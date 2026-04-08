@@ -1,7 +1,50 @@
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_delete, post_save, pre_save
 from django.dispatch import receiver
-from .models import TaskAttachment, TaskHierarchy
+
+from .models import Task, TaskAttachment, TaskHierarchy
 from .tasks import scan_task_attachment
+
+_task_status_cache: dict[int, str] = {}
+
+
+@receiver(pre_save, sender=Task)
+def _cache_previous_task_status(sender, instance, **kwargs):
+    if not instance.pk:
+        return
+    try:
+        prev = Task.objects.get(pk=instance.pk)
+        _task_status_cache[instance.pk] = prev.status
+    except Task.DoesNotExist:
+        _task_status_cache[instance.pk] = None
+
+
+@receiver(post_save, sender=Task)
+def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
+    if created:
+        return
+    old = _task_status_cache.pop(instance.pk, None)
+    if old is None or old == instance.status or not instance.owner_id:
+        return
+    from notifications.models import NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+
+    create_notification(
+        recipient_id=instance.owner_id,
+        actor_id=None,
+        category=NotificationCategory.TASKS,
+        event_type=NotificationEventType.TASK_STATUS_CHANGED,
+        title=f"Task status updated: {instance.summary}",
+        body=f"Status changed from {old} to {instance.status}.",
+        related_object_type="task",
+        related_object_id=str(instance.id),
+        action_url=f"/projects/{instance.project_id}/tasks",
+        metadata={
+            "task_id": instance.id,
+            "project_id": instance.project_id,
+            "old_status": old,
+            "new_status": instance.status,
+        },
+    )
 
 
 @receiver(post_save, sender=TaskAttachment)

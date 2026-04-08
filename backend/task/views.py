@@ -15,6 +15,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from core.models import ProjectMember, Project
 from core.utils.project import get_user_active_project
+from notifications.models import NotificationCategory, NotificationEventType
+from notifications.services import create_notification
 import json
 import traceback
 
@@ -408,7 +410,42 @@ class TaskViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         """Update a task"""
+        task = serializer.instance
+        old_owner_id = task.owner_id
+        old_approver_id = task.current_approver_id
         serializer.save()
+        task.refresh_from_db()
+        actor_id = self.request.user.id
+        project_id = task.project_id
+        action_url = f"/projects/{project_id}/tasks"
+
+        if task.owner_id and task.owner_id != old_owner_id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task reassigned: {task.summary}",
+                body="You are now the owner of this task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={"task_id": task.id, "project_id": project_id},
+            )
+
+        if task.current_approver_id and task.current_approver_id != old_approver_id:
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_ASSIGNED,
+                title=f"Approval requested: {task.summary}",
+                body="You are the current approver for this task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={"task_id": task.id, "project_id": project_id},
+            )
     
     def perform_destroy(self, instance):
         """

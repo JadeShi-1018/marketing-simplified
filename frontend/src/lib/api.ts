@@ -1,10 +1,10 @@
 import axios from 'axios';
-import { 
-  LoginRequest, 
-  LoginResponse, 
-  RegisterRequest, 
-  RegisterResponse, 
-  User, 
+import {
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  RegisterResponse,
+  User,
   AuthError,
   GoogleAuthResponse,
   SetPasswordRequest
@@ -15,6 +15,11 @@ const DEFAULT_API_BASE_URL = '';
 const API_BASE_URL =
   (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.trim()) ||
   DEFAULT_API_BASE_URL;
+
+/** Resolved API origin for browser and server; respects `NEXT_PUBLIC_API_URL` when set. */
+export function resolveApiBaseUrl(): string {
+  return API_BASE_URL;
+}
 
 // Create axios instance for API calls
 // indexes: null => array params serialize as repeated keys (e.g. status=A&status=B)

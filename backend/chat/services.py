@@ -335,6 +335,27 @@ class MessageService:
         
         logger.info(f"Created message {message.id} in chat {chat.id} by user {sender.id}")
 
+        try:
+            from notifications.models import NotificationCategory, NotificationEventType
+            from notifications.services import create_notification
+
+            for recipient in recipients:
+                uid = recipient.user_id
+                create_notification(
+                    recipient_id=uid,
+                    actor_id=sender.id,
+                    category=NotificationCategory.COLLABORATION,
+                    event_type=NotificationEventType.CHAT_NEW_MESSAGE,
+                    title="New chat message",
+                    body=(content[:200] + "…") if len(content) > 200 else content,
+                    related_object_type="chat",
+                    related_object_id=str(chat.id),
+                    action_url=f"/projects/{chat.project_id}/tasks",
+                    metadata={"chat_id": chat.id, "message_id": message.id, "project_id": chat.project_id},
+                )
+        except Exception:
+            logger.exception("In-app notification for chat message failed")
+
         # Route message to Agent Bot if it is a participant in this chat.
         # Wrapped in try/except so this never breaks normal chat functionality.
         try:

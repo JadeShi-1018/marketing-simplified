@@ -88,6 +88,7 @@ INSTALLED_APPS = [
     'slack_integration.apps.SlackIntegrationConfig',
     'agent.apps.AgentConfig',
     'meetings.apps.MeetingsConfig',
+    'notifications.apps.NotificationsConfig',
 ]
 
 MIDDLEWARE = [

@@ -71,6 +71,7 @@ urlpatterns = [
     path('api/slack/', include('slack_integration.urls')),
     path('api/agent/', include('agent.urls')),
     path('api/', include('meetings.urls')),
+    path('api/', include('notifications.urls')),
     path("", include("django_prometheus.urls")),
 ]
 

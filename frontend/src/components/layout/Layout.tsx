@@ -7,6 +7,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { usePermissionEditControl } from '@/hooks/usePermissionEditControl';
 import { LanguageProvider } from '@/contexts/LanguageContext';
+import { NotificationDrawerProvider } from '@/components/notifications/NotificationDrawerProvider';
+import NotificationDrawer from '@/components/notifications/NotificationDrawer';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -138,56 +140,61 @@ const Layout: React.FC<LayoutProps> = ({
 
   return (
     <LanguageProvider>
-      <div className={`${usePageScroll ? 'min-h-screen' : 'h-screen'} flex flex-col bg-gray-100 ${className}`}>
-        {/* Header */}
-        {showHeader && (
-          <Header
-            user={user}
-            onUserMenuClick={handleUserAction}
-            onSearchChange={handleSearch}
-            onNotificationClick={handleNotificationClick}
-          />
-        )}
-
-        {/* main */}
-        <div className={`flex min-h-0 flex-1 items-stretch ${usePageScroll ? 'overflow-visible' : 'overflow-hidden'}`}>
-          {/* sidebar */}
-          {showSidebar && (
-            <Sidebar
-              defaultCollapsed={isSidebarCollapsed}
-              onCollapseChange={handleSidebarCollapseChange}
-              userRole={user.role}
-              userRoleLevel={userRoleLevel}
-              unsavedChangesGuard={unsavedChangesGuard}
+      <NotificationDrawerProvider>
+        <div className={`${usePageScroll ? 'min-h-screen' : 'h-screen'} flex flex-col bg-gray-100 ${className}`}>
+          {/* Header */}
+          {showHeader && (
+            <Header
+              user={user}
+              onUserMenuClick={handleUserAction}
+              onSearchChange={handleSearch}
+              onNotificationClick={handleNotificationClick}
             />
           )}
 
-          {/* main content */}
-          <main className={`
+          {/* main */}
+          <div className={`flex min-h-0 flex-1 items-stretch ${usePageScroll ? 'overflow-visible' : 'overflow-hidden'}`}>
+            {/* sidebar */}
+            {showSidebar && (
+              <Sidebar
+                defaultCollapsed={isSidebarCollapsed}
+                onCollapseChange={handleSidebarCollapseChange}
+                userRole={user.role}
+                userRoleLevel={userRoleLevel}
+                unsavedChangesGuard={unsavedChangesGuard}
+              />
+            )}
 
-            flex-1 overflow-hidden bg-white 
-            ${usePageScroll ? 'overflow-visible' : 'overflow-hidden'} 
-            bg-gray-50
-            ${isMobile && !isSidebarCollapsed ? 'hidden' : 'block'}
-            transition-all duration-300 ease-in-out
-          `}>
-            {children}
-          </main>
+            {/* main content */}
+            <main className={`
+
+              flex-1 overflow-hidden bg-white
+              ${usePageScroll ? 'overflow-visible' : 'overflow-hidden'}
+              bg-gray-50
+              ${isMobile && !isSidebarCollapsed ? 'hidden' : 'block'}
+              transition-all duration-300 ease-in-out
+            `}>
+              {children}
+            </main>
+          </div>
+
+          {/* sidebar collapse */}
+          {isMobile && !isSidebarCollapsed && (
+            <div
+              className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
+              onClick={() => setIsSidebarCollapsed(true)}
+            />
+          )}
+
+          {/* Global Chat Widget - available on all pages when authenticated */}
+          {authUser && (
+            <ChatWidget contextProjectId={contextProjectId} />
+          )}
         </div>
 
-        {/* sidebar collapse */}
-        {isMobile && !isSidebarCollapsed && (
-          <div
-            className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"
-            onClick={() => setIsSidebarCollapsed(true)}
-          />
-        )}
-        
-        {/* Global Chat Widget - available on all pages when authenticated */}
-        {authUser && (
-          <ChatWidget contextProjectId={contextProjectId} />
-        )}
-      </div>
+        {/* Notification Context Drawer */}
+        <NotificationDrawer />
+      </NotificationDrawerProvider>
     </LanguageProvider>
   );
 };

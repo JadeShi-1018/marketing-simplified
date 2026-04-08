@@ -1,3 +1,4 @@
+import json
 import logging
 import traceback
 
@@ -43,6 +44,8 @@ from meetings.services import (
     meeting_list_order_by_fields,
     hub_split_meeting_pks_for_project,
 )
+from notifications.models import NotificationCategory, NotificationEventType
+from notifications.services import create_notification
 
 
 logger = logging.getLogger(__name__)
@@ -267,6 +270,64 @@ class MeetingViewSet(viewsets.ModelViewSet):
                         }
                     ) from exc
 
+        if participant_user_ids:
+            for uid in participant_user_ids:
+                if uid == self.request.user.id:
+                    continue
+                create_notification(
+                    recipient_id=uid,
+                    actor_id=self.request.user.id,
+                    category=NotificationCategory.MEETINGS,
+                    event_type=NotificationEventType.MEETING_CREATED,
+                    title=f"New meeting: {meeting.title}",
+                    body="You were added as a participant.",
+                    related_object_type="meeting",
+                    related_object_id=str(meeting.id),
+                    action_url=f"/projects/{project.id}/meetings",
+                    metadata={"project_id": project.id},
+                )
+
+    def perform_update(self, serializer):
+        meeting = serializer.instance
+        project = meeting.project
+        before = {
+            "title": meeting.title,
+            "objective": meeting.objective,
+            "scheduled_date": str(meeting.scheduled_date) if meeting.scheduled_date else None,
+            "scheduled_time": str(meeting.scheduled_time) if meeting.scheduled_time else None,
+            "type_definition_id": meeting.type_definition_id,
+            "external_reference": meeting.external_reference,
+            "layout_config": meeting.layout_config,
+        }
+        serializer.save()
+        meeting.refresh_from_db()
+        after = {
+            "title": meeting.title,
+            "objective": meeting.objective,
+            "scheduled_date": str(meeting.scheduled_date) if meeting.scheduled_date else None,
+            "scheduled_time": str(meeting.scheduled_time) if meeting.scheduled_time else None,
+            "type_definition_id": meeting.type_definition_id,
+            "external_reference": meeting.external_reference,
+            "layout_config": meeting.layout_config,
+        }
+        if json.dumps(before, sort_keys=True, default=str) == json.dumps(after, sort_keys=True, default=str):
+            return
+        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        for uid in participant_ids:
+            if uid == self.request.user.id:
+                continue
+            create_notification(
+                recipient_id=uid,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_UPDATED,
+                title=f"Meeting updated: {meeting.title}",
+                body="Meeting details were changed.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{project.id}/meetings",
+                metadata={"project_id": project.id},
+            )
 
 
 class AgendaItemViewSet(viewsets.ModelViewSet):
@@ -297,6 +358,22 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
 
             raise ValidationError(
                 {"order_index": ["This order_index is already used for this meeting."]}
+            )
+        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        for uid in participant_ids:
+            if uid == self.request.user.id:
+                continue
+            create_notification(
+                recipient_id=uid,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
+                title=f"Agenda updated: {meeting.title}",
+                body="A new agenda item was added or changed.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{meeting.project_id}/meetings",
+                metadata={"project_id": meeting.project_id},
             )
 
     @action(detail=False, methods=["patch"], url_path="reorder")
@@ -360,7 +437,20 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
-        serializer.save(meeting=meeting)
+        link = serializer.save(meeting=meeting)
+        if link.user_id != self.request.user.id:
+            create_notification(
+                recipient_id=link.user_id,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_PARTICIPANT_ADDED,
+                title=f"Added to meeting: {meeting.title}",
+                body="You were added as a participant.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{meeting.project_id}/meetings",
+                metadata={"project_id": meeting.project_id},
+            )
 
 
 class ArtifactLinkViewSet(viewsets.ModelViewSet):
