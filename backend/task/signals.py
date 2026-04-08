@@ -37,7 +37,7 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
         body=f"Status changed from {old} to {instance.status}.",
         related_object_type="task",
         related_object_id=str(instance.id),
-        action_url=f"/projects/{instance.project_id}/tasks",
+        action_url=f"/projects/{instance.project_id}/tasks/{instance.id}",
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,

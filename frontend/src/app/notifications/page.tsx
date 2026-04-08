@@ -38,9 +38,19 @@ function NotificationCard({
 }) {
   const { openDrawer } = useNotificationDrawer();
 
+  const handleCardClick = () => {
+    openDrawer(notification);
+  };
+
   return (
     <div
-      className={`rounded-xl border p-4 flex gap-3 ${
+      role="button"
+      tabIndex={0}
+      onClick={handleCardClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") handleCardClick();
+      }}
+      className={`rounded-xl border p-4 flex gap-3 cursor-pointer transition-colors hover:bg-gray-50 ${
         notification.is_read
           ? "bg-white border-gray-200"
           : "bg-white border-blue-200 shadow-sm"
@@ -51,6 +61,7 @@ function NotificationCard({
         className="mt-1 rounded border-gray-300"
         checked={selected}
         onChange={onToggle}
+        onClick={(e) => e.stopPropagation()}
       />
       <div className="flex-1 min-w-0">
         <div className="flex justify-between gap-2">
@@ -68,13 +79,6 @@ function NotificationCard({
         <p className="text-xs text-gray-400 mt-2">
           {formatRelativeTime(notification.created_at)}
         </p>
-        <button
-          type="button"
-          className="text-xs text-blue-600 hover:underline mt-2"
-          onClick={() => openDrawer(notification)}
-        >
-          Open
-        </button>
       </div>
       <button
         type="button"
@@ -259,7 +263,7 @@ function NotificationsContent() {
           </button>
         </div>
 
-        <div className="mt-4 space-y-3 max-w-4xl">
+        <div className="mt-4 space-y-3">
           {loading ? (
             <p className="text-gray-500 text-sm">Loading...</p>
           ) : items.length === 0 ? (

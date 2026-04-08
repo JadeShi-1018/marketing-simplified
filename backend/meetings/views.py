@@ -283,7 +283,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     body="You were added as a participant.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=f"/projects/{project.id}/meetings",
+                    action_url=f"/projects/{project.id}/meetings/{meeting.id}",
                     metadata={"project_id": project.id},
                 )
 
@@ -312,6 +312,32 @@ class MeetingViewSet(viewsets.ModelViewSet):
         }
         if json.dumps(before, sort_keys=True, default=str) == json.dumps(after, sort_keys=True, default=str):
             return
+
+        # Build change details for notification metadata
+        changes = {}
+        if before["scheduled_date"] != after["scheduled_date"] or before["scheduled_time"] != after["scheduled_time"]:
+            old_time = None
+            new_time = None
+            if before["scheduled_date"]:
+                old_time = before["scheduled_date"]
+                if before["scheduled_time"]:
+                    old_time += f" {before['scheduled_time']}"
+            if after["scheduled_date"]:
+                new_time = after["scheduled_date"]
+                if after["scheduled_time"]:
+                    new_time += f" {after['scheduled_time']}"
+            changes["old_time"] = old_time
+            changes["new_time"] = new_time
+        if before["objective"] != after["objective"]:
+            changes["old_agenda"] = before["objective"]
+            changes["new_agenda"] = after["objective"]
+        if before["external_reference"] != after["external_reference"]:
+            changes["old_location"] = before["external_reference"]
+            changes["new_location"] = after["external_reference"]
+        if before["title"] != after["title"]:
+            changes["old_title"] = before["title"]
+            changes["new_title"] = after["title"]
+
         participant_ids = meeting.participant_links.values_list("user_id", flat=True)
         for uid in participant_ids:
             if uid == self.request.user.id:
@@ -325,8 +351,8 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 body="Meeting details were changed.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{project.id}/meetings",
-                metadata={"project_id": project.id},
+                action_url=f"/projects/{project.id}/meetings/{meeting.id}",
+                metadata={"project_id": project.id, **changes},
             )
 
 
@@ -372,7 +398,7 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
                 body="A new agenda item was added or changed.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings",
+                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
                 metadata={"project_id": meeting.project_id},
             )
 
@@ -448,7 +474,7 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
                 body="You were added as a participant.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings",
+                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
                 metadata={"project_id": meeting.project_id},
             )
 

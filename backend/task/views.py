@@ -417,7 +417,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         task.refresh_from_db()
         actor_id = self.request.user.id
         project_id = task.project_id
-        action_url = f"/projects/{project_id}/tasks"
+        action_url = f"/projects/{project_id}/tasks/{task.id}"
 
         if task.owner_id and task.owner_id != old_owner_id:
             create_notification(

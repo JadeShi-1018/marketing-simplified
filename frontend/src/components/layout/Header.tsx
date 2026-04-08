@@ -114,6 +114,23 @@ const Header: React.FC<HeaderProps> = ({
     loadNotificationsPanel();
   }, [lastRefresh, isAuthenticated, loadNotificationsPanel]);
 
+  // Polling: auto-refresh unread count every 30 seconds
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const { data } = await notificationsApi.list({ page_size: 1 });
+        setGlobalUnreadCount(data.unread_count);
+        setUnreadCount(data.unread_count);
+      } catch {
+        // Silently ignore polling errors
+      }
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [isAuthenticated, setGlobalUnreadCount]);
+
   useEffect(() => {
     if (showNotifications && isAuthenticated) {
       loadNotificationsPanel();
@@ -348,16 +365,6 @@ const Header: React.FC<HeaderProps> = ({
                                 <p className="text-xs text-gray-400 mt-1">
                                   {formatRelativeTime(item.created_at)}
                                 </p>
-                                <button
-                                  type="button"
-                                  className="text-xs text-blue-600 hover:underline mt-1"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleNotificationRowClick(item);
-                                  }}
-                                >
-                                  View full notification
-                                </button>
                               </div>
                             </div>
                           </div>

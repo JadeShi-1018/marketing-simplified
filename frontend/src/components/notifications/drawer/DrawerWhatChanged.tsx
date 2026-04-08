@@ -43,7 +43,9 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
       metadata?.added_participants ||
       metadata?.removed_participants ||
       metadata?.old_location ||
-      metadata?.new_location
+      metadata?.new_location ||
+      metadata?.old_title ||
+      metadata?.new_title
     );
   }
 
@@ -152,6 +154,33 @@ function MeetingLocationChange({ metadata }: { metadata: Record<string, unknown>
   );
 }
 
+// Render meeting title change
+function MeetingTitleChange({ metadata }: { metadata: Record<string, unknown> }) {
+  const oldTitle = metadata?.old_title as string | undefined;
+  const newTitle = metadata?.new_title as string | undefined;
+
+  if (!oldTitle && !newTitle) return null;
+
+  return (
+    <div className="flex items-start gap-3 py-2">
+      <FileText className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium text-gray-800">Title</div>
+        {oldTitle && (
+          <div className="text-xs text-gray-500 line-through mt-0.5">
+            {oldTitle}
+          </div>
+        )}
+        {newTitle && (
+          <div className="text-xs text-green-700 font-medium mt-0.5">
+            {newTitle}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // Render participant changes
 function MeetingParticipantChange({ metadata }: { metadata: Record<string, unknown> }) {
   const added = metadata?.added_participants as string[] | undefined;
@@ -253,6 +282,7 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
           event_type === "meeting_participant_removed") &&
           metadata && (
             <div className="divide-y divide-orange-100">
+              <MeetingTitleChange metadata={metadata} />
               <MeetingTimeChange metadata={metadata} />
               <MeetingAgendaChange metadata={metadata} />
               <MeetingLocationChange metadata={metadata} />

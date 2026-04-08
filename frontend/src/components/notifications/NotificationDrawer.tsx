@@ -3,6 +3,7 @@
 import React, { useEffect, useCallback } from "react";
 import { useNotificationDrawer } from "./NotificationDrawerProvider";
 import { notificationsApi } from "@/lib/api/notificationsApi";
+import { useNotificationStore } from "@/lib/notificationStore";
 import DrawerHeader from "./drawer/DrawerHeader";
 import DrawerActivitySummary from "./drawer/DrawerActivitySummary";
 import DrawerObjectCard from "./drawer/DrawerObjectCard";
@@ -11,6 +12,7 @@ import DrawerActionBar from "./drawer/DrawerActionBar";
 
 export default function NotificationDrawer() {
   const { isOpen, notification, closeDrawer } = useNotificationDrawer();
+  const { triggerRefresh } = useNotificationStore();
 
   // Handle escape key to close drawer
   useEffect(() => {
@@ -41,10 +43,12 @@ export default function NotificationDrawer() {
     if (!notification || notification.is_read) return;
     try {
       await notificationsApi.markRead({ ids: [notification.id] });
+      // Trigger global refresh to update Header bell badge and page list
+      triggerRefresh();
     } catch (error) {
       console.error("Failed to mark notification as read:", error);
     }
-  }, [notification]);
+  }, [notification, triggerRefresh]);
 
   // Auto mark as read when drawer opens with an unread notification
   useEffect(() => {

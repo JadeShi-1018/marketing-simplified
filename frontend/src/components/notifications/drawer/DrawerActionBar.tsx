@@ -168,7 +168,15 @@ function QuickReplyAction({
 function buildFullPageUrl(notification: NotificationItem): string | null {
   const { related_object_type, related_object_id, metadata, action_url } = notification;
   const objectType = related_object_type?.toLowerCase();
-  const projectId = metadata?.project_id as number | string | undefined;
+
+  // Try multiple sources for project_id
+  const taskMeta = metadata?.task as Record<string, unknown> | undefined;
+  const meetingMeta = metadata?.meeting as Record<string, unknown> | undefined;
+  const projectId =
+    (metadata?.project_id as number | string | undefined) ||
+    (metadata?.project as number | string | undefined) ||
+    (taskMeta?.project_id as number | string | undefined) ||
+    (meetingMeta?.project_id as number | string | undefined);
 
   // Task detail page: /projects/[project_id]/tasks/[task_id]
   if (objectType === "task" && related_object_id) {
@@ -179,6 +187,11 @@ function buildFullPageUrl(notification: NotificationItem): string | null {
     const projectMatch = action_url?.match(/\/projects\/(\d+)/);
     if (projectMatch) {
       return `/projects/${projectMatch[1]}/tasks/${related_object_id}`;
+    }
+    // Try extracting from task-related patterns in action_url
+    const taskMatch = action_url?.match(/\/tasks\/(\d+)/);
+    if (taskMatch && action_url) {
+      return action_url;
     }
     // Fallback to tasks list with task filter
     return `/tasks?task_id=${related_object_id}`;
@@ -209,6 +222,10 @@ function buildFullPageUrl(notification: NotificationItem): string | null {
     if (projectMatch) {
       return `/projects/${projectMatch[1]}/decisions/${related_object_id}`;
     }
+    // Fallback to action_url if provided
+    if (action_url) {
+      return action_url;
+    }
   }
 
   // Default fallback to action_url
@@ -216,16 +233,37 @@ function buildFullPageUrl(notification: NotificationItem): string | null {
 }
 
 // Go to Full Page Link
-function GoToFullPageLink({ notification }: { notification: NotificationItem }) {
+function GoToFullPageLink({
+  notification,
+  onNavigate,
+}: {
+  notification: NotificationItem;
+  onNavigate: () => void;
+}) {
   const router = useRouter();
   const fullPageUrl = buildFullPageUrl(notification);
 
+  // Debug: log the generated URL for troubleshooting
+  console.log("[DrawerActionBar] buildFullPageUrl:", {
+    related_object_type: notification.related_object_type,
+    related_object_id: notification.related_object_id,
+    action_url: notification.action_url,
+    metadata: notification.metadata,
+    generatedUrl: fullPageUrl,
+  });
+
   if (!fullPageUrl) return null;
+
+  const handleClick = () => {
+    // Close the drawer first, then navigate
+    onNavigate();
+    router.push(fullPageUrl);
+  };
 
   return (
     <button
       type="button"
-      onClick={() => router.push(fullPageUrl)}
+      onClick={handleClick}
       className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-gray-900 text-white font-medium hover:bg-gray-800 transition-colors"
     >
       <span>Go to Full Page</span>
@@ -252,7 +290,7 @@ export default function DrawerActionBar({
       )}
 
       {/* Always show "Go to Full Page" link */}
-      <GoToFullPageLink notification={notification} />
+      <GoToFullPageLink notification={notification} onNavigate={onActionComplete} />
     </div>
   );
 }
