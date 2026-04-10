@@ -290,28 +290,80 @@ class MeetingViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         meeting = serializer.instance
         project = meeting.project
-        before = {
-            "title": meeting.title,
-            "objective": meeting.objective,
-            "scheduled_date": str(meeting.scheduled_date) if meeting.scheduled_date else None,
-            "scheduled_time": str(meeting.scheduled_time) if meeting.scheduled_time else None,
-            "type_definition_id": meeting.type_definition_id,
-            "external_reference": meeting.external_reference,
-            "layout_config": meeting.layout_config,
-        }
-        serializer.save()
-        meeting.refresh_from_db()
+
+        # Use raw SQL to absolutely bypass any ORM caching - get CURRENT database state
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT title, objective, scheduled_date, scheduled_time, type_definition_id, external_reference, layout_config FROM meetings_meeting WHERE id = %s",
+                [meeting.pk]
+            )
+            row = cursor.fetchone()
+
+        if row:
+            db_layout_config = row[6]
+            if isinstance(db_layout_config, str):
+                try:
+                    db_layout_config = json.loads(db_layout_config)
+                except:
+                    pass
+            before = {
+                "title": row[0],
+                "objective": row[1],
+                "scheduled_date": str(row[2]) if row[2] else None,
+                "scheduled_time": str(row[3]) if row[3] else None,
+                "type_definition_id": row[4],
+                "external_reference": row[5],
+                "layout_config": db_layout_config,
+            }
+        else:
+            before = {
+                "title": None, "objective": None, "scheduled_date": None,
+                "scheduled_time": None, "type_definition_id": None,
+                "external_reference": None, "layout_config": None,
+            }
+
+        # Build "after" from INCOMING data (what frontend is sending), NOT from database after save
+        # This ensures we compare what's in DB vs what frontend wants to save
+        validated = serializer.validated_data
         after = {
-            "title": meeting.title,
-            "objective": meeting.objective,
-            "scheduled_date": str(meeting.scheduled_date) if meeting.scheduled_date else None,
-            "scheduled_time": str(meeting.scheduled_time) if meeting.scheduled_time else None,
-            "type_definition_id": meeting.type_definition_id,
-            "external_reference": meeting.external_reference,
-            "layout_config": meeting.layout_config,
+            "title": validated.get("title", before["title"]),
+            "objective": validated.get("objective", before["objective"]),
+            "scheduled_date": str(validated["scheduled_date"]) if validated.get("scheduled_date") else before["scheduled_date"],
+            "scheduled_time": str(validated["scheduled_time"]) if validated.get("scheduled_time") else before["scheduled_time"],
+            "type_definition_id": validated.get("type_definition_id", before["type_definition_id"]),
+            "external_reference": validated.get("external_reference", before["external_reference"]),
+            "layout_config": validated.get("layout_config", before["layout_config"]),
         }
+
+        # Save to database
+        serializer.save()
+
+        # Check if anything changed
         if json.dumps(before, sort_keys=True, default=str) == json.dumps(after, sort_keys=True, default=str):
             return
+
+        # Helper function to extract agenda items from layout_config.nestedSections
+        def extract_agenda_items(layout_config):
+            """Extract all agenda item texts from nestedSections."""
+            if not layout_config or not isinstance(layout_config, dict):
+                return {}
+            nested_sections = layout_config.get("nestedSections", [])
+            if not isinstance(nested_sections, list):
+                return {}
+            # Map item id -> (section_title, item_text)
+            items = {}
+            for section in nested_sections:
+                if not isinstance(section, dict):
+                    continue
+                section_title = section.get("title", "")
+                for item in section.get("items", []):
+                    if isinstance(item, dict):
+                        item_id = item.get("id")
+                        item_text = item.get("text", "")
+                        if item_id:
+                            items[str(item_id)] = {"section": section_title, "text": item_text}
+            return items
 
         # Build change details for notification metadata
         changes = {}
@@ -338,6 +390,97 @@ class MeetingViewSet(viewsets.ModelViewSet):
             changes["old_title"] = before["title"]
             changes["new_title"] = after["title"]
 
+        # Detect agenda changes within layout_config.nestedSections
+        old_layout = before["layout_config"]
+        new_layout = after["layout_config"]
+        if isinstance(old_layout, str):
+            try:
+                old_layout = json.loads(old_layout)
+            except (json.JSONDecodeError, TypeError):
+                old_layout = None
+        if isinstance(new_layout, str):
+            try:
+                new_layout = json.loads(new_layout)
+            except (json.JSONDecodeError, TypeError):
+                new_layout = None
+
+        old_items = extract_agenda_items(old_layout)
+        new_items = extract_agenda_items(new_layout)
+
+        old_item_ids = set(old_items.keys())
+        new_item_ids = set(new_items.keys())
+
+        # Find added, removed, and modified items
+        added_ids = new_item_ids - old_item_ids
+        removed_ids = old_item_ids - new_item_ids
+        common_ids = old_item_ids & new_item_ids
+
+        modified_items = []
+        section_changes = []
+        for item_id in common_ids:
+            old_text = old_items[item_id]["text"]
+            new_text = new_items[item_id]["text"]
+            old_section = old_items[item_id]["section"]
+            new_section = new_items[item_id]["section"]
+
+            # Check for text changes
+            if old_text != new_text:
+                modified_items.append({
+                    "id": item_id,
+                    "old_text": old_text,
+                    "new_text": new_text,
+                })
+
+            # Check for section/group name changes
+            if old_section != new_section:
+                section_changes.append({
+                    "id": item_id,
+                    "old_section": old_section,
+                    "new_section": new_section,
+                })
+
+        # Build agenda change summary
+        agenda_changes = []
+
+        # Handle modified items - show before/after
+        if modified_items:
+            first_mod = modified_items[0]
+            changes["old_agenda"] = first_mod["old_text"]
+            changes["new_agenda"] = first_mod["new_text"]
+            for mod in modified_items:
+                agenda_changes.append(f"Modified: '{mod['old_text']}' → '{mod['new_text']}'")
+
+        # Handle section name changes
+        if section_changes:
+            first_sec = section_changes[0]
+            if not changes.get("old_agenda"):
+                changes["old_agenda"] = f"Section: {first_sec['old_section']}"
+            if not changes.get("new_agenda"):
+                changes["new_agenda"] = f"Section: {first_sec['new_section']}"
+            for sec in section_changes:
+                agenda_changes.append(f"Section renamed: '{sec['old_section']}' → '{sec['new_section']}'")
+
+        # Handle removed items
+        if removed_ids:
+            removed_texts = [old_items[rid]["text"] for rid in removed_ids]
+            if not changes.get("old_agenda"):
+                changes["old_agenda"] = removed_texts[0] if len(removed_texts) == 1 else "; ".join(removed_texts)
+            for text in removed_texts:
+                agenda_changes.append(f"Removed: '{text}'")
+
+        # Handle added items
+        if added_ids:
+            added_texts = [new_items[aid]["text"] for aid in added_ids]
+            if not changes.get("new_agenda"):
+                changes["new_agenda"] = added_texts[0] if len(added_texts) == 1 else "; ".join(added_texts)
+            for text in added_texts:
+                agenda_changes.append(f"Added: '{text}'")
+
+        # If no changes detected at all, skip notification
+        if not changes:
+            return
+
+        # Send notifications to participants
         participant_ids = meeting.participant_links.values_list("user_id", flat=True)
         for uid in participant_ids:
             if uid == self.request.user.id:
@@ -378,13 +521,15 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         meeting = self.get_meeting()
         try:
-            serializer.save(meeting=meeting)
+            agenda_item = serializer.save(meeting=meeting)
         except IntegrityError:
             from rest_framework.exceptions import ValidationError
 
             raise ValidationError(
                 {"order_index": ["This order_index is already used for this meeting."]}
             )
+
+        # Notify participants about new agenda item
         participant_ids = meeting.participant_links.values_list("user_id", flat=True)
         for uid in participant_ids:
             if uid == self.request.user.id:
@@ -395,11 +540,81 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
                 category=NotificationCategory.MEETINGS,
                 event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
                 title=f"Agenda updated: {meeting.title}",
-                body="A new agenda item was added or changed.",
+                body="A new agenda item was added.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
                 action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
-                metadata={"project_id": meeting.project_id},
+                metadata={
+                    "project_id": meeting.project_id,
+                    "new_agenda": agenda_item.content,
+                },
+            )
+
+    def perform_update(self, serializer):
+        agenda_item = serializer.instance
+        meeting = agenda_item.meeting
+
+        # Fetch original content from database BEFORE save
+        original_values = AgendaItem.objects.filter(pk=agenda_item.pk).values('content').first()
+        old_content = original_values["content"] if original_values else ""
+
+        # Save the changes
+        serializer.save()
+        agenda_item.refresh_from_db()
+        new_content = agenda_item.content
+
+        # Only notify if content actually changed
+        if old_content == new_content:
+            return
+
+        # Notify participants about modified agenda item
+        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        for uid in participant_ids:
+            if uid == self.request.user.id:
+                continue
+            create_notification(
+                recipient_id=uid,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
+                title=f"Agenda updated: {meeting.title}",
+                body="An agenda item was modified.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                metadata={
+                    "project_id": meeting.project_id,
+                    "old_agenda": old_content,
+                    "new_agenda": new_content,
+                },
+            )
+
+    def perform_destroy(self, instance):
+        meeting = instance.meeting
+        removed_content = instance.content
+
+        # Delete the agenda item
+        instance.delete()
+
+        # Notify participants about removed agenda item
+        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        for uid in participant_ids:
+            if uid == self.request.user.id:
+                continue
+            create_notification(
+                recipient_id=uid,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
+                title=f"Agenda updated: {meeting.title}",
+                body="An agenda item was removed.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                metadata={
+                    "project_id": meeting.project_id,
+                    "old_agenda": removed_content,
+                },
             )
 
     @action(detail=False, methods=["patch"], url_path="reorder")
@@ -500,7 +715,56 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
-        serializer.save(meeting=meeting)
+        artifact = serializer.save(meeting=meeting)
+
+        # Notify participants about new artifact
+        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        for uid in participant_ids:
+            if uid == self.request.user.id:
+                continue
+            create_notification(
+                recipient_id=uid,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_UPDATED,
+                title=f"Artifact added to meeting: {meeting.title}",
+                body=f"A new {artifact.artifact_type} was linked to this meeting.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                metadata={
+                    "project_id": meeting.project_id,
+                    "added_artifacts": [f"{artifact.artifact_type} (ID: {artifact.artifact_id})"],
+                },
+            )
+
+    def perform_destroy(self, instance):
+        meeting = instance.meeting
+        artifact_info = f"{instance.artifact_type} (ID: {instance.artifact_id})"
+
+        # Delete the artifact link
+        instance.delete()
+
+        # Notify participants about removed artifact
+        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        for uid in participant_ids:
+            if uid == self.request.user.id:
+                continue
+            create_notification(
+                recipient_id=uid,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_UPDATED,
+                title=f"Artifact removed from meeting: {meeting.title}",
+                body=f"An artifact was unlinked from this meeting.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                metadata={
+                    "project_id": meeting.project_id,
+                    "removed_artifacts": [artifact_info],
+                },
+            )
 
 
 class MeetingTemplateViewSet(viewsets.ModelViewSet):

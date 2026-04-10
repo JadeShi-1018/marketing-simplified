@@ -1,18 +1,38 @@
 "use client";
 
 import React from "react";
-import { Clock, Users, FileText, MapPin, Calendar } from "lucide-react";
+import { Clock, Users, FileText, MapPin, Type, Paperclip } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 
 interface DrawerWhatChangedProps {
   notification: NotificationItem;
 }
 
-// Format time for display
-function formatTime(timeStr: string | undefined | null): string {
+// Format datetime for display (human-readable format)
+function formatDateTime(timeStr: string | undefined | null): string {
   if (!timeStr) return "Not set";
   try {
-    return new Date(timeStr).toLocaleString();
+    // Handle date-only strings (YYYY-MM-DD) vs datetime strings
+    const hasTime = timeStr.includes(" ") || timeStr.includes("T");
+    if (!hasTime) {
+      // Date only - format as "Apr 9, 2026"
+      const date = new Date(timeStr + "T00:00:00");
+      return date.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      });
+    }
+    // DateTime - format as "Apr 9, 2026 10:00 AM"
+    const date = new Date(timeStr.replace(" ", "T"));
+    return date.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
   } catch {
     return timeStr;
   }
@@ -27,29 +47,98 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
     return !!(metadata?.old_status && metadata?.new_status);
   }
 
-  // Meeting updates
+  // Meeting updates - always show for meeting-related events
   if (
     event_type === "meeting_updated" ||
     event_type === "meeting_agenda_changed" ||
     event_type === "meeting_participant_added" ||
     event_type === "meeting_participant_removed"
   ) {
-    return !!(
-      metadata?.changes ||
-      metadata?.old_time ||
-      metadata?.new_time ||
-      metadata?.old_agenda ||
-      metadata?.new_agenda ||
-      metadata?.added_participants ||
-      metadata?.removed_participants ||
-      metadata?.old_location ||
-      metadata?.new_location ||
-      metadata?.old_title ||
-      metadata?.new_title
-    );
+    return true;
   }
 
   return false;
+}
+
+// Check if meeting has any specific change data
+function hasMeetingChangeData(metadata: Record<string, unknown>): boolean {
+  return !!(
+    metadata?.old_time ||
+    metadata?.new_time ||
+    metadata?.old_agenda ||
+    metadata?.new_agenda ||
+    metadata?.old_location ||
+    metadata?.new_location ||
+    metadata?.old_title ||
+    metadata?.new_title ||
+    metadata?.added_participants ||
+    metadata?.removed_participants ||
+    metadata?.added_artifacts ||
+    metadata?.removed_artifacts
+  );
+}
+
+// Generic Change Card component for Before/After display
+function ChangeCard({
+  icon: Icon,
+  label,
+  beforeValue,
+  afterValue,
+  isLongText = false,
+}: {
+  icon: React.ElementType;
+  label: string;
+  beforeValue: string | null | undefined;
+  afterValue: string | null | undefined;
+  isLongText?: boolean;
+}) {
+  // Don't render if no values
+  if (!beforeValue && !afterValue) return null;
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      {/* Header with icon and label */}
+      <div className="flex items-center gap-2 mb-2">
+        <Icon className="w-4 h-4 text-gray-500" />
+        <span className="text-sm font-semibold text-gray-800">{label}</span>
+      </div>
+
+      {/* Before/After content */}
+      <div className="space-y-1.5 pl-6">
+        {/* Before */}
+        {beforeValue && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Before:
+            </span>
+            <p
+              className={`text-sm text-gray-400 line-through mt-0.5 ${
+                isLongText ? "whitespace-pre-wrap break-words" : ""
+              }`}
+            >
+              {beforeValue}
+            </p>
+          </div>
+        )}
+
+        {/* After */}
+        {afterValue && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              After:
+            </span>
+            <p
+              className={`text-sm text-green-600 font-medium mt-0.5 ${
+                isLongText ? "whitespace-pre-wrap break-words" : ""
+              }`}
+            >
+              {afterValue}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // Render task status change
@@ -57,132 +146,23 @@ function TaskStatusChange({ metadata }: { metadata: Record<string, unknown> }) {
   const oldStatus = (metadata?.old_status as string) || "Unknown";
   const newStatus = (metadata?.new_status as string) || "Unknown";
 
-  return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-gray-600 w-16">Status:</span>
-        <span className="px-2 py-0.5 rounded bg-gray-200 text-gray-700 text-xs font-medium line-through">
-          {oldStatus.replace(/_/g, " ")}
-        </span>
-        <span className="text-gray-400">&rarr;</span>
-        <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs font-medium">
-          {newStatus.replace(/_/g, " ")}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// Render meeting time change
-function MeetingTimeChange({ metadata }: { metadata: Record<string, unknown> }) {
-  const oldTime = metadata?.old_time as string | undefined;
-  const newTime = metadata?.new_time as string | undefined;
-
-  if (!oldTime && !newTime) return null;
+  const formatStatus = (status: string) =>
+    status
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
 
   return (
-    <div className="flex items-start gap-3 py-2">
-      <Clock className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-800">Scheduled Time</div>
-        {oldTime && (
-          <div className="text-xs text-gray-500 line-through mt-0.5">
-            {formatTime(oldTime)}
-          </div>
-        )}
-        {newTime && (
-          <div className="text-xs text-green-700 font-medium mt-0.5">
-            {formatTime(newTime)}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Render meeting agenda change
-function MeetingAgendaChange({ metadata }: { metadata: Record<string, unknown> }) {
-  const oldAgenda = metadata?.old_agenda as string | undefined;
-  const newAgenda = metadata?.new_agenda as string | undefined;
-
-  if (!oldAgenda && !newAgenda) return null;
-
-  return (
-    <div className="flex items-start gap-3 py-2">
-      <FileText className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-800">Agenda</div>
-        {oldAgenda && (
-          <div className="text-xs text-gray-500 line-through mt-1 break-words">
-            {oldAgenda.length > 100 ? `${oldAgenda.slice(0, 100)}...` : oldAgenda}
-          </div>
-        )}
-        {newAgenda && (
-          <div className="text-xs text-green-700 mt-1 break-words">
-            {newAgenda.length > 100 ? `${newAgenda.slice(0, 100)}...` : newAgenda}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Render meeting location change
-function MeetingLocationChange({ metadata }: { metadata: Record<string, unknown> }) {
-  const oldLocation = metadata?.old_location as string | undefined;
-  const newLocation = metadata?.new_location as string | undefined;
-
-  if (!oldLocation && !newLocation) return null;
-
-  return (
-    <div className="flex items-start gap-3 py-2">
-      <MapPin className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-800">Location</div>
-        {oldLocation && (
-          <div className="text-xs text-gray-500 line-through mt-0.5">
-            {oldLocation}
-          </div>
-        )}
-        {newLocation && (
-          <div className="text-xs text-green-700 font-medium mt-0.5">
-            {newLocation}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Render meeting title change
-function MeetingTitleChange({ metadata }: { metadata: Record<string, unknown> }) {
-  const oldTitle = metadata?.old_title as string | undefined;
-  const newTitle = metadata?.new_title as string | undefined;
-
-  if (!oldTitle && !newTitle) return null;
-
-  return (
-    <div className="flex items-start gap-3 py-2">
-      <FileText className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-800">Title</div>
-        {oldTitle && (
-          <div className="text-xs text-gray-500 line-through mt-0.5">
-            {oldTitle}
-          </div>
-        )}
-        {newTitle && (
-          <div className="text-xs text-green-700 font-medium mt-0.5">
-            {newTitle}
-          </div>
-        )}
-      </div>
-    </div>
+    <ChangeCard
+      icon={FileText}
+      label="Status"
+      beforeValue={formatStatus(oldStatus)}
+      afterValue={formatStatus(newStatus)}
+    />
   );
 }
 
 // Render participant changes
-function MeetingParticipantChange({ metadata }: { metadata: Record<string, unknown> }) {
+function ParticipantChanges({ metadata }: { metadata: Record<string, unknown> }) {
   const added = metadata?.added_participants as string[] | undefined;
   const removed = metadata?.removed_participants as string[] | undefined;
 
@@ -191,20 +171,33 @@ function MeetingParticipantChange({ metadata }: { metadata: Record<string, unkno
   }
 
   return (
-    <div className="flex items-start gap-3 py-2">
-      <Users className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-gray-800">Participants</div>
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2">
+        <Users className="w-4 h-4 text-gray-500" />
+        <span className="text-sm font-semibold text-gray-800">Participants</span>
+      </div>
+
+      {/* Changes */}
+      <div className="space-y-1.5 pl-6">
         {removed && removed.length > 0 && (
-          <div className="mt-1">
-            <span className="text-xs text-red-600">Removed: </span>
-            <span className="text-xs text-gray-600">{removed.join(", ")}</span>
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Removed:
+            </span>
+            <p className="text-sm text-gray-400 line-through mt-0.5">
+              {removed.join(", ")}
+            </p>
           </div>
         )}
         {added && added.length > 0 && (
-          <div className="mt-1">
-            <span className="text-xs text-green-600">Added: </span>
-            <span className="text-xs text-gray-600">{added.join(", ")}</span>
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Added:
+            </span>
+            <p className="text-sm text-green-600 font-medium mt-0.5">
+              {added.join(", ")}
+            </p>
           </div>
         )}
       </div>
@@ -212,46 +205,130 @@ function MeetingParticipantChange({ metadata }: { metadata: Record<string, unkno
   );
 }
 
-// Change field type for generic changes
-interface ChangeField {
-  before?: string;
-  after?: string;
-}
+// Render artifact changes
+function ArtifactChanges({ metadata }: { metadata: Record<string, unknown> }) {
+  const added = metadata?.added_artifacts as string[] | undefined;
+  const removed = metadata?.removed_artifacts as string[] | undefined;
 
-// Render generic changes object (for backwards compatibility)
-function GenericChanges({ changes }: { changes: Record<string, ChangeField> }) {
-  const entries = Object.entries(changes);
-  if (entries.length === 0) return null;
+  if ((!added || added.length === 0) && (!removed || removed.length === 0)) {
+    return null;
+  }
 
   return (
-    <div className="space-y-2">
-      {entries.map(([field, change]) => {
-        const beforeValue = typeof change?.before === "string" ? change.before : "";
-        const afterValue = typeof change?.after === "string" ? change.after : "";
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-2">
+        <Paperclip className="w-4 h-4 text-gray-500" />
+        <span className="text-sm font-semibold text-gray-800">Artifacts</span>
+      </div>
 
-        if (!beforeValue && !afterValue) return null;
-
-        return (
-          <div key={field} className="flex items-start gap-3 py-2">
-            <Calendar className="w-4 h-4 text-orange-500 mt-0.5 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-800 capitalize">
-                {field.replace(/_/g, " ")}
-              </div>
-              {beforeValue && (
-                <div className="text-xs text-gray-500 line-through mt-0.5">
-                  {beforeValue}
-                </div>
-              )}
-              {afterValue && (
-                <div className="text-xs text-green-700 font-medium mt-0.5">
-                  {afterValue}
-                </div>
-              )}
-            </div>
+      {/* Changes */}
+      <div className="space-y-1.5 pl-6">
+        {removed && removed.length > 0 && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Removed:
+            </span>
+            <p className="text-sm text-gray-400 line-through mt-0.5">
+              {removed.join(", ")}
+            </p>
           </div>
-        );
-      })}
+        )}
+        {added && added.length > 0 && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Added:
+            </span>
+            <p className="text-sm text-green-600 font-medium mt-0.5">
+              {added.join(", ")}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Meeting changes section
+function MeetingChangesSection({
+  event_type,
+  metadata,
+}: {
+  event_type: string;
+  metadata: Record<string, unknown>;
+}) {
+  const oldTitle = metadata?.old_title as string | undefined;
+  const newTitle = metadata?.new_title as string | undefined;
+  const oldTime = metadata?.old_time as string | undefined;
+  const newTime = metadata?.new_time as string | undefined;
+  const oldAgenda = metadata?.old_agenda as string | undefined;
+  const newAgenda = metadata?.new_agenda as string | undefined;
+  const oldLocation = metadata?.old_location as string | undefined;
+  const newLocation = metadata?.new_location as string | undefined;
+
+  const hasSpecificChanges = hasMeetingChangeData(metadata);
+
+  // If no specific change data, show fallback message
+  if (!hasSpecificChanges) {
+    let fallbackMessage = "Meeting details were updated.";
+    if (event_type === "meeting_agenda_changed") {
+      fallbackMessage = "The meeting agenda was modified.";
+    } else if (event_type === "meeting_participant_added") {
+      fallbackMessage = "A participant was added to the meeting.";
+    } else if (event_type === "meeting_participant_removed") {
+      fallbackMessage = "A participant was removed from the meeting.";
+    }
+
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+        <p className="text-sm text-gray-600">{fallbackMessage}</p>
+        <p className="text-xs text-gray-400 mt-1 italic">
+          (Detailed change information not available for this notification)
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Title Change */}
+      <ChangeCard
+        icon={Type}
+        label="Title"
+        beforeValue={oldTitle}
+        afterValue={newTitle}
+      />
+
+      {/* Time Change */}
+      <ChangeCard
+        icon={Clock}
+        label="Scheduled Time"
+        beforeValue={oldTime ? formatDateTime(oldTime) : undefined}
+        afterValue={newTime ? formatDateTime(newTime) : undefined}
+      />
+
+      {/* Agenda/Objective Change */}
+      <ChangeCard
+        icon={FileText}
+        label="Agenda"
+        beforeValue={oldAgenda}
+        afterValue={newAgenda}
+        isLongText={true}
+      />
+
+      {/* Location Change */}
+      <ChangeCard
+        icon={MapPin}
+        label="Location"
+        beforeValue={oldLocation}
+        afterValue={newLocation}
+      />
+
+      {/* Participant Changes */}
+      <ParticipantChanges metadata={metadata} />
+
+      {/* Artifact Changes */}
+      <ArtifactChanges metadata={metadata} />
     </div>
   );
 }
@@ -279,25 +356,9 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
         {(event_type === "meeting_updated" ||
           event_type === "meeting_agenda_changed" ||
           event_type === "meeting_participant_added" ||
-          event_type === "meeting_participant_removed") &&
-          metadata && (
-            <div className="divide-y divide-orange-100">
-              <MeetingTitleChange metadata={metadata} />
-              <MeetingTimeChange metadata={metadata} />
-              <MeetingAgendaChange metadata={metadata} />
-              <MeetingLocationChange metadata={metadata} />
-              <MeetingParticipantChange metadata={metadata} />
-
-              {/* Generic changes object fallback */}
-              {metadata.changes &&
-                typeof metadata.changes === "object" &&
-                !Array.isArray(metadata.changes) ? (
-                  <GenericChanges
-                    changes={metadata.changes as Record<string, ChangeField>}
-                  />
-                ) : null}
-            </div>
-          )}
+          event_type === "meeting_participant_removed") && (
+          <MeetingChangesSection event_type={event_type} metadata={metadata || {}} />
+        )}
       </div>
     </div>
   );

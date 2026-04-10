@@ -243,15 +243,6 @@ function GoToFullPageLink({
   const router = useRouter();
   const fullPageUrl = buildFullPageUrl(notification);
 
-  // Debug: log the generated URL for troubleshooting
-  console.log("[DrawerActionBar] buildFullPageUrl:", {
-    related_object_type: notification.related_object_type,
-    related_object_id: notification.related_object_id,
-    action_url: notification.action_url,
-    metadata: notification.metadata,
-    generatedUrl: fullPageUrl,
-  });
-
   if (!fullPageUrl) return null;
 
   const handleClick = () => {
