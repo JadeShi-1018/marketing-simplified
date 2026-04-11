@@ -15,5 +15,12 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
   unreadCount: 0,
   lastRefresh: Date.now(),
   setUnreadCount: (count) => set({ unreadCount: count }),
-  triggerRefresh: () => set({ lastRefresh: Date.now() }),
+  triggerRefresh: () => {
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        "[notificationStore] triggerRefresh — consumers should refetch notifications / bell"
+      );
+    }
+    set({ lastRefresh: Date.now() });
+  },
 }));

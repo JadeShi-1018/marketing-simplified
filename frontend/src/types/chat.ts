@@ -168,7 +168,7 @@ export interface MarkAsReadRequest {
 
 // ==================== WebSocket Types ====================
 
-export type WebSocketMessageType = 
+export type WebSocketMessageType =
   | 'new_message'
   | 'chat_message'
   | 'message_status_update'
@@ -176,8 +176,24 @@ export type WebSocketMessageType =
   | 'typing_start'
   | 'typing_stop'
   | 'chat_created'
+  | 'in_app_notification'
   | 'pong'
   | 'error';
+
+/** In-app notification payload mirrors API NotificationSerializer. */
+export interface WebSocketInAppNotificationPayload {
+  id: string;
+  category: string;
+  event_type: string;
+  related_object_type: string;
+  related_object_id: string;
+  title: string;
+  body: string;
+  is_read: boolean;
+  action_url: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
 
 export interface WebSocketMessage {
   type: WebSocketMessageType;
@@ -189,6 +205,7 @@ export interface WebSocketMessage {
   message_id?: number;
   user_id?: number;
   error?: string;
+  notification?: WebSocketInAppNotificationPayload;
 }
 
 // ==================== Store Types ====================

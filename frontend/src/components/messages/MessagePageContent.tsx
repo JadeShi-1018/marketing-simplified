@@ -38,9 +38,10 @@ export default function MessagePageContent() {
     autoFetch: false,
   });
   
-  // Connect to WebSocket for real-time updates
+  // Real-time chat + in-app notifications use the WebSocket from Layout's ChatWidget
+  // (same user channel). Avoid a second connection here.
   const { connected } = useChatSocket(userId, {
-    enabled: true,
+    enabled: false,
     onMessage: (message) => {
       console.log('[MessagePage] New message received:', message);
     },

@@ -9,7 +9,13 @@ from django.utils.text import slugify
 from rest_framework import serializers as drf_serializers
 
 from core.models import Project, ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink
+from meetings.models import (
+    AgendaItem,
+    Meeting,
+    MeetingDocument,
+    MeetingTypeDefinition,
+    ParticipantLink,
+)
 
 
 def validate_meeting_for_origin_link(*, meeting_id: int, project: Project, user) -> Meeting:
@@ -212,8 +218,6 @@ def ensure_meeting_type_definition(project: Project, label: str) -> MeetingTypeD
         if created or mtd.label == safe_label:
             return mtd
     raise ValueError("Could not allocate meeting type slug")  # pragma: no cover - defensive
-from core.models import ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingDocument, ParticipantLink
 
 
 def user_has_meeting_document_access(user_id: int, meeting: Meeting) -> bool:
@@ -271,14 +275,68 @@ def get_or_create_meeting_document(meeting_id: int) -> MeetingDocument:
     return document
 
 
+def _meeting_document_text_preview(text: str, *, max_len: int = 50) -> str:
+    s = (text or "").strip()
+    if len(s) <= max_len:
+        return s
+    return s[:max_len] + "…"
+
+
+def notify_participants_meeting_document_updated(
+    *,
+    meeting: Meeting,
+    editor_id: int,
+    old_content: str,
+    new_content: str,
+) -> None:
+    """
+    Notify meeting participants (except the editor) that collaborative notes changed.
+    Uses DOC_ASSET_UPDATE + metadata keys compatible with DrawerWhatChanged.
+    """
+    if old_content == new_content:
+        return
+
+    from notifications.models import NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+
+    title_label = meeting.title
+    meta = {
+        "project_id": meeting.project_id,
+        "meeting_id": meeting.id,
+        "old_title": title_label,
+        "new_title": title_label,
+        "old_agenda": _meeting_document_text_preview(old_content),
+        "new_agenda": _meeting_document_text_preview(new_content),
+    }
+
+    participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+    for uid in participant_ids:
+        if uid == editor_id:
+            continue
+        create_notification(
+            recipient_id=uid,
+            actor_id=editor_id,
+            category=NotificationCategory.COLLABORATION,
+            event_type=NotificationEventType.DOC_ASSET_UPDATE,
+            title=f"Meeting notes updated: {meeting.title}",
+            body="The collaborative document for this meeting was edited.",
+            related_object_type="meeting",
+            related_object_id=str(meeting.id),
+            action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+            metadata=meta,
+        )
+
+
 def update_meeting_document_content(
     *,
     meeting_id: int,
     content: str,
     yjs_state: str | None = None,
     user_id: int | None = None,
+    notify_collaborators: bool = False,
 ) -> MeetingDocument:
     document = get_or_create_meeting_document(meeting_id)
+    old_content = document.content
     document.content = content
     if isinstance(yjs_state, str):
         document.yjs_state = yjs_state
@@ -287,5 +345,19 @@ def update_meeting_document_content(
     if isinstance(yjs_state, str):
         update_fields.append("yjs_state")
     document.save(update_fields=update_fields)
+
+    if (
+        notify_collaborators
+        and user_id
+        and old_content != content
+    ):
+        meeting = Meeting.objects.select_related("project").get(pk=meeting_id)
+        notify_participants_meeting_document_updated(
+            meeting=meeting,
+            editor_id=user_id,
+            old_content=old_content,
+            new_content=content,
+        )
+
     return document
 

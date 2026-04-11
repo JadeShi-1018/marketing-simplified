@@ -59,16 +59,38 @@ function getActivityDescription(notification: NotificationItem): string {
     // Chat events
     case "chat_new_message":
       return `${actorName} sent you a message.`;
-    case "chat_new_conversation":
-      return `${actorName} started a new conversation with you.`;
+    case "chat_new_conversation": {
+      const starter =
+        (metadata?.sender_name as string) ||
+        (metadata?.actor_name as string) ||
+        actorName;
+      const title = (metadata?.conversation_title as string) || "";
+      if (title && title !== "Direct message") {
+        return `${starter} started "${title}".`;
+      }
+      return `${starter} started a new conversation with you.`;
+    }
 
     // Collaboration events
     case "project_invite":
       return `You've been invited to join a project.`;
     case "calendar_reminder":
       return `Calendar reminder for an upcoming event.`;
-    case "doc_asset_update":
-      return `A document or asset has been updated.`;
+    case "doc_asset_update": {
+      const mt = metadata as {
+        meeting_id?: number;
+        old_title?: string;
+        new_title?: string;
+      };
+      const meetingTitle = mt?.new_title || mt?.old_title;
+      if (meetingTitle) {
+        return `The collaborative document for "${meetingTitle}" was edited.`;
+      }
+      if (mt?.meeting_id != null) {
+        return `Meeting document was updated (meeting #${mt.meeting_id}).`;
+      }
+      return `A collaborative document was updated.`;
+    }
 
     // Approval events
     case "budget_approval_result":

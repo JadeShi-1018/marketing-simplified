@@ -1,7 +1,15 @@
 "use client";
 
 import React from "react";
-import { Clock, Users, FileText, MapPin, Type, Paperclip } from "lucide-react";
+import {
+  Clock,
+  Users,
+  FileText,
+  MapPin,
+  Type,
+  Paperclip,
+  MessageCircle,
+} from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 
 interface DrawerWhatChangedProps {
@@ -55,6 +63,20 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
     event_type === "meeting_participant_removed"
   ) {
     return true;
+  }
+
+  // New chat session — show when metadata has sender or title (matches backend contract)
+  if (event_type === "chat_new_conversation") {
+    return !!(
+      metadata?.sender_name ||
+      metadata?.conversation_title ||
+      metadata?.first_message
+    );
+  }
+
+  // Meeting notes / collaborative document (DOC_ASSET_UPDATE)
+  if (event_type === "doc_asset_update") {
+    return hasMeetingChangeData(metadata || {});
   }
 
   return false;
@@ -136,6 +158,53 @@ function ChangeCard({
             </p>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function ChatNewConversationSection({
+  notification,
+}: {
+  notification: NotificationItem;
+}) {
+  const metadata = notification.metadata || {};
+  const senderName = (metadata.sender_name as string) || "Someone";
+  const conversationTitle =
+    (metadata.conversation_title as string) || "Conversation";
+  const firstMessage = (metadata.first_message as string) || "";
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+        <div className="flex items-center gap-2 mb-2">
+          <MessageCircle className="w-4 h-4 text-gray-500" />
+          <span className="text-sm font-semibold text-gray-800">New conversation</span>
+        </div>
+        <div className="space-y-2 pl-6">
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Started by
+            </span>
+            <p className="text-sm text-gray-800 font-medium mt-0.5">{senderName}</p>
+          </div>
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Chat
+            </span>
+            <p className="text-sm text-gray-700 mt-0.5">{conversationTitle}</p>
+          </div>
+          {firstMessage.trim() ? (
+            <div>
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                First message
+              </span>
+              <p className="text-sm text-gray-600 mt-0.5 whitespace-pre-wrap break-words">
+                {firstMessage.trim()}
+              </p>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );
@@ -277,6 +346,8 @@ function MeetingChangesSection({
       fallbackMessage = "A participant was added to the meeting.";
     } else if (event_type === "meeting_participant_removed") {
       fallbackMessage = "A participant was removed from the meeting.";
+    } else if (event_type === "doc_asset_update") {
+      fallbackMessage = "Meeting notes or a shared document was updated.";
     }
 
     return (
@@ -291,12 +362,12 @@ function MeetingChangesSection({
 
   return (
     <div className="space-y-3">
-      {/* Title Change */}
+      {/* Title Change — hidden for doc_asset_update when title is unchanged */}
       <ChangeCard
         icon={Type}
         label="Title"
-        beforeValue={oldTitle}
-        afterValue={newTitle}
+        beforeValue={event_type === "doc_asset_update" && oldTitle === newTitle ? undefined : oldTitle}
+        afterValue={event_type === "doc_asset_update" && oldTitle === newTitle ? undefined : newTitle}
       />
 
       {/* Time Change */}
@@ -307,10 +378,10 @@ function MeetingChangesSection({
         afterValue={newTime ? formatDateTime(newTime) : undefined}
       />
 
-      {/* Agenda/Objective Change */}
+      {/* Agenda / Document Content Change */}
       <ChangeCard
         icon={FileText}
-        label="Agenda"
+        label={event_type === "doc_asset_update" ? "Document Content" : "Agenda"}
         beforeValue={oldAgenda}
         afterValue={newAgenda}
         isLongText={true}
@@ -352,11 +423,16 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
           <TaskStatusChange metadata={metadata} />
         )}
 
-        {/* Meeting changes */}
+        {event_type === "chat_new_conversation" && (
+          <ChatNewConversationSection notification={notification} />
+        )}
+
+        {/* Meeting changes + collaborative document / notes */}
         {(event_type === "meeting_updated" ||
           event_type === "meeting_agenda_changed" ||
           event_type === "meeting_participant_added" ||
-          event_type === "meeting_participant_removed") && (
+          event_type === "meeting_participant_removed" ||
+          event_type === "doc_asset_update") && (
           <MeetingChangesSection event_type={event_type} metadata={metadata || {}} />
         )}
       </div>

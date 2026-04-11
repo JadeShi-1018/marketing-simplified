@@ -1,3 +1,10 @@
+/** Backend NotificationEventType string values used in UI (keep in sync with notifications.models). */
+export const NOTIFICATION_EVENT = {
+  CHAT_NEW_MESSAGE: "chat_new_message",
+  CHAT_NEW_CONVERSATION: "chat_new_conversation",
+  DOC_ASSET_UPDATE: "doc_asset_update",
+} as const;
+
 export type NotificationTab = "all" | "unread" | "mentions" | "deadlines";
 
 export interface NotificationItem {

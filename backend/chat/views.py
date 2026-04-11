@@ -28,7 +28,7 @@ from .serializers import (
     MessageAttachmentSerializer,
     AttachmentUploadSerializer,
 )
-from .services import ChatService, MessageService, OnlineStatusService
+from .services import ChatService, MessageService, OnlineStatusService, notify_participants_new_conversation
 from .tasks import notify_new_message
 
 logger = logging.getLogger(__name__)
@@ -126,6 +126,8 @@ class ChatViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         chat = serializer.save()
+
+        notify_participants_new_conversation(chat=chat, actor=request.user)
         
         # Notify all participants about the new chat via WebSocket
         self._notify_chat_created(chat, request)

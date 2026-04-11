@@ -5,7 +5,6 @@ import {
   useEffect,
   useMemo,
   useState,
-  FormEvent,
   Suspense,
 } from 'react';
 import { useParams, useRouter, usePathname, useSearchParams } from 'next/navigation';
@@ -26,9 +25,9 @@ import type {
   MeetingListQueryParams,
   PaginatedMeetingsList,
 } from '@/types/meeting';
-import { MeetingDateTimePicker } from '@/components/meetings/MeetingDateTimePicker';
 import { ProjectAPI, type ProjectData, type ProjectMemberData } from '@/lib/api/projectApi';
-import { meetingTimeToInput, normalizeTimeForApi } from '@/lib/meetingSchedule';
+import { normalizeTimeForApi } from '@/lib/meetingSchedule';
+import { QuickCreateMeetingModal } from '@/components/meetings/QuickCreateMeetingModal';
 import { formatMeetingsApiError } from '@/lib/meetingsApiErrors';
 import {
   buildSystemTemplateOptions,
@@ -96,17 +95,12 @@ function MeetingsPageInner() {
   const [errorTitle, setErrorTitle] = useState('Could not load meetings');
 
   const [creating, setCreating] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [unifiedTemplateOptions, setUnifiedTemplateOptions] = useState<
     UnifiedMeetingTemplateOption[]
   >(() => buildSystemTemplateOptions());
-  const [title, setTitle] = useState('');
-  const [meetingType, setMeetingType] = useState('');
-  const [objective, setObjective] = useState('');
-  const [scheduledDate, setScheduledDate] = useState('');
-  const [scheduledTime, setScheduledTime] = useState('');
   const [selectedMeetingId, setSelectedMeetingId] = useState<number | null>(null);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [centerMode, setCenterMode] = useState<'list' | 'create'>('list');
   const [incomingSort, setIncomingSort] =
     useState<MeetingSortKey>(DEFAULT_MEETING_SORT);
   const [completedSort, setCompletedSort] =
@@ -214,7 +208,7 @@ function MeetingsPageInner() {
         console.error('Failed to load meeting templates for create form:', err);
         setUnifiedTemplateOptions(buildSystemTemplateOptions());
       });
-  }, [projectId, centerMode]);
+  }, [projectId]);
 
   useEffect(() => {
     if (!projectId || Number.isNaN(projectId)) {
@@ -302,18 +296,22 @@ function MeetingsPageInner() {
     [projectMembers],
   );
 
-  const handleCreate = async (e: FormEvent) => {
-    e.preventDefault();
+  const handleCreate = async (modalPayload: {
+    meetingType: string;
+    title: string;
+    objective: string;
+    scheduledDate?: string;
+    scheduledTime?: string;
+    participantUserIds: number[];
+  }) => {
     if (!projectId || Number.isNaN(projectId)) {
       toast.error('Project ID is required');
       return;
     }
-    if (!title.trim() || !meetingType.trim()) {
-      toast.error('Please fill in title and select a template');
-      return;
-    }
 
-    const templateOpt = unifiedTemplateOptions.find((o) => o.value === meetingType.trim());
+    const templateOpt = unifiedTemplateOptions.find(
+      (o) => o.value === modalPayload.meetingType.trim(),
+    );
     if (!templateOpt) {
       toast.error('Select a valid meeting type or template');
       return;
@@ -321,19 +319,19 @@ function MeetingsPageInner() {
 
     const { meeting_type, layout_config } = layoutConfigForNewMeetingFromSelection(templateOpt);
     const objectiveResolved =
-      objective.trim() || `${templateOpt.label} meeting`;
+      modalPayload.objective.trim() || `${templateOpt.label} meeting`;
 
     const payload: MeetingCreateRequest = {
-      title: title.trim(),
+      title: modalPayload.title.trim(),
       meeting_type,
       objective: objectiveResolved,
       layout_config,
     };
-    if (scheduledDate.trim()) {
-      payload.scheduled_date = scheduledDate.trim();
+    if (modalPayload.scheduledDate?.trim()) {
+      payload.scheduled_date = modalPayload.scheduledDate.trim();
     }
-    if (scheduledTime.trim()) {
-      payload.scheduled_time = normalizeTimeForApi(scheduledTime);
+    if (modalPayload.scheduledTime?.trim()) {
+      payload.scheduled_time = normalizeTimeForApi(modalPayload.scheduledTime);
     }
 
     setCreating(true);
@@ -381,12 +379,7 @@ function MeetingsPageInner() {
       }
 
       toast.success('Meeting created');
-      setTitle('');
-      setMeetingType('');
-      setObjective('');
-      setScheduledDate('');
-      setScheduledTime('');
-      setCenterMode('list');
+      setIsCreateModalOpen(false);
       setSelectedMeetingId(null);
       setRightPanelOpen(false);
       await refetchList();
@@ -702,7 +695,7 @@ function MeetingsPageInner() {
   const projectName = project?.name ?? `Project ${projectIdParam ?? ''}`;
 
   const discoveryBlock =
-    centerMode === 'list' && !pageLoading && !error ? (
+    !pageLoading && !error ? (
       <div className="mb-6 space-y-3" data-meeting-discovery>
         <MeetingDiscoveryToolbar
           qValue={queryParams.q ?? ''}
@@ -809,11 +802,7 @@ function MeetingsPageInner() {
                       </select>
                       <button
                         type="button"
-                        onClick={() => {
-                          setCenterMode('create');
-                          setRightPanelOpen(false);
-                          setSelectedMeetingId(null);
-                        }}
+                        onClick={() => setIsCreateModalOpen(true)}
                         className="h-9 rounded-md bg-blue-600 px-3 text-sm font-medium text-white shadow-sm hover:bg-blue-700"
                       >
                         Create
@@ -852,117 +841,7 @@ function MeetingsPageInner() {
 
                 {discoveryBlock}
 
-                {centerMode === 'create' ? (
-                  <form
-                    onSubmit={handleCreate}
-                    className="mx-auto max-w-2xl rounded-2xl border border-gray-200/90 bg-white p-6 shadow-sm sm:p-8"
-                  >
-                    <fieldset
-                      disabled={!pageLoading && !!error}
-                      className={`min-w-0 border-0 p-0 ${!pageLoading && error ? 'opacity-60' : ''}`}
-                    >
-                      <div className="mb-6">
-                        <h2 className="text-lg font-semibold tracking-tight text-gray-900">
-                          New meeting
-                        </h2>
-                        <p className="mt-1 text-sm text-gray-500">
-                          Add the basics now — you can invite people and add links after saving.
-                        </p>
-                      </div>
-                      <div className="space-y-6">
-                        <div>
-                          <label className="mb-2 block text-sm font-medium text-gray-700">
-                            Title
-                          </label>
-                          <input
-                            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-base text-gray-900 shadow-sm transition placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
-                            value={title}
-                            onChange={(e) => setTitle(e.target.value)}
-                            placeholder="e.g. Weekly Planning"
-                            autoComplete="off"
-                          />
-                        </div>
-                        <div>
-                          <label className="mb-2 block text-sm font-medium text-gray-700">
-                            Meeting type
-                          </label>
-                          <select
-                            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-base text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
-                            value={meetingType}
-                            onChange={(e) => setMeetingType(e.target.value)}
-                            aria-label="Meeting type"
-                          >
-                            <option value="">Select meeting type…</option>
-                            {unifiedTemplateOptions.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
-                                {!opt.is_system ? ' (saved)' : ''}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className="mb-2 block text-sm font-medium text-gray-700">
-                            Objective
-                          </label>
-                          <textarea
-                            rows={4}
-                            className="min-h-[120px] w-full resize-y rounded-xl border border-gray-200 bg-white px-4 py-3 text-base leading-relaxed text-gray-900 shadow-sm transition placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/25"
-                            value={objective}
-                            onChange={(e) => setObjective(e.target.value)}
-                            placeholder="What do you want to achieve in this meeting?"
-                          />
-                        </div>
-                        <div>
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
-                            Schedule
-                          </p>
-                          <label className="mb-2 block text-sm font-medium text-gray-700">
-                            Date &amp; time
-                          </label>
-                          <MeetingDateTimePicker
-                            id="meeting-create-scheduled"
-                            variant="comfortable"
-                            dateValue={scheduledDate}
-                            timeValue={scheduledTime}
-                            disabled={creating}
-                            onChange={(d, t) => {
-                              setScheduledDate(d);
-                              setScheduledTime(t);
-                            }}
-                          />
-                        </div>
-                      </div>
-                      <div className="mt-8 flex flex-wrap justify-end gap-3">
-                        <button
-                          type="button"
-                          disabled={creating}
-                          onClick={() => setCenterMode('list')}
-                          className="inline-flex min-h-[44px] min-w-[100px] items-center justify-center rounded-xl border border-gray-200 bg-white px-5 py-2.5 text-sm font-medium text-gray-800 shadow-sm transition hover:bg-gray-50 disabled:opacity-50"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          disabled={creating}
-                          className="inline-flex min-h-[44px] min-w-[120px] items-center justify-center rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-blue-300"
-                        >
-                          {creating ? (
-                            <>
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              Saving…
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="mr-2 h-4 w-4" />
-                              Save
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </fieldset>
-                  </form>
-                ) : listLoading && rows.length === 0 ? (
+                {listLoading && rows.length === 0 ? (
                   <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/50 py-14">
                     <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
                     <p className="mt-3 text-sm font-medium text-slate-700">
@@ -1087,7 +966,6 @@ function MeetingsPageInner() {
           />
           <Dialog
             open={
-              centerMode === 'list' &&
               selectedMeetingId != null &&
               rightPanelOpen &&
               Number.isFinite(projectId) &&
@@ -1103,8 +981,7 @@ function MeetingsPageInner() {
               aria-describedby={undefined}
             >
               <DialogTitle className="sr-only">Meeting details</DialogTitle>
-              {centerMode === 'list' &&
-              selectedMeetingId != null &&
+              {selectedMeetingId != null &&
               Number.isFinite(projectId) &&
               !Number.isNaN(projectId) ? (
                 <MeetingSummaryPanel
@@ -1125,6 +1002,15 @@ function MeetingsPageInner() {
             </DialogContent>
           </Dialog>
         </div>
+
+        <QuickCreateMeetingModal
+          open={isCreateModalOpen}
+          onOpenChange={setIsCreateModalOpen}
+          creating={creating}
+          projectId={Number.isFinite(projectId) ? projectId : 0}
+          templateOptions={unifiedTemplateOptions}
+          onSubmit={handleCreate}
+        />
       </Layout>
     </ProtectedRoute>
   );

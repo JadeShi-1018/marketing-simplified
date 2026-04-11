@@ -4,6 +4,8 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { buildWsUrl } from '@/lib/ws';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
+import { useNotificationStore } from '@/lib/notificationStore';
+import { notificationsApi } from '@/lib/api/notificationsApi';
 import type { WebSocketMessage, Message } from '@/types/chat';
 
 interface UseChatSocketOptions {
@@ -270,6 +272,29 @@ export function useChatSocket(userId: number | null | undefined, options: UseCha
                   addChat(data.chat);
               }
               break;
+
+            case 'in_app_notification': {
+              const notif = (data as { notification?: { id?: string; event_type?: string } })
+                .notification;
+              if (process.env.NODE_ENV === 'development') {
+                console.log(
+                  '[Chat WebSocket] in_app_notification → refresh bell',
+                  notif?.event_type,
+                  notif?.id
+                );
+              }
+              const { triggerRefresh, setUnreadCount } = useNotificationStore.getState();
+              triggerRefresh();
+              void (async () => {
+                try {
+                  const { data: listData } = await notificationsApi.list({ page_size: 1 });
+                  setUnreadCount(listData.unread_count);
+                } catch {
+                  /* ignore */
+                }
+              })();
+              break;
+            }
 
               case 'pong':
                 // Heartbeat response from server, ignore

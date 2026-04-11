@@ -114,11 +114,11 @@ export default function ChatWidget({ contextProjectId }: ChatWidgetProps = {}) {
     autoFetch: !!effectiveProjectId
   });
   
-  // Connect to WebSocket for real-time updates
+  // Connect whenever logged in so in-app notifications (bell) receive WebSocket pushes
+  // without opening the widget (same channel as chat: chat_user_{id}).
   const userId = user?.id ? Number(user.id) : null;
-  const socketEnabled = isWidgetOpen && !isMessagePageOpen;
   const { connected } = useChatSocket(userId, {
-    enabled: socketEnabled,
+    enabled: Boolean(userId),
     onMessage: (message) => {
       console.log('[ChatWidget] New message received:', message);
     },
