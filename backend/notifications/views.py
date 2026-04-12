@@ -1,11 +1,16 @@
 import logging
 
+from asgiref.sync import sync_to_async
+from django.contrib.auth import get_user_model
+from django.http import HttpResponse, StreamingHttpResponse
 from rest_framework import mixins, status, viewsets
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from .sse import sse_event_generator
 
 logger = logging.getLogger(__name__)
 
@@ -161,3 +166,77 @@ class UserNotificationPreferenceView(APIView):
             )
         merged = coalesce_preferences(pref.preferences)
         return Response({"preferences": merged, "updated_at": pref.updated_at})
+
+
+async def stream_notifications(request):
+    """
+    SSE endpoint: GET /api/notifications/stream/
+
+    Opens a long-lived HTTP response that pushes real-time notification events
+    to the authenticated browser tab using the text/event-stream protocol.
+
+    Authentication
+    --------------
+    The native browser EventSource API cannot set custom headers, so the JWT
+    is accepted in two ways (checked in order):
+
+    1. ``Authorization: Bearer <token>`` header  (Axios / fetch callers)
+    2. ``?token=<token>`` query parameter         (native EventSource)
+
+    Returns HTTP 401 if no valid token is found.
+
+    Reconnect / Last-Event-ID
+    -------------------------
+    The browser automatically sends a ``Last-Event-ID`` header on reconnect.
+    The view replays up to 50 missed notifications from the DB before resuming
+    the live Redis Pub/Sub stream.  The query param ``?lastEventId=`` serves
+    as a fallback for polyfill clients.
+
+    Nginx integration
+    -----------------
+    ``X-Accel-Buffering: no`` disables Nginx response buffering so events are
+    delivered immediately rather than batched.
+    """
+    # ── 1. Extract the raw JWT string ────────────────────────────────────
+    token_string: str | None = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.lower().startswith("bearer "):
+        token_string = auth_header.split(" ", 1)[1].strip()
+    elif request.GET.get("token"):
+        token_string = request.GET["token"]
+
+    if not token_string:
+        return HttpResponse("Unauthorized", status=401, content_type="text/plain")
+
+    # ── 2. Validate token and resolve user ───────────────────────────────
+    try:
+        from rest_framework_simplejwt.tokens import AccessToken  # noqa: PLC0415
+
+        validated = await sync_to_async(AccessToken)(token_string)
+        user_id = validated["user_id"]
+        User = get_user_model()
+        user = await sync_to_async(User.objects.get)(pk=user_id)
+    except Exception:
+        logger.warning("SSE: invalid or expired token", exc_info=True)
+        return HttpResponse("Unauthorized", status=401, content_type="text/plain")
+
+    # ── 3. Resolve Last-Event-ID ─────────────────────────────────────────
+    # Browser sets the ``Last-Event-ID`` *header* automatically on reconnect;
+    # the query param is a manual fallback for the initial EventSource URL.
+    last_event_id = (
+        request.headers.get("Last-Event-ID")
+        or request.GET.get("lastEventId")
+    )
+
+    # ── 4. Return streaming response ─────────────────────────────────────
+    response = StreamingHttpResponse(
+        sse_event_generator(user.id, last_event_id),
+        content_type="text/event-stream",
+    )
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"   # Prevent Nginx from buffering SSE chunks
+    response["Connection"] = "keep-alive"
+    return response
+
+
+stream_notifications.csrf_exempt = True  # bypass CSRF without wrapping the async function

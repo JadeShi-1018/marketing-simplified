@@ -22,6 +22,9 @@ def _cache_previous_task_status(sender, instance, **kwargs):
 def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
     if created:
         return
+    if getattr(instance, '_suppress_status_notification', False):
+        _task_status_cache.pop(instance.pk, None)
+        return
     old = _task_status_cache.pop(instance.pk, None)
     if old is None or old == instance.status or not instance.owner_id:
         return

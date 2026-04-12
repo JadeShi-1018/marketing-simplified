@@ -405,16 +405,30 @@ class TaskViewSet(viewsets.ModelViewSet):
         return task
     
     def perform_create(self, serializer):
-        """Create a new task"""
-        return serializer.save()
+        """Create a new task and notify the assigned owner (if not the creator)."""
+        task = serializer.save()
+        if task.owner_id and task.owner_id != self.request.user.id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_ASSIGNED,
+                title=f"Task assigned: {task.summary}",
+                body="You have been assigned to a new task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=f"/projects/{task.project_id}/tasks/{task.id}",
+                metadata={"task_id": task.id, "project_id": task.project_id},
+            )
+        return task
     
     def perform_update(self, serializer):
-        """Update a task"""
+        """Update a task and fire targeted notifications for key field changes."""
         task = serializer.instance
         old_owner_id = task.owner_id
         old_approver_id = task.current_approver_id
+        old_due_date = task.due_date
         serializer.save()
-        task.refresh_from_db()
         actor_id = self.request.user.id
         project_id = task.project_id
         action_url = f"/projects/{project_id}/tasks/{task.id}"
@@ -445,6 +459,26 @@ class TaskViewSet(viewsets.ModelViewSet):
                 related_object_id=str(task.id),
                 action_url=action_url,
                 metadata={"task_id": task.id, "project_id": project_id},
+            )
+
+        # Notify the task owner when someone else changes the due date.
+        if task.due_date != old_due_date and task.owner_id and task.owner_id != actor_id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_DEADLINE_SOON,
+                title=f"Task deadline updated: {task.summary}",
+                body="The deadline for this task has been changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    "task_id": task.id,
+                    "project_id": project_id,
+                    "old_due_date": str(old_due_date) if old_due_date else None,
+                    "new_due_date": str(task.due_date) if task.due_date else None,
+                },
             )
     
     def perform_destroy(self, instance):

@@ -261,6 +261,12 @@ export interface ChatState {
   
   setLoading: (loading: boolean) => void;
   
+  // SSE-driven chat activity signal
+  /** Epoch ms bumped whenever an SSE notification for a chat event is received. */
+  lastChatActivity: number;
+  /** Called by useNotificationSSE when a chat-related event arrives. */
+  triggerChatActivity: () => void;
+
   // Helpers
   getCurrentChat: () => Chat | undefined;
   getCurrentMessages: () => Message[];

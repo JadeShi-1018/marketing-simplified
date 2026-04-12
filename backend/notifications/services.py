@@ -21,35 +21,14 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-def _push_notification_to_user_websocket(recipient_id: int, notification: Notification) -> None:
+def _push_notification_to_redis(recipient_id: int, notification: Notification) -> None:
     """
-    Push the new in-app notification over the existing chat user channel
-    (group chat_user_{id}) so the frontend can refresh the bell without polling.
+    Publish a new in-app notification to the per-user Redis Pub/Sub channel
+    so any active SSE stream can forward it to the browser immediately.
     """
-    try:
-        from asgiref.sync import async_to_sync
-        from channels.layers import get_channel_layer
+    from .sse import publish_notification_to_redis  # noqa: PLC0415
 
-        from notifications.serializers import NotificationSerializer
-
-        channel_layer = get_channel_layer()
-        if not channel_layer:
-            return
-
-        payload = NotificationSerializer(notification).data
-        async_to_sync(channel_layer.group_send)(
-            f"chat_user_{recipient_id}",
-            {
-                "type": "in_app_notification",
-                "notification": payload,
-            },
-        )
-    except Exception:
-        logger.exception(
-            "WebSocket push failed for notification %s recipient %s",
-            getattr(notification, "pk", None),
-            recipient_id,
-        )
+    publish_notification_to_redis(recipient_id, notification)
 
 PREFERENCE_SECTION_KEYS = (
     "collaboration_assets",
@@ -306,7 +285,7 @@ def create_notification(
         metadata=metadata or {},
     )
     maybe_dispatch_external_channels(notification=n, user=recipient, event_type=event_type)
-    _push_notification_to_user_websocket(recipient_id, n)
+    _push_notification_to_redis(recipient_id, n)
     return n
 
 

@@ -181,6 +181,27 @@ class ProjectOnboardingView(APIView):
                 project=project,
                 defaults={'role': role, 'is_active': True},
             )
+            actor = self.request.user
+            if invited_user.id != actor.id:
+                try:
+                    from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
+                    from notifications.services import create_notification  # noqa: PLC0415
+                    create_notification(
+                        recipient_id=invited_user.id,
+                        actor_id=actor.id,
+                        category=NotificationCategory.COLLABORATION,
+                        event_type=NotificationEventType.PROJECT_INVITE,
+                        title=f"You've been added to project: {project.name}",
+                        body=f"You were added to the project \"{project.name}\".",
+                        related_object_type="project",
+                        related_object_id=str(project.id),
+                        action_url=f"/projects/{project.id}",
+                        metadata={"project_name": project.name},
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send PROJECT_INVITE notification for user %s", invited_user.id
+                    )
 
     def _ensure_organization_for_user(self, user):
         email = getattr(user, 'email', '') or ''

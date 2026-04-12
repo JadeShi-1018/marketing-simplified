@@ -184,7 +184,12 @@ class MeetingDocumentConsumer(AsyncWebsocketConsumer):
             return
 
         client_id = payload.get("client_id")
-        document = await self._update_document(self.meeting_id, content, self.scope["user"].id)
+        document = await self._update_document(
+            self.meeting_id,
+            content,
+            self.scope["user"].id,
+            notify_collaborators=True,
+        )
 
         await self.channel_layer.group_send(
             self.room_group_name,
@@ -267,10 +272,12 @@ class MeetingDocumentConsumer(AsyncWebsocketConsumer):
         content: str,
         user_id: int,
         yjs_state: str | None = None,
+        notify_collaborators: bool = False,
     ):
         return update_meeting_document_content(
             meeting_id=meeting_id,
             content=content,
             yjs_state=yjs_state,
             user_id=user_id,
+            notify_collaborators=notify_collaborators,
         )

@@ -542,9 +542,6 @@ class MessageService:
             participant.last_read_at = timezone.now()
             participant.save()
             
-            # Verify the save worked by reloading from DB
-            participant.refresh_from_db()
-            
             logger.info(
                 f"mark_chat_as_read: chat={chat.id}, user={user.id}, "
                 f"old_last_read_at={old_last_read_at}, new_last_read_at={participant.last_read_at}, "

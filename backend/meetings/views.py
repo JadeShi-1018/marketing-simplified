@@ -37,7 +37,9 @@ from meetings.serializers import (
 from meetings.services import (
     reorder_agenda_items,
     get_or_create_meeting_document,
+    normalize_text,
     update_meeting_document_content,
+    upsert_agenda_item_notification,
     user_has_meeting_document_access,
     meetings_base_queryset_for_project,
     apply_meeting_knowledge_filters,
@@ -356,14 +358,29 @@ class MeetingViewSet(viewsets.ModelViewSet):
             for section in nested_sections:
                 if not isinstance(section, dict):
                     continue
-                section_title = section.get("title", "")
+                section_title = section.get("title", "").strip()
                 for item in section.get("items", []):
                     if isinstance(item, dict):
                         item_id = item.get("id")
-                        item_text = item.get("text", "")
+                        item_text = item.get("text", "").strip()
                         if item_id:
                             items[str(item_id)] = {"section": section_title, "text": item_text}
             return items
+
+        def extract_sections(layout_config):
+            """Extract {section_id: title} from layout_config.nestedSections."""
+            if not layout_config or not isinstance(layout_config, dict):
+                return {}
+            nested = layout_config.get("nestedSections", [])
+            if not isinstance(nested, list):
+                return {}
+            result = {}
+            for section in nested:
+                if isinstance(section, dict):
+                    sec_id = section.get("id")
+                    if sec_id:
+                        result[str(sec_id)] = section.get("title", "").strip()
+            return result
 
         # Build change details for notification metadata
         changes = {}
@@ -423,20 +440,34 @@ class MeetingViewSet(viewsets.ModelViewSet):
             old_section = old_items[item_id]["section"]
             new_section = new_items[item_id]["section"]
 
-            # Check for text changes
-            if old_text != new_text:
+            # Check for text changes (strip whitespace to avoid false positives)
+            if old_text.strip() != new_text.strip():
                 modified_items.append({
                     "id": item_id,
-                    "old_text": old_text,
-                    "new_text": new_text,
+                    "old_text": old_text.strip(),
+                    "new_text": new_text.strip(),
                 })
 
             # Check for section/group name changes
-            if old_section != new_section:
+            if old_section.strip() != new_section.strip():
                 section_changes.append({
                     "id": item_id,
-                    "old_section": old_section,
-                    "new_section": new_section,
+                    "old_section": old_section.strip(),
+                    "new_section": new_section.strip(),
+                })
+
+        # Detect title changes in EMPTY sections that the item loop above cannot see.
+        old_sections_map = extract_sections(old_layout)
+        new_sections_map = extract_sections(new_layout)
+        already_seen_old_titles = {sc["old_section"] for sc in section_changes}
+        for sec_id in old_sections_map.keys() & new_sections_map.keys():
+            old_t = old_sections_map[sec_id]
+            new_t = new_sections_map[sec_id]
+            if old_t != new_t and old_t not in already_seen_old_titles:
+                section_changes.append({
+                    "id": f"section:{sec_id}",
+                    "old_section": old_t,
+                    "new_section": new_t,
                 })
 
         # Build agenda change summary
@@ -556,37 +587,30 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
 
         # Fetch original content from database BEFORE save
         original_values = AgendaItem.objects.filter(pk=agenda_item.pk).values('content').first()
-        old_content = original_values["content"] if original_values else ""
+        old_content = normalize_text(original_values["content"] if original_values else "")
 
         # Save the changes
         serializer.save()
-        agenda_item.refresh_from_db()
-        new_content = agenda_item.content
+        new_content = normalize_text(agenda_item.content)
 
-        # Only notify if content actually changed
+        # Only notify if content substantively changed (normalised comparison)
         if old_content == new_content:
             return
 
-        # Notify participants about modified agenda item
+        # Upsert notifications for each participant (2-second dedup window prevents
+        # duplicate records when the user makes several rapid edits to the same item).
+        actor_id = self.request.user.id
         participant_ids = meeting.participant_links.values_list("user_id", flat=True)
         for uid in participant_ids:
-            if uid == self.request.user.id:
+            if uid == actor_id:
                 continue
-            create_notification(
+            upsert_agenda_item_notification(
+                meeting=meeting,
+                item_id=agenda_item.pk,
+                old_content=old_content,
+                new_content=new_content,
+                actor_id=actor_id,
                 recipient_id=uid,
-                actor_id=self.request.user.id,
-                category=NotificationCategory.MEETINGS,
-                event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
-                title=f"Agenda updated: {meeting.title}",
-                body="An agenda item was modified.",
-                related_object_type="meeting",
-                related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
-                metadata={
-                    "project_id": meeting.project_id,
-                    "old_agenda": old_content,
-                    "new_agenda": new_content,
-                },
             )
 
     def perform_destroy(self, instance):
@@ -691,6 +715,29 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
                 related_object_id=str(meeting.id),
                 action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
                 metadata={"project_id": meeting.project_id},
+            )
+
+    def perform_destroy(self, instance):
+        # Capture data before deletion; get_meeting() already select_related("project").
+        meeting = self.get_meeting()
+        removed_user_id = instance.user_id
+        instance.delete()
+        if removed_user_id != self.request.user.id:
+            create_notification(
+                recipient_id=removed_user_id,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.MEETINGS,
+                event_type=NotificationEventType.MEETING_PARTICIPANT_REMOVED,
+                title=f"Removed from meeting: {meeting.title}",
+                body="You were removed from this meeting.",
+                related_object_type="meeting",
+                related_object_id=str(meeting.id),
+                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                metadata={
+                    "meeting_title": meeting.title,
+                    "project_name": meeting.project.name,
+                    "project_id": meeting.project_id,
+                },
             )
 
 

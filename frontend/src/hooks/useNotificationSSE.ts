@@ -1,0 +1,191 @@
+'use client';
+
+/**
+ * useNotificationSSE
+ * ------------------
+ * Establishes a persistent Server-Sent Events connection to
+ * GET /api/notifications/stream/?token=<jwt>
+ *
+ * Responsibilities
+ * ----------------
+ * - Keeps the bell badge unread-count in sync via notificationStore.
+ * - For chat-related events (chat_new_message, chat_new_conversation):
+ *   also bumps chatStore.lastChatActivity so chat list components can
+ *   refetch without polling.
+ * - Page Visibility API:
+ *     hidden  → closes the SSE connection (saves server goroutine / fd)
+ *     visible → reopens and replays any missed events via Last-Event-ID
+ * - Reconnects automatically on network error (exponential back-off up to
+ *   30 s) and always uses the latest token from authStore.
+ *
+ * Usage
+ * -----
+ * Mount once at the app-shell level (e.g. ChatWidget or a top-level layout
+ * component that is rendered while the user is logged in).
+ */
+
+import { useCallback, useEffect, useRef } from 'react';
+import { useAuthStore } from '@/lib/authStore';
+import { useChatStore } from '@/lib/chatStore';
+import { useNotificationStore } from '@/lib/notificationStore';
+import { notificationsApi } from '@/lib/api/notificationsApi';
+
+/** Event types that should also trigger a chat list refresh. */
+const CHAT_EVENT_TYPES = new Set([
+  'chat_new_message',
+  'chat_new_conversation',
+]);
+
+const MIN_RETRY_MS = 3_000;
+const MAX_RETRY_MS = 30_000;
+
+export function useNotificationSSE(): void {
+  const token = useAuthStore((state) => state.token);
+
+  // Keep a stable reference to the current token so the event-source
+  // teardown / reconnect path always uses the freshest value.
+  const tokenRef = useRef<string | null>(null);
+  tokenRef.current = token ?? null;
+
+  // Track the Last-Event-ID for reconnect replay.
+  const lastEventIdRef = useRef<string>('');
+
+  // Retry back-off state.
+  const retryMsRef = useRef(MIN_RETRY_MS);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const stoppedRef = useRef(false);
+
+  const refreshUnreadCount = useCallback(async () => {
+    try {
+      const { data } = await notificationsApi.list({ page_size: 1 });
+      useNotificationStore.getState().setUnreadCount(data.unread_count);
+    } catch {
+      // non-critical – bell badge will sync on next successful call
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    if (typeof window === 'undefined') return;
+
+    stoppedRef.current = false;
+
+    const close = () => {
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+      }
+    };
+
+    const connect = () => {
+      if (stoppedRef.current) return;
+      const currentToken = tokenRef.current;
+      if (!currentToken) return;
+
+      close(); // ensure no stale connection
+
+      // Build URL – token goes in the query string because the native
+      // EventSource API cannot set custom headers.
+      const params = new URLSearchParams({ token: currentToken });
+      if (lastEventIdRef.current) {
+        params.set('lastEventId', lastEventIdRef.current);
+      }
+      const url = `/api/notifications/stream/?${params.toString()}`;
+
+      const es = new EventSource(url);
+      esRef.current = es;
+
+      es.onopen = () => {
+        retryMsRef.current = MIN_RETRY_MS; // reset back-off on success
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[NotificationSSE] connected');
+        }
+      };
+
+      es.onmessage = (event: MessageEvent<string>) => {
+        // The browser automatically sends Last-Event-ID on reconnect, but we
+        // also track it ourselves for manual reconnects (visibility change).
+        if (event.lastEventId) {
+          lastEventIdRef.current = event.lastEventId;
+        }
+
+        let payload: { type: string; data?: { event_type?: string } };
+        try {
+          payload = JSON.parse(event.data) as typeof payload;
+        } catch {
+          return; // malformed – skip
+        }
+
+        if (payload.type !== 'notification') return;
+
+        const eventType = payload.data?.event_type ?? '';
+
+        // Refresh the notification bell badge.
+        useNotificationStore.getState().triggerRefresh();
+        void refreshUnreadCount();
+
+        // For chat events: signal chat components to refresh their lists.
+        if (CHAT_EVENT_TYPES.has(eventType)) {
+          useChatStore.getState().incrementGlobalUnreadCount();
+          useChatStore.getState().triggerChatActivity();
+        }
+      };
+
+      // EventSource.onerror fires on any connection problem.
+      // We close the EventSource here (cancelling the browser's built-in
+      // auto-reconnect) and schedule our own reconnect with back-off so we
+      // always reconnect with the freshest token.
+      es.onerror = () => {
+        if (stoppedRef.current) return;
+        close();
+
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(
+            `[NotificationSSE] error – reconnecting in ${retryMsRef.current}ms`,
+          );
+        }
+
+        retryTimerRef.current = setTimeout(() => {
+          retryMsRef.current = Math.min(retryMsRef.current * 2, MAX_RETRY_MS);
+          connect();
+        }, retryMsRef.current);
+      };
+    };
+
+    connect();
+
+    // ── Page Visibility API ────────────────────────────────────────────
+    // When the user hides the tab we close the SSE connection (saves one
+    // server-side goroutine + Redis subscription per hidden tab).
+    // When the tab becomes visible again we reconnect immediately, which
+    // triggers the Last-Event-ID replay on the backend so no events are lost.
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        if (retryTimerRef.current) {
+          clearTimeout(retryTimerRef.current);
+          retryTimerRef.current = null;
+        }
+        close();
+      } else {
+        // visible – reconnect and pick up any missed events
+        connect();
+        // Eagerly sync the unread count in case we missed notifications
+        // while the tab was hidden.
+        void refreshUnreadCount();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      stoppedRef.current = true;
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      close();
+    };
+  }, [token, refreshUnreadCount]);
+}

@@ -255,5 +255,27 @@ def accept_invitation(token, user=None, password=None, username=None):
     invitation.accepted = True
     invitation.accepted_at = timezone.now()
     invitation.save()
-    
+
+    # Notify the new member (skip self-invites: project owner adds themselves)
+    invited_by_id = getattr(invitation, "invited_by_id", None)
+    if invited_by_id and invited_by_id != user.id:
+        try:
+            from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
+            from notifications.services import create_notification  # noqa: PLC0415
+            project = invitation.project
+            create_notification(
+                recipient_id=user.id,
+                actor_id=invited_by_id,
+                category=NotificationCategory.COLLABORATION,
+                event_type=NotificationEventType.PROJECT_INVITE,
+                title=f"You've been added to project: {project.name}",
+                body=f"You were added to the project \"{project.name}\".",
+                related_object_type="project",
+                related_object_id=str(project.id),
+                action_url=f"/projects/{project.id}",
+                metadata={"project_name": project.name},
+            )
+        except Exception:
+            logger.exception("Failed to send PROJECT_INVITE notification for user %s", user.id)
+
     return invitation, user, user_created
