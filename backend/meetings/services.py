@@ -332,6 +332,7 @@ def upsert_agenda_item_notification(
         # MERGE PATH — update the existing notification with the latest content.
         try:
             notif = Notification.objects.get(id=existing_id)
+            # Only update if the content is substantively different (normalised comparison).
             current_new = notif.metadata.get("new_agenda", "")
             if normalize_text(current_new) == normalize_text(new_content):
                 logger.warning(
@@ -364,21 +365,126 @@ def upsert_agenda_item_notification(
         recipient_id=recipient_id,
         actor_id=actor_id,
         category=NotificationCategory.MEETINGS,
-        event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
-        title=f"Agenda updated: {meeting.title}",
-        body="An agenda item was modified.",
+        event_type=NotificationEventType.MEETING_UPDATED,
+        title=f"Meeting updated: {meeting.title}",
+        body="Meeting details were changed.",
         related_object_type="meeting",
         related_object_id=str(meeting.id),
         action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
         metadata={
             "project_id": meeting.project_id,
             "item_id": item_id,
+            "change_type": "agenda_item",
             "old_agenda": old_content,
             "new_agenda": new_content,
         },
     )
     if notif:
         django_cache.set(data_key, str(notif.id), timeout=_AGENDA_NOTIF_DEDUP_TTL)
+    else:
+        # create_notification returned None — preferences/settings blocked it.
+        # Release the lock so the next update within the TTL can attempt again.
+        django_cache.delete(lock_key)
+        logger.warning(
+            "NOTIF_BLOCKED (upsert): meeting=%s item=%s recipient=%s — "
+            "create_notification returned None (check preferences or user existence)",
+            meeting.id, item_id, recipient_id,
+        )
+
+
+def notify_agenda_event(
+    *,
+    meeting: Meeting,
+    actor_id: int,
+    recipient_id: int,
+    change_type: str,
+    item_id: int | None = None,
+    old_content: str = "",
+    new_content: str = "",
+) -> None:
+    """
+    Dedup-aware ``MEETING_UPDATED`` notification for agenda-item create / delete events.
+
+    Cache-key scope
+    ---------------
+    When ``item_id`` is provided the dedup window is *per-item*, so creating /
+    deleting two different items in quick succession each produces their own
+    notification.  This prevents the "meeting-wide" key from accidentally
+    suppressing legitimate events for unrelated items.
+
+    Lock safety
+    -----------
+    The lock key is released (deleted) if ``create_notification`` fails so that
+    callers are not silently blocked for the full TTL on a transient error.
+    """
+    from notifications.models import NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+
+    scope = str(item_id) if item_id is not None else "meeting"
+    data_key = f"notif_debounce:{meeting.id}:{change_type}:{scope}:{recipient_id}"
+    lock_key = f"notif_lock:{meeting.id}:{change_type}:{scope}:{recipient_id}"
+
+    logger.info(
+        "NOTIF_AGENDA_EVENT: meeting=%s change_type=%s item=%s recipient=%s",
+        meeting.id, change_type, item_id, recipient_id,
+    )
+
+    # Pure dedup: within the TTL window, skip duplicate events for the same item.
+    if django_cache.get(data_key):
+        logger.warning(
+            "NOTIF_SUPPRESSED: meeting=%s change_type=%s item=%s recipient=%s — within dedup window",
+            meeting.id, change_type, item_id, recipient_id,
+        )
+        return
+
+    # Atomic lock so only one concurrent request reaches the DB create path.
+    acquired = django_cache.add(lock_key, "1", timeout=_AGENDA_NOTIF_DEDUP_TTL)
+    if not acquired:
+        logger.warning(
+            "NOTIF_SUPPRESSED: meeting=%s change_type=%s item=%s recipient=%s — concurrent duplicate blocked",
+            meeting.id, change_type, item_id, recipient_id,
+        )
+        return
+
+    metadata: dict = {"project_id": meeting.project_id, "change_type": change_type}
+    if old_content:
+        metadata["old_agenda"] = old_content
+    if new_content:
+        metadata["new_agenda"] = new_content
+
+    try:
+        notif = create_notification(
+            recipient_id=recipient_id,
+            actor_id=actor_id,
+            category=NotificationCategory.MEETINGS,
+            event_type=NotificationEventType.MEETING_UPDATED,
+            title=f"Meeting updated: {meeting.title}",
+            body="Meeting details were changed.",
+            related_object_type="meeting",
+            related_object_id=str(meeting.id),
+            action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+            metadata=metadata,
+        )
+        if notif:
+            django_cache.set(data_key, str(notif.id), timeout=_AGENDA_NOTIF_DEDUP_TTL)
+            logger.info(
+                "NOTIF_CREATED: id=%s meeting=%s change_type=%s item=%s recipient=%s",
+                notif.id, meeting.id, change_type, item_id, recipient_id,
+            )
+        else:
+            # create_notification returned None — release the lock so retries are possible.
+            django_cache.delete(lock_key)
+            logger.warning(
+                "NOTIF_FAILED: create_notification returned None for meeting=%s change_type=%s item=%s recipient=%s",
+                meeting.id, change_type, item_id, recipient_id,
+            )
+    except Exception:
+        django_cache.delete(lock_key)
+        logger.exception(
+            "NOTIF_ERROR: exception in create_notification for meeting=%s change_type=%s item=%s recipient=%s",
+            meeting.id, change_type, item_id, recipient_id,
+        )
+        raise
 
 
 def notify_participants_meeting_document_updated(

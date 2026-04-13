@@ -1924,7 +1924,28 @@ export default function MeetingWorkspacePage() {
     setTemplateDirty(true);
   };
 
-  const addItemToSection = (sectionId: string) => {
+  /**
+   * Add a new agenda item to a nested section.
+   *
+   * We immediately POST to /agenda-items/ so the item gets a real numeric
+   * database ID.  This is critical for two reasons:
+   *   1. `onSave` (blur-commit) skips UUID items — only numeric IDs call
+   *      `patchAgendaItem`, which in turn fires backend notifications.
+   *   2. Backend notifications for create are triggered in
+   *      `AgendaItemViewSet.perform_create`, which is only reached via this
+   *      POST — never via the layout-config PATCH.
+   *
+   * Flow:
+   *   optimistic UUID add → POST /agenda-items/ → swap UUID → real numeric ID
+   *   On failure: rollback optimistic item + show error.
+   */
+  const addItemToSection = async (sectionId: string) => {
+    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+
+    const tempId = `item-${crypto.randomUUID()}`;
+    const defaultText = 'New item';
+
+    // 1. Optimistic add so the UI is instant.
     setNestedSections((prev) =>
       prev.map((section) =>
         section.id === sectionId
@@ -1932,18 +1953,56 @@ export default function MeetingWorkspacePage() {
               ...section,
               items: [
                 ...section.items,
-                {
-                  id: `item-${crypto.randomUUID()}`,
-                  text: 'New item',
-                  completed: false,
-                  duration: '5m',
-                },
+                { id: tempId, text: defaultText, completed: false, duration: '5m' },
               ],
             }
           : section,
       ),
     );
     setTemplateDirty(true);
+
+    // 2. Create the real backend record.
+    try {
+      const nextOrderIndex =
+        orderedAgenda.length > 0
+          ? orderedAgenda[orderedAgenda.length - 1].order_index + 1
+          : 0;
+
+      const created = await MeetingsAPI.createAgendaItem(projectId, meetingId, {
+        content: defaultText,
+        order_index: nextOrderIndex,
+        is_priority: false,
+      });
+
+      // 3. Swap the temp UUID for the real numeric ID so subsequent edits
+      //    go through patchAgendaItem (and trigger update notifications).
+      setNestedSections((prev) =>
+        prev.map((section) =>
+          section.id === sectionId
+            ? {
+                ...section,
+                items: section.items.map((i) =>
+                  i.id === tempId ? { ...i, id: String(created.id) } : i,
+                ),
+              }
+            : section,
+        ),
+      );
+
+      // 4. Keep the flat agendaItems list in sync (orderedAgenda, saveAgendaItem, etc.).
+      setAgendaItems((prev) => [...prev, created]);
+    } catch (err: unknown) {
+      // Rollback the optimistic item on failure.
+      setNestedSections((prev) =>
+        prev.map((section) =>
+          section.id === sectionId
+            ? { ...section, items: section.items.filter((i) => i.id !== tempId) }
+            : section,
+        ),
+      );
+      console.error('Failed to create agenda item:', err);
+      toast.error(getApiErrorMessage(err, 'Failed to add agenda item'));
+    }
   };
 
   const saveTemplateLayout = async () => {

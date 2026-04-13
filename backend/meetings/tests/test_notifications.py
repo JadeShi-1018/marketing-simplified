@@ -517,8 +517,10 @@ class AgendaSectionNotificationTests(TestCase):
         notif_objects = [c[0][1] for c in mock_publish.call_args_list]
         self.assertTrue(len(notif_objects) >= 1)
         meta = notif_objects[0].metadata
-        self.assertIn("Section: Before", meta.get("old_agenda", ""))
-        self.assertIn("Section: After", meta.get("new_agenda", ""))
+        # Backend now stores the plain title (no "Section: " prefix);
+        # the "Section: " prefix stripping happens on the frontend only.
+        self.assertIn("Before", meta.get("old_agenda", ""))
+        self.assertIn("After", meta.get("new_agenda", ""))
 
     @patch(_PUBLISH_PATH)
     def test_unchanged_section_title_does_not_fire_notification(self, mock_publish):
@@ -540,7 +542,7 @@ class AgendaSectionNotificationTests(TestCase):
 
 class AgendaItemDedupNotificationTests(TestCase):
     """
-    Verify the 2-second dedup window for MEETING_AGENDA_CHANGED:
+    Verify the 2-second dedup window for agenda-item notifications (now MEETING_UPDATED):
     - Rapid successive updates to the same item produce exactly ONE DB notification.
     - The notification preserves the original ``old_agenda`` while always showing
       the latest ``new_agenda``.
@@ -658,13 +660,16 @@ class AgendaItemDedupNotificationTests(TestCase):
                 recipient_id=self.watcher.id,
             )
 
-        # Only ONE "modified" DB Notification row should exist
+        # Only ONE "modified" DB Notification row should exist (now uses MEETING_UPDATED,
+        # change_type="agenda_item" — distinct from the "agenda_item_create" record that
+        # setUp produces when it POSTs the initial agenda item).
         notifs = Notification.objects.filter(
             recipient=self.watcher,
             actor=self.editor,
-            event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
+            event_type=NotificationEventType.MEETING_UPDATED,
             related_object_id=str(self.meeting.id),
-            body="An agenda item was modified.",
+            body="Meeting details were changed.",
+            metadata__change_type="agenda_item",
         )
         self.assertEqual(
             notifs.count(), 1, "Two rapid edits must produce exactly one notification record"
@@ -674,6 +679,110 @@ class AgendaItemDedupNotificationTests(TestCase):
                          "old_agenda must preserve the pre-edit-session value")
         self.assertEqual(n.metadata.get("new_agenda"), "Final version",
                          "new_agenda must reflect the most recent edit")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agenda-item create / delete notification tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AgendaItemCreateDeleteNotificationTests(TestCase):
+    """
+    Verify that creating and deleting an AgendaItem fires exactly ONE
+    MEETING_UPDATED notification (not the old MEETING_AGENDA_CHANGED type)
+    with the correct change_type and content metadata.
+    """
+
+    def setUp(self):
+        self.client = APIClient()
+        self.org = Organization.objects.create(name="CrudOrg", slug="crudorg")
+        self.project = Project.objects.create(name="CrudProject", organization=self.org)
+
+        self.actor = CustomUser.objects.create_user(
+            email="crud_actor@example.com", password="pass12345", username="crud_actor"
+        )
+        self.watcher = CustomUser.objects.create_user(
+            email="crud_watcher@example.com", password="pass12345", username="crud_watcher"
+        )
+        ProjectMember.objects.create(user=self.actor, project=self.project, is_active=True)
+        ProjectMember.objects.create(user=self.watcher, project=self.project, is_active=True)
+
+        self.mtd, _ = MeetingTypeDefinition.objects.get_or_create(
+            project=self.project, slug="crud-meeting", defaults={"label": "Crud Meeting"}
+        )
+        self.meeting = Meeting.objects.create(
+            project=self.project,
+            title="Crud Meeting",
+            type_definition=self.mtd,
+        )
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.actor)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.watcher)
+
+        self.client.force_authenticate(user=self.actor)
+        self.items_url = (
+            f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/agenda-items/"
+        )
+
+    @patch(_PUBLISH_PATH)
+    def test_create_item_fires_meeting_updated_notification(self, mock_publish):
+        """POST /agenda-items/ must fire MEETING_UPDATED with change_type='agenda_item_create'."""
+        from notifications.models import Notification
+
+        r = self.client.post(self.items_url, {"content": "New items", "order_index": 0}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+
+        notif = Notification.objects.filter(
+            recipient=self.watcher,
+            actor=self.actor,
+            event_type=NotificationEventType.MEETING_UPDATED,
+            related_object_id=str(self.meeting.id),
+        ).first()
+        self.assertIsNotNone(notif, "A MEETING_UPDATED notification must exist for the watcher")
+        self.assertEqual(notif.metadata.get("change_type"), "agenda_item_create")
+        self.assertEqual(notif.metadata.get("new_agenda"), "New items")
+        self.assertIsNone(notif.metadata.get("old_agenda"), "Create notification must have no old_agenda")
+
+    @patch(_PUBLISH_PATH)
+    def test_delete_item_fires_meeting_updated_notification(self, mock_publish):
+        """DELETE /agenda-items/{pk}/ must fire MEETING_UPDATED with change_type='agenda_item_delete'."""
+        from notifications.models import Notification
+
+        # Create the item first (silently — reset mock and Notification table after).
+        r = self.client.post(self.items_url, {"content": "Item to delete", "order_index": 0}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        item_id = r.data["id"]
+        mock_publish.reset_mock()
+        from notifications.models import Notification as _N
+        _N.objects.all().delete()  # clear so the delete notification is the only one left
+
+        # No cache.clear() needed: per-item cache key for delete != create key.
+        delete_url = f"{self.items_url}{item_id}/"
+        r = self.client.delete(delete_url)
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+
+        notif = Notification.objects.filter(
+            recipient=self.watcher,
+            actor=self.actor,
+            event_type=NotificationEventType.MEETING_UPDATED,
+            related_object_id=str(self.meeting.id),
+        ).order_by("-created_at").first()
+        self.assertIsNotNone(notif, "A MEETING_UPDATED notification must exist after deletion")
+        self.assertEqual(notif.metadata.get("change_type"), "agenda_item_delete")
+        self.assertEqual(notif.metadata.get("old_agenda"), "Item to delete")
+        self.assertIsNone(notif.metadata.get("new_agenda"), "Delete notification must have no new_agenda")
+
+    @patch(_PUBLISH_PATH)
+    def test_create_item_does_not_notify_actor(self, mock_publish):
+        """The actor who creates the item must NOT receive a notification."""
+        from notifications.models import Notification
+
+        self.client.post(self.items_url, {"content": "Self-created item", "order_index": 0}, format="json")
+
+        self_notif = Notification.objects.filter(
+            recipient=self.actor,
+            event_type=NotificationEventType.MEETING_UPDATED,
+            related_object_id=str(self.meeting.id),
+        ).first()
+        self.assertIsNone(self_notif, "Actor must not receive a notification for their own creation")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

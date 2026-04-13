@@ -98,9 +98,7 @@ export function useNotificationSSE(): void {
 
       es.onopen = () => {
         retryMsRef.current = MIN_RETRY_MS; // reset back-off on success
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[NotificationSSE] connected');
-        }
+        console.log('[NotificationSSE] connected to', url);
       };
 
       es.onmessage = (event: MessageEvent<string>) => {
@@ -110,14 +108,25 @@ export function useNotificationSSE(): void {
           lastEventIdRef.current = event.lastEventId;
         }
 
-        let payload: { type: string; data?: { event_type?: string } };
+        let payload: { type: string; data?: { event_type?: string; metadata?: unknown } };
         try {
           payload = JSON.parse(event.data) as typeof payload;
         } catch {
-          return; // malformed – skip
+          console.warn('[NotificationSSE] malformed message — could not parse JSON:', event.data);
+          return;
         }
 
-        if (payload.type !== 'notification') return;
+        // Log every raw message so we can confirm delivery regardless of type.
+        console.log(
+          '[NotificationSSE] raw message — type:', payload.type,
+          '| event_type:', payload.data?.event_type ?? '(none)',
+          '| metadata:', payload.data?.metadata ?? '(none)',
+        );
+
+        if (payload.type !== 'notification') {
+          console.log('[NotificationSSE] ignored non-notification message, type:', payload.type);
+          return;
+        }
 
         const eventType = payload.data?.event_type ?? '';
 

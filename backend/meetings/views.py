@@ -38,6 +38,7 @@ from meetings.services import (
     reorder_agenda_items,
     get_or_create_meeting_document,
     normalize_text,
+    notify_agenda_event,
     update_meeting_document_content,
     upsert_agenda_item_notification,
     user_has_meeting_document_access,
@@ -470,42 +471,23 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     "new_section": new_t,
                 })
 
-        # Build agenda change summary
-        agenda_changes = []
-
-        # Handle modified items - show before/after
-        if modified_items:
-            first_mod = modified_items[0]
-            changes["old_agenda"] = first_mod["old_text"]
-            changes["new_agenda"] = first_mod["new_text"]
-            for mod in modified_items:
-                agenda_changes.append(f"Modified: '{mod['old_text']}' → '{mod['new_text']}'")
-
-        # Handle section name changes
+        # Handle section name changes.
+        # NOTE: item *text* changes (modified_items) are intentionally NOT notified here —
+        # they are already handled by AgendaItemViewSet.perform_update via
+        # upsert_agenda_item_notification, which creates a MEETING_UPDATED notification
+        # with change_type="agenda_item". Emitting a second notification from the layout
+        # PATCH would produce duplicates for the same logical edit.
         if section_changes:
             first_sec = section_changes[0]
-            if not changes.get("old_agenda"):
-                changes["old_agenda"] = f"Section: {first_sec['old_section']}"
-            if not changes.get("new_agenda"):
-                changes["new_agenda"] = f"Section: {first_sec['new_section']}"
-            for sec in section_changes:
-                agenda_changes.append(f"Section renamed: '{sec['old_section']}' → '{sec['new_section']}'")
+            changes["old_agenda"] = first_sec["old_section"]
+            changes["new_agenda"] = first_sec["new_section"]
+            changes["change_type"] = "agenda_section"
 
-        # Handle removed items
-        if removed_ids:
-            removed_texts = [old_items[rid]["text"] for rid in removed_ids]
-            if not changes.get("old_agenda"):
-                changes["old_agenda"] = removed_texts[0] if len(removed_texts) == 1 else "; ".join(removed_texts)
-            for text in removed_texts:
-                agenda_changes.append(f"Removed: '{text}'")
-
-        # Handle added items
-        if added_ids:
-            added_texts = [new_items[aid]["text"] for aid in added_ids]
-            if not changes.get("new_agenda"):
-                changes["new_agenda"] = added_texts[0] if len(added_texts) == 1 else "; ".join(added_texts)
-            for text in added_texts:
-                agenda_changes.append(f"Added: '{text}'")
+        # NOTE: added_ids and removed_ids are intentionally NOT notified here.
+        # Item creation is handled by AgendaItemViewSet.perform_create and deletion by
+        # perform_destroy — both now emit a dedup-aware MEETING_UPDATED notification via
+        # notify_agenda_event. Emitting a second notification from the layout PATCH would
+        # produce duplicates for the same logical event.
 
         # If no changes detected at all, skip notification
         if not changes:
@@ -560,25 +542,22 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
                 {"order_index": ["This order_index is already used for this meeting."]}
             )
 
-        # Notify participants about new agenda item
-        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
-        for uid in participant_ids:
-            if uid == self.request.user.id:
-                continue
-            create_notification(
+        # Notify participants about the new agenda item (dedup-aware, keyed per item).
+        actor_id = self.request.user.id
+        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        recipients = [uid for uid in participant_ids if uid != actor_id]
+        logger.info(
+            "AgendaItem CREATE: meeting=%s item=%s actor=%s participants=%s recipients=%s",
+            meeting.id, agenda_item.pk, actor_id, participant_ids, recipients,
+        )
+        for uid in recipients:
+            notify_agenda_event(
+                meeting=meeting,
+                actor_id=actor_id,
                 recipient_id=uid,
-                actor_id=self.request.user.id,
-                category=NotificationCategory.MEETINGS,
-                event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
-                title=f"Agenda updated: {meeting.title}",
-                body="A new agenda item was added.",
-                related_object_type="meeting",
-                related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
-                metadata={
-                    "project_id": meeting.project_id,
-                    "new_agenda": agenda_item.content,
-                },
+                change_type="agenda_item_create",
+                item_id=agenda_item.pk,
+                new_content=agenda_item.content or "",
             )
 
     def perform_update(self, serializer):
@@ -600,10 +579,13 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
         # Upsert notifications for each participant (2-second dedup window prevents
         # duplicate records when the user makes several rapid edits to the same item).
         actor_id = self.request.user.id
-        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
-        for uid in participant_ids:
-            if uid == actor_id:
-                continue
+        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        recipients = [uid for uid in participant_ids if uid != actor_id]
+        logger.info(
+            "AgendaItem UPDATE: meeting=%s item=%s actor=%s participants=%s recipients=%s",
+            meeting.id, agenda_item.pk, actor_id, participant_ids, recipients,
+        )
+        for uid in recipients:
             upsert_agenda_item_notification(
                 meeting=meeting,
                 item_id=agenda_item.pk,
@@ -620,25 +602,23 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
         # Delete the agenda item
         instance.delete()
 
-        # Notify participants about removed agenda item
-        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
-        for uid in participant_ids:
-            if uid == self.request.user.id:
-                continue
-            create_notification(
+        # Notify participants about the deleted agenda item (dedup-aware, keyed per item).
+        actor_id = self.request.user.id
+        item_pk = instance.pk  # capture before instance is deleted
+        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        recipients = [uid for uid in participant_ids if uid != actor_id]
+        logger.info(
+            "AgendaItem DELETE: meeting=%s item=%s actor=%s participants=%s recipients=%s",
+            meeting.id, item_pk, actor_id, participant_ids, recipients,
+        )
+        for uid in recipients:
+            notify_agenda_event(
+                meeting=meeting,
+                actor_id=actor_id,
                 recipient_id=uid,
-                actor_id=self.request.user.id,
-                category=NotificationCategory.MEETINGS,
-                event_type=NotificationEventType.MEETING_AGENDA_CHANGED,
-                title=f"Agenda updated: {meeting.title}",
-                body="An agenda item was removed.",
-                related_object_type="meeting",
-                related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
-                metadata={
-                    "project_id": meeting.project_id,
-                    "old_agenda": removed_content,
-                },
+                change_type="agenda_item_delete",
+                item_id=item_pk,
+                old_content=removed_content or "",
             )
 
     @action(detail=False, methods=["patch"], url_path="reorder")

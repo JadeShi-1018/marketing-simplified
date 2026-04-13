@@ -318,6 +318,60 @@ function ArtifactChanges({ metadata }: { metadata: Record<string, unknown> }) {
   );
 }
 
+/**
+ * Resolve the agenda change card label and display values from notification metadata.
+ *
+ * change_type          | label          | value treatment
+ * ---------------------|----------------|------------------------------------------
+ * agenda_item          | "Item"         | raw old/new item content (edit)
+ * agenda_item_create   | "Item Created" | new_agenda only
+ * agenda_item_delete   | "Item Deleted" | old_agenda only
+ * agenda_section       | "Section"      | title (strips legacy "Section: " prefix)
+ * (legacy / none)      | "Agenda"       | backward-compat
+ */
+function resolveAgendaCardProps(
+  event_type: string,
+  metadata: Record<string, unknown>,
+): { label: string; beforeValue: string | undefined; afterValue: string | undefined } {
+  const raw_old = metadata?.old_agenda as string | undefined;
+  const raw_new = metadata?.new_agenda as string | undefined;
+  const changeType = metadata?.change_type as string | undefined;
+
+  if (event_type === "doc_asset_update") {
+    return { label: "Document Content", beforeValue: raw_old, afterValue: raw_new };
+  }
+
+  if (changeType === "agenda_item") {
+    return { label: "Item", beforeValue: raw_old, afterValue: raw_new };
+  }
+
+  if (changeType === "agenda_item_create") {
+    // Only an "after" value — no prior content exists.
+    return { label: "Item Created", beforeValue: undefined, afterValue: raw_new };
+  }
+
+  if (changeType === "agenda_item_delete") {
+    // Only a "before" value — the item no longer exists.
+    return { label: "Item Deleted", beforeValue: raw_old, afterValue: undefined };
+  }
+
+  if (changeType === "agenda_section") {
+    // Strip the legacy "Section: " prefix that older notifications may include.
+    const strip = (v: string | undefined) =>
+      v?.startsWith("Section: ") ? v.slice("Section: ".length) : v;
+    return { label: "Section", beforeValue: strip(raw_old), afterValue: strip(raw_new) };
+  }
+
+  // Backward-compat: legacy notifications stored "Section: <title>" in old_agenda.
+  if (raw_old?.startsWith("Section: ") || raw_new?.startsWith("Section: ")) {
+    const strip = (v: string | undefined) =>
+      v?.startsWith("Section: ") ? v.slice("Section: ".length) : v;
+    return { label: "Section", beforeValue: strip(raw_old), afterValue: strip(raw_new) };
+  }
+
+  return { label: "Agenda", beforeValue: raw_old, afterValue: raw_new };
+}
+
 // Meeting changes section
 function MeetingChangesSection({
   event_type,
@@ -330,8 +384,6 @@ function MeetingChangesSection({
   const newTitle = metadata?.new_title as string | undefined;
   const oldTime = metadata?.old_time as string | undefined;
   const newTime = metadata?.new_time as string | undefined;
-  const oldAgenda = metadata?.old_agenda as string | undefined;
-  const newAgenda = metadata?.new_agenda as string | undefined;
   const oldLocation = metadata?.old_location as string | undefined;
   const newLocation = metadata?.new_location as string | undefined;
 
@@ -360,6 +412,8 @@ function MeetingChangesSection({
     );
   }
 
+  const agendaCard = resolveAgendaCardProps(event_type, metadata);
+
   return (
     <div className="space-y-3">
       {/* Title Change — hidden for doc_asset_update when title is unchanged */}
@@ -378,12 +432,12 @@ function MeetingChangesSection({
         afterValue={newTime ? formatDateTime(newTime) : undefined}
       />
 
-      {/* Agenda / Document Content Change */}
+      {/* Agenda / Section / Item Content Change */}
       <ChangeCard
         icon={FileText}
-        label={event_type === "doc_asset_update" ? "Document Content" : "Agenda"}
-        beforeValue={oldAgenda}
-        afterValue={newAgenda}
+        label={agendaCard.label}
+        beforeValue={agendaCard.beforeValue}
+        afterValue={agendaCard.afterValue}
         isLongText={true}
       />
 

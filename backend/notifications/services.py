@@ -258,18 +258,32 @@ def create_notification(
     metadata: dict | None = None,
 ) -> Notification | None:
     if recipient_id == actor_id:
+        # Self-notifications are always suppressed; this is expected behaviour.
         return None
 
     try:
         recipient = User.objects.get(pk=recipient_id)
     except User.DoesNotExist:
-        logger.warning("create_notification: recipient %s does not exist", recipient_id)
+        logger.warning(
+            "create_notification: SKIPPED — recipient_id=%s does not exist (event=%s)",
+            recipient_id, event_type,
+        )
         return None
 
     if not _is_in_app_enabled(recipient, event_type):
+        logger.warning(
+            "create_notification: SKIPPED — in-app disabled for recipient_id=%s event=%s "
+            "(check UserNotificationPreference for this user)",
+            recipient_id, event_type,
+        )
         return None
 
     if _legacy_notification_settings_blocks_in_app(recipient, event_type):
+        logger.warning(
+            "create_notification: SKIPPED — legacy NotificationSettings block "
+            "recipient_id=%s event=%s",
+            recipient_id, event_type,
+        )
         return None
 
     n = Notification.objects.create(
@@ -286,6 +300,10 @@ def create_notification(
     )
     maybe_dispatch_external_channels(notification=n, user=recipient, event_type=event_type)
     _push_notification_to_redis(recipient_id, n)
+    logger.info(
+        "create_notification: OK — id=%s recipient_id=%s event=%s",
+        n.id, recipient_id, event_type,
+    )
     return n
 
 
