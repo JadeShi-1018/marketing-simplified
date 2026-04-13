@@ -9,6 +9,10 @@ import {
   Type,
   Paperclip,
   MessageCircle,
+  Tag,
+  Calendar,
+  User,
+  AlertCircle,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 
@@ -46,13 +50,26 @@ function formatDateTime(timeStr: string | undefined | null): string {
   }
 }
 
+/** Task event types that can surface a "What Changed" card. */
+const TASK_EVENT_TYPES = new Set([
+  "task_status_changed",
+  "task_assigned",
+  "task_owner_changed",
+  "task_deadline_soon",
+  "task_anomaly",
+]);
+
 // Check if this notification type supports "What Changed" section
 export function hasWhatChanged(notification: NotificationItem): boolean {
   const { event_type, metadata } = notification;
 
-  // Task status changes
-  if (event_type === "task_status_changed") {
-    return !!(metadata?.old_status && metadata?.new_status);
+  // Task events: show when the backend has emitted a change_type.
+  // Legacy task_status_changed also renders with old_status / new_status alone.
+  if (TASK_EVENT_TYPES.has(event_type)) {
+    return !!(
+      metadata?.change_type ||
+      (metadata?.old_status && metadata?.new_status)
+    );
   }
 
   // Meeting updates - always show for meeting-related events
@@ -319,6 +336,95 @@ function ArtifactChanges({ metadata }: { metadata: Record<string, unknown> }) {
 }
 
 /**
+ * Resolve task change card props from notification metadata.
+ *
+ * change_type       | icon        | label      | value treatment
+ * ------------------|-------------|------------|-------------------------------
+ * task_status       | FileText    | Status     | format snake_case → Title Case
+ * task_assignee     | User        | Assignee   | display names
+ * task_approver     | User        | Approver   | display names
+ * task_due_date     | Calendar    | Due Date   | ISO date string
+ * task_title        | Type        | Title      | plain text
+ * task_priority     | AlertCircle | Priority   | e.g. HIGH → High
+ * (legacy fallback) | Tag         | Change     | raw old/new values
+ */
+function resolveTaskCardProps(metadata: Record<string, unknown>): {
+  icon: React.ElementType;
+  label: string;
+  beforeValue: string | undefined;
+  afterValue: string | undefined;
+} {
+  const changeType = metadata?.change_type as string | undefined;
+  const oldVal = (metadata?.old_value ?? metadata?.old_status) as string | null | undefined;
+  const newVal = (metadata?.new_value ?? metadata?.new_status) as string | null | undefined;
+
+  const before = oldVal ?? undefined;
+  const after  = newVal ?? undefined;
+
+  const formatStatus = (s: string) =>
+    s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  const formatPriority = (s: string) =>
+    s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+
+  switch (changeType) {
+    case "task_status":
+      return {
+        icon: FileText,
+        label: "Status",
+        beforeValue: before ? formatStatus(before) : undefined,
+        afterValue:  after  ? formatStatus(after)  : undefined,
+      };
+    case "task_assignee":
+      return { icon: User, label: "Assignee", beforeValue: before, afterValue: after };
+    case "task_approver":
+      return { icon: User, label: "Approver", beforeValue: before, afterValue: after };
+    case "task_due_date":
+      return { icon: Calendar, label: "Due Date", beforeValue: before, afterValue: after };
+    case "task_title":
+      return { icon: Type, label: "Title", beforeValue: before, afterValue: after };
+    case "task_priority":
+      return {
+        icon: AlertCircle,
+        label: "Priority",
+        beforeValue: before ? formatPriority(before) : undefined,
+        afterValue:  after  ? formatPriority(after)  : undefined,
+      };
+    default:
+      // Legacy task_status_changed that only has old_status / new_status
+      if (metadata?.old_status || metadata?.new_status) {
+        const os = metadata.old_status as string | undefined;
+        const ns = metadata.new_status as string | undefined;
+        return {
+          icon: FileText,
+          label: "Status",
+          beforeValue: os ? formatStatus(os) : undefined,
+          afterValue:  ns ? formatStatus(ns) : undefined,
+        };
+      }
+      return { icon: Tag, label: "Change", beforeValue: before, afterValue: after };
+  }
+}
+
+// Render a single task change card.
+function TaskChangesSection({ metadata }: { metadata: Record<string, unknown> }) {
+  const { icon, label, beforeValue, afterValue } = resolveTaskCardProps(metadata);
+
+  if (!beforeValue && !afterValue) {
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+        <p className="text-sm text-gray-600">Task details were updated.</p>
+        <p className="text-xs text-gray-400 mt-1 italic">
+          (Detailed change information not available for this notification)
+        </p>
+      </div>
+    );
+  }
+
+  return <ChangeCard icon={icon} label={label} beforeValue={beforeValue} afterValue={afterValue} />;
+}
+
+/**
  * Resolve the agenda change card label and display values from notification metadata.
  *
  * change_type          | label          | value treatment
@@ -472,9 +578,9 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
           What Changed
         </div>
 
-        {/* Task status change */}
-        {event_type === "task_status_changed" && metadata && (
-          <TaskStatusChange metadata={metadata} />
+        {/* Task changes (status, assignee, due date, title, priority, …) */}
+        {TASK_EVENT_TYPES.has(event_type) && metadata && (
+          <TaskChangesSection metadata={metadata} />
         )}
 
         {event_type === "chat_new_conversation" && (

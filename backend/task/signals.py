@@ -44,6 +44,10 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,
+            "change_type": "task_status",
+            "old_value": old,
+            "new_value": instance.status,
+            # Legacy keys kept for backward-compat with existing notifications.
             "old_status": old,
             "new_status": instance.status,
         },

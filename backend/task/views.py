@@ -404,6 +404,21 @@ class TaskViewSet(viewsets.ModelViewSet):
         self.check_object_permissions(self.request, task)
         return task
     
+    # ── internal helper ───────────────────────────────────────────────────────
+    @staticmethod
+    def _user_display_name(user_id) -> str | None:
+        """Return 'First Last' (or username) for a user id, or None if not found."""
+        if user_id is None:
+            return None
+        User = get_user_model()
+        row = User.objects.filter(pk=user_id).values(
+            "username", "first_name", "last_name"
+        ).first()
+        if not row:
+            return None
+        full = f"{row['first_name']} {row['last_name']}".strip()
+        return full or row["username"]
+
     def perform_create(self, serializer):
         """Create a new task and notify the assigned owner (if not the creator)."""
         task = serializer.save()
@@ -418,21 +433,35 @@ class TaskViewSet(viewsets.ModelViewSet):
                 related_object_type="task",
                 related_object_id=str(task.id),
                 action_url=f"/projects/{task.project_id}/tasks/{task.id}",
-                metadata={"task_id": task.id, "project_id": task.project_id},
+                metadata={
+                    "task_id": task.id,
+                    "project_id": task.project_id,
+                    "change_type": "task_assignee",
+                    "old_value": None,
+                    "new_value": self._user_display_name(task.owner_id),
+                },
             )
         return task
-    
+
     def perform_update(self, serializer):
         """Update a task and fire targeted notifications for key field changes."""
         task = serializer.instance
-        old_owner_id = task.owner_id
+
+        # Snapshot all watched fields BEFORE saving.
+        old_owner_id   = task.owner_id
         old_approver_id = task.current_approver_id
-        old_due_date = task.due_date
+        old_due_date   = task.due_date
+        old_summary    = task.summary
+        old_priority   = task.priority
+
         serializer.save()
-        actor_id = self.request.user.id
+
+        actor_id   = self.request.user.id
         project_id = task.project_id
         action_url = f"/projects/{project_id}/tasks/{task.id}"
+        task_meta  = {"task_id": task.id, "project_id": project_id}
 
+        # ── Owner reassigned ──────────────────────────────────────────────────
         if task.owner_id and task.owner_id != old_owner_id:
             create_notification(
                 recipient_id=task.owner_id,
@@ -444,9 +473,15 @@ class TaskViewSet(viewsets.ModelViewSet):
                 related_object_type="task",
                 related_object_id=str(task.id),
                 action_url=action_url,
-                metadata={"task_id": task.id, "project_id": project_id},
+                metadata={
+                    **task_meta,
+                    "change_type": "task_assignee",
+                    "old_value": self._user_display_name(old_owner_id),
+                    "new_value": self._user_display_name(task.owner_id),
+                },
             )
 
+        # ── Approver changed ──────────────────────────────────────────────────
         if task.current_approver_id and task.current_approver_id != old_approver_id:
             create_notification(
                 recipient_id=task.current_approver_id,
@@ -458,10 +493,15 @@ class TaskViewSet(viewsets.ModelViewSet):
                 related_object_type="task",
                 related_object_id=str(task.id),
                 action_url=action_url,
-                metadata={"task_id": task.id, "project_id": project_id},
+                metadata={
+                    **task_meta,
+                    "change_type": "task_approver",
+                    "old_value": self._user_display_name(old_approver_id),
+                    "new_value": self._user_display_name(task.current_approver_id),
+                },
             )
 
-        # Notify the task owner when someone else changes the due date.
+        # ── Due date changed ──────────────────────────────────────────────────
         if task.due_date != old_due_date and task.owner_id and task.owner_id != actor_id:
             create_notification(
                 recipient_id=task.owner_id,
@@ -474,10 +514,50 @@ class TaskViewSet(viewsets.ModelViewSet):
                 related_object_id=str(task.id),
                 action_url=action_url,
                 metadata={
-                    "task_id": task.id,
-                    "project_id": project_id,
-                    "old_due_date": str(old_due_date) if old_due_date else None,
-                    "new_due_date": str(task.due_date) if task.due_date else None,
+                    **task_meta,
+                    "change_type": "task_due_date",
+                    "old_value": str(old_due_date) if old_due_date else None,
+                    "new_value": str(task.due_date) if task.due_date else None,
+                },
+            )
+
+        # ── Title / summary changed ───────────────────────────────────────────
+        if task.summary != old_summary and task.owner_id and task.owner_id != actor_id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task updated: {task.summary}",
+                body="The title of this task was changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_title",
+                    "old_value": old_summary,
+                    "new_value": task.summary,
+                },
+            )
+
+        # ── Priority changed ──────────────────────────────────────────────────
+        if task.priority != old_priority and task.owner_id and task.owner_id != actor_id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task priority changed: {task.summary}",
+                body=f"Priority changed from {old_priority} to {task.priority}.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_priority",
+                    "old_value": old_priority,
+                    "new_value": task.priority,
                 },
             )
     
