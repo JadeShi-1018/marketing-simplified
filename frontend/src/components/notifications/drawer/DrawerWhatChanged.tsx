@@ -13,6 +13,8 @@ import {
   Calendar,
   User,
   AlertCircle,
+  Bell,
+  Hourglass,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 
@@ -57,6 +59,7 @@ const TASK_EVENT_TYPES = new Set([
   "task_owner_changed",
   "task_deadline_soon",
   "task_anomaly",
+  "task_overdue",
 ]);
 
 // Check if this notification type supports "What Changed" section
@@ -96,6 +99,17 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
     return hasMeetingChangeData(metadata || {});
   }
 
+  // System-triggered alerts
+  if (event_type === "calendar_reminder") {
+    return !!(metadata?.event_title || metadata?.start_time);
+  }
+  if (event_type === "decision_deadline") {
+    return !!(metadata?.change_type === "decision_deadline" || metadata?.new_value);
+  }
+  if (event_type === "meeting_starting_soon") {
+    return !!(metadata?.change_type === "meeting_start" || metadata?.start_time);
+  }
+
   return false;
 }
 
@@ -124,21 +138,26 @@ function ChangeCard({
   beforeValue,
   afterValue,
   isLongText = false,
+  afterDanger = false,
 }: {
   icon: React.ElementType;
   label: string;
   beforeValue: string | null | undefined;
   afterValue: string | null | undefined;
   isLongText?: boolean;
+  /** When true the "After" value is rendered in red to indicate a warning state. */
+  afterDanger?: boolean;
 }) {
   // Don't render if no values
   if (!beforeValue && !afterValue) return null;
+
+  const afterColorClass = afterDanger ? "text-red-600" : "text-green-600";
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
       {/* Header with icon and label */}
       <div className="flex items-center gap-2 mb-2">
-        <Icon className="w-4 h-4 text-gray-500" />
+        <Icon className={`w-4 h-4 ${afterDanger ? "text-red-500" : "text-gray-500"}`} />
         <span className="text-sm font-semibold text-gray-800">{label}</span>
       </div>
 
@@ -167,7 +186,7 @@ function ChangeCard({
               After:
             </span>
             <p
-              className={`text-sm text-green-600 font-medium mt-0.5 ${
+              className={`text-sm font-medium mt-0.5 ${afterColorClass} ${
                 isLongText ? "whitespace-pre-wrap break-words" : ""
               }`}
             >
@@ -353,6 +372,7 @@ function resolveTaskCardProps(metadata: Record<string, unknown>): {
   label: string;
   beforeValue: string | undefined;
   afterValue: string | undefined;
+  afterDanger: boolean;
 } {
   const changeType = metadata?.change_type as string | undefined;
   const oldVal = (metadata?.old_value ?? metadata?.old_status) as string | null | undefined;
@@ -374,21 +394,31 @@ function resolveTaskCardProps(metadata: Record<string, unknown>): {
         label: "Status",
         beforeValue: before ? formatStatus(before) : undefined,
         afterValue:  after  ? formatStatus(after)  : undefined,
+        afterDanger: false,
+      };
+    case "task_overdue":
+      return {
+        icon: AlertCircle,
+        label: "Status",
+        beforeValue: before,
+        afterValue:  after ?? "Overdue",
+        afterDanger: true,
       };
     case "task_assignee":
-      return { icon: User, label: "Assignee", beforeValue: before, afterValue: after };
+      return { icon: User, label: "Assignee", beforeValue: before, afterValue: after, afterDanger: false };
     case "task_approver":
-      return { icon: User, label: "Approver", beforeValue: before, afterValue: after };
+      return { icon: User, label: "Approver", beforeValue: before, afterValue: after, afterDanger: false };
     case "task_due_date":
-      return { icon: Calendar, label: "Due Date", beforeValue: before, afterValue: after };
+      return { icon: Calendar, label: "Due Date", beforeValue: before, afterValue: after, afterDanger: false };
     case "task_title":
-      return { icon: Type, label: "Title", beforeValue: before, afterValue: after };
+      return { icon: Type, label: "Title", beforeValue: before, afterValue: after, afterDanger: false };
     case "task_priority":
       return {
         icon: AlertCircle,
         label: "Priority",
         beforeValue: before ? formatPriority(before) : undefined,
         afterValue:  after  ? formatPriority(after)  : undefined,
+        afterDanger: false,
       };
     default:
       // Legacy task_status_changed that only has old_status / new_status
@@ -400,15 +430,16 @@ function resolveTaskCardProps(metadata: Record<string, unknown>): {
           label: "Status",
           beforeValue: os ? formatStatus(os) : undefined,
           afterValue:  ns ? formatStatus(ns) : undefined,
+          afterDanger: false,
         };
       }
-      return { icon: Tag, label: "Change", beforeValue: before, afterValue: after };
+      return { icon: Tag, label: "Change", beforeValue: before, afterValue: after, afterDanger: false };
   }
 }
 
 // Render a single task change card.
 function TaskChangesSection({ metadata }: { metadata: Record<string, unknown> }) {
-  const { icon, label, beforeValue, afterValue } = resolveTaskCardProps(metadata);
+  const { icon, label, beforeValue, afterValue, afterDanger } = resolveTaskCardProps(metadata);
 
   if (!beforeValue && !afterValue) {
     return (
@@ -421,7 +452,136 @@ function TaskChangesSection({ metadata }: { metadata: Record<string, unknown> })
     );
   }
 
-  return <ChangeCard icon={icon} label={label} beforeValue={beforeValue} afterValue={afterValue} />;
+  return (
+    <ChangeCard
+      icon={icon}
+      label={label}
+      beforeValue={beforeValue}
+      afterValue={afterValue}
+      afterDanger={afterDanger}
+    />
+  );
+}
+
+// ── System alert sections ─────────────────────────────────────────────────────
+
+/** Shows calendar event title + scheduled time for CALENDAR_REMINDER. */
+function CalendarReminderSection({
+  metadata,
+}: {
+  metadata: Record<string, unknown>;
+}) {
+  const eventTitle = (metadata.event_title as string) || "Upcoming event";
+  const startTimeRaw = metadata.start_time as string | null | undefined;
+
+  let startTimeLabel = startTimeRaw ?? "";
+  if (startTimeRaw) {
+    try {
+      startTimeLabel = new Date(startTimeRaw).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+    } catch {
+      // keep raw value if parsing fails
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="flex items-center gap-2 mb-2">
+        <Calendar className="w-4 h-4 text-blue-500" />
+        <span className="text-sm font-semibold text-gray-800">Event</span>
+      </div>
+      <div className="space-y-1.5 pl-6">
+        <div>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Title
+          </span>
+          <p className="text-sm text-gray-800 font-medium mt-0.5">{eventTitle}</p>
+        </div>
+        {startTimeLabel && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Starts At
+            </span>
+            <p className="text-sm text-blue-600 font-medium mt-0.5">{startTimeLabel}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Shows the stale-approval message for DECISION_DEADLINE. */
+function DecisionDeadlineSection({
+  metadata,
+}: {
+  metadata: Record<string, unknown>;
+}) {
+  const decisionTitle = (metadata.decision_title as string) || "Decision";
+  const message =
+    (metadata.new_value as string) || "Awaiting approval";
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="flex items-center gap-2 mb-2">
+        <Hourglass className="w-4 h-4 text-amber-500" />
+        <span className="text-sm font-semibold text-gray-800">Deadline</span>
+      </div>
+      <div className="space-y-1.5 pl-6">
+        <div>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Decision
+          </span>
+          <p className="text-sm text-gray-800 font-medium mt-0.5">{decisionTitle}</p>
+        </div>
+        <div>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Status
+          </span>
+          <p className="text-sm text-amber-600 font-medium mt-0.5">{message}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Shows how soon the meeting starts for MEETING_STARTING_SOON. */
+function MeetingStartingSoonSection({
+  metadata,
+}: {
+  metadata: Record<string, unknown>;
+}) {
+  const meetingTitle = (metadata.meeting_title as string) || "Meeting";
+  const startLabel = (metadata.start_time as string) || "";
+  const startExact = (metadata.start_time_exact as string) || "";
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="flex items-center gap-2 mb-2">
+        <Bell className="w-4 h-4 text-indigo-500" />
+        <span className="text-sm font-semibold text-gray-800">Starts In</span>
+      </div>
+      <div className="space-y-1.5 pl-6">
+        <div>
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Meeting
+          </span>
+          <p className="text-sm text-gray-800 font-medium mt-0.5">{meetingTitle}</p>
+        </div>
+        {(startLabel || startExact) && (
+          <div>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+              Scheduled
+            </span>
+            <p className="text-sm text-indigo-600 font-medium mt-0.5">
+              {startExact ? `${startExact} (${startLabel})` : startLabel}
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -578,13 +738,28 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
           What Changed
         </div>
 
-        {/* Task changes (status, assignee, due date, title, priority, …) */}
+        {/* Task changes (status, assignee, due date, title, priority, overdue …) */}
         {TASK_EVENT_TYPES.has(event_type) && metadata && (
           <TaskChangesSection metadata={metadata} />
         )}
 
         {event_type === "chat_new_conversation" && (
           <ChatNewConversationSection notification={notification} />
+        )}
+
+        {/* Calendar reminder */}
+        {event_type === "calendar_reminder" && metadata && (
+          <CalendarReminderSection metadata={metadata} />
+        )}
+
+        {/* Decision deadline */}
+        {event_type === "decision_deadline" && metadata && (
+          <DecisionDeadlineSection metadata={metadata} />
+        )}
+
+        {/* Meeting starting soon */}
+        {event_type === "meeting_starting_soon" && metadata && (
+          <MeetingStartingSoonSection metadata={metadata} />
         )}
 
         {/* Meeting changes + collaborative document / notes */}
