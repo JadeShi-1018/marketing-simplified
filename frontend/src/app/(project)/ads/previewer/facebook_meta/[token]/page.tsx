@@ -4,7 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { getPublicPreview, AdCreativeData } from '@/lib/api/publicPreviewApi';
 import { Loader2, AlertCircle } from 'lucide-react';
-import Layout from '@/components/layout/Layout';
+import { useAuthStore } from '@/lib/authStore';
+import HeaderSection from '@/components/home/HeaderSection';
 import FacebookFeedPreview from '@/components/facebook_meta/previews/FacebookFeedPreview';
 import InstagramFeedPreview from '@/components/facebook_meta/previews/InstagramFeedPreview';
 import FacebookProfileFeedsPreview from '@/components/facebook_meta/previews/FacebookProfileFeedsPreview';
@@ -27,10 +28,36 @@ interface MediaFile {
 export default function PublicPreviewPage() {
     const params = useParams();
     const token = params?.token as string;
+    const { initialized, isAuthenticated, user } = useAuthStore();
 
     const [adCreative, setAdCreative] = useState<AdCreativeData | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+
+    const redirectToLogin = () => {
+        window.location.href = '/login';
+    };
+
+    const handleLoginClick = () => {
+        if (!initialized) return;
+        if (isAuthenticated) {
+            window.location.href = '/profile';
+            return;
+        }
+        window.location.href = '/login';
+    };
+
+    const handleGetStartedClick = () => {
+        if (!initialized) return;
+        if (isAuthenticated) {
+            window.location.href = '/tasks';
+            return;
+        }
+        window.location.href = '/login';
+    };
+
+    const displayName = user?.username || user?.email || 'User';
+    const displayRole = user?.roles?.[0] || 'Member';
 
     useEffect(() => {
         const fetchPreviewData = async () => {
@@ -133,11 +160,19 @@ export default function PublicPreviewPage() {
     };
 
     const renderLayout = (content: React.ReactNode) => (
-        <Layout>
-            <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
+        <div className="min-h-screen bg-gray-50">
+            <HeaderSection
+                isAuthenticated={isAuthenticated}
+                displayName={displayName}
+                displayRole={displayRole}
+                onLoginClick={handleLoginClick}
+                onGetStartedClick={handleGetStartedClick}
+                onRedirectToLogin={redirectToLogin}
+            />
+            <main className="p-4 sm:p-5">
                 {content}
-            </div>
-        </Layout>
+            </main>
+        </div>
     );
 
     const mediaFiles = getMediaFiles();
@@ -185,130 +220,132 @@ export default function PublicPreviewPage() {
     }
 
     return renderLayout(
-        <div className="py-8">
-            <div className="w-full px-4 sm:px-6 lg:px-8">
-                 {/* Two Column Layout */}
-                 <div className="flex gap-8">
-                     {/* Left Column - Header and Preview Content */}
-                     <div className="flex-1">
-                         {/* Page Header */}
-                         <div className="mb-8">
-                             <div className="text-sm text-gray-500 mb-2">Preview for:</div>
-                             <div className="text-xl font-bold mb-2">
-                                 {adCreative.name}
-                             </div>
-                         </div>
+        <div className="space-y-4">
+            <header className="rounded-xl bg-white px-5 py-4 shadow-sm ring-1 ring-gray-100">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                        <div className="text-[11px] font-medium uppercase tracking-wide text-gray-500">
+                            Facebook Meta preview
+                        </div>
+                        <h1 className="mt-1 truncate text-[22px] font-semibold tracking-tight text-gray-900">
+                            {adCreative.name}
+                        </h1>
+                    </div>
+                    {adCreative.days_left !== undefined && (
+                        <div className="shrink-0 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 ring-1 ring-rose-100">
+                            Expires in {adCreative.days_left} {adCreative.days_left === 1 ? 'day' : 'days'}
+                        </div>
+                    )}
+                </div>
+            </header>
 
-                         {/* Preview Container */}
-                         <div className="rounded-lg">
-                             {mediaFiles.length > 0 && (
-                                 <div>
-                                     {/* Feeds Section */}
-                                     <div>
-                                         <h2 className="text-base font-semibold mb-[-30px]">Feeds</h2>
-                                         <div className="grid grid-cols-4 gap-6 mb-[-30px] ml-[-40px]">
-                                             <FacebookFeedPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                             <FacebookProfileFeedsPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                             <InstagramFeedPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                             <InstagramProfileFeedPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                         </div>
-                                     </div>
+            <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+                <div className="space-y-8">
+                    <div>
+                        <h2 className="text-sm font-semibold text-gray-900">Feeds</h2>
+                        <div className="mt-4 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="flex justify-center">
+                                <FacebookFeedPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                            <div className="flex justify-center">
+                                <FacebookProfileFeedsPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                            <div className="flex justify-center">
+                                <InstagramFeedPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                            <div className="flex justify-center">
+                                <InstagramProfileFeedPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                        </div>
+                    </div>
 
-                                     {/* Stories, status, reels Section */}
-                                     <div>
-                                         <h2 className="text-base font-semibold mb-[-30px]">Stories, status, reels
-                                         </h2>
-                                         <div className="grid grid-cols-4 gap-6 mb-[-30px] ml-[-40px]">
-                                             <FacebookStoriesPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                             <FacebookReelsPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                             <InstagramReelsPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                         </div>
-                                     </div>
+                    <div>
+                        <h2 className="text-sm font-semibold text-gray-900">Stories, status, reels</h2>
+                        <div className="mt-4 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="flex justify-center">
+                                <FacebookStoriesPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                            <div className="flex justify-center">
+                                <FacebookReelsPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                            <div className="flex justify-center">
+                                <InstagramReelsPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                        </div>
+                    </div>
 
-                                     {/* In-stream ads for videos and reels Section */}
-                                     <div>
-                                         <h2 className="text-base font-semibold mb-[-30px]">In-stream ads for videos and reels</h2>
-                                         <div className="grid grid-cols-4 gap-6 max-w-md mb-[-30px] ml-[-40px]">
-                                             <AdsOnFacebookReelsPreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                         </div>
-                                     </div>
+                    <div>
+                        <h2 className="text-sm font-semibold text-gray-900">In-stream ads for videos and reels</h2>
+                        <div className="mt-4 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="flex justify-center">
+                                <AdsOnFacebookReelsPreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                        </div>
+                    </div>
 
-                                     {/* Search results Section */}
-                                     <div>
-                                         <h2 className="text-base font-semibold mb-[-30px]">Search results</h2>
-                                         <div className="grid grid-cols-4 gap-6 mb-[-30px] ml-[-40px]">
-                                             <FacebookMarketplacePreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                             <InstagramExplorePreview
-                                                 mediaToShow={mediaFiles[0]}
-                                                 primaryText={primaryText}
-                                                 showHeaderOnHover={false}
-                                                 scale={75}
-                                             />
-                                         </div>
-                                     </div>
-                                 </div>
-                             )}
-                         </div>
-                     </div>
-                     
-                     {/* Right Column - Expire Info */}
-                     <div className="flex-shrink-0">
-                         {adCreative.days_left !== undefined && (
-                             <div className="bg-red-700 rounded-lg px-2 text-center">
-                                 <div className="text-white font-bold text-xs">
-                                     This link expires in {adCreative.days_left} {adCreative.days_left === 1 ? 'day' : 'days'}
-                                 </div>
-                             </div>
-                         )}
-                     </div>
-                 </div>
-            </div>
+                    <div>
+                        <h2 className="text-sm font-semibold text-gray-900">Search results</h2>
+                        <div className="mt-4 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
+                            <div className="flex justify-center">
+                                <FacebookMarketplacePreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                            <div className="flex justify-center">
+                                <InstagramExplorePreview
+                                    mediaToShow={mediaFiles[0]}
+                                    primaryText={primaryText}
+                                    showHeaderOnHover={false}
+                                    scale={75}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </div>
     );
 }
-
