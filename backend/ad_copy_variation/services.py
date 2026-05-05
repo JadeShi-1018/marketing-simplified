@@ -1,4 +1,4 @@
-from agent.gemini_client import call_gemini_json
+from .aistudio_client import call_aistudio_json
 from meta_ads.models import MetaAdCreative
 
 
@@ -38,8 +38,8 @@ def _creative_to_template(creative: MetaAdCreative) -> dict:
 def generate_from_existing(creative_id: int, instruction: str = '') -> dict:
     creative = MetaAdCreative.objects.get(pk=creative_id)
     template = _creative_to_template(creative)
-    return call_gemini_json(SYSTEM_PROMPT, _build_user_prompt(template, instruction))
+    return call_aistudio_json(SYSTEM_PROMPT, _build_user_prompt(template, instruction))
 
 
 def generate_from_custom(base_copy: dict, instruction: str = '') -> dict:
-    return call_gemini_json(SYSTEM_PROMPT, _build_user_prompt(base_copy, instruction))
+    return call_aistudio_json(SYSTEM_PROMPT, _build_user_prompt(base_copy, instruction))

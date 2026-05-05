@@ -152,7 +152,7 @@ class GenerateFromExistingTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         self.url = reverse('ad-copy-variation-generate')
 
-    @patch('ad_copy_variation.services.call_gemini_json')
+    @patch('ad_copy_variation.services.call_aistudio_json')
     def test_returns_json_shape(self, mock_call):
         mock_call.return_value = _FAKE_GEMINI_RESPONSE
         resp = self.client.post(
@@ -169,7 +169,7 @@ class GenerateFromExistingTests(APITestCase):
         self.assertEqual(resp.data['hook'], 'Generated hook line')
         self.assertEqual(mock_call.call_count, 1)
 
-    @patch('ad_copy_variation.services.call_gemini_json')
+    @patch('ad_copy_variation.services.call_aistudio_json')
     def test_does_not_persist(self, mock_call):
         mock_call.return_value = _FAKE_GEMINI_RESPONSE
         before = AdCopyVariation.objects.count()
@@ -181,7 +181,7 @@ class GenerateFromExistingTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(AdCopyVariation.objects.count(), before)
 
-    @patch('ad_copy_variation.services.call_gemini_json')
+    @patch('ad_copy_variation.services.call_aistudio_json')
     def test_template_is_built_from_creative(self, mock_call):
         mock_call.return_value = _FAKE_GEMINI_RESPONSE
         self.client.post(
@@ -204,7 +204,7 @@ class GenerateFromCustomTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         self.url = reverse('ad-copy-variation-generate')
 
-    @patch('ad_copy_variation.services.call_gemini_json')
+    @patch('ad_copy_variation.services.call_aistudio_json')
     def test_returns_json_shape(self, mock_call):
         mock_call.return_value = _FAKE_GEMINI_RESPONSE
         resp = self.client.post(
@@ -238,7 +238,7 @@ class GenerateExternalUrlNotImplementedTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         self.url = reverse('ad-copy-variation-generate')
 
-    @patch('ad_copy_variation.services.call_gemini_json')
+    @patch('ad_copy_variation.services.call_aistudio_json')
     def test_returns_501(self, mock_call):
         resp = self.client.post(
             self.url,
@@ -258,7 +258,7 @@ class GenerateBadInputTests(APITestCase):
         self.client.force_authenticate(user=self.user)
         self.url = reverse('ad-copy-variation-generate')
 
-    @patch('ad_copy_variation.services.call_gemini_json')
+    @patch('ad_copy_variation.services.call_aistudio_json')
     def test_missing_creative_id_for_existing(self, mock_call):
         resp = self.client.post(
             self.url,
@@ -268,7 +268,7 @@ class GenerateBadInputTests(APITestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         mock_call.assert_not_called()
 
-    @patch('ad_copy_variation.services.call_gemini_json')
+    @patch('ad_copy_variation.services.call_aistudio_json')
     def test_unknown_source_mode(self, mock_call):
         resp = self.client.post(
             self.url,
