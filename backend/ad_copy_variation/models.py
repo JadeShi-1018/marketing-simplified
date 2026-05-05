@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -29,6 +31,13 @@ class AdCopyVariation(TimeStampedModel):
     instruction = models.TextField(blank=True, default='')
     model_name = models.CharField(max_length=64, default='gemini-2.5-flash-lite')
     prompt_version = models.CharField(max_length=32, default='v1')
+
+    batch_id = models.UUIDField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text='Groups variations generated from the same batch call.',
+    )
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

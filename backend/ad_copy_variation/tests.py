@@ -374,3 +374,138 @@ class PermissionTests(APITestCase):
             format='json',
         )
         self.assertIn(resp.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+
+class GenerateBatchTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = _make_user(username='gen_batch')
+
+    def setUp(self):
+        self.client.force_authenticate(user=self.user)
+        self.url = reverse('ad-copy-variation-generate')
+
+    def _custom_payload(self, **overrides):
+        base = {
+            'source_mode': 'custom',
+            'base_copy': {
+                'hook': 'h', 'headline': 'hl',
+                'description': 'd', 'cta': 'SHOP_NOW',
+            },
+        }
+        base.update(overrides)
+        return base
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_batch_custom_happy_path(self, mock_llm):
+        mock_llm.return_value = _FAKE_GEMINI_RESPONSE
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(count=5),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertIn('batch_id', resp.data)
+        # batch_id is uuid v4 string with 4 hyphens
+        self.assertEqual(resp.data['batch_id'].count('-'), 4)
+        self.assertEqual(resp.data['count_requested'], 5)
+        self.assertEqual(resp.data['count_succeeded'], 5)
+        self.assertEqual(resp.data['count_failed'], 0)
+        self.assertEqual(len(resp.data['results']), 5)
+        self.assertEqual(resp.data['failed_indices'], [])
+        for r in resp.data['results']:
+            self.assertEqual(set(r.keys()), {'hook', 'headline', 'description', 'cta'})
+        # Generate is preview-only — no rows persisted.
+        self.assertEqual(AdCopyVariation.objects.count(), 0)
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_batch_partial_failure(self, mock_llm):
+        # Mix of success + RuntimeError; mock side_effect is consumed in call order
+        # (Mock is thread-safe for side_effect popping).
+        mock_llm.side_effect = [
+            _FAKE_GEMINI_RESPONSE,
+            RuntimeError('mocked transient'),
+            _FAKE_GEMINI_RESPONSE,
+            _FAKE_GEMINI_RESPONSE,
+        ]
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(count=4),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['count_requested'], 4)
+        self.assertEqual(resp.data['count_succeeded'], 3)
+        self.assertEqual(resp.data['count_failed'], 1)
+        self.assertEqual(len(resp.data['results']), 3)
+        self.assertEqual(len(resp.data['failed_indices']), 1)
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_batch_all_fail_returns_502(self, mock_llm):
+        mock_llm.side_effect = RuntimeError('always fail')
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(count=3),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertEqual(resp.data['count_succeeded'], 0)
+        self.assertEqual(resp.data['count_failed'], 3)
+        self.assertEqual(resp.data['results'], [])
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_count_too_large_returns_400(self, mock_llm):
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(count=51),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_llm.assert_not_called()
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_count_zero_returns_400(self, mock_llm):
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(count=0),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_llm.assert_not_called()
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_count_non_integer_returns_400(self, mock_llm):
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(count='abc'),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_llm.assert_not_called()
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_count_one_returns_flat_shape_not_wrapped(self, mock_llm):
+        mock_llm.return_value = _FAKE_GEMINI_RESPONSE
+        # Send count=1 explicitly
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(count=1),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        # Must be the flat shape (no wrapper), so the legacy modal frontend keeps working.
+        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})
+        self.assertNotIn('batch_id', resp.data)
+        self.assertNotIn('results', resp.data)
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    def test_count_omitted_returns_flat_shape_not_wrapped(self, mock_llm):
+        mock_llm.return_value = _FAKE_GEMINI_RESPONSE
+        # Omit count entirely
+        resp = self.client.post(
+            self.url,
+            self._custom_payload(),
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})

@@ -1,6 +1,15 @@
+import logging
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from .aistudio_client import call_aistudio_json
 from .url_fetcher import fetch_url_text
 from meta_ads.models import MetaAdCreative
+
+logger = logging.getLogger(__name__)
+
+MAX_BATCH = 50
+BATCH_CONCURRENCY = 5
 
 
 CTA_ENUM_ALLOWLIST = (
@@ -133,3 +142,67 @@ def generate_from_external_url(url: str, instruction: str = '') -> dict:
         instruction=focus,
     )
     return call_aistudio_json(SYSTEM_PROMPT, user_prompt)
+
+
+def _single_generate_dispatch(source_mode: str, source_kwargs: dict, instruction: str) -> dict:
+    if source_mode == 'existing':
+        creative_id = source_kwargs.get('creative_id')
+        if not creative_id:
+            raise ValueError('creative_id required for source_mode=existing')
+        return generate_from_existing(int(creative_id), instruction)
+    if source_mode == 'custom':
+        base_copy = source_kwargs.get('base_copy') or {}
+        return generate_from_custom(base_copy, instruction)
+    if source_mode == 'external_url':
+        url = (source_kwargs.get('url') or '').strip()
+        if not url:
+            raise ValueError('url required for source_mode=external_url')
+        return generate_from_external_url(url, instruction)
+    raise ValueError(f'unknown source_mode: {source_mode}')
+
+
+def generate_batch(
+    source_mode: str,
+    count: int,
+    source_kwargs: dict,
+    instruction: str = '',
+) -> dict:
+    if count < 1 or count > MAX_BATCH:
+        raise ValueError(f'count must be between 1 and {MAX_BATCH}')
+
+    batch_id = str(uuid.uuid4())
+    results: list = [None] * count
+    failed_indices: list = []
+
+    def _task(index: int):
+        try:
+            return index, _single_generate_dispatch(source_mode, source_kwargs, instruction)
+        except Exception as exc:
+            logger.warning('Batch generation failed batch_id=%s index=%s err=%s', batch_id, index, str(exc)[:200])
+            return index, exc
+
+    with ThreadPoolExecutor(max_workers=BATCH_CONCURRENCY) as pool:
+        futures = [pool.submit(_task, i) for i in range(count)]
+        for fut in as_completed(futures):
+            idx, outcome = fut.result()
+            if isinstance(outcome, Exception):
+                failed_indices.append(idx)
+            else:
+                results[idx] = outcome
+
+    successful = [r for r in results if r is not None]
+    failed_indices.sort()
+
+    logger.info(
+        'Batch generation done batch_id=%s requested=%d succeeded=%d failed=%d',
+        batch_id, count, len(successful), len(failed_indices),
+    )
+
+    return {
+        'batch_id': batch_id,
+        'count_requested': count,
+        'count_succeeded': len(successful),
+        'count_failed': len(failed_indices),
+        'results': successful,
+        'failed_indices': failed_indices,
+    }
