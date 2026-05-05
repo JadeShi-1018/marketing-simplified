@@ -28,6 +28,7 @@ import {
   holdRateBandClass,
   thumbnailOrFallback,
 } from './metaAdsUtils';
+import AdCopyVariationModal from './AdCopyVariationModal';
 import ExportActionMenu from './ExportActionMenu';
 import SelectAllHeader from './SelectAllHeader';
 import VideoModal from './VideoModal';
@@ -62,6 +63,7 @@ export default function CreativesPanel({
   const [previewCreativeId, setPreviewCreativeId] = useState<number | null>(null);
   const [previewTitle, setPreviewTitle] = useState<string>('');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [variationModalOpen, setVariationModalOpen] = useState(false);
 
   const toggleSelected = (id: number) => {
     setSelectedIds((prev) => {
@@ -159,6 +161,13 @@ export default function CreativesPanel({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => setVariationModalOpen(true)}
+            className="inline-flex h-9 items-center gap-1 rounded-lg bg-white px-3 text-sm font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
+          >
+            Generate variation
+          </button>
           <ExportActionMenu
             unit="creative"
             selectedIds={Array.from(selectedIds)}
@@ -250,6 +259,11 @@ export default function CreativesPanel({
           onPageChange={setCurrentPage}
         />
       )}
+      <AdCopyVariationModal
+        open={variationModalOpen}
+        onClose={() => setVariationModalOpen(false)}
+        selectedCreatives={rows.filter((c) => selectedIds.has(c.id))}
+      />
     </section>
   );
 }
