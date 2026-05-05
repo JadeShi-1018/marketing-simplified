@@ -60,7 +60,6 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
   const removeTask = useTaskStore((s) => s.removeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const [search, setSearch] = useState('');
-  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
@@ -254,7 +253,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
       window.cancelAnimationFrame(frame);
       window.removeEventListener('resize', measureTruncation);
     };
-  }, [density, loading, visible]);
+  }, [loading, visible]);
 
   const memberOptions = useMemo(() => {
     if (members.length > 0) {
@@ -547,28 +546,6 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
         >
           {bulkMode ? 'Exit Bulk edit' : 'Bulk edit'}
         </button>
-        <div className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white p-0.5">
-          <button
-            type="button"
-            onClick={() => setDensity('comfortable')}
-            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${density === 'comfortable'
-                ? 'border border-[#2fc6d6] bg-[#effbfc] text-[#2fc6d6] shadow-sm'
-                : 'border border-transparent text-gray-600 hover:bg-gray-50'
-              }`}
-          >
-            Comfortable
-          </button>
-          <button
-            type="button"
-            onClick={() => setDensity('compact')}
-            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${density === 'compact'
-                ? 'border border-[#2fc6d6] bg-[#effbfc] text-[#2fc6d6] shadow-sm'
-                : 'border border-transparent text-gray-600 hover:bg-gray-50'
-              }`}
-          >
-            Compact
-          </button>
-        </div>
       </div>
 
       {bulkMode && selectedIds.length > 0 && (
@@ -720,7 +697,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                     }}
                     onContextMenu={(e) => openRowMenu(e, task)}
                   >
-                    <td className={`${TABLE_COLUMN_WIDTHS.icon} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
+                    <td className={`${TABLE_COLUMN_WIDTHS.icon} align-middle px-4 py-1.5`}>
                       <div className="relative" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
@@ -758,7 +735,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                     </td>
                     {bulkMode ? (
                       <td
-                        className={`${TABLE_COLUMN_WIDTHS.select} align-middle px-2 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}
+                        className={`${TABLE_COLUMN_WIDTHS.select} align-middle px-2 py-1.5`}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <input
@@ -769,7 +746,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                         />
                       </td>
                     ) : null}
-                    <td className={`align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
+                    <td className="align-middle px-4 py-1.5">
                       <div className="min-w-0">
                         {editingSummaryId === task.id ? (
                           <input
@@ -830,10 +807,10 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                         )}
                       </div>
                     </td>
-                    <td className={`${TABLE_COLUMN_WIDTHS.type} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs font-medium uppercase tracking-wide text-gray-500`}>
+                    <td className={`${TABLE_COLUMN_WIDTHS.type} align-middle px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-gray-500`}>
                       {TYPE_LABEL[task.type] ?? task.type ?? '—'}
                     </td>
-                    <td className={`${TABLE_COLUMN_WIDTHS.status} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
+                    <td className={`${TABLE_COLUMN_WIDTHS.status} align-middle px-4 py-1.5`}>
                       <div className="relative" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
@@ -874,7 +851,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                       </div>
                     </td>
                     <td
-                      className={`${TABLE_COLUMN_WIDTHS.owner} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs text-gray-600`}
+                      className={`${TABLE_COLUMN_WIDTHS.owner} align-middle px-4 py-1.5 text-xs text-gray-600`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="relative">
@@ -929,7 +906,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                       </div>
                     </td>
                     <td
-                      className={`${TABLE_COLUMN_WIDTHS.approver} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs text-gray-600`}
+                      className={`${TABLE_COLUMN_WIDTHS.approver} align-middle px-4 py-1.5 text-xs text-gray-600`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {(() => {
@@ -1018,7 +995,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                       })()}
                     </td>
                     <td
-                      className={`${TABLE_COLUMN_WIDTHS.due} relative align-middle px-3 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-left text-xs tabular-nums text-gray-500`}
+                      className={`${TABLE_COLUMN_WIDTHS.due} relative align-middle px-3 py-1.5 text-left text-xs tabular-nums text-gray-500`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button

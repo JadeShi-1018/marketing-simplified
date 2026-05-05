@@ -87,6 +87,15 @@ const ROOT_PATHS = new Set([
   '/timeline',
 ]);
 
+const UPCOMING_MEETINGS_PANEL_STORAGE_KEY = 'dashboard-upcoming-meetings-panel-open';
+
+function getStoredMeetingsPanelOpen(): boolean {
+  const stored = localStorage.getItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY);
+  if (stored === 'false') return false;
+  if (stored === 'true') return true;
+  return true;
+}
+
 export default function DashboardLayout({
   children,
   alerts = [],
@@ -94,7 +103,8 @@ export default function DashboardLayout({
   hideRightPanel = false,
   mainClassName = '',
 }: DashboardLayoutProps) {
-  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [hasLoadedPanelPreference, setHasLoadedPanelPreference] = useState(false);
   const [meetingsLoading, setMeetingsLoading] = useState(
     () => !(upcomingMeetings && upcomingMeetings.length > 0)
   );
@@ -111,6 +121,11 @@ export default function DashboardLayout({
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
   const [autoMeetings, setAutoMeetings] = useState<MeetingListItem[]>([]);
   const useExplicit = upcomingMeetings && upcomingMeetings.length > 0;
+
+  useEffect(() => {
+    setIsPanelOpen(getStoredMeetingsPanelOpen());
+    setHasLoadedPanelPreference(true);
+  }, []);
 
   useEffect(() => {
     const previousHtmlOverflow = document.documentElement.style.overflow;
@@ -163,6 +178,15 @@ export default function DashboardLayout({
   }, [activeProject?.id, hasProjectStoreHydrated, useExplicit]);
 
   const meetingsForPanel = useExplicit ? upcomingMeetings! : autoMeetings;
+  const isMeetingsPanelOpen = hasLoadedPanelPreference && isPanelOpen;
+  const toggleMeetingsPanel = () => {
+    setIsPanelOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY, String(next));
+      return next;
+    });
+    setHasLoadedPanelPreference(true);
+  };
 
   return (
     <div className="fixed inset-0 flex bg-[#F7F8FA] overflow-hidden">
@@ -194,10 +218,10 @@ export default function DashboardLayout({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setIsPanelOpen(!isPanelOpen)}
+                onClick={toggleMeetingsPanel}
                 className="h-7 px-2 text-xs text-gray-500 hover:text-gray-700"
               >
-                {isPanelOpen ? (
+                {isMeetingsPanelOpen ? (
                   <><PanelRightClose className="w-4 h-4 mr-1" /> Hide Panel</>
                 ) : (
                   <><PanelRightOpen className="w-4 h-4 mr-1" /> Show Panel</>
@@ -216,7 +240,7 @@ export default function DashboardLayout({
       {!hideRightPanel && (
         <UpcomingMeetingsPanel
           meetings={meetingsForPanel}
-          isOpen={isPanelOpen}
+          isOpen={isMeetingsPanelOpen}
           loading={meetingsLoading}
         />
       )}

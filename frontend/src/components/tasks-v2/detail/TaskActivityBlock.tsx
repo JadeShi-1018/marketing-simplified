@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskComment } from '@/types/task';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 
 function fmtTime(iso: string) {
   const d = new Date(iso);
@@ -45,6 +46,9 @@ export default function TaskActivityBlock({
   const [body, setBody] = useState('');
   const [posting, setPosting] = useState(false);
   const [localKey, setLocalKey] = useState(0);
+  const { textareaRef, resizeTextarea } = useAutoResizeTextarea(body, {
+    minHeight: 128,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -126,11 +130,16 @@ export default function TaskActivityBlock({
       {!readOnly && !loading && (
         <div className="mt-4 rounded-lg bg-gray-50 p-3 ring-1 ring-gray-100">
           <textarea
-            className="w-full resize-y rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-[#3CCED7]"
-            rows={2}
+            ref={textareaRef}
+            className="w-full resize-none overflow-hidden rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-[#3CCED7]"
+            rows={1}
             placeholder="Add a comment…"
             value={body}
-            onChange={(e) => setBody(e.target.value)}
+            onChange={(e) => {
+              setBody(e.target.value);
+              resizeTextarea();
+            }}
+            onInput={resizeTextarea}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                 e.preventDefault();

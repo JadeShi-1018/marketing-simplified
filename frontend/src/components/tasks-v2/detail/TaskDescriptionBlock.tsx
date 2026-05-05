@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAutoResizeTextarea } from '@/hooks/useAutoResizeTextarea';
 
 export default function TaskDescriptionBlock({
   task,
@@ -20,6 +21,9 @@ export default function TaskDescriptionBlock({
   const [value, setValue] = useState(task.description || '');
   const [saving, setSaving] = useState(false);
   const lastSaved = useRef(task.description || '');
+  const { textareaRef, resizeTextarea } = useAutoResizeTextarea(value, {
+    minHeight: 128,
+  });
 
   useEffect(() => {
     setValue(task.description || '');
@@ -57,9 +61,14 @@ export default function TaskDescriptionBlock({
         </div>
       ) : (
         <textarea
-          className="min-h-[60px] w-full resize-y rounded-md bg-transparent px-0 py-1 text-sm leading-relaxed text-gray-900 outline-none transition placeholder:text-gray-300 focus:bg-gray-50 focus:px-2"
+          ref={textareaRef}
+          className="w-full resize-none overflow-hidden rounded-md bg-transparent px-0 py-1 text-sm leading-relaxed text-gray-900 outline-none transition placeholder:text-gray-300 focus:bg-gray-50 focus:px-2"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => {
+            setValue(e.target.value);
+            resizeTextarea();
+          }}
+          onInput={resizeTextarea}
           onBlur={commit}
           disabled={readOnly}
           placeholder={readOnly ? 'No description.' : 'Describe what this task is about…'}
