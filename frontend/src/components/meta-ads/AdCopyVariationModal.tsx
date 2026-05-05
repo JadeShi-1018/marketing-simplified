@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import toast from "react-hot-toast";
 import { Loader2, X } from "lucide-react";
 
@@ -8,9 +9,11 @@ import Modal from "@/components/ui/Modal";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   generateVariation,
+  listVariations,
   saveVariation,
 } from "@/lib/api/adCopyVariationApi";
 import type {
+  AdCopyVariation,
   AdCopyVariationCopy,
   AdCopyVariationSourceMode,
 } from "@/types/adCopyVariation";
@@ -47,6 +50,20 @@ const TAB_TRIGGER_BASE =
 const SECTION_LABEL =
   "text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-2";
 
+function relativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const diff = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (diff < 60) return `${diff}s ago`;
+  const m = Math.floor(diff / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+
 function extractErrorMessage(err: unknown, fallback: string): string {
   if (typeof err === "object" && err !== null) {
     const maybeAxios = err as {
@@ -77,6 +94,8 @@ export default function AdCopyVariationModal({
   const [result, setResult] = useState<AdCopyVariationCopy | null>(null);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [recentVariations, setRecentVariations] = useState<AdCopyVariation[]>([]);
+  const [recentTotal, setRecentTotal] = useState<number>(0);
 
   const firstFieldRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -94,6 +113,31 @@ export default function AdCopyVariationModal({
 
   const sourceCreative =
     selectedCreatives.length === 1 ? selectedCreatives[0] : null;
+
+  useEffect(() => {
+    if (!open || mode !== "existing" || !sourceCreative) {
+      setRecentVariations([]);
+      setRecentTotal(0);
+      return;
+    }
+    let active = true;
+    listVariations(sourceCreative.id, { limit: 3 })
+      .then((res) => {
+        if (!active) return;
+        setRecentVariations(res.results);
+        setRecentTotal(res.total);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setRecentVariations([]);
+        setRecentTotal(0);
+        // Secondary surface; do not toast — log only so primary generate UX stays clean.
+        console.warn("listVariations failed", err);
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, mode, sourceCreative?.id]);
   const sourceHook = sourceCreative
     ? (sourceCreative.body || "").split("\n", 1)[0]
     : "";
@@ -225,6 +269,55 @@ export default function AdCopyVariationModal({
               value="existing"
               className="px-6 pt-4 pb-5 space-y-5 mt-0"
             >
+              {sourceCreative && (
+                <div>
+                  <div className={SECTION_LABEL}>Recent variations</div>
+                  {recentVariations.length === 0 ? (
+                    <p className="text-[12px] text-gray-500">
+                      No variations saved for this creative yet.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-gray-100">
+                      {recentVariations.map((rv) => {
+                        const hookText = (rv.hook || "").trim() || "(no hook)";
+                        const truncated =
+                          hookText.length > 60
+                            ? `${hookText.slice(0, 60)}…`
+                            : hookText;
+                        return (
+                          <li
+                            key={rv.id}
+                            className="flex items-start justify-between gap-3 py-2 hover:bg-gray-50 transition-colors px-2 -mx-2 rounded-md"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[14px] text-gray-700 truncate">
+                                {truncated}
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-gray-400">
+                                {relativeTime(rv.created_at)}
+                              </div>
+                            </div>
+                            <Link
+                              href={`/meta-ads/creatives/${sourceCreative.id}/variations`}
+                              className="shrink-0 text-[12px] text-[#3CCED7] hover:underline"
+                            >
+                              Edit
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                  {recentTotal > 3 && (
+                    <Link
+                      href={`/meta-ads/creatives/${sourceCreative.id}/variations`}
+                      className="mt-2 inline-block text-[12px] text-gray-500 hover:text-gray-900"
+                    >
+                      View all ({recentTotal}) →
+                    </Link>
+                  )}
+                </div>
+              )}
               {sourceCreative ? (
                 <div>
                   <div className={SECTION_LABEL}>Source preview</div>
