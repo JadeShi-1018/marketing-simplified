@@ -49,7 +49,9 @@ def call_aistudio(
     system_prompt: str,
     user_prompt: str,
     model: str = AISTUDIO_MODEL,
-    temperature: float = 0.3,
+    # 0.7 chosen for diversity: at 0.3 successive calls produced near-duplicate
+    # variations; mediabuyers want fresh angles on regenerate.
+    temperature: float = 0.7,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> str:
     """Plain-text completion against AI Studio."""
@@ -87,7 +89,9 @@ def call_aistudio_json(
     system_prompt: str,
     user_prompt: str,
     model: str = AISTUDIO_MODEL,
-    temperature: float = 0.3,
+    # 0.7 chosen for diversity: at 0.3 successive calls produced near-duplicate
+    # variations; mediabuyers want fresh angles on regenerate.
+    temperature: float = 0.7,
     timeout: int = DEFAULT_TIMEOUT,
     _retry: bool = True,
 ) -> dict:
