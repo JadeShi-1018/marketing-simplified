@@ -44,10 +44,25 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
             return Response(copy, status=status.HTTP_200_OK)
 
         if source_mode == 'external_url':
-            return Response(
-                {'error': 'external_url mode not yet implemented'},
-                status=status.HTTP_501_NOT_IMPLEMENTED,
-            )
+            url = (request.data.get('url') or '').strip()
+            if not url:
+                return Response(
+                    {'error': 'url required for source_mode=external_url'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if not (url.startswith('http://') or url.startswith('https://')):
+                return Response(
+                    {'error': 'url must be http or https'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                copy = services.generate_from_external_url(url, instruction)
+            except Exception as exc:
+                return Response(
+                    {'error': f'External URL fetch or generation failed: {exc}'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+            return Response(copy, status=status.HTTP_200_OK)
 
         return Response(
             {'error': f'unknown source_mode: {source_mode}'},

@@ -229,7 +229,7 @@ class GenerateFromCustomTests(APITestCase):
         self.assertIn('SUBSCRIBE', user_prompt)
 
 
-class GenerateExternalUrlNotImplementedTests(APITestCase):
+class GenerateFromExternalUrlTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user(username='gen_external')
@@ -239,14 +239,75 @@ class GenerateExternalUrlNotImplementedTests(APITestCase):
         self.url = reverse('ad-copy-variation-generate')
 
     @patch('ad_copy_variation.services.call_aistudio_json')
-    def test_returns_501(self, mock_call):
+    @patch('ad_copy_variation.services.fetch_url_text')
+    def test_happy_path(self, mock_fetch, mock_llm):
+        mock_fetch.return_value = 'rendered ad page text with hook + body + cta'
+        mock_llm.return_value = _FAKE_GEMINI_RESPONSE
         resp = self.client.post(
             self.url,
-            {'source_mode': 'external_url', 'source_ref': 'https://example.com/ad'},
+            {
+                'source_mode': 'external_url',
+                'url': 'https://example.com/test',
+                'instruction': 'shorter',
+            },
             format='json',
         )
-        self.assertEqual(resp.status_code, status.HTTP_501_NOT_IMPLEMENTED)
-        mock_call.assert_not_called()
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})
+        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(mock_llm.call_count, 1)
+        # Generate is preview-only — no row should be persisted.
+        self.assertFalse(AdCopyVariation.objects.filter(source_mode='external_url').exists())
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    @patch('ad_copy_variation.services.fetch_url_text')
+    def test_missing_url(self, mock_fetch, mock_llm):
+        resp = self.client.post(
+            self.url,
+            {'source_mode': 'external_url'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_fetch.assert_not_called()
+        mock_llm.assert_not_called()
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    @patch('ad_copy_variation.services.fetch_url_text')
+    def test_invalid_url_scheme(self, mock_fetch, mock_llm):
+        resp = self.client.post(
+            self.url,
+            {'source_mode': 'external_url', 'url': 'ftp://example.com/x'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        mock_fetch.assert_not_called()
+        mock_llm.assert_not_called()
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    @patch('ad_copy_variation.services.fetch_url_text')
+    def test_fetch_failure_returns_502(self, mock_fetch, mock_llm):
+        mock_fetch.side_effect = RuntimeError('Browserless fetch failed: status=500')
+        resp = self.client.post(
+            self.url,
+            {'source_mode': 'external_url', 'url': 'https://example.com/test'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn('error', resp.data)
+        mock_llm.assert_not_called()
+
+    @patch('ad_copy_variation.services.call_aistudio_json')
+    @patch('ad_copy_variation.services.fetch_url_text')
+    def test_llm_failure_returns_502(self, mock_fetch, mock_llm):
+        mock_fetch.return_value = 'rendered text'
+        mock_llm.side_effect = RuntimeError('AI Studio call failed: status=429')
+        resp = self.client.post(
+            self.url,
+            {'source_mode': 'external_url', 'url': 'https://example.com/test'},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn('error', resp.data)
 
 
 class GenerateBadInputTests(APITestCase):

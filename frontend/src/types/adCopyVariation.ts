@@ -24,6 +24,7 @@ export interface GenerateVariationRequest {
   source_mode: AdCopyVariationSourceMode;
   creative_id?: number;
   base_copy?: AdCopyVariationCopy;
+  url?: string;
   instruction?: string;
 }
 

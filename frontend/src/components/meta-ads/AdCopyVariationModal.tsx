@@ -38,9 +38,6 @@ const EMPTY_COPY: AdCopyVariationCopy = {
   cta: "",
 };
 
-const EXTERNAL_URL_TOOLTIP =
-  "Pending Gemini grounding probe — see prompt_04";
-
 const TEXTAREA_BASE =
   "mt-2 w-full resize-none bg-transparent text-[14px] text-gray-700 placeholder:text-gray-400 outline-none border-0 leading-5 py-1 focus:ring-0";
 
@@ -96,6 +93,7 @@ export default function AdCopyVariationModal({
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [recentVariations, setRecentVariations] = useState<AdCopyVariation[]>([]);
   const [recentTotal, setRecentTotal] = useState<number>(0);
+  const [externalUrl, setExternalUrl] = useState<string>("");
 
   const firstFieldRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -107,6 +105,7 @@ export default function AdCopyVariationModal({
     setResult(null);
     setIsGenerating(false);
     setIsSaving(false);
+    setExternalUrl("");
     const frame = requestAnimationFrame(() => firstFieldRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [open, selectedCreatives.length]);
@@ -175,6 +174,22 @@ export default function AdCopyVariationModal({
     }
   };
 
+  const handleGenerateExternalUrl = async () => {
+    setIsGenerating(true);
+    try {
+      const copy = await generateVariation({
+        source_mode: "external_url",
+        url: externalUrl.trim(),
+        instruction,
+      });
+      setResult(copy);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Failed to generate variation."));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!result) return;
     setIsSaving(true);
@@ -183,6 +198,7 @@ export default function AdCopyVariationModal({
         source_mode: mode,
         creative:
           mode === "existing" && sourceCreative ? sourceCreative.id : null,
+        source_ref: mode === "external_url" ? externalUrl.trim() : undefined,
         hook: result.hook,
         headline: result.headline,
         description: result.description,
@@ -207,13 +223,17 @@ export default function AdCopyVariationModal({
       void handleGenerateExisting();
     } else if (mode === "custom") {
       void handleGenerateCustom();
+    } else if (mode === "external_url") {
+      void handleGenerateExternalUrl();
     }
   };
 
+  const externalUrlValid = /^https?:\/\//.test(externalUrl.trim());
+
   const generateDisabled =
     isGenerating ||
-    mode === "external_url" ||
-    (mode === "existing" && !sourceCreative);
+    (mode === "existing" && !sourceCreative) ||
+    (mode === "external_url" && !externalUrlValid);
 
   return (
     <Modal isOpen={open} onClose={onClose} disableBackdropClose>
@@ -256,9 +276,6 @@ export default function AdCopyVariationModal({
               </TabsTrigger>
               <TabsTrigger
                 value="external_url"
-                disabled
-                title={EXTERNAL_URL_TOOLTIP}
-                aria-disabled="true"
                 className={TAB_TRIGGER_BASE}
               >
                 External URL
@@ -459,11 +476,37 @@ export default function AdCopyVariationModal({
 
             <TabsContent
               value="external_url"
-              className="px-6 pt-4 pb-5 mt-0"
+              className="px-6 pt-4 pb-5 space-y-5 mt-0"
             >
-              <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-[13px] text-gray-600">
-                External URL mode is disabled until the Gemini URL grounding
-                probe completes.
+              <div>
+                <div className={SECTION_LABEL}>Ad URL</div>
+                <input
+                  type="url"
+                  value={externalUrl}
+                  onChange={(e) => setExternalUrl(e.target.value)}
+                  placeholder="https://www.facebook.com/ads/library/?id=..."
+                  className="w-full bg-transparent text-[14px] text-gray-700 placeholder:text-gray-400 outline-none border-0 border-b border-gray-200 focus:border-[#3CCED7] transition py-1"
+                />
+                <p className="mt-1 text-[11px] text-gray-400">
+                  Paste a public Meta Ad Library URL. The page is fetched via a
+                  managed headless browser, then the ad copy is extracted and
+                  rewritten.
+                </p>
+              </div>
+              <div>
+                <div className={SECTION_LABEL}>
+                  Instruction
+                  <span className="ml-1.5 text-gray-300 normal-case tracking-normal font-normal">
+                    optional
+                  </span>
+                </div>
+                <textarea
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  placeholder="Focus the rewrite, e.g. 'make it shorter and more urgent'"
+                  rows={3}
+                  className={TEXTAREA_BASE}
+                />
               </div>
             </TabsContent>
           </Tabs>

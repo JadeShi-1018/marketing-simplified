@@ -1,4 +1,5 @@
 from .aistudio_client import call_aistudio_json
+from .url_fetcher import fetch_url_text
 from meta_ads.models import MetaAdCreative
 
 
@@ -43,3 +44,27 @@ def generate_from_existing(creative_id: int, instruction: str = '') -> dict:
 
 def generate_from_custom(base_copy: dict, instruction: str = '') -> dict:
     return call_aistudio_json(SYSTEM_PROMPT, _build_user_prompt(base_copy, instruction))
+
+
+EXTERNAL_URL_PROMPT_PREFIX = (
+    "Below is the rendered text content of a public ad page. "
+    "First identify the ad copy fields hidden in this text (the page may contain "
+    "navigation, ad delivery metadata, advertiser info, and unrelated content; "
+    "the ad copy itself is the main creative text — typically a short hook line, "
+    "a headline, a body paragraph, and a call-to-action button label). "
+    "Then produce a NEW VARIATION of that ad copy following the user's instruction.\n\n"
+    "Page text:\n---\n{page_text}\n---\n\n"
+    "Instruction: {instruction}\n\n"
+    "Return strict JSON with keys: hook, headline, description, cta. "
+    "Each value must be the NEW variation, not the extracted source."
+)
+
+
+def generate_from_external_url(url: str, instruction: str = '') -> dict:
+    page_text = fetch_url_text(url)
+    focus = instruction.strip() or "Rewrite all four fields with fresh phrasing while preserving the offer style and CTA."
+    user_prompt = EXTERNAL_URL_PROMPT_PREFIX.format(
+        page_text=page_text,
+        instruction=focus,
+    )
+    return call_aistudio_json(SYSTEM_PROMPT, user_prompt)
