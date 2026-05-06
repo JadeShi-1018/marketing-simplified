@@ -1179,7 +1179,7 @@ class CalendarEventSignalTests(TestCase):
         )
         task = self._create_task(summary="A" * 255, due_date=None)
         Task.objects.filter(pk=task.pk).update(due_date=date(2026, 4, 12))
-        task.refresh_from_db()
+        task = Task.objects.get(pk=task.pk)
 
         request = APIRequestFactory().patch(
             f"/api/tasks/{task.id}/",
@@ -1190,16 +1190,16 @@ class CalendarEventSignalTests(TestCase):
         response = TaskViewSet.as_view({"patch": "partial_update"})(request, pk=task.id)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        task.refresh_from_db()
-        self.assertEqual(task.description, "Updated description only")
+        updated_task = Task.objects.get(pk=task.pk)
+        self.assertEqual(updated_task.description, "Updated description only")
         event = self.CalendarEvent.objects.get(
             event_type=self.CalendarEvent.EventType.TASK,
-            task=task,
+            task=updated_task,
         )
         max_title_length = self.CalendarEvent._meta.get_field("title").max_length
         self.assertLessEqual(len(event.title), max_title_length)
         self.assertIn(f"[{self.project.name}]", event.title)
-        self.assertIn(task.get_status_display(), event.title)
+        self.assertIn(updated_task.get_status_display(), event.title)
 
     # ── Bug 3: Deleted events removed from calendar ───────────────────────────
 
