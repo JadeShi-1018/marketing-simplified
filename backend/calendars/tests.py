@@ -1163,6 +1163,44 @@ class CalendarEventSignalTests(TestCase):
         event = self.CalendarEvent.objects.get(event_type=self.CalendarEvent.EventType.TASK, task=task)
         self.assertEqual(event.end_time.date(), date(2026, 4, 15))
 
+    def test_task_description_patch_handles_long_calendar_title_projection(self):
+        """
+        Updating a task description should not fail because the derived calendar
+        title adds project/status text around an already long task summary.
+        """
+        from datetime import date
+        from task.models import Task
+        from task.views import TaskViewSet
+
+        ProjectMember.objects.get_or_create(
+            user=self.user,
+            project=self.project,
+            defaults={"role": "owner", "is_active": True},
+        )
+        task = self._create_task(summary="A" * 255, due_date=None)
+        Task.objects.filter(pk=task.pk).update(due_date=date(2026, 4, 12))
+        task.refresh_from_db()
+
+        request = APIRequestFactory().patch(
+            f"/api/tasks/{task.id}/",
+            {"description": "Updated description only"},
+            format="json",
+        )
+        force_authenticate(request, user=self.user)
+        response = TaskViewSet.as_view({"patch": "partial_update"})(request, pk=task.id)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        task.refresh_from_db()
+        self.assertEqual(task.description, "Updated description only")
+        event = self.CalendarEvent.objects.get(
+            event_type=self.CalendarEvent.EventType.TASK,
+            task=task,
+        )
+        max_title_length = self.CalendarEvent._meta.get_field("title").max_length
+        self.assertLessEqual(len(event.title), max_title_length)
+        self.assertIn(f"[{self.project.name}]", event.title)
+        self.assertIn(task.get_status_display(), event.title)
+
     # ── Bug 3: Deleted events removed from calendar ───────────────────────────
 
     def test_calendar_event_deleted_when_task_deleted(self):
