@@ -48,9 +48,10 @@ export default function AgentSidePanel() {
   return (
     <aside
       className={`h-screen border-l border-gray-200 bg-white shrink-0 overflow-hidden flex ${
-        isOpen ? '' : 'w-0'
+        isOpen ? '' : 'w-0 pointer-events-none'
       }`}
       style={isOpen ? { width } : undefined}
+      aria-hidden={!isOpen}
     >
       {/* Drag handle */}
       {isOpen && (

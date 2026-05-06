@@ -127,15 +127,16 @@ services:
         max-file: "3"
         labels: "service=nextjs"    
 
-  # Nginx Reverse Proxy
+  # Nginx Reverse Proxy (image COPY of nginx.conf avoids macOS bind-mount pread errors)
   nginx:
-    image: nginx:latest
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: marketing-simplified-nginx
     container_name: nginx-dev
     restart: always
     ports:
       - "80:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - backend
       - frontend

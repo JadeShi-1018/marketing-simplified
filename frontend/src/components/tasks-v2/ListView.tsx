@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData } from '@/types/task';
 import {
@@ -21,12 +21,17 @@ import BulkActionToolbar, { type BulkField } from './BulkActionToolbar';
 import TaskListRowContextMenu, {
   type TaskListRowContextMenuState,
 } from '@/components/tasks-v2/TaskListRowContextMenu';
+import LinearBulkOutputModal from '@/components/linear/LinearBulkOutputModal';
 
 interface ListViewProps {
   tasks: TaskData[];
   loading: boolean;
   error: string | null;
   projectId: number | null;
+  /** Opens the shared Linear import modal owned by the tasks page. */
+  onOpenLinearImport?: () => void;
+  /** After a successful bulk push to Linear, refresh task list from parent. */
+  onLinearBulkSynced?: () => void | Promise<void>;
 }
 
 const TYPE_LABEL = TASK_TYPES.reduce<Record<string, string>>((acc, t) => {
@@ -55,7 +60,14 @@ const STATUS_DOT_CLASS: Record<string, string> = {
   CANCELLED: 'bg-gray-400',
 };
 
-export default function ListView({ tasks, loading, error, projectId }: ListViewProps) {
+export default function ListView({
+  tasks,
+  loading,
+  error,
+  projectId,
+  onOpenLinearImport,
+  onLinearBulkSynced,
+}: ListViewProps) {
   const router = useRouter();
   const removeTask = useTaskStore((s) => s.removeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
@@ -63,6 +75,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
   const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [linearBulkOpen, setLinearBulkOpen] = useState(false);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [editingSummaryId, setEditingSummaryId] = useState<number | null>(null);
@@ -288,6 +301,14 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
       else next.delete(taskId);
       return Array.from(next);
     });
+  };
+
+  const openLinearOutput = () => {
+    if (selectedIds.length === 0) {
+      toast('Select one or more tasks with the checkboxes first.', { duration: 5000 });
+      return;
+    }
+    setLinearBulkOpen(true);
   };
 
   const toggleSelectAll = (checked: boolean) => {
@@ -527,8 +548,8 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
         onTaskDeleted={handleTaskDeleted}
         onTaskPatched={handleTaskPatched}
       />
-      <div className="mb-3 flex items-center gap-2">
-        <div className="relative flex-1">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[12rem] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input
             value={search}
@@ -540,14 +561,14 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
         <button
           type="button"
           onClick={() => setBulkMode((v) => !v)}
-          className={`inline-flex h-9 items-center rounded-xl border px-3.5 text-xs font-semibold transition ${bulkMode
+          className={`shrink-0 inline-flex h-9 items-center rounded-xl border px-3.5 text-xs font-semibold transition ${bulkMode
               ? 'border-[#2fc6d6] bg-white text-[#2fc6d6] shadow-sm hover:bg-[#2fc6d6]/5'
               : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
             }`}
         >
           {bulkMode ? 'Exit Bulk edit' : 'Bulk edit'}
         </button>
-        <div className="inline-flex h-9 items-center rounded-xl border border-gray-200 bg-white p-0.5">
+        <div className="inline-flex h-9 shrink-0 items-center rounded-xl border border-gray-200 bg-white p-0.5">
           <button
             type="button"
             onClick={() => setDensity('comfortable')}
@@ -570,6 +591,50 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
           </button>
         </div>
       </div>
+
+      {bulkMode && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
+          <div className="text-xs text-gray-500">
+            Bulk edit is active. Select tasks to apply bulk actions or send them to Linear.
+          </div>
+          <div
+            className="inline-flex items-stretch overflow-hidden rounded-lg border border-gray-200 bg-white"
+            role="group"
+            aria-label="Linear bulk actions"
+          >
+            <button
+              type="button"
+              disabled={!projectId}
+              title={
+                !projectId
+                  ? 'Select a project in the sidebar first'
+                  : 'Import Linear issues as tasks in this project'
+              }
+              onClick={onOpenLinearImport}
+              className="inline-flex h-8 items-center gap-1.5 border-r border-gray-200 px-2.5 text-xs font-semibold text-gray-800 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ArrowDownToLine className="h-3.5 w-3.5 shrink-0 text-[#5E6AD2]" aria-hidden />
+              Import from Linear
+            </button>
+            <button
+              type="button"
+              disabled={!projectId || selectedIds.length === 0}
+              title={
+                !projectId
+                  ? 'Select a project in the sidebar first'
+                  : selectedIds.length === 0
+                    ? 'Select one or more tasks first'
+                    : 'Push selected tasks to Linear'
+              }
+              onClick={openLinearOutput}
+              className="inline-flex h-8 items-center gap-1.5 bg-[#5E6AD2]/10 px-2.5 text-xs font-semibold text-[#4a55b8] transition hover:bg-[#5E6AD2]/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ArrowUpToLine className="h-3.5 w-3.5 shrink-0 text-[#5E6AD2]" aria-hidden />
+              Output to Linear
+            </button>
+          </div>
+        </div>
+      )}
 
       {bulkMode && selectedIds.length > 0 && (
         <BulkActionToolbar
@@ -1088,6 +1153,15 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
           </table>
         )}
       </div>
+      <LinearBulkOutputModal
+        isOpen={linearBulkOpen}
+        onClose={() => setLinearBulkOpen(false)}
+        taskIds={selectedIds}
+        tasks={tasks}
+        onComplete={() => {
+          void onLinearBulkSynced?.();
+        }}
+      />
     </div>
   );
 }
