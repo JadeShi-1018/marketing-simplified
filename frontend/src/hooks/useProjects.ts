@@ -71,27 +71,40 @@ export const useProjects = () => {
   const fetchProjects = useCallback(
     async (options?: { activeOnly?: boolean }) => {
       setLoading(true);
+      const activeProjectIdAtRequestStart = useProjectStore.getState().activeProject?.id ?? null;
       try {
         const data = await ProjectAPI.getProjects(options);
         const list = Array.isArray(data) ? data : [];
         setProjects(list);
 
         // Use current store state to merge active IDs without causing dependency loops
-        const { inactiveProjectIds: inactiveIds, activeProjectIds: activeIds } = useProjectStore.getState();
+        const {
+          activeProject: latestStoreActiveProject,
+          inactiveProjectIds: inactiveIds,
+          activeProjectIds: activeIds,
+        } = useProjectStore.getState();
+        const latestActiveProjectId = latestStoreActiveProject?.id ?? null;
+        const activeChangedDuringRequest = latestActiveProjectId !== activeProjectIdAtRequestStart;
         const apiActiveIds = list
           .filter((item) => item.is_active && !inactiveIds.includes(item.id))
           .map((item) => item.id);
         const apiActiveProject =
           list.find((item) => item.is_active && !inactiveIds.includes(item.id)) ?? null;
+        const latestStoreActiveProjectFromList = latestActiveProjectId
+          ? list.find((item) => item.id === latestActiveProjectId) ?? null
+          : null;
 
-        if (apiActiveIds.length > 0) {
+        if (activeChangedDuringRequest && latestActiveProjectId) {
+          setActiveProjectIds([latestActiveProjectId]);
+        } else if (apiActiveIds.length > 0) {
           setActiveProjectIds((prev) => Array.from(new Set([...prev, ...apiActiveIds, ...activeIds])));
         }
-        if (apiActiveProject) {
+        if (activeChangedDuringRequest && latestStoreActiveProjectFromList) {
+          setStoreActiveProject(latestStoreActiveProjectFromList);
+        } else if (apiActiveProject) {
           setStoreActiveProject(apiActiveProject);
-        } else if (activeProject?.id) {
-          const matchingProject = list.find((item) => item.id === activeProject.id) ?? null;
-          setStoreActiveProject(matchingProject);
+        } else if (latestStoreActiveProjectId) {
+          setStoreActiveProject(latestStoreActiveProjectFromList);
         }
         // Capture backend-completed flags if present
         const apiCompletedIds = list
@@ -108,7 +121,7 @@ export const useProjects = () => {
         setLoading(false);
       }
     },
-    [activeProject?.id, setActiveProjectIds, setStoreActiveProject]
+    [setActiveProjectIds, setCompletedProjectIds, setStoreActiveProject]
   );
 
   const setActiveProject = useCallback(
@@ -159,7 +172,6 @@ export const useProjects = () => {
     },
     [
       projects,
-      activeProjectIds,
       fetchProjects,
       setStoreActiveProject,
       setActiveProjectIds,
