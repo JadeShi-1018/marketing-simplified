@@ -60,10 +60,10 @@ http {
 
     server {
         listen 443 ssl;
-        server_name marketing.simplified.dpdns.org;
+        server_name zmarkio.com;
 
-        ssl_certificate /etc/letsencrypt/live/marketing.simplified.dpdns.org/fullchain.pem;
-        ssl_certificate_key /etc/letsencrypt/live/marketing.simplified.dpdns.org/privkey.pem;
+        ssl_certificate /etc/letsencrypt/live/zmarkio.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/zmarkio.com/privkey.pem;
 
         client_max_body_size 110m;
 
