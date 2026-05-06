@@ -1,14 +1,12 @@
 'use client';
 
-import { useEffect, useState, useMemo, type ReactNode } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { GoogleAd } from '@/lib/api/googleAdsApi';
 import { getPublicGoogleAdsPreview, GoogleAdPublicPreviewResponse } from '@/lib/api/googleAdsPublicPreviewApi';
 import PreviewModal from '@/components/google_ads/preview/PreviewModal';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { decodeSharePayload } from '@/components/google_ads/preview/share-utils';
-import { useAuthStore } from '@/lib/authStore';
-import HeaderSection from '@/components/home/HeaderSection';
 
 type SurfaceType = 'ALL' | 'DISPLAY' | 'GMAIL' | 'YOUTUBE';
 type DeviceType = 'MOBILE' | 'DESKTOP';
@@ -54,7 +52,6 @@ const mapImageAssets = (items?: any[]): any[] =>
 
 export default function SharePreviewPage() {
   const searchParams = useSearchParams();
-  const { initialized, isAuthenticated, user } = useAuthStore();
   const [ad, setAd] = useState<GoogleAd | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -64,47 +61,6 @@ export default function SharePreviewPage() {
   const [shareGenerationDate, setShareGenerationDate] = useState<Date | null>(null);
   const [shareExpirationDays, setShareExpirationDays] = useState<number | null>(null);
   const [shareType, setShareType] = useState<'DISPLAY' | 'SEARCH' | 'VIDEO'>('DISPLAY');
-
-  const redirectToLogin = () => {
-    window.location.href = '/login';
-  };
-
-  const handleLoginClick = () => {
-    if (!initialized) return;
-    if (isAuthenticated) {
-      window.location.href = '/profile';
-      return;
-    }
-    window.location.href = '/login';
-  };
-
-  const handleGetStartedClick = () => {
-    if (!initialized) return;
-    if (isAuthenticated) {
-      window.location.href = '/tasks';
-      return;
-    }
-    window.location.href = '/login';
-  };
-
-  const displayName = user?.username || user?.email || 'User';
-  const displayRole = user?.roles?.[0] || 'Member';
-
-  const renderLayout = (content: ReactNode) => (
-    <div className="min-h-screen bg-gray-50">
-      <HeaderSection
-        isAuthenticated={isAuthenticated}
-        displayName={displayName}
-        displayRole={displayRole}
-        onLoginClick={handleLoginClick}
-        onGetStartedClick={handleGetStartedClick}
-        onRedirectToLogin={redirectToLogin}
-      />
-      <main className="p-4 sm:p-5">
-        {content}
-      </main>
-    </div>
-  );
 
   useEffect(() => {
     const loadSharePreview = async () => {
@@ -157,6 +113,7 @@ export default function SharePreviewPage() {
 
         // Use public preview API (no authentication required) - pass token directly
         const response = await getPublicGoogleAdsPreview(previewToken);
+        console.log('[SharePreview] raw response:', response);
         
         // Transform backend response to match GoogleAd interface
         // Backend returns: { ad: {...}, preview_data: { ad_type_data: { responsive_display_ad/responsive_search_ad: {...} } } }
@@ -406,16 +363,16 @@ export default function SharePreviewPage() {
   }, [variants, surface]);
 
   if (loading) {
-    return renderLayout(
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <LoadingSpinner />
       </div>
     );
   }
 
   if (error || !ad) {
-    return renderLayout(
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center">
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-gray-900 mb-2">Preview Not Available</h1>
           <p className="text-gray-600">{error || 'Ad not found'}</p>
@@ -427,8 +384,8 @@ export default function SharePreviewPage() {
     );
   }
 
-  return renderLayout(
-    <>
+  return (
+    <div className="min-h-screen bg-gray-50">
       {shareGenerationDate && (
         <div className="bg-blue-50 border-b border-blue-200 px-4 py-2">
           <div className="max-w-7xl mx-auto text-sm text-gray-700">
@@ -442,7 +399,7 @@ export default function SharePreviewPage() {
           </div>
         </div>
       )}
-      <div className="flex min-h-[calc(100vh-8rem)] items-center justify-center py-4">
+      <div className="min-h-screen flex items-center justify-center py-4">
         <PreviewModal
           surface={surface}
           device={device}
@@ -457,7 +414,7 @@ export default function SharePreviewPage() {
           hideSurfaceSelector={shareType !== 'DISPLAY'}
         />
       </div>
-    </>
+    </div>
   );
 }
 

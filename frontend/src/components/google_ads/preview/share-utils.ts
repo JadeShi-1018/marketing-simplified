@@ -22,10 +22,38 @@ export type SharePayload = {
   previewExpiresAt?: number;
 };
 
+const LOCAL_HOSTNAMES = ['localhost', '127.0.0.1', '0.0.0.0'];
+const DEFAULT_PROXY_BASE = 'https://volar-probankruptcy-orval.ngrok-free.dev';
+
 const stripTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 
+const getEnvValue = (key: string): string | undefined => {
+  const env = (globalThis as any)?.process?.env;
+  const value = env?.[key];
+  return typeof value === 'string' ? value : undefined;
+};
+
 export function resolveShareBaseUrl(): string {
-  return typeof window !== 'undefined' ? stripTrailingSlash(window.location.origin) : '';
+  const envBase =
+    getEnvValue('NEXT_PUBLIC_SHARE_BASE_URL') || getEnvValue('NEXT_PUBLIC_BASE_URL');
+
+  if (envBase && typeof envBase === 'string') {
+    return stripTrailingSlash(envBase);
+  }
+
+  if (typeof window !== 'undefined') {
+    const { origin } = window.location;
+    try {
+      const url = new URL(origin);
+      if (!LOCAL_HOSTNAMES.includes(url.hostname)) {
+        return stripTrailingSlash(url.origin);
+      }
+    } catch {
+      // Fallback to default proxy if origin cannot be parsed
+    }
+  }
+
+  return DEFAULT_PROXY_BASE;
 }
 
 export function encodeSharePayload(payload: SharePayload): string {

@@ -80,7 +80,7 @@ export default function AgentSidePanel() {
         </div>
 
         {/* Chat content */}
-        <div className="min-h-0 flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden">
           <AgentLayoutProvider initialView="overview">
             <AgentChatPage />
           </AgentLayoutProvider>
