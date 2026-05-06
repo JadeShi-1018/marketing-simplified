@@ -8,9 +8,14 @@ import DashboardSidebar from './DashboardSidebar';
 import NotificationBell from './NotificationBell';
 import UpcomingMeetingsPanel from './UpcomingMeetingsPanel';
 import AgentSidePanel from '@/components/agent/AgentSidePanel';
+import { useDashboardPanelPreference } from './DashboardPanelPreferenceContext';
 import { useProjectStore } from '@/lib/projectStore';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
 import { splitMeetingRowsBySchedule } from '@/lib/meetings/meetingScheduleSplit';
+import {
+  UPCOMING_MEETINGS_PANEL_STORAGE_KEY,
+  normalizeUpcomingMeetingsPanelOpen,
+} from '@/lib/dashboardPanelPreferences';
 import type { AlertData } from '@/lib/mock/dashboardMock';
 import type { MeetingListItem } from '@/types/meeting';
 
@@ -87,15 +92,6 @@ const ROOT_PATHS = new Set([
   '/timeline',
 ]);
 
-const UPCOMING_MEETINGS_PANEL_STORAGE_KEY = 'dashboard-upcoming-meetings-panel-open';
-
-function getStoredMeetingsPanelOpen(): boolean {
-  const stored = localStorage.getItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY);
-  if (stored === 'false') return false;
-  if (stored === 'true') return true;
-  return true;
-}
-
 export default function DashboardLayout({
   children,
   alerts = [],
@@ -103,8 +99,10 @@ export default function DashboardLayout({
   hideRightPanel = false,
   mainClassName = '',
 }: DashboardLayoutProps) {
-  const [isPanelOpen, setIsPanelOpen] = useState(false);
-  const [hasLoadedPanelPreference, setHasLoadedPanelPreference] = useState(false);
+  const {
+    upcomingMeetingsPanelOpen: isPanelOpen,
+    setUpcomingMeetingsPanelOpen: setIsPanelOpen,
+  } = useDashboardPanelPreference();
   const [meetingsLoading, setMeetingsLoading] = useState(
     () => !(upcomingMeetings && upcomingMeetings.length > 0)
   );
@@ -123,9 +121,13 @@ export default function DashboardLayout({
   const useExplicit = upcomingMeetings && upcomingMeetings.length > 0;
 
   useEffect(() => {
-    setIsPanelOpen(getStoredMeetingsPanelOpen());
-    setHasLoadedPanelPreference(true);
-  }, []);
+    const stored = localStorage.getItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY);
+    if (stored === 'false' || stored === 'true') {
+      const storedOpen = normalizeUpcomingMeetingsPanelOpen(stored);
+      setIsPanelOpen(storedOpen);
+      document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(storedOpen)}; path=/; max-age=31536000; samesite=lax`;
+    }
+  }, [setIsPanelOpen]);
 
   useEffect(() => {
     const previousHtmlOverflow = document.documentElement.style.overflow;
@@ -178,14 +180,13 @@ export default function DashboardLayout({
   }, [activeProject?.id, hasProjectStoreHydrated, useExplicit]);
 
   const meetingsForPanel = useExplicit ? upcomingMeetings! : autoMeetings;
-  const isMeetingsPanelOpen = hasLoadedPanelPreference && isPanelOpen;
   const toggleMeetingsPanel = () => {
     setIsPanelOpen((prev) => {
       const next = !prev;
       localStorage.setItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY, String(next));
+      document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(next)}; path=/; max-age=31536000; samesite=lax`;
       return next;
     });
-    setHasLoadedPanelPreference(true);
   };
 
   return (
@@ -221,7 +222,7 @@ export default function DashboardLayout({
                 onClick={toggleMeetingsPanel}
                 className="h-7 px-2 text-xs text-gray-500 hover:text-gray-700"
               >
-                {isMeetingsPanelOpen ? (
+                {isPanelOpen ? (
                   <><PanelRightClose className="w-4 h-4 mr-1" /> Hide Panel</>
                 ) : (
                   <><PanelRightOpen className="w-4 h-4 mr-1" /> Show Panel</>
@@ -240,7 +241,7 @@ export default function DashboardLayout({
       {!hideRightPanel && (
         <UpcomingMeetingsPanel
           meetings={meetingsForPanel}
-          isOpen={isMeetingsPanelOpen}
+          isOpen={isPanelOpen}
           loading={meetingsLoading}
         />
       )}

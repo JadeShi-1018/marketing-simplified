@@ -47,7 +47,7 @@ export default function TaskActivityBlock({
   const [posting, setPosting] = useState(false);
   const [localKey, setLocalKey] = useState(0);
   const { textareaRef, resizeTextarea } = useAutoResizeTextarea(body, {
-    minHeight: 128,
+    minHeight: 168,
   });
 
   useEffect(() => {
@@ -131,7 +131,7 @@ export default function TaskActivityBlock({
         <div className="mt-4 rounded-lg bg-gray-50 p-3 ring-1 ring-gray-100">
           <textarea
             ref={textareaRef}
-            className="w-full resize-none overflow-hidden rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-[#3CCED7]"
+            className="min-h-[168px] w-full resize-none overflow-hidden rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none transition focus:border-[#3CCED7]"
             rows={1}
             placeholder="Add a comment…"
             value={body}
