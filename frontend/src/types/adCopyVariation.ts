@@ -15,6 +15,7 @@ export interface AdCopyVariation extends AdCopyVariationCopy {
   instruction: string;
   model_name: string;
   prompt_version: string;
+  batch_id?: string | null;
   created_by: number | null;
   created_at: string;
   updated_at: string;
@@ -22,10 +23,20 @@ export interface AdCopyVariation extends AdCopyVariationCopy {
 
 export interface GenerateVariationRequest {
   source_mode: AdCopyVariationSourceMode;
+  count?: number;
   creative_id?: number;
   base_copy?: AdCopyVariationCopy;
   url?: string;
   instruction?: string;
+}
+
+export interface BatchGenerateResponse {
+  batch_id: string;
+  count_requested: number;
+  count_succeeded: number;
+  count_failed: number;
+  results: AdCopyVariationCopy[];
+  failed_indices: number[];
 }
 
 export interface SaveVariationRequest extends AdCopyVariationCopy {
@@ -33,4 +44,5 @@ export interface SaveVariationRequest extends AdCopyVariationCopy {
   creative?: number | null;
   source_ref?: string;
   instruction?: string;
+  batch_id?: string | null;
 }
