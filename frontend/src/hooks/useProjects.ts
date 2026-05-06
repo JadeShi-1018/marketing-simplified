@@ -103,7 +103,7 @@ export const useProjects = () => {
           setStoreActiveProject(latestStoreActiveProjectFromList);
         } else if (apiActiveProject) {
           setStoreActiveProject(apiActiveProject);
-        } else if (latestStoreActiveProjectId) {
+        } else if (latestStoreActiveProjectFromList) {
           setStoreActiveProject(latestStoreActiveProjectFromList);
         }
         // Capture backend-completed flags if present
