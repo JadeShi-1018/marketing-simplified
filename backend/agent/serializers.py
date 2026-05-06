@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowRun, ImportedCSVFile,
     AgentWorkflowDefinition, AgentWorkflowStep, AgentStepExecution,
+    AgentPendingExternalApproval,
 )
 
 
@@ -19,7 +20,7 @@ class AgentSessionListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgentSession
-        fields = ['id', 'title', 'status', 'created_at', 'message_count']
+        fields = ['id', 'title', 'status', 'approval_required', 'created_at', 'message_count']
         read_only_fields = ['id', 'created_at']
 
     def get_message_count(self, obj):
@@ -33,7 +34,10 @@ class AgentSessionDetailSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AgentSession
-        fields = ['id', 'title', 'status', 'created_at', 'updated_at', 'messages', 'follow_up_available', 'follow_up_started']
+        fields = [
+            'id', 'title', 'status', 'approval_required',
+            'created_at', 'updated_at', 'messages', 'follow_up_available', 'follow_up_started',
+        ]
         read_only_fields = ['id', 'status', 'created_at', 'updated_at']
 
     def get_follow_up_available(self, obj):
@@ -51,6 +55,22 @@ class AgentSessionDetailSerializer(serializers.ModelSerializer):
             chat_followed_up=False,
             is_deleted=False,
         ).exists()
+
+
+class AgentPendingExternalApprovalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AgentPendingExternalApproval
+        fields = [
+            'id', 'kind', 'status', 'draft', 'destination_options',
+            'default_destination', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class ResolveExternalApprovalSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=['approve', 'reject'])
+    draft = serializers.JSONField(required=False, default=dict)
+    destination = serializers.JSONField(required=False, allow_null=True)
 
 
 class AgentWorkflowRunSerializer(serializers.ModelSerializer):
@@ -89,10 +109,18 @@ class ChatInputSerializer(serializers.Serializer):
             'analyze', 'confirm_decision', 'create_tasks', 'generate_miro',
             'distribute_message', 'start_follow_up', 'cancel_follow_up',
             'confirm_columns',
+            'resolve_external_approval',
         ],
         required=False,
         allow_null=True,
     )
+    approval_id = serializers.UUIDField(required=False, allow_null=True)
+    approval_decision = serializers.ChoiceField(
+        choices=['approve', 'reject'],
+        required=False,
+        allow_null=True,
+    )
+    approval_draft = serializers.JSONField(required=False, allow_null=True)
     calendar_context = serializers.JSONField(required=False, allow_null=True)
     workflow_id = serializers.UUIDField(required=False, allow_null=True)
     # User-approved column mapping for confirm_columns action.

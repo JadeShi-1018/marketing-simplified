@@ -3,7 +3,11 @@ from unittest.mock import patch, Mock
 from agent.executors import CreateMiroBoardExecutor, GenerateMiroSnapshotExecutor
 from agent.miro_generation import normalize_miro_snapshot_layout, call_gemini_miro_generator
 from agent.miro_board_service import _materialize_snapshot_ids
-from agent.services import _generate_miro_board_for_workflow_run, AgentOrchestrator
+from agent.services import (
+    MIRO_LEGACY_BG_QUEUED_MESSAGE,
+    _generate_miro_board_for_workflow_run,
+    AgentOrchestrator,
+)
 
 
 def _test_snapshot():
@@ -125,6 +129,7 @@ class _SessionStub:
     def __init__(self):
         self.id = "session-1"
         self.title = "Analysis session"
+        self.approval_required = False
         self.project = type("ProjectStub", (), {"id": 99})()
         self.user = type("UserStub", (), {"id": 7, "is_authenticated": True})()
         messages = [
@@ -132,6 +137,10 @@ class _SessionStub:
             type("MessageStub", (), {"role": "assistant", "content": "Found anomalies"})(),
         ]
         self.messages = type("MessageManagerStub", (), {"order_by": lambda self, *_args: messages})()
+
+    def refresh_from_db(self, *args, **kwargs):
+        # Agent approval gate expects a Django model; unit tests use a stub.
+        return None
 
 
 class _OrchestratorStub:
@@ -275,8 +284,8 @@ def test_create_tasks_from_analysis_is_idempotent_when_tasks_and_miro_exist(mock
     assert len(events) == 2
 
 
-@patch("agent.services._enqueue_miro_generation_for_workflow_run")
-def test_generate_miro_action_enqueues_background_generation(mock_enqueue):
+@patch.object(AgentOrchestrator, "_legacy_start_miro_background_if_needed")
+def test_generate_miro_action_yields_miro_status_when_generation_claim_succeeds(mock_claim):
     orchestrator = AgentOrchestrator(
         user=type("UserStub", (), {"id": 7})(),
         project=type("ProjectStub", (), {"id": 99})(),
@@ -285,12 +294,13 @@ def test_generate_miro_action_enqueues_background_generation(mock_enqueue):
     workflow_run = _WorkflowRunStub()
     workflow_run.analysis_result = {"recommended_tasks": [{"summary": "Audit placements"}]}
     workflow_run.created_tasks = [11, 12]
+    mock_claim.return_value = ("started", workflow_run, None)
 
     events = list(orchestrator._legacy_confirm("generate_miro", workflow_run))
 
     assert events[0]["type"] == "miro_status"
-    assert events[0]["content"] == "Miro board generation started in background."
-    mock_enqueue.assert_called_once_with(orchestrator, workflow_run)
+    assert events[0]["content"] == MIRO_LEGACY_BG_QUEUED_MESSAGE
+    mock_claim.assert_called_once_with(workflow_run)
 
 
 def test_normalize_miro_snapshot_layout_pushes_overlapping_items_down():

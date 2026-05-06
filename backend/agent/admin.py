@@ -3,6 +3,7 @@ from .models import (
     AgentSession, AgentMessage, ImportedCSVFile,
     AgentWorkflowRun, AgentWorkflowDefinition,
     AgentWorkflowStep, AgentStepExecution,
+    AgentPendingExternalApproval,
     FieldCategory, DataSchemaTemplate,
     ImportedDataField, ImportedDataRecord,
 )
@@ -10,7 +11,7 @@ from .models import (
 
 @admin.register(AgentSession)
 class AgentSessionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'project', 'title', 'status', 'created_at')
+    list_display = ('id', 'user', 'project', 'title', 'status', 'approval_required', 'created_at')
     list_filter = ('status',)
     search_fields = ('title',)
 
@@ -49,6 +50,13 @@ class AgentWorkflowStepAdmin(admin.ModelAdmin):
 class AgentStepExecutionAdmin(admin.ModelAdmin):
     list_display = ('id', 'workflow_run', 'step_name', 'step_order', 'status', 'started_at')
     list_filter = ('status',)
+
+
+@admin.register(AgentPendingExternalApproval)
+class AgentPendingExternalApprovalAdmin(admin.ModelAdmin):
+    list_display = ('id', 'session', 'kind', 'status', 'workflow_run', 'created_at')
+    list_filter = ('status', 'kind')
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(FieldCategory)

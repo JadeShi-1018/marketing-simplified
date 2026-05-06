@@ -41,13 +41,14 @@ function formatTimeAgo(iso: string): string {
 }
 
 export function LeftSidebar() {
-  const { activeView, isViewReady, setActiveView, openFloatingChat, floatingChat, isInSnapZone } = useAgentLayout()
+  const { activeView, isViewReady, setActiveView, openFloatingChat, closeFloatingChat, floatingChat, isInSnapZone } = useAgentLayout()
   const [recentSessions, setRecentSessions] = useState<SessionItem[]>([])
   const [sessionsLoading, setSessionsLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState("")
   const editInputRef = useRef<HTMLInputElement>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [pendingDeleteSession, setPendingDeleteSession] = useState<SessionItem | null>(null)
 
   const loadSessions = async (showLoading = false) => {
     if (showLoading) {
@@ -107,10 +108,23 @@ export function LeftSidebar() {
     }
   }, [editingId])
 
-  const handleNewChat = (e: React.MouseEvent) => {
+  const handleNewChat = async (e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+
+    // Open immediately for responsiveness, then attach a real sessionId once created.
+    // The approval toggle only renders once sessionId exists.
     sessionStorage.removeItem("agent-session-id")
     openFloatingChat(null, rect)
+
+    try {
+      const session = await AgentAPI.createSession({})
+      const sid = String(session.id)
+      sessionStorage.setItem("agent-session-id", sid)
+      openFloatingChat(sid, rect)
+      window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
+    } catch {
+      // Keep the welcome screen (no session yet) on failure.
+    }
   }
 
   const handleSelectSession = (sessionId: string, e: React.MouseEvent) => {
@@ -153,6 +167,24 @@ export function LeftSidebar() {
   const handleDeleteConfirm = async () => {
     setShowDeleteConfirm(false)
     await batch.deleteSelected()
+  }
+
+  const handleSingleDeleteConfirm = async () => {
+    const s = pendingDeleteSession
+    if (!s) return
+    setPendingDeleteSession(null)
+    try {
+      await AgentAPI.deleteSession(s.id)
+      setRecentSessions((prev) => prev.filter((x) => x.id !== s.id))
+      window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
+      if (floatingChat.sessionId === s.id && floatingChat.mode !== "closed") {
+        closeFloatingChat()
+        sessionStorage.removeItem("agent-session-id")
+        window.dispatchEvent(new CustomEvent("agent:new-chat"))
+      }
+    } catch {
+      // ignore
+    }
   }
 
   return (
@@ -325,6 +357,17 @@ export function LeftSidebar() {
                     >
                       <Pencil className="w-3 h-3" />
                     </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPendingDeleteSession(session)
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground/60 hover:text-red-500 shrink-0 transition-opacity"
+                      title="Delete"
+                      aria-label="Delete dialogue"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                     <span className="text-[10px] text-muted-foreground/50 shrink-0">{session.time}</span>
                   </button>
                 )}
@@ -362,6 +405,21 @@ export function LeftSidebar() {
         cancelText="Cancel"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={pendingDeleteSession != null}
+        title="Delete Dialogue"
+        message={
+          pendingDeleteSession
+            ? `Delete "${pendingDeleteSession.title}"? This action cannot be undone.`
+            : ""
+        }
+        type="danger"
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={handleSingleDeleteConfirm}
+        onCancel={() => setPendingDeleteSession(null)}
       />
     </div>
   )
