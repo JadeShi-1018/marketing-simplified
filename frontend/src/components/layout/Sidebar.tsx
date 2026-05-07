@@ -168,10 +168,10 @@ const getNavigationItems = (
   }
 
   baseItems.push({
-    name: t ? t("sidebar.settings") : "Settings",
-    href: "/settings",
+    name: "Integrations",
+    href: "/integrations",
     icon: Settings,
-    description: t ? t("sidebar.user_preferences") : "User preferences",
+    description: "Manage connected integrations",
   });
 
   return baseItems;

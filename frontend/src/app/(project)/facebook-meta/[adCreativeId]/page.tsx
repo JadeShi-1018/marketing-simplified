@@ -21,19 +21,19 @@ import {
 import { toast } from 'react-hot-toast';
 import AdDraftActionBar, {
   type ActionSpec,
-} from '@/components/ads-draft-v2/AdDraftActionBar';
-import CampaignScopeBanner from '@/components/ads-draft-v2/CampaignScopeBanner';
-import PlatformBadge from '@/components/ads-draft-v2/PlatformBadge';
+} from '@/components/ads-draft/AdDraftActionBar';
+import CampaignScopeBanner from '@/components/ads-draft/CampaignScopeBanner';
+import PlatformBadge from '@/components/ads-draft/PlatformBadge';
 import SharePreviewModal, {
   type ShareDays,
-} from '@/components/ads-draft-v2/SharePreviewModal';
-import AdDraftStatusPill from '@/components/ads-draft-v2/pills/AdDraftStatusPill';
-import type { FacebookStatus } from '@/components/ads-draft-v2/types';
+} from '@/components/ads-draft/SharePreviewModal';
+import AdDraftStatusPill from '@/components/ads-draft/pills/AdDraftStatusPill';
+import type { FacebookStatus } from '@/components/ads-draft/types';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import FacebookAdPreviews from '@/components/facebook_meta/FacebookAdPreviews';
-import BrandDialog from '@/components/tasks-v2/detail/BrandDialog';
-import InlineSelect from '@/components/tasks-v2/detail/InlineSelect';
+import BrandDialog from '@/components/tasks/detail/BrandDialog';
+import InlineSelect from '@/components/tasks/detail/InlineSelect';
 import { FacebookMetaAPI, type AdCreative } from '@/lib/api/facebookMetaApi';
 import { getPhotos, uploadPhoto, type PhotoData } from '@/lib/api/facebookMetaPhotoApi';
 import { getVideos, uploadVideo, type VideoData } from '@/lib/api/facebookMetaVideoApi';
@@ -65,10 +65,16 @@ const STATUS_LABEL: Record<string, string> = {
 
 interface MediaFile {
   id: number;
+  mediaId?: number;
   type: 'photo' | 'video';
   url?: string;
   thumbnail?: string;
   caption?: string;
+}
+
+function getBackendMediaId(value: unknown): number | undefined {
+  const id = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(id) && id > 0 ? id : undefined;
 }
 
 function extractMediaFromCreative(creative: AdCreative | null): MediaFile[] {
@@ -79,8 +85,10 @@ function extractMediaFromCreative(creative: AdCreative | null): MediaFile[] {
     const photos = Array.isArray(photoData) ? photoData : [photoData];
     photos.forEach((photo: any, index: number) => {
       if (photo?.url) {
+        const mediaId = getBackendMediaId(photo.id);
         media.push({
-          id: index + 1,
+          id: mediaId ?? index + 1,
+          mediaId,
           type: 'photo',
           url: photo.url,
           caption: photo.caption,
@@ -93,8 +101,10 @@ function extractMediaFromCreative(creative: AdCreative | null): MediaFile[] {
     const videos = Array.isArray(videoData) ? videoData : [videoData];
     videos.forEach((video: any, index: number) => {
       if (video?.image_url || video?.video_id) {
+        const mediaId = getBackendMediaId(video.id);
         media.push({
-          id: 1000 + index,
+          id: mediaId ?? 1000 + index,
+          mediaId,
           type: 'video',
           url: video.image_url,
           caption: video.message || video.title,
@@ -326,9 +336,13 @@ function FacebookMetaDetailContent() {
   };
 
   const openMediaModal = () => {
-    const existingPhotoIds = media.filter((m) => m.type === 'photo').map((m) => m.id);
-    const existingVideoIds = media.filter((m) => m.type === 'video').map((m) => m.id - 1000);
-    setSelectedPhotoIds(existingPhotoIds.filter((id) => id < 1000));
+    const existingPhotoIds = media
+      .filter((m) => m.type === 'photo' && m.mediaId)
+      .map((m) => m.mediaId as number);
+    const existingVideoIds = media
+      .filter((m) => m.type === 'video' && m.mediaId)
+      .map((m) => m.mediaId as number);
+    setSelectedPhotoIds(existingPhotoIds);
     setSelectedVideoIds(existingVideoIds);
     setMediaOpen(true);
   };

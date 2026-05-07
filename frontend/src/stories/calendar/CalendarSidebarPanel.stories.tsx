@@ -42,6 +42,9 @@ function SidebarStory({
   const [activeCalendarId, setActiveCalendarId] = React.useState<string | null>(
     selectedCalendarId,
   );
+  const [activeEventTypes, setActiveEventTypes] = React.useState(
+    () => new Set(["decision", "task"]),
+  );
 
   return (
     <div className={wrapperClass}>
@@ -63,6 +66,18 @@ function SidebarStory({
             setActiveCalendarId((prev) =>
               prev === calendarId ? null : calendarId,
             );
+          }}
+          activeEventTypes={activeEventTypes}
+          onToggleActivityType={(type) => {
+            setActiveEventTypes((prev) => {
+              const next = new Set(prev);
+              if (next.has(type)) {
+                next.delete(type);
+              } else {
+                next.add(type);
+              }
+              return next;
+            });
           }}
         />
       </div>
@@ -105,4 +120,3 @@ export const ErrorState: Story = {
     />
   ),
 };
-

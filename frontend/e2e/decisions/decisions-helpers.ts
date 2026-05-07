@@ -46,6 +46,24 @@ export async function resolveFirstProjectSection(
   return { projectId, header, section };
 }
 
+export async function getActiveProjectId(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('project-storage');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const state = parsed?.state ?? parsed;
+      const projectId =
+        state?.activeProject?.id ??
+        (Array.isArray(state?.activeProjectIds) ? state.activeProjectIds[0] : null);
+      const numeric = Number(projectId);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 async function getAuthToken(page: Page): Promise<string | null> {
   return page.evaluate(() => {
     try {
