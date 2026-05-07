@@ -337,8 +337,8 @@ export default function CreateTaskPage() {
       }
 
       toast.success(asDraft ? 'Saved as draft' : 'Task submitted for review');
-      // Clean up the autosave draft now that the task is persisted.
-      try { await clear(); } catch { /* best-effort */ }
+      // Fire-and-forget: draft is superseded; TTL cleans up any orphan in 7 days.
+      void clear().catch(() => {});
       if (linkDecisionId) {
         const qs = projectId ? `?project_id=${projectId}` : '';
         router.push(`/decisions/${linkDecisionId}${qs}`);
