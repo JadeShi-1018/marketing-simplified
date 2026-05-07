@@ -2,13 +2,42 @@ from django.db import migrations
 
 
 def _relax_team_sync_columns(apps, schema_editor):
-    """Legacy table may require default_team_id / sync_enabled; ensure DB defaults and nullable."""
+    """Align legacy Linear credential columns with current Django state."""
     conn = schema_editor.connection
     if conn.vendor not in {"postgresql", "sqlite"}:
         return
     table = "linear_integration_linearcredential"
     with conn.cursor() as cursor:
         if conn.vendor == "postgresql":
+            cursor.execute(
+                """
+                SELECT con.conname
+                FROM pg_constraint con
+                JOIN unnest(con.conkey) AS cols(attnum) ON TRUE
+                JOIN pg_attribute att
+                  ON att.attrelid = con.conrelid
+                 AND att.attnum = cols.attnum
+                WHERE con.conrelid = %s::regclass
+                  AND con.contype = 'f'
+                  AND att.attname = 'organization_id'
+                """,
+                [table],
+            )
+            for (constraint_name,) in cursor.fetchall():
+                cursor.execute(
+                    f"ALTER TABLE {table} DROP CONSTRAINT {schema_editor.quote_name(constraint_name)};"
+                )
+
+            cursor.execute(
+                f"ALTER TABLE {table} ALTER COLUMN organization_id TYPE varchar(64) USING organization_id::varchar;"
+            )
+            cursor.execute(
+                f"ALTER TABLE {table} ALTER COLUMN organization_id SET DEFAULT '';"
+            )
+            cursor.execute(
+                f"ALTER TABLE {table} ALTER COLUMN organization_id DROP NOT NULL;"
+            )
+
             cursor.execute(
                 """
                 SELECT column_name
