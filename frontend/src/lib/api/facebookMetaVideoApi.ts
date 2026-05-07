@@ -44,6 +44,13 @@ export const uploadVideo = async (file: File, title?: string, message?: string):
 };
 
 /**
+ * Delete a video by ID
+ */
+export const deleteVideo = async (id: number): Promise<void> => {
+  await api.delete(`/api/facebook_meta/videos/${id}/`);
+};
+
+/**
  * Get list of uploaded videos
  */
 export const getVideos = async (page = 1, pageSize = 12): Promise<VideoListResponse> => {

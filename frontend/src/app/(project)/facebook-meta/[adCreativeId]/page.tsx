@@ -35,8 +35,8 @@ import FacebookAdPreviews from '@/components/facebook_meta/FacebookAdPreviews';
 import BrandDialog from '@/components/tasks/detail/BrandDialog';
 import InlineSelect from '@/components/tasks/detail/InlineSelect';
 import { FacebookMetaAPI, type AdCreative } from '@/lib/api/facebookMetaApi';
-import { getPhotos, uploadPhoto, type PhotoData } from '@/lib/api/facebookMetaPhotoApi';
-import { getVideos, uploadVideo, type VideoData } from '@/lib/api/facebookMetaVideoApi';
+import { getPhotos, uploadPhoto, deletePhoto, type PhotoData } from '@/lib/api/facebookMetaPhotoApi';
+import { getVideos, uploadVideo, deleteVideo, type VideoData } from '@/lib/api/facebookMetaVideoApi';
 import {
   createSharePreview,
   deleteSharePreview,
@@ -473,6 +473,30 @@ function FacebookMetaDetailContent() {
     } finally {
       setUploadingVideo(false);
       if (videoInputRef.current) videoInputRef.current.value = '';
+    }
+  };
+
+  const handleDeletePhoto = async (photoId: number) => {
+    try {
+      await deletePhoto(photoId);
+      setPhotos((prev) => prev.filter((p) => p.id !== photoId));
+      setSelectedPhotoIds((prev) => prev.filter((id) => id !== photoId));
+      toast.success('Photo deleted');
+      await loadCreative();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to delete photo');
+    }
+  };
+
+  const handleDeleteVideo = async (videoId: number) => {
+    try {
+      await deleteVideo(videoId);
+      setVideos((prev) => prev.filter((v) => v.id !== videoId));
+      setSelectedVideoIds((prev) => prev.filter((id) => id !== videoId));
+      toast.success('Video deleted');
+      await loadCreative();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to delete video');
     }
   };
 
@@ -914,7 +938,7 @@ function FacebookMetaDetailContent() {
                   {dedupedLibraryPhotos.map((photo) => {
                     const selected = selectedPhotoIds.includes(photo.id);
                     return (
-                      <li key={`photo-${photo.id}`}>
+                      <li key={`photo-${photo.id}`} className="group relative">
                         <button
                           type="button"
                           onClick={() => togglePhotoSelection(photo.id)}
@@ -932,6 +956,15 @@ function FacebookMetaDetailContent() {
                               <Check className="h-3 w-3" aria-hidden="true" />
                             </span>
                           )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleDeletePhoto(photo.id); }}
+                          className="absolute bottom-1 left-1 hidden group-hover:flex items-center gap-0.5 rounded bg-white/90 px-1.5 py-0.5 text-[10px] text-red-500 shadow hover:bg-red-50"
+                          aria-label="Delete photo"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Delete
                         </button>
                       </li>
                     );
@@ -967,7 +1000,7 @@ function FacebookMetaDetailContent() {
                   {dedupedLibraryVideos.map((video) => {
                     const selected = selectedVideoIds.includes(video.id);
                     return (
-                      <li key={`video-${video.id}`}>
+                      <li key={`video-${video.id}`} className="group relative">
                         <button
                           type="button"
                           onClick={() => toggleVideoSelection(video.id)}
@@ -982,6 +1015,15 @@ function FacebookMetaDetailContent() {
                               <Check className="h-3 w-3" aria-hidden="true" />
                             </span>
                           )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteVideo(video.id); }}
+                          className="absolute bottom-1 left-1 hidden group-hover:flex items-center gap-0.5 rounded bg-white/90 px-1.5 py-0.5 text-[10px] text-red-500 shadow hover:bg-red-50"
+                          aria-label="Delete video"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          Delete
                         </button>
                       </li>
                     );

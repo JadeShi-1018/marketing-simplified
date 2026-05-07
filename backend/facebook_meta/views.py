@@ -457,18 +457,14 @@ class PhotoUploadView(APIView):
                 image_hash = checksum_hex[:32]
                 caption = request.data.get('caption', '')
 
-                # Dedup: any existing row with the same content hash wins.
+                # Dedup within this user only — same user uploading same photo twice.
                 existing = (
                     AdCreativePhotoData.objects
-                    .filter(image_hash=image_hash)
-                    .order_by('id')
+                    .filter(image_hash=image_hash, uploaded_by=request.user)
                     .first()
                 )
 
                 if existing and facebook_media_file_exists(existing.url):
-                    # Identical content already on disk + in DB. Discard the
-                    # temp upload and return the existing record so the
-                    # client never sees a duplicate.
                     try:
                         os.remove(tmp_path)
                     except FileNotFoundError:
@@ -479,8 +475,7 @@ class PhotoUploadView(APIView):
                         "photo": build_photo_payload(existing),
                     }, status=status.HTTP_200_OK)
 
-                # New content (or existing row whose file was deleted from
-                # disk). Place the temp file at a unique final path.
+                # New upload (or orphaned row) — write file to disk.
                 final_filename = original_filename
                 counter = 1
                 while os.path.exists(os.path.join(full_storage_path, final_filename)):
@@ -489,8 +484,6 @@ class PhotoUploadView(APIView):
                 full_path = os.path.join(full_storage_path, final_filename)
                 os.replace(tmp_path, full_path)
                 tmp_path = None
-                # mkstemp creates files at 0600; restore world-readable perms
-                # so the static file server (nginx) can serve them.
                 try:
                     os.chmod(full_path, 0o644)
                 except OSError:
@@ -500,8 +493,7 @@ class PhotoUploadView(APIView):
                 file_url = f"/media/{storage_key}"
 
                 if existing:
-                    # Rebind the orphan row to the new file instead of
-                    # creating a duplicate.
+                    # Orphaned row for this user — rebind to the new file.
                     existing.url = file_url
                     update_fields = ['url']
                     if caption and not existing.caption:
@@ -515,6 +507,7 @@ class PhotoUploadView(APIView):
                         url=file_url,
                         caption=caption,
                         image_hash=image_hash,
+                        uploaded_by=request.user,
                     )
                     response_status = status.HTTP_201_CREATED
             finally:
@@ -550,8 +543,7 @@ class PhotoListView(generics.ListAPIView):
     serializer_class = AdCreativePhotoDataSerializer
     
     def get_queryset(self):
-        """Return all photos, ordered by most recent first"""
-        return AdCreativePhotoData.objects.all().order_by('-id')
+        return AdCreativePhotoData.objects.filter(uploaded_by=self.request.user).order_by('-id')
     
     def list(self, request, *args, **kwargs):
         """Override list to return custom response format"""
@@ -659,11 +651,10 @@ class VideoUploadView(APIView):
                 title = request.data.get('title', '')
                 message = request.data.get('message', '')
 
-                # Dedup: any existing row with the same content hash wins.
+                # Dedup within this user only — same user uploading same video twice.
                 existing = (
                     AdCreativeVideoData.objects
-                    .filter(video_id=video_id_value)
-                    .order_by('id')
+                    .filter(video_id=video_id_value, uploaded_by=request.user)
                     .first()
                 )
 
@@ -678,8 +669,7 @@ class VideoUploadView(APIView):
                         "video": build_video_payload(existing),
                     }, status=status.HTTP_200_OK)
 
-                # New content (or row whose file is gone). Promote temp to
-                # a unique final path.
+                # New upload (or orphaned row) — write file to disk.
                 final_filename = original_filename
                 counter = 1
                 while os.path.exists(os.path.join(full_storage_path, final_filename)):
@@ -688,7 +678,6 @@ class VideoUploadView(APIView):
                 full_path = os.path.join(full_storage_path, final_filename)
                 os.replace(tmp_path, full_path)
                 tmp_path = None
-                # See PhotoUploadView: restore perms after mkstemp.
                 try:
                     os.chmod(full_path, 0o644)
                 except OSError:
@@ -698,6 +687,7 @@ class VideoUploadView(APIView):
                 file_url = f"/media/{storage_key}"
 
                 if existing:
+                    # Orphaned row for this user — rebind to the new file.
                     existing.image_url = file_url
                     update_fields = ['image_url']
                     if title and not existing.title:
@@ -715,6 +705,7 @@ class VideoUploadView(APIView):
                         title=title,
                         message=message,
                         video_id=video_id_value,
+                        uploaded_by=request.user,
                     )
                     response_status = status.HTTP_201_CREATED
             finally:
@@ -738,18 +729,97 @@ class VideoUploadView(APIView):
             )
 
 
+class PhotoDeleteView(APIView):
+    """
+    Delete a photo by ID
+
+    DELETE /facebook_meta/photos/<pk>/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            photo = AdCreativePhotoData.objects.get(pk=pk)
+        except AdCreativePhotoData.DoesNotExist:
+            return Response(
+                ErrorResponseSerializer({"error": "Photo not found", "code": "NOT_FOUND"}).data,
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if photo.uploaded_by_id is not None and photo.uploaded_by_id != request.user.id:
+            return Response(
+                ErrorResponseSerializer({"error": "You do not have permission to delete this photo.", "code": "FORBIDDEN"}).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Remove the file from disk if it exists
+        storage_dir = getattr(settings, 'FILE_STORAGE_DIR', os.path.join(settings.BASE_DIR, 'media'))
+        if photo.url:
+            rel_path = photo.url.lstrip('/')           # strip leading /
+            if rel_path.startswith('media/'):
+                rel_path = rel_path[len('media/'):]    # strip media/ prefix
+            full_path = os.path.join(storage_dir, rel_path)
+            if os.path.exists(full_path):
+                try:
+                    os.remove(full_path)
+                except OSError:
+                    pass
+
+        photo.delete()
+        return Response({"success": True}, status=status.HTTP_200_OK)
+
+
+class VideoDeleteView(APIView):
+    """
+    Delete a video by ID
+
+    DELETE /facebook_meta/videos/<pk>/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, pk):
+        try:
+            video = AdCreativeVideoData.objects.get(pk=pk)
+        except AdCreativeVideoData.DoesNotExist:
+            return Response(
+                ErrorResponseSerializer({"error": "Video not found", "code": "NOT_FOUND"}).data,
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.uploaded_by_id is not None and video.uploaded_by_id != request.user.id:
+            return Response(
+                ErrorResponseSerializer({"error": "You do not have permission to delete this video.", "code": "FORBIDDEN"}).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Remove the file from disk if it exists
+        storage_dir = getattr(settings, 'FILE_STORAGE_DIR', os.path.join(settings.BASE_DIR, 'media'))
+        if video.image_url:
+            rel_path = video.image_url.lstrip('/')
+            if rel_path.startswith('media/'):
+                rel_path = rel_path[len('media/'):]
+            full_path = os.path.join(storage_dir, rel_path)
+            if os.path.exists(full_path):
+                try:
+                    os.remove(full_path)
+                except OSError:
+                    pass
+
+        video.delete()
+        return Response({"success": True}, status=status.HTTP_200_OK)
+
+
 class VideoListView(generics.ListAPIView):
     """
     List uploaded videos for ad creative
-    
+
     GET /facebook_meta/videos
     """
     permission_classes = [IsAuthenticated]
     serializer_class = AdCreativeVideoDataSerializer
     
     def get_queryset(self):
-        """Return all videos, ordered by most recent first"""
-        return AdCreativeVideoData.objects.all().order_by('-id')
+        return AdCreativeVideoData.objects.filter(uploaded_by=self.request.user).order_by('-id')
     
     def list(self, request, *args, **kwargs):
         """Override list to return custom response format"""

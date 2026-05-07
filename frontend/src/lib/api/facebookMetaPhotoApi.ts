@@ -40,6 +40,13 @@ export const uploadPhoto = async (file: File, caption?: string): Promise<PhotoUp
 };
 
 /**
+ * Delete a photo by ID
+ */
+export const deletePhoto = async (id: number): Promise<void> => {
+  await api.delete(`/api/facebook_meta/photos/${id}/`);
+};
+
+/**
  * Get list of uploaded photos
  */
 export const getPhotos = async (page = 1, pageSize = 12): Promise<PhotoListResponse> => {
