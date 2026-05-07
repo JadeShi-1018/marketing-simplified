@@ -1,6 +1,6 @@
 'use client';
 
-import { Check, Loader2, Plus } from 'lucide-react';
+import { Check, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-hot-toast';
 import BrandDialog from '@/components/tasks/detail/BrandDialog';
@@ -8,6 +8,7 @@ import {
   getTiktokMaterials,
   uploadTiktokImage,
   uploadTiktokVideo,
+  deleteTiktokMaterial,
   type TiktokMaterialItem,
 } from '@/lib/api/tiktokApi';
 
@@ -93,13 +94,24 @@ export default function MediaLibraryDialog({
     if (!file) return;
     try {
       setUploading(true);
-      if (tab === 'video') {
-        await uploadTiktokVideo(file);
-      } else {
-        await uploadTiktokImage(file);
-      }
+      const result = tab === 'video'
+        ? await uploadTiktokVideo(file)
+        : await uploadTiktokImage(file);
+
       toast.success(`${tab === 'video' ? 'Video' : 'Image'} uploaded`);
       await loadMaterials(tab);
+
+      if (result?.id) {
+        const newItem: TiktokMaterialItem = {
+          id: result.id,
+          type: tab,
+          url: result.preview_url ?? result.file_url ?? '',
+          previewUrl: result.preview_url,
+          fileUrl: result.file_url,
+          title: result.name,
+        };
+        toggleItem(newItem);
+      }
     } catch (err: any) {
       toast.error(err?.response?.data?.error ?? 'Upload failed');
     } finally {
@@ -141,6 +153,19 @@ export default function MediaLibraryDialog({
       }
       return next;
     });
+  };
+
+  const handleDelete = async (e: React.MouseEvent, item: TiktokMaterialItem) => {
+    e.stopPropagation();
+    try {
+      await deleteTiktokMaterial(item.id);
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      if (primary?.id === item.id) setPrimary(null);
+      setImages((prev) => prev.filter((i) => i.id !== item.id));
+      toast.success(`${tab === 'video' ? 'Video' : 'Image'} deleted`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error ?? 'Failed to delete');
+    }
   };
 
   const accept = useMemo(() => (tab === 'video' ? 'video/mp4,video/quicktime' : 'image/*'), [tab]);
@@ -223,7 +248,7 @@ export default function MediaLibraryDialog({
               {items.map((item) => {
                 const selected = isItemSelected(item);
                 return (
-                  <li key={item.id}>
+                  <li key={item.id} className="group relative">
                     <button
                       type="button"
                       onClick={() => toggleItem(item)}
@@ -250,6 +275,15 @@ export default function MediaLibraryDialog({
                           <Check className="h-3 w-3" aria-hidden="true" />
                         </span>
                       )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => handleDelete(e, item)}
+                      className="absolute bottom-1 left-1 hidden group-hover:flex items-center gap-0.5 rounded bg-white/90 px-1.5 py-0.5 text-[10px] text-red-500 shadow hover:bg-red-50"
+                      aria-label="Delete"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      Delete
                     </button>
                   </li>
                 );

@@ -641,6 +641,25 @@ def material_info(request, id):
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@api_view(['DELETE'])
+@permission_classes([IsAuthenticated])
+def material_delete(request, id):
+    """Delete a creative material by ID. Only the uploader can delete."""
+    try:
+        creative = TikTokCreative.objects.get(id=id, uploaded_by=request.user)
+    except TikTokCreative.DoesNotExist:
+        return Response({'error': 'Material not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    if creative.storage_path:
+        try:
+            default_storage.delete(creative.storage_path)
+        except Exception:
+            pass
+
+    creative.delete()
+    return Response({'success': True}, status=status.HTTP_200_OK)
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def ad_draft_save(request):
