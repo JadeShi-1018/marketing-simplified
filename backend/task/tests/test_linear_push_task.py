@@ -130,8 +130,7 @@ def test_push_task_creates_with_team(organization, api_client):
     assert r.data["action"] == "created"
     assert r.data["linear_issue_id"] == "new-linear-id"
     cr.assert_called_once()
-    task.refresh_from_db()
-    assert task.linear_issue_id == "new-linear-id"
+    assert Task.objects.get(pk=task.pk).linear_issue_id == "new-linear-id"
 
 
 @pytest.mark.django_db
