@@ -8,9 +8,14 @@ import DashboardSidebar from './DashboardSidebar';
 import NotificationBell from './NotificationBell';
 import UpcomingMeetingsPanel from './UpcomingMeetingsPanel';
 import AgentSidePanel from '@/components/agent/AgentSidePanel';
+import { useDashboardPanelPreference } from './DashboardPanelPreferenceContext';
 import { useProjectStore } from '@/lib/projectStore';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
 import { splitMeetingRowsBySchedule } from '@/lib/meetings/meetingScheduleSplit';
+import {
+  UPCOMING_MEETINGS_PANEL_STORAGE_KEY,
+  normalizeUpcomingMeetingsPanelOpen,
+} from '@/lib/dashboardPanelPreferences';
 import type { AlertData } from '@/lib/mock/dashboardMock';
 import type { MeetingListItem } from '@/types/meeting';
 
@@ -94,7 +99,10 @@ export default function DashboardLayout({
   hideRightPanel = false,
   mainClassName = '',
 }: DashboardLayoutProps) {
-  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const {
+    upcomingMeetingsPanelOpen: isPanelOpen,
+    setUpcomingMeetingsPanelOpen: setIsPanelOpen,
+  } = useDashboardPanelPreference();
   const [meetingsLoading, setMeetingsLoading] = useState(
     () => !(upcomingMeetings && upcomingMeetings.length > 0)
   );
@@ -111,6 +119,15 @@ export default function DashboardLayout({
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
   const [autoMeetings, setAutoMeetings] = useState<MeetingListItem[]>([]);
   const useExplicit = upcomingMeetings && upcomingMeetings.length > 0;
+
+  useEffect(() => {
+    const stored = localStorage.getItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY);
+    if (stored === 'false' || stored === 'true') {
+      const storedOpen = normalizeUpcomingMeetingsPanelOpen(stored);
+      setIsPanelOpen(storedOpen);
+      document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(storedOpen)}; path=/; max-age=31536000; samesite=lax`;
+    }
+  }, [setIsPanelOpen]);
 
   useEffect(() => {
     const previousHtmlOverflow = document.documentElement.style.overflow;
@@ -163,6 +180,14 @@ export default function DashboardLayout({
   }, [activeProject?.id, hasProjectStoreHydrated, useExplicit]);
 
   const meetingsForPanel = useExplicit ? upcomingMeetings! : autoMeetings;
+  const toggleMeetingsPanel = () => {
+    setIsPanelOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY, String(next));
+      document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(next)}; path=/; max-age=31536000; samesite=lax`;
+      return next;
+    });
+  };
 
   return (
     <div className="fixed inset-0 flex bg-[#F7F8FA] overflow-hidden">
@@ -194,7 +219,7 @@ export default function DashboardLayout({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setIsPanelOpen(!isPanelOpen)}
+                onClick={toggleMeetingsPanel}
                 className="h-7 px-2 text-xs text-gray-500 hover:text-gray-700"
               >
                 {isPanelOpen ? (

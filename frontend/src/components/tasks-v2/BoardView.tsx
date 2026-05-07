@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import type { TaskData } from '@/types/task';
 import { TASK_TYPES } from './TYPE_META';
 import TaskCardMini from './TaskCardMini';
@@ -14,8 +14,11 @@ interface BoardViewProps {
   error: string | null;
 }
 
+const COLUMN_PAGE_SIZE = 10;
+
 export default function BoardView({ tasks, loading, error }: BoardViewProps) {
   const router = useRouter();
+  const [pageByType, setPageByType] = useState<Record<string, number>>({});
 
   const grouped = useMemo(() => {
     const map: Record<string, TaskData[]> = {};
@@ -25,6 +28,39 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
     }
     return map;
   }, [tasks]);
+
+  const sortedTypes = useMemo(
+    () =>
+      [...TASK_TYPES].sort((a, b) => {
+        const countDiff = (grouped[b.value]?.length ?? 0) - (grouped[a.value]?.length ?? 0);
+        if (countDiff !== 0) return countDiff;
+        return TASK_TYPES.findIndex((type) => type.value === a.value) -
+          TASK_TYPES.findIndex((type) => type.value === b.value);
+      }),
+    [grouped]
+  );
+
+  useEffect(() => {
+    setPageByType((prev) => {
+      let changed = false;
+      const next: Record<string, number> = {};
+
+      for (const meta of TASK_TYPES) {
+        const totalPages = Math.max(1, Math.ceil((grouped[meta.value]?.length ?? 0) / COLUMN_PAGE_SIZE));
+        const currentPage = prev[meta.value] ?? 1;
+        const clampedPage = Math.min(Math.max(currentPage, 1), totalPages);
+        next[meta.value] = clampedPage;
+        if (prev[meta.value] !== clampedPage) changed = true;
+      }
+
+      return changed ? next : prev;
+    });
+  }, [grouped]);
+
+  const setColumnPage = (type: string, page: number, totalPages: number) => {
+    const nextPage = Math.min(Math.max(page, 1), totalPages);
+    setPageByType((prev) => ({ ...prev, [type]: nextPage }));
+  };
 
   if (error) {
     return (
@@ -37,8 +73,12 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
   return (
     <div className="overflow-x-auto pb-3">
       <div className="flex min-w-full gap-4">
-        {TASK_TYPES.map((meta) => {
+        {sortedTypes.map((meta) => {
           const tasksInColumn = grouped[meta.value] ?? [];
+          const currentPage = pageByType[meta.value] ?? 1;
+          const totalPages = Math.max(1, Math.ceil(tasksInColumn.length / COLUMN_PAGE_SIZE));
+          const pageStart = (currentPage - 1) * COLUMN_PAGE_SIZE;
+          const visibleTasks = tasksInColumn.slice(pageStart, pageStart + COLUMN_PAGE_SIZE);
           return (
             <div
               key={meta.value}
@@ -80,10 +120,38 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
                     No {meta.shortLabel.toLowerCase()} tasks
                   </div>
                 ) : (
-                  tasksInColumn.map((task) => (
+                  visibleTasks.map((task) => (
                     <TaskCardMini key={task.id} task={task} />
                   ))
                 )}
+
+                {!loading && tasksInColumn.length > COLUMN_PAGE_SIZE ? (
+                  <div className="flex items-center justify-between border-t border-gray-100 pt-2 text-[11px] text-gray-500">
+                    <span>
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setColumnPage(meta.value, currentPage - 1, totalPages)}
+                        disabled={currentPage <= 1}
+                        className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <ChevronLeft className="h-3 w-3" aria-hidden="true" />
+                        Prev
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setColumnPage(meta.value, currentPage + 1, totalPages)}
+                        disabled={currentPage >= totalPages}
+                        className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[11px] font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Next
+                        <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
 
                 <button
                   type="button"

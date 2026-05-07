@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDownToLine, ArrowUpToLine, Search } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData } from '@/types/task';
 import {
@@ -60,6 +60,8 @@ const STATUS_DOT_CLASS: Record<string, string> = {
   CANCELLED: 'bg-gray-400',
 };
 
+const LIST_PAGE_SIZE = 10;
+
 export default function ListView({
   tasks,
   loading,
@@ -72,7 +74,7 @@ export default function ListView({
   const removeTask = useTaskStore((s) => s.removeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const [search, setSearch] = useState('');
-  const [density, setDensity] = useState<'comfortable' | 'compact'>('comfortable');
+  const [currentPage, setCurrentPage] = useState(1);
   const [bulkMode, setBulkMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [linearBulkOpen, setLinearBulkOpen] = useState(false);
@@ -242,6 +244,23 @@ export default function ListView({
     );
   }, [search, tasks]);
 
+  const totalPages = Math.max(1, Math.ceil(visible.length / LIST_PAGE_SIZE));
+  const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
+  const paginatedVisible = useMemo(() => {
+    const start = (safeCurrentPage - 1) * LIST_PAGE_SIZE;
+    return visible.slice(start, start + LIST_PAGE_SIZE);
+  }, [safeCurrentPage, visible]);
+  const pageStart = visible.length === 0 ? 0 : (safeCurrentPage - 1) * LIST_PAGE_SIZE + 1;
+  const pageEnd = Math.min(visible.length, safeCurrentPage * LIST_PAGE_SIZE);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(Math.max(page, 1), totalPages));
+  }, [totalPages]);
+
   useEffect(() => {
     if (loading) {
       setTruncatedSummaryIds([]);
@@ -267,7 +286,7 @@ export default function ListView({
       window.cancelAnimationFrame(frame);
       window.removeEventListener('resize', measureTruncation);
     };
-  }, [density, loading, visible]);
+  }, [loading, paginatedVisible]);
 
   const memberOptions = useMemo(() => {
     if (members.length > 0) {
@@ -313,10 +332,17 @@ export default function ListView({
 
   const toggleSelectAll = (checked: boolean) => {
     if (!checked) {
-      setSelectedIds([]);
+      const pageIds = new Set(paginatedVisible.map((t) => t.id).filter(Boolean) as number[]);
+      setSelectedIds((prev) => prev.filter((id) => !pageIds.has(id)));
       return;
     }
-    setSelectedIds(visible.map((t) => t.id!).filter(Boolean));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      paginatedVisible.forEach((task) => {
+        if (task.id) next.add(task.id);
+      });
+      return Array.from(next);
+    });
   };
 
   const setTaskSaving = (taskId: number, saving: boolean) => {
@@ -537,6 +563,17 @@ export default function ListView({
     return 'text-gray-700';
   };
 
+  const goToPage = (page: number) => {
+    setCurrentPage(Math.min(Math.max(page, 1), totalPages));
+  };
+
+  const currentPageIds = useMemo(
+    () => paginatedVisible.map((task) => task.id).filter(Boolean) as number[],
+    [paginatedVisible]
+  );
+  const isCurrentPageSelected =
+    currentPageIds.length > 0 && currentPageIds.every((id) => selectedIds.includes(id));
+
   return (
     <div className="min-w-0">
       <TaskListRowContextMenu
@@ -568,28 +605,6 @@ export default function ListView({
         >
           {bulkMode ? 'Exit Bulk edit' : 'Bulk edit'}
         </button>
-        <div className="inline-flex h-9 shrink-0 items-center rounded-xl border border-gray-200 bg-white p-0.5">
-          <button
-            type="button"
-            onClick={() => setDensity('comfortable')}
-            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${density === 'comfortable'
-                ? 'border border-[#2fc6d6] bg-[#effbfc] text-[#2fc6d6] shadow-sm'
-                : 'border border-transparent text-gray-600 hover:bg-gray-50'
-              }`}
-          >
-            Comfortable
-          </button>
-          <button
-            type="button"
-            onClick={() => setDensity('compact')}
-            className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${density === 'compact'
-                ? 'border border-[#2fc6d6] bg-[#effbfc] text-[#2fc6d6] shadow-sm'
-                : 'border border-transparent text-gray-600 hover:bg-gray-50'
-              }`}
-          >
-            Compact
-          </button>
-        </div>
       </div>
 
       {bulkMode && (
@@ -701,7 +716,7 @@ export default function ListView({
                   <th className={`${TABLE_COLUMN_WIDTHS.select} px-2 py-2.5 text-left`}>
                     <input
                       type="checkbox"
-                      checked={visible.length > 0 && selectedIds.length === visible.length}
+                      checked={isCurrentPageSelected}
                       onChange={(e) => toggleSelectAll(e.target.checked)}
                       className="h-4 w-4 rounded border-gray-300 accent-gray-900 focus:ring-gray-300"
                     />
@@ -716,7 +731,7 @@ export default function ListView({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-gray-700">
-              {(loading ? Array.from({ length: 6 }, () => undefined) : visible).map((task, index) => {
+              {(loading ? Array.from({ length: 6 }, () => undefined) : paginatedVisible).map((task, index) => {
                 if (loading) {
                   return (
                     <tr key={`tasks-list-skeleton-${index}`}>
@@ -764,8 +779,8 @@ export default function ListView({
                 const statusMeta = STATUS_META[status] ?? STATUS_META.DRAFT;
                 const isSaving = !!task.id && savingIds.includes(task.id);
                 const isSelected = !!task.id && selectedIds.includes(task.id);
-                const openPriorityUpward = index >= Math.max(visible.length - 3, 0);
-                const openOverlayUpward = index >= Math.max(visible.length - 3, 0);
+                const openPriorityUpward = index >= Math.max(paginatedVisible.length - 3, 0);
+                const openOverlayUpward = index >= Math.max(paginatedVisible.length - 3, 0);
                 return (
                   <tr
                     key={task.id}
@@ -785,7 +800,7 @@ export default function ListView({
                     }}
                     onContextMenu={(e) => openRowMenu(e, task)}
                   >
-                    <td className={`${TABLE_COLUMN_WIDTHS.icon} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
+                    <td className={`${TABLE_COLUMN_WIDTHS.icon} align-middle px-4 py-1.5`}>
                       <div className="relative" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
@@ -823,7 +838,7 @@ export default function ListView({
                     </td>
                     {bulkMode ? (
                       <td
-                        className={`${TABLE_COLUMN_WIDTHS.select} align-middle px-2 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}
+                        className={`${TABLE_COLUMN_WIDTHS.select} align-middle px-2 py-1.5`}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <input
@@ -834,7 +849,7 @@ export default function ListView({
                         />
                       </td>
                     ) : null}
-                    <td className={`align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
+                    <td className="align-middle px-4 py-1.5">
                       <div className="min-w-0">
                         {editingSummaryId === task.id ? (
                           <input
@@ -895,10 +910,10 @@ export default function ListView({
                         )}
                       </div>
                     </td>
-                    <td className={`${TABLE_COLUMN_WIDTHS.type} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs font-medium uppercase tracking-wide text-gray-500`}>
+                    <td className={`${TABLE_COLUMN_WIDTHS.type} align-middle px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-gray-500`}>
                       {TYPE_LABEL[task.type] ?? task.type ?? '—'}
                     </td>
-                    <td className={`${TABLE_COLUMN_WIDTHS.status} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
+                    <td className={`${TABLE_COLUMN_WIDTHS.status} align-middle px-4 py-1.5`}>
                       <div className="relative" onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
@@ -939,7 +954,7 @@ export default function ListView({
                       </div>
                     </td>
                     <td
-                      className={`${TABLE_COLUMN_WIDTHS.owner} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs text-gray-600`}
+                      className={`${TABLE_COLUMN_WIDTHS.owner} align-middle px-4 py-1.5 text-xs text-gray-600`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <div className="relative">
@@ -994,7 +1009,7 @@ export default function ListView({
                       </div>
                     </td>
                     <td
-                      className={`${TABLE_COLUMN_WIDTHS.approver} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs text-gray-600`}
+                      className={`${TABLE_COLUMN_WIDTHS.approver} align-middle px-4 py-1.5 text-xs text-gray-600`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       {(() => {
@@ -1083,7 +1098,7 @@ export default function ListView({
                       })()}
                     </td>
                     <td
-                      className={`${TABLE_COLUMN_WIDTHS.due} relative align-middle px-3 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-left text-xs tabular-nums text-gray-500`}
+                      className={`${TABLE_COLUMN_WIDTHS.due} relative align-middle px-3 py-1.5 text-left text-xs tabular-nums text-gray-500`}
                       onClick={(e) => e.stopPropagation()}
                     >
                       <button
@@ -1101,7 +1116,7 @@ export default function ListView({
                       </button>
                       {openDuePickerTaskId === task.id ? (
                         <div
-                          className={`absolute right-0 z-20 w-52 rounded-lg border border-gray-200 bg-white p-2 shadow-lg ${index >= Math.max(visible.length - 3, 0) ? 'bottom-11' : 'top-11'
+                          className={`absolute right-0 z-20 w-52 rounded-lg border border-gray-200 bg-white p-2 shadow-lg ${index >= Math.max(paginatedVisible.length - 3, 0) ? 'bottom-11' : 'top-11'
                             }`}
                         >
                           <input
@@ -1152,6 +1167,36 @@ export default function ListView({
             </tbody>
           </table>
         )}
+        {!loading && !error && visible.length > LIST_PAGE_SIZE ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-2.5 text-xs text-gray-600">
+            <span className="text-gray-400">
+              {pageStart}–{pageEnd} of {visible.length}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => goToPage(safeCurrentPage - 1)}
+                disabled={safeCurrentPage <= 1}
+                className="inline-flex h-8 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <ChevronLeft className="h-3 w-3" aria-hidden="true" />
+                Prev
+              </button>
+              <span className="text-gray-500">
+                Page {safeCurrentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => goToPage(safeCurrentPage + 1)}
+                disabled={safeCurrentPage >= totalPages}
+                className="inline-flex h-8 items-center gap-1 rounded-md px-2.5 text-xs font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
       <LinearBulkOutputModal
         isOpen={linearBulkOpen}

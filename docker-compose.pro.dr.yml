@@ -111,8 +111,8 @@ services:
       - "443:443"
     volumes:
       - ./nginx/nginx.conf.pro:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt/live/marketing.simplified.dpdns.org:/etc/letsencrypt/live/marketing.simplified.dpdns.org:ro
-      - /etc/letsencrypt/archive/marketing.simplified.dpdns.org:/etc/letsencrypt/archive/marketing.simplified.dpdns.org:ro
+      - /etc/letsencrypt/live/zmarkio.com:/etc/letsencrypt/live/zmarkio.com:ro
+      - /etc/letsencrypt/archive/zmarkio.com:/etc/letsencrypt/archive/zmarkio.com:ro
     depends_on:
       backend:
         condition: service_started
