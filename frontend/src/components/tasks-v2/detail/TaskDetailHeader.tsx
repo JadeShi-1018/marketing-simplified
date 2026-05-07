@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
 import { ChevronRight, Trash2, Share2, ArrowLeft } from 'lucide-react';
@@ -42,17 +42,38 @@ export default function TaskDetailHeader({
 }: Props) {
   const [value, setValue] = useState(task.summary || '');
   const [saving, setSaving] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
   const lastSaved = useRef(task.summary || '');
+  const titleTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const resizeTitle = useCallback(() => {
+    const textarea = titleTextareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 92)}px`;
+  }, []);
 
   useEffect(() => {
     setValue(task.summary || '');
     lastSaved.current = task.summary || '';
   }, [task.summary, task.id]);
 
+  useEffect(() => {
+    if (!editingTitle) return;
+    const textarea = titleTextareaRef.current;
+    if (!textarea) return;
+
+    resizeTitle();
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }, [editingTitle, resizeTitle]);
+
   const commit = async () => {
     const trimmed = value.trim();
     if (!task.id || !trimmed || trimmed === lastSaved.current) {
       if (!trimmed) setValue(lastSaved.current);
+      setEditingTitle(false);
       return;
     }
     setSaving(true);
@@ -60,6 +81,7 @@ export default function TaskDetailHeader({
       await TaskAPI.updateTask(task.id, { summary: trimmed });
       lastSaved.current = trimmed;
       await onUpdated();
+      setEditingTitle(false);
     } catch (e) {
       toast.error((e as any)?.response?.data?.detail || 'Save failed');
       setValue(lastSaved.current);
@@ -138,21 +160,48 @@ export default function TaskDetailHeader({
             </div>
           </div>
         ) : (
-          <input
-            type="text"
-            className="-mx-1 w-[calc(100%+0.5rem)] rounded-md border-0 border-b-2 border-transparent bg-transparent px-1 py-1 text-[22px] font-semibold leading-tight text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-[#3CCED7] disabled:opacity-70"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            onBlur={commit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                (e.target as HTMLInputElement).blur();
-              }
-            }}
-            disabled={readOnly}
-            placeholder="Task title"
-          />
+          <div className="relative -mx-1 w-[calc(100%+0.5rem)]">
+            {editingTitle ? (
+              <textarea
+                ref={titleTextareaRef}
+                rows={1}
+                className="block max-h-[92px] min-h-[40px] w-full resize-none overflow-y-auto rounded-md border-0 border-b-2 border-transparent bg-transparent px-1 py-1 text-[22px] font-semibold leading-tight text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-[#3CCED7] disabled:opacity-70"
+                value={value}
+                onChange={(e) => {
+                  setValue(e.target.value.replace(/[\r\n]+/g, ' '));
+                  resizeTitle();
+                }}
+                onInput={resizeTitle}
+                onBlur={commit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    (e.target as HTMLTextAreaElement).blur();
+                  }
+                  if (e.key === 'Escape') {
+                    setValue(lastSaved.current);
+                    setEditingTitle(false);
+                  }
+                }}
+                disabled={readOnly}
+                placeholder="Task title"
+              />
+            ) : (
+              <button
+                type="button"
+                className="block min-h-[40px] w-full rounded-md px-1 py-1 text-left text-[22px] font-semibold leading-tight text-gray-900 outline-none transition hover:bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#3CCED7]/30 disabled:cursor-default disabled:hover:bg-transparent"
+                onClick={() => {
+                  if (!readOnly) setEditingTitle(true);
+                }}
+                disabled={readOnly}
+                title={value || 'Task title'}
+              >
+                <span className="block overflow-hidden break-words [-webkit-box-orient:vertical] [-webkit-line-clamp:3]">
+                  {value || 'Task title'}
+                </span>
+              </button>
+            )}
+          </div>
         )}
         {!loading && (
           <div className="mt-4 flex flex-wrap items-center gap-2">

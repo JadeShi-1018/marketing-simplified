@@ -6,6 +6,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { useAuthStore } from '@/lib/authStore';
@@ -42,6 +43,7 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [checking, setChecking] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const refreshRequestIdRef = useRef(0);
 
   const normalizeProjects = (data: unknown): ProjectData[] => {
     if (Array.isArray(data)) return data as ProjectData[];
@@ -52,7 +54,11 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
   };
 
   const evaluateProjects = useCallback(
-    (rawProjects: any, pendingInviteCount: number) => {
+    (
+      rawProjects: any,
+      pendingInviteCount: number,
+      options?: { preferLatestActive?: boolean }
+    ) => {
       const list = normalizeProjects(rawProjects);
       setProjects(list);
 
@@ -65,17 +71,24 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
         return;
       }
 
-      const currentActive = list.find((project) => project.id === activeProject?.id);
-      const nextActive = currentActive || list[0];
+      const backendActive = list.find((project) => project.is_active);
+      const latestActiveProjectId = useProjectStore.getState().activeProject?.id;
+      const latestActive = latestActiveProjectId
+        ? list.find((project) => project.id === latestActiveProjectId)
+        : null;
+      const nextActive = options?.preferLatestActive
+        ? latestActive || backendActive || list[0]
+        : backendActive || latestActive || list[0];
 
       setActiveProject(nextActive);
       setNeedsOnboarding(false);
     },
-    [activeProject?.id, setActiveProject, setNeedsOnboarding, setProjects]
+    [setActiveProject, setNeedsOnboarding, setProjects]
   );
 
   const refreshProjects = useCallback(async () => {
     if (!isAuthenticated) {
+      refreshRequestIdRef.current += 1;
       setNeedsOnboarding(false);
       setFetchError(null);
       setLoading(false);
@@ -84,23 +97,34 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
 
     setChecking(true);
     setLoading(true);
+    const requestId = ++refreshRequestIdRef.current;
+    const activeProjectIdAtRequestStart = useProjectStore.getState().activeProject?.id ?? null;
 
     try {
       const [projectList, invitations] = await Promise.all([
         ProjectAPI.getProjects(),
         ProjectAPI.getMyPendingInvitations().catch(() => []),
       ]);
+      if (requestId !== refreshRequestIdRef.current) return;
+
       const pendingCount = Array.isArray(invitations) ? invitations.length : 0;
-      evaluateProjects(projectList, pendingCount);
+      const latestActiveProjectId = useProjectStore.getState().activeProject?.id ?? null;
+      evaluateProjects(projectList, pendingCount, {
+        preferLatestActive: latestActiveProjectId !== activeProjectIdAtRequestStart,
+      });
       setFetchError(null);
       setError(null);
     } catch (error: any) {
+      if (requestId !== refreshRequestIdRef.current) return;
+
       const message = error?.response?.data?.error || 'Failed to load projects';
       setFetchError(message);
       setError(message);
       // If we cannot determine project membership, keep the UI blocked
       setNeedsOnboarding(true);
     } finally {
+      if (requestId !== refreshRequestIdRef.current) return;
+
       setChecking(false);
       setLoading(false);
     }
