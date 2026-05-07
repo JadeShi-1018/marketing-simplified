@@ -12,14 +12,38 @@ import random
 import os
 import hashlib
 import secrets
+import tempfile
 from datetime import timedelta
 from django.utils import timezone
 from django.conf import settings
 from .services import (
     validate_numeric_string,
     validate_fields_param,
-    validate_thumbnail_dimensions
+    validate_thumbnail_dimensions,
+    facebook_media_file_exists,
     )
+
+
+def build_photo_payload(photo):
+    return {
+        "id": photo.id,
+        "url": photo.url,
+        "caption": photo.caption,
+        "image_hash": photo.image_hash,
+        "width": 1024,
+        "height": 1024
+    }
+
+
+def build_video_payload(video):
+    return {
+        "id": video.id,
+        "url": video.image_url,
+        "title": video.title,
+        "message": video.message,
+        "video_id": video.video_id,
+    }
+
 
 class AdCreativesView(generics.ListCreateAPIView):
     """
@@ -408,53 +432,104 @@ class PhotoUploadView(APIView):
             
             # Storage directory (no date folders)
             storage_dir_path = 'facebook_meta_photos'
-            
-            # Use original filename with conflict resolution
-            original_filename = uploaded_file.name
-            base_name, ext = os.path.splitext(original_filename)
-            
-            # Check for existing files and add (1), (2), etc. if needed
             storage_dir = getattr(settings, 'FILE_STORAGE_DIR', os.path.join(settings.BASE_DIR, 'media'))
             full_storage_path = os.path.join(storage_dir, storage_dir_path)
             os.makedirs(full_storage_path, exist_ok=True)
-            
-            final_filename = original_filename
-            counter = 1
-            while os.path.exists(os.path.join(full_storage_path, final_filename)):
-                final_filename = f"{base_name}({counter}){ext}"
-                counter += 1
-            
-            storage_key = os.path.join(storage_dir_path, final_filename)
-            
-            # Compute checksum and save file
+
+            original_filename = uploaded_file.name
+            base_name, ext = os.path.splitext(original_filename)
+
+            # Stream upload into a temp file in the same directory while
+            # hashing the bytes. We need the full content hash before we can
+            # decide whether to dedupe against an existing row, so we cannot
+            # write the final file until that decision is made.
             sha256 = hashlib.sha256()
-            bytes_written = 0
-            
-            full_path = os.path.join(full_storage_path, final_filename)
-            
-            with open(full_path, 'wb') as dest:
-                for chunk in uploaded_file.chunks():
-                    sha256.update(chunk)
-                    dest.write(chunk)
-                    bytes_written += len(chunk)
-            
-            checksum_hex = sha256.hexdigest()
-            
-            # Generate URL for accessing the file
-            file_url = f"/media/{storage_key}"
-            
-            # Get optional caption from request
-            caption = request.data.get('caption', '')
-            
-            # Create AdCreativePhotoData record
-            photo_data = AdCreativePhotoData.objects.create(
-                url=file_url,
-                caption=caption,
-                image_hash=checksum_hex[:32]  # Use first 32 chars of checksum as hash
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                prefix='.upload_', suffix=ext or '', dir=full_storage_path
             )
-            
-            # Return simple success response
-            return Response({"success": True}, status=status.HTTP_201_CREATED)
+            try:
+                with os.fdopen(tmp_fd, 'wb') as dest:
+                    for chunk in uploaded_file.chunks():
+                        sha256.update(chunk)
+                        dest.write(chunk)
+
+                checksum_hex = sha256.hexdigest()
+                image_hash = checksum_hex[:32]
+                caption = request.data.get('caption', '')
+
+                # Dedup: any existing row with the same content hash wins.
+                existing = (
+                    AdCreativePhotoData.objects
+                    .filter(image_hash=image_hash)
+                    .order_by('id')
+                    .first()
+                )
+
+                if existing and facebook_media_file_exists(existing.url):
+                    # Identical content already on disk + in DB. Discard the
+                    # temp upload and return the existing record so the
+                    # client never sees a duplicate.
+                    try:
+                        os.remove(tmp_path)
+                    except FileNotFoundError:
+                        pass
+                    tmp_path = None
+                    return Response({
+                        "success": True,
+                        "photo": build_photo_payload(existing),
+                    }, status=status.HTTP_200_OK)
+
+                # New content (or existing row whose file was deleted from
+                # disk). Place the temp file at a unique final path.
+                final_filename = original_filename
+                counter = 1
+                while os.path.exists(os.path.join(full_storage_path, final_filename)):
+                    final_filename = f"{base_name}({counter}){ext}"
+                    counter += 1
+                full_path = os.path.join(full_storage_path, final_filename)
+                os.replace(tmp_path, full_path)
+                tmp_path = None
+                # mkstemp creates files at 0600; restore world-readable perms
+                # so the static file server (nginx) can serve them.
+                try:
+                    os.chmod(full_path, 0o644)
+                except OSError:
+                    pass
+
+                storage_key = os.path.join(storage_dir_path, final_filename)
+                file_url = f"/media/{storage_key}"
+
+                if existing:
+                    # Rebind the orphan row to the new file instead of
+                    # creating a duplicate.
+                    existing.url = file_url
+                    update_fields = ['url']
+                    if caption and not existing.caption:
+                        existing.caption = caption
+                        update_fields.append('caption')
+                    existing.save(update_fields=update_fields)
+                    photo_data = existing
+                    response_status = status.HTTP_200_OK
+                else:
+                    photo_data = AdCreativePhotoData.objects.create(
+                        url=file_url,
+                        caption=caption,
+                        image_hash=image_hash,
+                    )
+                    response_status = status.HTTP_201_CREATED
+            finally:
+                # Best-effort cleanup if we bailed before promoting / removing
+                # the temp file.
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+
+            return Response({
+                "success": True,
+                "photo": build_photo_payload(photo_data),
+            }, status=response_status)
             
         except Exception as e:
             return Response(
@@ -480,34 +555,33 @@ class PhotoListView(generics.ListAPIView):
     
     def list(self, request, *args, **kwargs):
         """Override list to return custom response format"""
-        queryset = self.get_queryset()
-        
+        # Filter out orphans (DB row exists, file is gone) AND collapse
+        # duplicates by content hash. The upload view dedupes new uploads,
+        # but we may already have duplicate rows from before that fix; this
+        # ensures the user only ever sees one tile per unique image.
+        seen_hashes = set()
+        queryset = []
+        for photo in self.get_queryset():
+            if not facebook_media_file_exists(photo.url):
+                continue
+            key = photo.image_hash or f'noop:{photo.id}'
+            if key in seen_hashes:
+                continue
+            seen_hashes.add(key)
+            queryset.append(photo)
+
         # Paginate
         page = self.paginate_queryset(queryset)
         if page is not None:
             photos_data = []
             for photo in page:
-                photos_data.append({
-                    "id": photo.id,
-                    "url": photo.url,
-                    "caption": photo.caption,
-                    "image_hash": photo.image_hash,
-                    "width": 1024,
-                    "height": 1024
-                })
+                photos_data.append(build_photo_payload(photo))
             return self.get_paginated_response(photos_data)
-        
+
         photos_data = []
         for photo in queryset:
-            photos_data.append({
-                "id": photo.id,
-                "url": photo.url,
-                "caption": photo.caption,
-                "image_hash": photo.image_hash,
-                "width": 1024,
-                "height": 1024
-            })
-        
+            photos_data.append(build_photo_payload(photo))
+
         return Response({
             "count": len(photos_data),
             "next": None,
@@ -560,55 +634,100 @@ class VideoUploadView(APIView):
             
             # Storage directory (no date folders)
             storage_dir_path = 'facebook_meta_videos'
-            
-            # Use original filename with conflict resolution
-            original_filename = uploaded_file.name
-            base_name, ext = os.path.splitext(original_filename)
-            
-            # Check for existing files and add (1), (2), etc. if needed
             storage_dir = getattr(settings, 'FILE_STORAGE_DIR', os.path.join(settings.BASE_DIR, 'media'))
             full_storage_path = os.path.join(storage_dir, storage_dir_path)
             os.makedirs(full_storage_path, exist_ok=True)
-            
-            final_filename = original_filename
-            counter = 1
-            while os.path.exists(os.path.join(full_storage_path, final_filename)):
-                final_filename = f"{base_name}({counter}){ext}"
-                counter += 1
-            
-            storage_key = os.path.join(storage_dir_path, final_filename)
-            
-            # Compute checksum and save file
+
+            original_filename = uploaded_file.name
+            base_name, ext = os.path.splitext(original_filename)
+
+            # Stream upload into a temp file in the same directory while
+            # hashing. Mirrors PhotoUploadView so we can dedupe on content
+            # hash before promoting the file to its final path.
             sha256 = hashlib.sha256()
-            bytes_written = 0
-            
-            full_path = os.path.join(full_storage_path, final_filename)
-            
-            with open(full_path, 'wb') as dest:
-                for chunk in uploaded_file.chunks():
-                    sha256.update(chunk)
-                    dest.write(chunk)
-                    bytes_written += len(chunk)
-            
-            checksum_hex = sha256.hexdigest()
-            
-            # Generate URL for accessing the file
-            file_url = f"/media/{storage_key}"
-            
-            # Get optional title and message from request
-            title = request.data.get('title', '')
-            message = request.data.get('message', '')
-            
-            # Create AdCreativeVideoData record
-            video_data = AdCreativeVideoData.objects.create(
-                image_url=file_url,  # Using image_url to store video file path
-                title=title,
-                message=message,
-                video_id=checksum_hex[:32]  # Use first 32 chars of checksum as video_id
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                prefix='.upload_', suffix=ext or '', dir=full_storage_path
             )
-            
-            # Return simple success response
-            return Response({"success": True}, status=status.HTTP_201_CREATED)
+            try:
+                with os.fdopen(tmp_fd, 'wb') as dest:
+                    for chunk in uploaded_file.chunks():
+                        sha256.update(chunk)
+                        dest.write(chunk)
+
+                checksum_hex = sha256.hexdigest()
+                video_id_value = checksum_hex[:32]
+                title = request.data.get('title', '')
+                message = request.data.get('message', '')
+
+                # Dedup: any existing row with the same content hash wins.
+                existing = (
+                    AdCreativeVideoData.objects
+                    .filter(video_id=video_id_value)
+                    .order_by('id')
+                    .first()
+                )
+
+                if existing and facebook_media_file_exists(existing.image_url):
+                    try:
+                        os.remove(tmp_path)
+                    except FileNotFoundError:
+                        pass
+                    tmp_path = None
+                    return Response({
+                        "success": True,
+                        "video": build_video_payload(existing),
+                    }, status=status.HTTP_200_OK)
+
+                # New content (or row whose file is gone). Promote temp to
+                # a unique final path.
+                final_filename = original_filename
+                counter = 1
+                while os.path.exists(os.path.join(full_storage_path, final_filename)):
+                    final_filename = f"{base_name}({counter}){ext}"
+                    counter += 1
+                full_path = os.path.join(full_storage_path, final_filename)
+                os.replace(tmp_path, full_path)
+                tmp_path = None
+                # See PhotoUploadView: restore perms after mkstemp.
+                try:
+                    os.chmod(full_path, 0o644)
+                except OSError:
+                    pass
+
+                storage_key = os.path.join(storage_dir_path, final_filename)
+                file_url = f"/media/{storage_key}"
+
+                if existing:
+                    existing.image_url = file_url
+                    update_fields = ['image_url']
+                    if title and not existing.title:
+                        existing.title = title
+                        update_fields.append('title')
+                    if message and not existing.message:
+                        existing.message = message
+                        update_fields.append('message')
+                    existing.save(update_fields=update_fields)
+                    video_data = existing
+                    response_status = status.HTTP_200_OK
+                else:
+                    video_data = AdCreativeVideoData.objects.create(
+                        image_url=file_url,
+                        title=title,
+                        message=message,
+                        video_id=video_id_value,
+                    )
+                    response_status = status.HTTP_201_CREATED
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except OSError:
+                        pass
+
+            return Response({
+                "success": True,
+                "video": build_video_payload(video_data),
+            }, status=response_status)
             
         except Exception as e:
             return Response(
@@ -634,32 +753,31 @@ class VideoListView(generics.ListAPIView):
     
     def list(self, request, *args, **kwargs):
         """Override list to return custom response format"""
-        queryset = self.get_queryset()
-        
+        # Filter orphans + collapse duplicates by content hash (video_id stores
+        # the sha256[:32] of the file). See PhotoListView.list for rationale.
+        seen_hashes = set()
+        queryset = []
+        for video in self.get_queryset():
+            if not facebook_media_file_exists(video.image_url):
+                continue
+            key = video.video_id or f'noop:{video.id}'
+            if key in seen_hashes:
+                continue
+            seen_hashes.add(key)
+            queryset.append(video)
+
         # Paginate
         page = self.paginate_queryset(queryset)
         if page is not None:
             videos_data = []
             for video in page:
-                videos_data.append({
-                    "id": video.id,
-                    "url": video.image_url,  # Using image_url field which stores video file path
-                    "title": video.title,
-                    "message": video.message,
-                    "video_id": video.video_id,
-                })
+                videos_data.append(build_video_payload(video))
             return self.get_paginated_response(videos_data)
-        
+
         videos_data = []
         for video in queryset:
-            videos_data.append({
-                "id": video.id,
-                "url": video.image_url,  # Using image_url field which stores video file path
-                "title": video.title,
-                "message": video.message,
-                "video_id": video.video_id,
-            })
-        
+            videos_data.append(build_video_payload(video))
+
         return Response({
             "count": len(videos_data),
             "next": None,
@@ -735,6 +853,14 @@ class AssociateMediaToAdCreativeView(APIView):
                         ).data,
                         status=status.HTTP_404_NOT_FOUND
                     )
+                missing_file_ids = [photo.id for photo in photos if not facebook_media_file_exists(photo.url)]
+                if missing_file_ids:
+                    return Response(
+                        ErrorResponseSerializer(
+                            {"error": f"Photo file(s) missing: {missing_file_ids}", "code": "PHOTO_FILES_MISSING"}
+                        ).data,
+                        status=status.HTTP_404_NOT_FOUND
+                    )
             except Exception as e:
                 return Response(
                     ErrorResponseSerializer(
@@ -760,6 +886,14 @@ class AssociateMediaToAdCreativeView(APIView):
                     return Response(
                         ErrorResponseSerializer(
                             {"error": f"Video(s) not found: {list(missing_ids)}", "code": "VIDEOS_NOT_FOUND"}
+                        ).data,
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                missing_file_ids = [video.id for video in videos if not facebook_media_file_exists(video.image_url)]
+                if missing_file_ids:
+                    return Response(
+                        ErrorResponseSerializer(
+                            {"error": f"Video file(s) missing: {missing_file_ids}", "code": "VIDEO_FILES_MISSING"}
                         ).data,
                         status=status.HTTP_404_NOT_FOUND
                     )

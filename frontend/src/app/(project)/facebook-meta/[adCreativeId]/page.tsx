@@ -80,13 +80,24 @@ function getBackendMediaId(value: unknown): number | undefined {
 function extractMediaFromCreative(creative: AdCreative | null): MediaFile[] {
   if (!creative?.object_story_spec) return [];
   const media: MediaFile[] = [];
+  // Dedup keys: prefer the content hash (image_hash / video_id) so multiple
+  // associated rows pointing at the same file collapse into one tile, and
+  // fall back to id / url for entries missing a hash.
+  const seen = new Set<string>();
+  const pushUnique = (key: string, item: MediaFile) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    media.push(item);
+  };
+
   const photoData = creative.object_story_spec.photo_data;
   if (photoData) {
     const photos = Array.isArray(photoData) ? photoData : [photoData];
     photos.forEach((photo: any, index: number) => {
       if (photo?.url) {
         const mediaId = getBackendMediaId(photo.id);
-        media.push({
+        const key = `photo:${photo.image_hash || photo.url || mediaId || index}`;
+        pushUnique(key, {
           id: mediaId ?? index + 1,
           mediaId,
           type: 'photo',
@@ -102,7 +113,8 @@ function extractMediaFromCreative(creative: AdCreative | null): MediaFile[] {
     videos.forEach((video: any, index: number) => {
       if (video?.image_url || video?.video_id) {
         const mediaId = getBackendMediaId(video.id);
-        media.push({
+        const key = `video:${video.video_id || video.image_url || mediaId || index}`;
+        pushUnique(key, {
           id: mediaId ?? 1000 + index,
           mediaId,
           type: 'video',
@@ -223,7 +235,78 @@ function FacebookMetaDetailContent() {
     return raw.map((entry: any) => (typeof entry === 'string' ? entry : entry?.name ?? '')).filter(Boolean);
   }, [creative]);
 
-  const media = useMemo(() => extractMediaFromCreative(creative), [creative]);
+  const rawMedia = useMemo(() => extractMediaFromCreative(creative), [creative]);
+
+  // Frontend safety net: orphan AdCreativePhotoData / AdCreativeVideoData rows
+  // (DB record exists, file deleted from disk) can be returned by the detail
+  // endpoint until the backend container is restarted (daphne does not
+  // hot-reload). Probe each URL once and prune unreachable entries so the
+  // Preview and Media sections stay consistent with the (already-filtered)
+  // media library.
+  const [unreachableMediaKeys, setUnreachableMediaKeys] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    if (rawMedia.length === 0) {
+      setUnreachableMediaKeys((prev) => (prev.size === 0 ? prev : new Set()));
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const failures = await Promise.all(
+        rawMedia.map(async (item) => {
+          const key = `${item.type}-${item.id}`;
+          if (!item.url) return key;
+          try {
+            const res = await fetch(item.url, { method: 'HEAD' });
+            return res.ok ? null : key;
+          } catch {
+            // CORS / network error — assume reachable rather than prune blindly.
+            return null;
+          }
+        })
+      );
+      if (cancelled) return;
+      const next = new Set(failures.filter((k): k is string => Boolean(k)));
+      setUnreachableMediaKeys(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rawMedia]);
+
+  const media = useMemo(
+    () => rawMedia.filter((item) => !unreachableMediaKeys.has(`${item.type}-${item.id}`)),
+    [rawMedia, unreachableMediaKeys]
+  );
+
+  // Frontend dedup safety net for the modal media library: collapse photos /
+  // videos that share the same content hash so the user only ever sees one
+  // tile per unique file even if the API still returns duplicates from
+  // before the upload-side dedup change shipped.
+  const dedupedLibraryPhotos = useMemo(() => {
+    const seen = new Set<string>();
+    const out: PhotoData[] = [];
+    for (const photo of photos) {
+      const key = photo.image_hash ? `h:${photo.image_hash}` : `i:${photo.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(photo);
+    }
+    return out;
+  }, [photos]);
+
+  const dedupedLibraryVideos = useMemo(() => {
+    const seen = new Set<string>();
+    const out: VideoData[] = [];
+    for (const video of videos) {
+      const key = video.video_id ? `h:${video.video_id}` : `i:${video.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(video);
+    }
+    return out;
+  }, [videos]);
+
   const primaryText = useMemo(() => getPrimaryText(creative), [creative]);
   const statusValue = (creative?.status as FacebookStatus | undefined) ?? undefined;
 
@@ -352,8 +435,15 @@ function FacebookMetaDetailContent() {
     if (!file) return;
     try {
       setUploadingPhoto(true);
-      await uploadPhoto(file);
+      const result = await uploadPhoto(file);
       toast.success('Photo uploaded');
+      const uploadedPhoto = result.photo;
+      if (uploadedPhoto) {
+        setPhotos((prev) => [uploadedPhoto, ...prev.filter((photo) => photo.id !== uploadedPhoto.id)]);
+        setSelectedPhotoIds((prev) => (
+          prev.includes(uploadedPhoto.id) ? prev : [...prev, uploadedPhoto.id]
+        ));
+      }
       await refreshMediaLibrary();
     } catch (err: any) {
       toast.error(err?.response?.data?.error ?? 'Upload failed');
@@ -368,8 +458,15 @@ function FacebookMetaDetailContent() {
     if (!file) return;
     try {
       setUploadingVideo(true);
-      await uploadVideo(file);
+      const result = await uploadVideo(file, file.name);
       toast.success('Video uploaded');
+      const uploadedVideo = result.video;
+      if (uploadedVideo) {
+        setVideos((prev) => [uploadedVideo, ...prev.filter((video) => video.id !== uploadedVideo.id)]);
+        setSelectedVideoIds((prev) => (
+          prev.includes(uploadedVideo.id) ? prev : [...prev, uploadedVideo.id]
+        ));
+      }
       await refreshMediaLibrary();
     } catch (err: any) {
       toast.error(err?.response?.data?.error ?? 'Upload failed');
@@ -670,11 +767,26 @@ function FacebookMetaDetailContent() {
                     <li key={`${item.type}-${item.id}`} className="flex items-center gap-3">
                       <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-gray-100 ring-1 ring-gray-200">
                         {item.url ? (
-                          <img
-                            src={item.url}
-                            alt={item.caption ?? ''}
-                            className="h-full w-full object-cover"
-                          />
+                          item.type === 'video' ? (
+                            // <img> can't render an mp4 (renders as a broken
+                            // image icon). Use <video> with preload="metadata"
+                            // and a #t=0.1 fragment so the browser fetches
+                            // just enough to show the first frame as a poster.
+                            <video
+                              src={`${item.url}#t=0.1`}
+                              muted
+                              playsInline
+                              preload="metadata"
+                              className="h-full w-full object-cover"
+                              aria-label={item.caption ?? 'Video thumbnail'}
+                            />
+                          ) : (
+                            <img
+                              src={item.url}
+                              alt={item.caption ?? ''}
+                              className="h-full w-full object-cover"
+                            />
+                          )
                         ) : null}
                       </div>
                       <div className="min-w-0">
@@ -795,11 +907,11 @@ function FacebookMetaDetailContent() {
                   onChange={onPhotoFile}
                 />
               </div>
-              {photos.length === 0 ? (
+              {dedupedLibraryPhotos.length === 0 ? (
                 <p className="mt-2 text-xs text-gray-500">No photos yet. Upload one to associate.</p>
               ) : (
                 <ul className="mt-2 grid grid-cols-4 gap-2">
-                  {photos.map((photo) => {
+                  {dedupedLibraryPhotos.map((photo) => {
                     const selected = selectedPhotoIds.includes(photo.id);
                     return (
                       <li key={`photo-${photo.id}`}>
@@ -848,11 +960,11 @@ function FacebookMetaDetailContent() {
                   onChange={onVideoFile}
                 />
               </div>
-              {videos.length === 0 ? (
+              {dedupedLibraryVideos.length === 0 ? (
                 <p className="mt-2 text-xs text-gray-500">No videos yet. Upload one to associate.</p>
               ) : (
                 <ul className="mt-2 grid grid-cols-4 gap-2">
-                  {videos.map((video) => {
+                  {dedupedLibraryVideos.map((video) => {
                     const selected = selectedVideoIds.includes(video.id);
                     return (
                       <li key={`video-${video.id}`}>

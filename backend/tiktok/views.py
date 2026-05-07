@@ -41,6 +41,107 @@ MIN_SIZE_1_1 = (640, 640)
 MIN_SIZE_9_16 = (720, 1280)
 
 
+def ensure_creative_file_available(creative, file_content, fallback_storage_path):
+    storage_path = creative.storage_path or fallback_storage_path
+
+    if not default_storage.exists(storage_path):
+        storage_path = default_storage.save(storage_path, ContentFile(file_content))
+
+    preview_url = f"{settings.MEDIA_URL}{storage_path}"
+    update_fields = []
+    if creative.storage_path != storage_path:
+        creative.storage_path = storage_path
+        update_fields.append('storage_path')
+    if creative.preview_url != preview_url:
+        creative.preview_url = preview_url
+        update_fields.append('preview_url')
+    if update_fields:
+        update_fields.append('updated_at')
+        creative.save(update_fields=update_fields)
+
+    return creative
+
+
+def creative_file_exists(creative):
+    storage_path = getattr(creative, 'storage_path', None)
+    return bool(storage_path) and default_storage.exists(storage_path)
+
+
+def build_material_payload(creative):
+    item = {
+        'id': creative.id,
+        'type': creative.type,
+        'name': creative.name,
+        'preview_url': creative.preview_url,
+        'file_url': creative.preview_url,
+        'storage_path': creative.storage_path,
+        'width': creative.width,
+        'height': creative.height,
+        'created_at': creative.created_at.isoformat() if creative.created_at else None,
+    }
+
+    if creative.type == 'video' and creative.duration_sec is not None:
+        item['duration_sec'] = creative.duration_sec
+
+    return item
+
+
+def sanitize_assets_for_available_media(raw_assets, user):
+    def sanitize_material(value):
+        if not isinstance(value, dict):
+            return None
+
+        creative_id = value.get('id')
+        if creative_id is None:
+            return value
+
+        try:
+            creative = TikTokCreative.objects.get(id=creative_id, uploaded_by=user)
+        except (TikTokCreative.DoesNotExist, ValueError, TypeError):
+            return None
+
+        if not creative_file_exists(creative):
+            return None
+
+        return {
+            **value,
+            'id': creative.id,
+            'type': creative.type,
+            'url': creative.preview_url,
+            'previewUrl': creative.preview_url,
+            'fileUrl': creative.preview_url,
+            'title': creative.name,
+            'width': creative.width,
+            'height': creative.height,
+        }
+
+    def sanitize_asset_group(asset_group):
+        if not isinstance(asset_group, dict):
+            return asset_group
+
+        sanitized = dict(asset_group)
+        if 'primaryCreative' in sanitized:
+            sanitized['primaryCreative'] = sanitize_material(sanitized.get('primaryCreative'))
+
+        if isinstance(sanitized.get('images'), list):
+            sanitized['images'] = [
+                item
+                for item in (sanitize_material(image) for image in sanitized['images'])
+                if item is not None
+            ]
+
+        if sanitized.get('primaryCreative') is None and not sanitized.get('images'):
+            return None
+
+        return sanitized
+
+    if isinstance(raw_assets, list):
+        return [asset for asset in (sanitize_asset_group(item) for item in raw_assets) if asset is not None]
+    if isinstance(raw_assets, dict):
+        return sanitize_asset_group(raw_assets) or {}
+    return raw_assets
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def upload_video_ad(request):
@@ -78,10 +179,17 @@ def upload_video_ad(request):
         file_content = file.read()
         file.seek(0)  # Reset file pointer
         md5_hash = hashlib.md5(file_content).hexdigest()
+        file_extension = os.path.splitext(file.name)[1]
+        storage_filename = f"tiktok/videos/{md5_hash}{file_extension}"
         
         # Check for duplicate files
         existing_creative = TikTokCreative.objects.filter(md5=md5_hash).first()
         if existing_creative:
+            existing_creative = ensure_creative_file_available(
+                existing_creative,
+                file_content,
+                storage_filename,
+            )
             return Response({
                 'id': existing_creative.id,
                 'name': existing_creative.name,
@@ -100,10 +208,6 @@ def upload_video_ad(request):
                 'created_at': existing_creative.created_at,
                 'updated_at': existing_creative.updated_at
             }, status=status.HTTP_201_CREATED)
-        
-        # Generate storage path
-        file_extension = os.path.splitext(file.name)[1]
-        storage_filename = f"tiktok/videos/{md5_hash}{file_extension}"
         
         # Save file to storage
         storage_path = default_storage.save(storage_filename, ContentFile(file_content))
@@ -294,10 +398,17 @@ def upload_image_ad(request):
         file_content = file.read()
         file.seek(0)  # Reset file pointer
         md5_hash = hashlib.md5(file_content).hexdigest()
+        file_extension = os.path.splitext(file.name)[1]
+        storage_filename = f"tiktok/images/{md5_hash}{file_extension}"
         
         # Check for duplicate files
         existing_creative = TikTokCreative.objects.filter(md5=md5_hash).first()
         if existing_creative:
+            existing_creative = ensure_creative_file_available(
+                existing_creative,
+                file_content,
+                storage_filename,
+            )
             return Response({
                 'id': existing_creative.id,
                 'name': existing_creative.name,
@@ -335,8 +446,6 @@ def upload_image_ad(request):
         duration_sec = None  # Images don't have duration
         
         # Generate storage path and save file
-        file_extension = os.path.splitext(file.name)[1]
-        storage_filename = f"tiktok/images/{md5_hash}{file_extension}"
         storage_path = default_storage.save(storage_filename, ContentFile(file_content))
         
         # Validate image dimensions and aspect ratios
@@ -449,35 +558,22 @@ def material_list(request):
         if creative_type:
             queryset = queryset.filter(type=creative_type)
         
-        # Order by creation date (newest first)
-        queryset = queryset.order_by('-created_at')
-        
+        available_creatives = [
+            creative
+            for creative in queryset.order_by('-created_at')
+            if creative_file_exists(creative)
+        ]
+
         # Calculate pagination
-        total = queryset.count()
+        total = len(available_creatives)
         start = (page - 1) * page_size
         end = start + page_size
         
         # Get items for current page
-        items_queryset = queryset[start:end]
+        items_queryset = available_creatives[start:end]
         
         # Build response items
-        items = []
-        for creative in items_queryset:
-            item = {
-                'id': creative.id,
-                'type': creative.type,
-                'name': creative.name,
-                'preview_url': creative.preview_url,
-                'width': creative.width,
-                'height': creative.height,
-                'created_at': creative.created_at.isoformat() if creative.created_at else None
-            }
-            
-            # Add duration for videos
-            if creative.type == 'video' and creative.duration_sec is not None:
-                item['duration_sec'] = creative.duration_sec
-            
-            items.append(item)
+        items = [build_material_payload(creative) for creative in items_queryset]
         
         # Build response
         response_data = {
@@ -510,6 +606,11 @@ def material_info(request, id):
         except TikTokCreative.DoesNotExist:
             return Response({
                 'error': 'Material not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        if not creative_file_exists(creative):
+            return Response({
+                'error': 'Material file not found'
             }, status=status.HTTP_404_NOT_FOUND)
         
         # Build response data
@@ -1022,6 +1123,7 @@ def creation_detail(request):
 
         def _normalize_assets(raw_assets):
             # Ensure assets is always a list; tolerate None or dict legacy payloads.
+            raw_assets = sanitize_assets_for_available_media(raw_assets, request.user)
             if isinstance(raw_assets, list):
                 return raw_assets
             if isinstance(raw_assets, dict):
@@ -1221,5 +1323,3 @@ def brief_info_list(request):
             'msg': f'Failed to retrieve brief info list: {str(e)}',
             'data': None
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-

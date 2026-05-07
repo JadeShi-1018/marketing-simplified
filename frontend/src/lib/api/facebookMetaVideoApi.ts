@@ -17,10 +17,15 @@ export interface VideoListResponse {
   results: VideoData[];
 }
 
+export interface VideoUploadResponse {
+  success: boolean;
+  video?: VideoData;
+}
+
 /**
  * Upload a video file
  */
-export const uploadVideo = async (file: File, title?: string, message?: string): Promise<{ success: boolean }> => {
+export const uploadVideo = async (file: File, title?: string, message?: string): Promise<VideoUploadResponse> => {
   const formData = new FormData();
   formData.append('file', file);
   if (title) {
@@ -30,7 +35,7 @@ export const uploadVideo = async (file: File, title?: string, message?: string):
     formData.append('message', message);
   }
 
-  const response = await api.post<{ success: boolean }>(
+  const response = await api.post<VideoUploadResponse>(
     '/api/facebook_meta/videos/upload/',
     formData
   );
@@ -54,4 +59,3 @@ export const getVideos = async (page = 1, pageSize = 12): Promise<VideoListRespo
 
   return response.data;
 };
-

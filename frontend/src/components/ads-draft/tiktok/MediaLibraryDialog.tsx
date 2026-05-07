@@ -41,24 +41,46 @@ export default function MediaLibraryDialog({
   const [primary, setPrimary] = useState<TiktokMaterialItem | null>(initialPrimary ?? null);
   const [images, setImages] = useState<TiktokMaterialItem[]>(initialImages ?? []);
   const fileRef = useRef<HTMLInputElement>(null);
+  const loadRequestRef = useRef(0);
 
   useEffect(() => {
     if (open) {
       setTab(forceType ?? 'video');
+      setItems([]);
+      const nextImages = initialImages ?? [];
+      if (forceType === 'image') {
+        setPrimary(initialPrimary?.type === 'image' ? initialPrimary : nextImages[0] ?? null);
+        setImages(nextImages);
+        return;
+      }
+      if (forceType === 'video') {
+        setPrimary(initialPrimary?.type === 'video' ? initialPrimary : null);
+        setImages([]);
+        return;
+      }
       setPrimary(initialPrimary ?? null);
-      setImages(initialImages ?? []);
+      setImages(nextImages);
     }
   }, [open, forceType, initialPrimary, initialImages]);
 
   const loadMaterials = useCallback(async (type: Tab) => {
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
+    setItems([]);
     try {
       setLoading(true);
       const response = await getTiktokMaterials({ page: 1, page_size: 60, type });
-      setItems(response.results ?? []);
+      if (loadRequestRef.current === requestId) {
+        setItems((response.results ?? []).filter((item) => item.type === type));
+      }
     } catch {
-      toast.error('Failed to load media library');
+      if (loadRequestRef.current === requestId) {
+        toast.error('Failed to load media library');
+      }
     } finally {
-      setLoading(false);
+      if (loadRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -124,7 +146,12 @@ export default function MediaLibraryDialog({
   const accept = useMemo(() => (tab === 'video' ? 'video/mp4,video/quicktime' : 'image/*'), [tab]);
 
   const handleConfirm = () => {
-    onConfirm({ primary, images });
+    if (tab === 'video') {
+      onConfirm({ primary: primary?.type === 'video' ? primary : null, images: [] });
+    } else {
+      const imagePrimary = primary?.type === 'image' ? primary : images[0] ?? null;
+      onConfirm({ primary: imagePrimary, images });
+    }
     onOpenChange(false);
   };
 

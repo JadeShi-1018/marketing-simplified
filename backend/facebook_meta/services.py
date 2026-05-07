@@ -1,9 +1,59 @@
+import os
 import re
 import secrets
 from typing import List, Optional
-from rest_framework.exceptions import ValidationError
+from urllib.parse import unquote, urlparse
+
+from django.conf import settings
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
+
 from .models import AdCreative, AdCreativePreview
+
+
+def facebook_media_file_exists(url):
+    """
+    Return True if the given media URL points to a file that still exists
+    on disk (for self-hosted media) or refers to an external http(s) resource
+    we cannot verify locally (e.g. a CDN URL).
+
+    Important: do NOT short-circuit on the URL scheme alone. A URL like
+    ``http://localhost:8000/media/facebook_meta_photos/foo.jpg`` is
+    self-hosted and must be verified against disk; otherwise orphan rows
+    (DB record present, file deleted) leak through this filter and the
+    detail-page Preview/Media UI shows broken thumbnails while the media
+    library (which already filters via this helper) appears empty —
+    exactly the inconsistency we are fixing here.
+
+    Used to filter out orphan AdCreativePhotoData/AdCreativeVideoData rows
+    whose underlying file has been removed from disk.
+    """
+    if not url:
+        return False
+
+    parsed = urlparse(url)
+    parsed_path = unquote(parsed.path or url)
+
+    # Normalize MEDIA_URL to just the path portion in case it is configured as
+    # an absolute URL (e.g. "http://cdn.example.com/media/").
+    media_url_setting = getattr(settings, 'MEDIA_URL', '/media/') or '/media/'
+    media_url_path = urlparse(media_url_setting).path or media_url_setting
+    if not media_url_path.startswith('/'):
+        media_url_path = '/' + media_url_path
+
+    if parsed_path.startswith(media_url_path):
+        relative_path = parsed_path[len(media_url_path):]
+    elif parsed_path.startswith('/media/'):
+        relative_path = parsed_path[len('/media/'):]
+    elif parsed.scheme in ('http', 'https'):
+        # Absolute URL whose path doesn't look like our media mount —
+        # treat as a true external resource we can't verify (CDN, etc.).
+        return True
+    else:
+        relative_path = parsed_path.lstrip('/')
+
+    storage_dir = getattr(settings, 'FILE_STORAGE_DIR', os.path.join(settings.BASE_DIR, 'media'))
+    return os.path.exists(os.path.join(storage_dir, relative_path))
 
 
 def validate_numeric_string(input_id: str) -> bool:
@@ -142,6 +192,30 @@ def get_ad_creative_by_id(ad_creative_id: str):
         raise ValidationError("AdCreative not found")
 
 
+def _available_unique_facebook_media(media_items, file_url_attr: str, content_key_attr: str):
+    """
+    Keep JSON spec media output aligned with detail/list serializers:
+    skip orphan rows whose local file is gone and collapse legacy duplicates.
+    """
+    seen = set()
+    available_items = []
+
+    for item in media_items:
+        file_url = getattr(item, file_url_attr, None)
+        if not facebook_media_file_exists(file_url):
+            continue
+
+        content_key = getattr(item, content_key_attr, None) or getattr(item, 'id', None)
+        dedupe_key = f"{content_key_attr}:{content_key}"
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        available_items.append(item)
+
+    return available_items
+
+
 def generate_secure_token() -> str:
     """
     Generate a secure token for preview access
@@ -263,8 +337,12 @@ def generate_json_spec_from_ad_creative(ad_creative, ad_format: str, **kwargs) -
         }
     
     # Add photo_data if exists (now ManyToMany - serialize as list)
-    photo_data_queryset = ad_creative.object_story_spec_photo_data.all()
-    if photo_data_queryset.exists():
+    photo_data = _available_unique_facebook_media(
+        ad_creative.object_story_spec_photo_data.all(),
+        'url',
+        'image_hash',
+    )
+    if photo_data:
         object_story_spec['photo_data'] = [
             {
                 'branded_content_shared_to_sponsor_status': photo.branded_content_shared_to_sponsor_status,
@@ -275,12 +353,16 @@ def generate_json_spec_from_ad_creative(ad_creative, ad_format: str, **kwargs) -
                 'page_welcome_message': photo.page_welcome_message,
                 'url': photo.url
             }
-            for photo in photo_data_queryset
+            for photo in photo_data
         ]
     
     # Add video_data if exists (now ManyToMany - serialize as list)
-    video_data_queryset = ad_creative.object_story_spec_video_data.all()
-    if video_data_queryset.exists():
+    video_data = _available_unique_facebook_media(
+        ad_creative.object_story_spec_video_data.all(),
+        'image_url',
+        'video_id',
+    )
+    if video_data:
         object_story_spec['video_data'] = [
             {
                 'additional_image_index': video.additional_image_index,
@@ -303,7 +385,7 @@ def generate_json_spec_from_ad_creative(ad_creative, ad_format: str, **kwargs) -
                 'title': video.title,
                 'video_id': video.video_id
             }
-            for video in video_data_queryset
+            for video in video_data
         ]
     
     # Add text_data if exists

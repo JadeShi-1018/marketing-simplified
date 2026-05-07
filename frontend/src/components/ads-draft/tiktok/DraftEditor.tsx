@@ -215,10 +215,28 @@ export default function DraftEditor({
             </button>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {primary && <CreativeChip item={primary} />}
-              {images.map((image) => (
-                <CreativeChip key={image.id} item={image} />
-              ))}
+              {/*
+                For image ads, the parent stores the picked image both as
+                `primary` and as the first entry of `images`. Rendering both
+                lists naively shows the same image twice. Dedup by id so the
+                primary appears first and any non-primary images follow.
+              */}
+              {(() => {
+                const seen = new Set<number>();
+                const chips: TiktokMaterialItem[] = [];
+                if (primary) {
+                  seen.add(primary.id);
+                  chips.push(primary);
+                }
+                for (const image of images) {
+                  if (seen.has(image.id)) continue;
+                  seen.add(image.id);
+                  chips.push(image);
+                }
+                return chips.map((item) => (
+                  <CreativeChip key={`${item.type}-${item.id}`} item={item} />
+                ));
+              })()}
             </div>
           )}
         </div>
