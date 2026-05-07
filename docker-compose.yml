@@ -122,8 +122,9 @@ services:
     restart: always
     expose:
       - "3000"
-    # Do not mount over /app/.next or /app/node_modules: the image already contains `npm run build`
-    # output; named volumes here mask it and often cause Next to 500/502 (missing chunks, empty .next).
+    volumes:
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
     environment:
       - WATCHPACK_POLLING=true
       - CHOKIDAR_USEPOLLING=true
@@ -133,16 +134,13 @@ services:
 
 # Nginx Service - Only start in dev environment or full environment
   nginx:
-    # Config is COPY'd into the image (avoids macOS Docker bind-mount pread errors on nginx.conf).
-    # After editing nginx/nginx.conf: docker compose build nginx && docker compose up -d nginx
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
-    image: marketing-simplified-nginx
+    image: nginx:latest
     container_name: nginx
     restart: always
     ports:
       - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - backend
       - frontend
@@ -150,4 +148,6 @@ services:
 volumes:
   pgdata: 
   pgbackups: 
-  pglogs:
+  pglogs: 
+  frontend_node_modules:
+  frontend_next:
