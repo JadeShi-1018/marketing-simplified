@@ -35,6 +35,7 @@ interface TiktokPreviewProps {
   images?: TiktokMaterialItem[];
   currentImageIndex?: number; // index in images when creative is image
   onImageIndexChange?: (nextIndex: number) => void;
+  onCreativeUnavailable?: (creative: TiktokMaterialItem) => void;
 }
 
 const approxEqual = (a: number, b: number, tol = 0.05) => Math.abs(a - b) <= tol;
@@ -77,7 +78,8 @@ const PhoneFrame: React.FC<{
   showCommentBarInSearch: boolean;
   metrics: { likes: number; comments: number; bookmarks: number; shares: number };
   avatarUrl?: string;
-}> = ({ mediaUrl, previewUrl, placement, widthClass = 'w-[320px]', videoRef, isPlaying, setIsPlaying, onLoadedMeta, onTimeUpdate, mediaType, imageSlideDir, imageAnimKey, identityDisplay, textLine, sponsored, ctaMode, ctaLabel, showCTA, showCommentBarInSearch, metrics, avatarUrl }) => {
+  onMediaUnavailable?: () => void;
+}> = ({ mediaUrl, previewUrl, placement, widthClass = 'w-[320px]', videoRef, isPlaying, setIsPlaying, onLoadedMeta, onTimeUpdate, mediaType, imageSlideDir, imageAnimKey, identityDisplay, textLine, sponsored, ctaMode, ctaLabel, showCTA, showCommentBarInSearch, metrics, avatarUrl, onMediaUnavailable }) => {
   const [natural, setNatural] = React.useState<{ w: number; h: number } | null>(null);
   const [isHovering, setIsHovering] = React.useState(false);
   const [imageTranslate, setImageTranslate] = React.useState<string>('translate-x-0');
@@ -104,6 +106,16 @@ const PhoneFrame: React.FC<{
     }
   }, [imageAnimKey, imageSlideDir, mediaType]);
 
+  const playVideo = React.useCallback((video: HTMLVideoElement) => {
+    video
+      .play()
+      .then(() => setIsPlaying(true))
+      .catch(() => {
+        setIsPlaying(false);
+        onMediaUnavailable?.();
+      });
+  }, [onMediaUnavailable, setIsPlaying]);
+
   return (
     <div className={`bg-black rounded-[28px] overflow-hidden aspect-[9/19.5] ${widthClass} mx-auto relative shadow-lg`}>
       <div
@@ -128,9 +140,10 @@ const PhoneFrame: React.FC<{
               onLoadedMeta(v);
             }}
             onTimeUpdate={(e) => onTimeUpdate((e.currentTarget as HTMLVideoElement).currentTime)}
+            onError={onMediaUnavailable}
             onClick={() => {
               const v = videoRef.current; if (!v) return;
-              if (v.paused) { v.play(); setIsPlaying(true); } else { v.pause(); setIsPlaying(false); }
+              if (v.paused) { playVideo(v); } else { v.pause(); setIsPlaying(false); }
             }}
           />
         ) : mediaType === 'image' && mediaUrl ? (
@@ -139,6 +152,7 @@ const PhoneFrame: React.FC<{
             src={mediaUrl}
             className={`w-full h-full object-contain bg-black transition-transform duration-400 ease-out ${imageTranslate}`}
             alt="preview"
+            onError={onMediaUnavailable}
           />
         ) : (
           <div className="h-full w-full bg-gradient-to-b from-gray-600 to-gray-800 flex items-center justify-center">
@@ -156,7 +170,7 @@ const PhoneFrame: React.FC<{
         <button
           onClick={() => {
             const v = videoRef.current; if (!v) return;
-            if (v.paused) { v.play(); setIsPlaying(true); } else { v.pause(); setIsPlaying(false); }
+            if (v.paused) { playVideo(v); } else { v.pause(); setIsPlaying(false); }
           }}
           className={`absolute inset-0 flex items-center justify-center transition-opacity ${isHovering || !isPlaying ? 'opacity-100' : 'opacity-0'}`}
           aria-label={isPlaying ? 'pause' : 'play'}
@@ -348,6 +362,7 @@ const TiktokPreview: React.FC<TiktokPreviewProps> = (props) => {
     showCommentBarInSearch = true,
     onImageIndexChange,
     allowFullscreen = true,
+    onCreativeUnavailable,
   } = props;
   // Paging handlers for images
   const goPrevImage = () => {
@@ -378,6 +393,11 @@ const TiktokPreview: React.FC<TiktokPreviewProps> = (props) => {
   const [imageSlideDir, setImageSlideDir] = React.useState<'left' | 'right' | undefined>(undefined);
 
   const mediaUrl = creative?.previewUrl || creative?.fileUrl || creative?.url;
+  const handleCreativeUnavailable = React.useCallback(() => {
+    if (creative) {
+      onCreativeUnavailable?.(creative);
+    }
+  }, [creative, onCreativeUnavailable]);
 
   // When media changes, reset playback state to ensure correct switching
   React.useEffect(() => {
@@ -412,7 +432,7 @@ const TiktokPreview: React.FC<TiktokPreviewProps> = (props) => {
     }
     prevImageIndexRef.current = idx;
     setImageAnimKey((k) => k + 1);
-  }, [creative?.id, props.currentImageIndex]);
+  }, [creative?.id, creative?.type, props.currentImageIndex]);
 
   // ----- Derived display values -----
   const identityDisplay = identity?.displayName || 'Your identity';
@@ -507,6 +527,7 @@ const TiktokPreview: React.FC<TiktokPreviewProps> = (props) => {
           showCommentBarInSearch={props.showCommentBarInSearch ?? true}
           metrics={metricVals}
           avatarUrl={avatarUrl}
+          onMediaUnavailable={handleCreativeUnavailable}
         />
       </div>
 
@@ -567,7 +588,7 @@ const TiktokPreview: React.FC<TiktokPreviewProps> = (props) => {
                 setIsPlaying={setIsPlaying}
                 onLoadedMeta={handleLoaded}
                 onTimeUpdate={setCurrent}
-                mediaType={creative?.type === 'image' ? 'image' : 'video'}
+                mediaType={creative ? (creative.type === 'image' ? 'image' : 'video') : 'none'}
                 imageSlideDir={imageSlideDir}
                 imageAnimKey={imageAnimKey}
                 identityDisplay={identityDisplay}
@@ -579,6 +600,7 @@ const TiktokPreview: React.FC<TiktokPreviewProps> = (props) => {
                 showCommentBarInSearch={props.showCommentBarInSearch ?? true}
                 metrics={metricVals}
                 avatarUrl={avatarUrl}
+                onMediaUnavailable={handleCreativeUnavailable}
               />
               {creative?.type === 'video' ? (
                 <div className="w-[360px] mt-3 flex items-center gap-3">

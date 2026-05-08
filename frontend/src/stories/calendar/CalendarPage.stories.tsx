@@ -150,6 +150,8 @@ function CalendarPageStory(props: CalendarPageStoryProps = {}) {
           isLoading={sidebarLoading}
           error={sidebarError}
           onCalendarItemClick={() => {}}
+          activeEventTypes={new Set(["decision", "task"])}
+          onToggleActivityType={() => {}}
           />
         </div>
 

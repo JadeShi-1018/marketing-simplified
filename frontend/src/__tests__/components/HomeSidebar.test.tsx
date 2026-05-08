@@ -218,10 +218,10 @@ describe('HomeSidebar — Project members integration', () => {
 
   // AC: Loading state
   test('shows skeleton loader while members are loading', () => {
-    render(<HomeSidebar {...defaultProps} isLoadingMembers={true} />);
+    const { container } = render(<HomeSidebar {...defaultProps} isLoadingMembers={true} />);
 
     expect(screen.getByText('Project members')).toBeInTheDocument();
-    const skeletons = document.querySelectorAll('.animate-pulse');
+    const skeletons = container.querySelectorAll('.skeleton-fade');
     expect(skeletons.length).toBeGreaterThan(0);
   });
 });

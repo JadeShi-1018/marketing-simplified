@@ -41,7 +41,6 @@ const BREADCRUMB_ROOT: Record<string, string> = {
   meetings: 'Collaborate',
   calendar: 'Collaborate',
   messages: 'Collaborate',
-  'messages-v2': 'Collaborate',
   miro: 'Collaborate',
   variations: 'Content',
   facebook_meta: 'Content',
@@ -52,7 +51,6 @@ const BREADCRUMB_ROOT: Record<string, string> = {
   klaviyo: 'Content',
   'klaviyo-v2': 'Content',
   notion: 'Content',
-  'notion-v2': 'Content',
   workflows: 'Tools',
   timeline: 'Tools',
   settings: 'Tools',
@@ -66,8 +64,6 @@ const BREADCRUMB_LEAF: Record<string, string> = {
   spreadsheet: 'Spreadsheets',
   'mailchimp-v2': 'Mailchimp',
   'klaviyo-v2': 'Klaviyo',
-  'notion-v2': 'Notion',
-  'messages-v2': 'Messages',
 };
 
 const getBreadcrumb = (pathname: string | null): { root: string; leaf: string } => {

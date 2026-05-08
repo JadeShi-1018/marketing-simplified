@@ -462,8 +462,8 @@ class ServicesExtraCoverageAppendedTest(TestCase):
 
     def test_generate_json_spec_from_ad_creative_all_paths(self):
         link = AdCreativeLinkData.objects.create()
-        photo = AdCreativePhotoData.objects.create()
-        video = AdCreativeVideoData.objects.create()
+        photo = AdCreativePhotoData.objects.create(url='https://example.com/photo.jpg')
+        video = AdCreativeVideoData.objects.create(image_url='https://example.com/video.jpg')
         text = AdCreativeTextData.objects.create(message='hello')
         template = AdCreativeLinkData.objects.create()
 

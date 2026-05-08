@@ -58,7 +58,7 @@ class TikTokUrlsTest(TestCase):
         from ..urls import urlpatterns
 
         # Check that we have the expected number of URL patterns
-        self.assertEqual(len(urlpatterns), 12)  # 4 material + 6 creation + 2 preview
+        self.assertEqual(len(urlpatterns), 13)  # 5 material + 6 creation + 2 preview
 
         # Check that all expected patterns exist
         pattern_names = [pattern.name for pattern in urlpatterns]
@@ -67,6 +67,7 @@ class TikTokUrlsTest(TestCase):
             'tiktok-image-ad-upload',
             'tiktok-material-list',
             'tiktok-material-info',
+            'tiktok-material-delete',
             'tiktok-brief-info-list',
             'tiktok-creation-detail',
             'tiktok-ad-draft-save',
