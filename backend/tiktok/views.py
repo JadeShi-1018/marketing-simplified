@@ -5,6 +5,7 @@ import tempfile
 import subprocess
 import json
 import io
+from urllib.parse import unquote, urlparse
 from django.conf import settings
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -64,7 +65,24 @@ def ensure_creative_file_available(creative, file_content, fallback_storage_path
 
 def creative_file_exists(creative):
     storage_path = getattr(creative, 'storage_path', None)
-    return bool(storage_path) and default_storage.exists(storage_path)
+    if storage_path and default_storage.exists(storage_path):
+        return True
+
+    preview_url = getattr(creative, 'preview_url', None)
+    if not preview_url:
+        return False
+
+    parsed = urlparse(preview_url)
+    parsed_path = unquote(parsed.path or preview_url)
+    media_url_setting = getattr(settings, 'MEDIA_URL', '/media/') or '/media/'
+    media_url_path = urlparse(media_url_setting).path or media_url_setting
+    if not media_url_path.startswith('/'):
+        media_url_path = '/' + media_url_path
+
+    if parsed_path.startswith(media_url_path) or parsed_path.startswith('/media/'):
+        return False
+
+    return parsed.scheme in ('http', 'https')
 
 
 def build_material_payload(creative):

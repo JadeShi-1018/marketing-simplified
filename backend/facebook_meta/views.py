@@ -16,6 +16,7 @@ import tempfile
 from datetime import timedelta
 from django.utils import timezone
 from django.conf import settings
+from django.db.models import Q
 from .services import (
     validate_numeric_string,
     validate_fields_param,
@@ -543,7 +544,9 @@ class PhotoListView(generics.ListAPIView):
     serializer_class = AdCreativePhotoDataSerializer
     
     def get_queryset(self):
-        return AdCreativePhotoData.objects.filter(uploaded_by=self.request.user).order_by('-id')
+        return AdCreativePhotoData.objects.filter(
+            Q(uploaded_by=self.request.user) | Q(uploaded_by__isnull=True)
+        ).order_by('-id')
     
     def list(self, request, *args, **kwargs):
         """Override list to return custom response format"""
@@ -819,7 +822,9 @@ class VideoListView(generics.ListAPIView):
     serializer_class = AdCreativeVideoDataSerializer
     
     def get_queryset(self):
-        return AdCreativeVideoData.objects.filter(uploaded_by=self.request.user).order_by('-id')
+        return AdCreativeVideoData.objects.filter(
+            Q(uploaded_by=self.request.user) | Q(uploaded_by__isnull=True)
+        ).order_by('-id')
     
     def list(self, request, *args, **kwargs):
         """Override list to return custom response format"""
