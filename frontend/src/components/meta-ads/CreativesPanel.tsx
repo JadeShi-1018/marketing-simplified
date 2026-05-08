@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import {
   ArrowUpRight,
@@ -62,6 +63,7 @@ export default function CreativesPanel({
   const [previewCreativeId, setPreviewCreativeId] = useState<number | null>(null);
   const [previewTitle, setPreviewTitle] = useState<string>('');
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const router = useRouter();
 
   const toggleSelected = (id: number) => {
     setSelectedIds((prev) => {
@@ -159,6 +161,20 @@ export default function CreativesPanel({
               </option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedIds.size === 1) {
+                const onlyId = Array.from(selectedIds)[0];
+                router.push(`/variations-studio?creative=${onlyId}`);
+              } else {
+                router.push('/variations-studio');
+              }
+            }}
+            className="inline-flex h-9 items-center gap-1 rounded-lg bg-white px-3 text-sm font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
+          >
+            Generate variations
+          </button>
           <ExportActionMenu
             unit="creative"
             selectedIds={Array.from(selectedIds)}
