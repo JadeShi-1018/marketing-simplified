@@ -12,9 +12,10 @@ import TabNav, { type TasksTab } from '@/components/tasks-v2/TabNav';
 import SummaryView from '@/components/tasks-v2/SummaryView';
 import ListView from '@/components/tasks-v2/ListView';
 import BoardView from '@/components/tasks-v2/BoardView';
+import GanttView from '@/components/tasks-v2/GanttView';
 import { Skeleton } from '@/components/ui/skeleton';
 
-const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board'];
+const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt'];
 
 export default function TasksV2Page() {
   const router = useRouter();
@@ -129,6 +130,9 @@ export default function TasksV2Page() {
             <ListView tasks={tasks} loading={taskListLoading} error={error} projectId={projectId} />
           )}
           {tab === 'board' && <BoardView tasks={tasks} loading={taskListLoading} error={error} />}
+          {tab === 'gantt' && (
+            <GanttView projectId={projectId} projectContextLoading={projectContextLoading} />
+          )}
         </div>
         <ChatFAB />
       </DashboardLayout>

@@ -12,6 +12,7 @@ import {
   TaskListFilters,
   TaskBulkUpdateRequest,
   TaskBulkActionResponse,
+  GanttChartPayload,
 } from "@/types/task";
 
 export const TaskAPI = {
@@ -39,6 +40,11 @@ export const TaskAPI = {
       queryParams.has_parent = queryParams.has_parent.toString();
     }
     return api.get("/api/tasks/", { params: queryParams });
+  },
+
+  getTasksGantt: async (params?: { project_id?: number }): Promise<GanttChartPayload> => {
+    const response = await api.get("/api/tasks/gantt/", { params });
+    return response.data as GanttChartPayload;
   },
 
   // Get a specific task by ID

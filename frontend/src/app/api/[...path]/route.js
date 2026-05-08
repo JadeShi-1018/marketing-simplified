@@ -3,12 +3,23 @@ import logger from '@/lib/logger';
 // Ensure this route uses Node.js runtime (not edge runtime)
 export const runtime = 'nodejs';
 
+/** Base origin for Django (no trailing slash, no /api suffix — we add /api/ when proxying). */
+function resolveBackendOrigin() {
+  let base = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').trim();
+  base = base.replace(/\/$/, '');
+  // Misconfig: NEXT_PUBLIC_API_URL=http://host:8000/api → would produce /api/api/... and 404 on Django
+  if (base.endsWith('/api')) {
+    base = base.slice(0, -4);
+  }
+  return base;
+}
+
 export async function GET(request, { params }) {
   const path = params.path.join('/');
   const url = new URL(request.url);
   const searchParams = url.searchParams.toString();
 
-  const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const backendUrl = resolveBackendOrigin();
   const targetUrl = `${backendUrl}/api/${path}${searchParams ? `?${searchParams}` : ''}`;
 
   try {
@@ -50,7 +61,7 @@ export async function POST(request, { params }) {
   const path = params.path.join('/');
   const contentType = request.headers.get('content-type') || '';
 
-  const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const backendUrl = resolveBackendOrigin();
   const targetUrl = `${backendUrl}/api/${path}`;
 
   try {
