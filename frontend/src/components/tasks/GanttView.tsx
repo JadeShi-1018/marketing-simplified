@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 const WEEKDAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 export type GanttTimeWindow = '1W' | '1M' | '3M' | '6M' | '1Y';
-type PageSizeMode = '6' | '10' | '15' | '20' | 'all' | 'custom';
+type PageSizeMode = '6' | '10' | '15' | 'all' | 'custom';
 
 const WINDOW_DAYS: Record<GanttTimeWindow, number> = {
   '1W': 7,
@@ -23,8 +23,8 @@ const COLUMN_WIDTH_BY_WINDOW: Record<GanttTimeWindow, number> = {
   '1W': 100,
   '1M': 26,
   '3M': 9,
-  '6M': 4,
-  '1Y': 2,
+  '6M': 5,
+  '1Y': 2.5,
 };
 
 const TIME_WINDOW_OPTIONS: GanttTimeWindow[] = ['1W', '1M', '3M', '6M', '1Y'];
@@ -756,7 +756,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
           onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
           disabled={currentPage <= 1 || totalPages <= 1}
         >
-          ← Previous
+          ← Prev
         </button>
         <span className="text-sm text-gray-500">
           {`Page ${Math.min(currentPage, totalPages)} / ${totalPages}`}
@@ -776,7 +776,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
           onChange={(e) => {
             const v = e.target.value as PageSizeMode;
             setPageSizeMode(v);
-            if (v === '6' || v === '10' || v === '15' || v === '20') {
+            if (v === '6' || v === '10' || v === '15') {
               setAppliedPageSize(Number(v));
             } else if (v === 'custom') {
               setCustomPageInput(String(appliedPageSize));
@@ -786,7 +786,6 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
           <option value="6">6</option>
           <option value="10">10</option>
           <option value="15">15</option>
-          <option value="20">20</option>
           <option value="all">All</option>
           <option value="custom">Custom</option>
         </select>
