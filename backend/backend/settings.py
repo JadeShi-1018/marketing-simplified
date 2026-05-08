@@ -91,6 +91,7 @@ INSTALLED_APPS = [
     'agent.apps.AgentConfig',
     'meetings.apps.MeetingsConfig',
     'zoom_integration.apps.ZoomIntegrationConfig',
+    'linear_integration.apps.LinearIntegrationConfig',
     'google_docs_integration.apps.GoogleDocsIntegrationConfig',
     'google_calendar_integration.apps.GoogleCalendarIntegrationConfig',
     'facebook_integration.apps.FacebookIntegrationConfig',
@@ -680,3 +681,8 @@ ZOOM_CLIENT_SECRET = os.environ.get("ZOOM_CLIENT_SECRET", "")
 ZOOM_REDIRECT_URI  = os.environ.get("ZOOM_REDIRECT_URI", "")
 # Webhook only: Secret Token from Zoom Marketplace app → Feature → Webhooks (not OAuth client secret).
 ZOOM_WEBHOOK_SECRET_TOKEN = os.environ.get("ZOOM_WEBHOOK_SECRET_TOKEN", "")
+
+# Linear OAuth
+LINEAR_CLIENT_ID = (os.environ.get("LINEAR_CLIENT_ID") or "").strip()
+LINEAR_CLIENT_SECRET = (os.environ.get("LINEAR_CLIENT_SECRET") or "").strip()
+LINEAR_REDIRECT_URI = (os.environ.get("LINEAR_REDIRECT_URI") or "").strip()

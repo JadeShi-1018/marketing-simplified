@@ -13,6 +13,7 @@ import SummaryView from '@/components/tasks/SummaryView';
 import ListView from '@/components/tasks/ListView';
 import BoardView from '@/components/tasks/BoardView';
 import { Skeleton } from '@/components/ui/skeleton';
+import LinearImportModal from '@/components/linear/LinearImportModal';
 
 const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board'];
 
@@ -33,6 +34,7 @@ export default function TasksV2Page() {
   );
 
   const { tasks, loading, error, fetchTasks } = useTaskData();
+  const [linearImportOpen, setLinearImportOpen] = useState(false);
   const [hasLoadedTaskListOnce, setHasLoadedTaskListOnce] = useState(false);
   const projectContextLoading = !projectIdParam && !hasProjectStoreHydrated;
 
@@ -81,6 +83,12 @@ export default function TasksV2Page() {
     [router, searchParams]
   );
 
+  const refreshTasks = () => {
+    if (projectId) {
+      void fetchTasks({ project_id: projectId, page: 1 });
+    }
+  };
+
   const headerActions = (
     <button
       type="button"
@@ -126,10 +134,23 @@ export default function TasksV2Page() {
             <SummaryView projectId={projectId} projectContextLoading={projectContextLoading} />
           )}
           {tab === 'tasks' && (
-            <ListView tasks={tasks} loading={taskListLoading} error={error} projectId={projectId} />
+            <ListView
+              tasks={tasks}
+              loading={taskListLoading}
+              error={error}
+              projectId={projectId}
+              onOpenLinearImport={() => setLinearImportOpen(true)}
+              onLinearBulkSynced={refreshTasks}
+            />
           )}
           {tab === 'board' && <BoardView tasks={tasks} loading={taskListLoading} error={error} />}
         </div>
+        <LinearImportModal
+          isOpen={linearImportOpen}
+          onClose={() => setLinearImportOpen(false)}
+          projectId={projectId}
+          onImported={refreshTasks}
+        />
         <ChatFAB />
       </DashboardLayout>
     </ProtectedRoute>

@@ -23,8 +23,8 @@ interface TabNavProps {
 
 export default function TabNav({ active, onChange, trailing }: TabNavProps) {
   return (
-    <div className="mb-5 flex items-center justify-between gap-3 border-b border-gray-100 pb-3">
-      <nav className="flex items-center gap-1">
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-3">
+      <nav className="flex min-w-0 flex-wrap items-center gap-1">
         {TABS.map((tab) => {
           const isActive = tab.id === active;
           return (
@@ -49,7 +49,11 @@ export default function TabNav({ active, onChange, trailing }: TabNavProps) {
           );
         })}
       </nav>
-      {trailing ? <div className="flex items-center gap-2">{trailing}</div> : null}
+      {trailing ? (
+        <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:w-auto sm:justify-end">
+          {trailing}
+        </div>
+      ) : null}
     </div>
   );
 }
