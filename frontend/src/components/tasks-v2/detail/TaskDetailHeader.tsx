@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
-import { ChevronRight, Trash2, Share2, ArrowLeft } from 'lucide-react';
+import { ChevronRight, Trash2, Share2, ArrowLeft, KanbanSquare } from 'lucide-react';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
 import StatusPill from './pills/StatusPill';
@@ -12,6 +12,7 @@ import TypeBadge from './pills/TypeBadge';
 import FSMActionBar from './FSMActionBar';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
 import { Skeleton } from '@/components/ui/skeleton';
+import LinearPushTaskDialog from '@/components/linear/LinearPushTaskDialog';
 
 function buildIssueKey(projectName?: string, taskId?: number) {
   const prefix = (projectName || 'TASK')
@@ -42,6 +43,7 @@ export default function TaskDetailHeader({
 }: Props) {
   const [value, setValue] = useState(task.summary || '');
   const [saving, setSaving] = useState(false);
+  const [linearPushOpen, setLinearPushOpen] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const lastSaved = useRef(task.summary || '');
   const titleTextareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -123,6 +125,18 @@ export default function TaskDetailHeader({
           </div>
         </nav>
         <div className="flex items-center gap-1">
+          {task.id ? (
+            <button
+              type="button"
+              onClick={() => setLinearPushOpen(true)}
+              title="Sync to Linear"
+              aria-label="Sync to Linear"
+              disabled={readOnly}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-50 hover:text-[#5E6AD2] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <KanbanSquare className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => toast('Share to Chat — coming soon')}
@@ -226,6 +240,16 @@ export default function TaskDetailHeader({
           <FSMActionBar task={task} members={members} onMutated={onMutated} />
         )}
       </div>
+
+      {task.id ? (
+        <LinearPushTaskDialog
+          isOpen={linearPushOpen}
+          onClose={() => setLinearPushOpen(false)}
+          taskId={task.id}
+          linearIssueId={task.linear_issue_id}
+          onSuccess={onUpdated}
+        />
+      ) : null}
     </section>
   );
 }

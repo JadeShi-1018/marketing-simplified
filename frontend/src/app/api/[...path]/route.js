@@ -3,8 +3,23 @@ import logger from '@/lib/logger';
 // Ensure this route uses Node.js runtime (not edge runtime)
 export const runtime = 'nodejs';
 
+/**
+ * Segment after /api/ as requested by the client, preserving a trailing slash.
+ * Next [...path] drops the final empty segment when the URL ends with /, which breaks
+ * Django APPEND_SLASH routes like POST /api/v1/linear/push-task/ → 404 without this.
+ */
+function apiPathFromRequest(request, params) {
+  const pathname = new URL(request.url).pathname;
+  const prefix = '/api/';
+  if (pathname.startsWith(prefix)) {
+    const rest = pathname.slice(prefix.length);
+    if (rest) return rest;
+  }
+  return Array.isArray(params?.path) ? params.path.join('/') : '';
+}
+
 export async function GET(request, { params }) {
-  const path = params.path.join('/');
+  const path = apiPathFromRequest(request, params);
   const url = new URL(request.url);
   const searchParams = url.searchParams.toString();
 
@@ -47,7 +62,7 @@ export async function GET(request, { params }) {
 }
 
 export async function POST(request, { params }) {
-  const path = params.path.join('/');
+  const path = apiPathFromRequest(request, params);
   const contentType = request.headers.get('content-type') || '';
 
   const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
