@@ -16,12 +16,18 @@ urlpatterns = [
     
     # GET /facebook_meta/photos
     path('photos/', views.PhotoListView.as_view(), name='photo_list'),
-    
+
+    # DELETE /facebook_meta/photos/<pk>/
+    path('photos/<int:pk>/', views.PhotoDeleteView.as_view(), name='photo_delete'),
+
     # POST /facebook_meta/videos/upload
     path('videos/upload/', views.VideoUploadView.as_view(), name='video_upload'),
-    
+
     # GET /facebook_meta/videos
     path('videos/', views.VideoListView.as_view(), name='video_list'),
+
+    # DELETE /facebook_meta/videos/<pk>/
+    path('videos/<int:pk>/', views.VideoDeleteView.as_view(), name='video_delete'),
 
     # POST, GET, DELETE /facebook_meta/{ad_creative_id}/share-preview
     path('<str:ad_creative_id>/share-preview/', views.SharePreviewView.as_view(), name='share_preview'),

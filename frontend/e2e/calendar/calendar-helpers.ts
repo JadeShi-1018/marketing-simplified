@@ -23,15 +23,12 @@ type EnsureCalendarResult = {
 const AUTH_STORAGE_KEY = 'auth-storage';
 const AUTH_FILE = path.resolve(__dirname, '../.auth/user.json');
 
-function calendarViewTrigger(page: Page): Locator {
-  return page.getByRole('button', { name: 'Calendar view' });
+function calendarViewTabs(page: Page): Locator {
+  return page.locator('[data-testid="calendar-view-tabs"]');
 }
 
 function calendarViewOption(page: Page, view: CalendarViewName): Locator {
-  return page
-    .getByRole('listbox')
-    .getByRole('option', { name: new RegExp(`^${view}(?:\\s|$)`) })
-    .first();
+  return calendarViewTabs(page).getByRole('tab', { name: view, exact: true });
 }
 
 function calendarViewRoot(page: Page, view: CalendarViewName): Locator {
@@ -126,7 +123,8 @@ export async function waitForCalendarPageReady(page: Page) {
   await expect(
     page.getByRole('button', { name: 'Next period' }),
   ).toBeVisible();
-  await expect(calendarViewTrigger(page)).toBeVisible();
+  await expect(calendarViewTabs(page)).toBeVisible();
+  await expect(calendarViewOption(page, 'Week')).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('[data-testid="calendar-header-title"]')).toBeVisible();
   await expect(calendarViewRoot(page, 'Week')).toBeVisible({ timeout: 20_000 });
 }
@@ -164,29 +162,15 @@ export async function waitForCalendarTitleToChange(
 }
 
 /**
- * Open the calendar view picker and wait for the listbox options to render.
- * The trigger itself stays labeled "Calendar view" across view changes.
- */
-export async function openCalendarViewSwitcher(page: Page) {
-  const trigger = calendarViewTrigger(page);
-  await expect(trigger).toBeVisible();
-  await trigger.click();
-  await expect(page.getByRole('listbox')).toBeVisible({ timeout: 10_000 });
-}
-
-/**
- * Switch between Day / Week / Month views and assert both the target view root
- * and the trigger text update to the selected view.
+ * Switch between Day / Week / Month views and assert the active tab and target
+ * view root update to the selected view.
  */
 export async function switchCalendarView(page: Page, view: CalendarViewName) {
-  await openCalendarViewSwitcher(page);
-  const listbox = page.getByRole('listbox');
   const option = calendarViewOption(page, view);
 
   await expect(option).toBeVisible({ timeout: 10_000 });
   await option.click();
-  await expect(listbox).not.toBeVisible({ timeout: 10_000 });
-  await expect(calendarViewTrigger(page)).toContainText(view);
+  await expect(option).toHaveAttribute('aria-selected', 'true');
   await expect(calendarViewRoot(page, view)).toBeVisible({ timeout: 10_000 });
 }
 
@@ -255,7 +239,7 @@ export async function createEventFromDaySlot(
 
   const isCreateEventRequest = (url: string, method: string) => {
     const pathname = new URL(url).pathname;
-    return pathname === '/api/v1/events/' && method === 'POST';
+    return pathname === '/api/events/' && method === 'POST';
   };
 
   const saveButton = dialog.getByRole('button', { name: 'Save' });
@@ -289,7 +273,7 @@ export async function createEventFromDaySlot(
  */
 export async function listAccessibleCalendars(page: Page): Promise<CalendarDTO[]> {
   const { baseUrl, headers } = await getAuthenticatedApiContext(page);
-  const response = await page.request.get(`${baseUrl}/api/v1/calendars/`, {
+  const response = await page.request.get(`${baseUrl}/api/calendars/`, {
     headers,
   });
 
@@ -309,7 +293,7 @@ export async function createCalendarViaApi(
   name: string,
 ): Promise<CalendarDTO> {
   const { baseUrl, headers } = await getAuthenticatedApiContext(page);
-  const response = await page.request.post(`${baseUrl}/api/v1/calendars/`, {
+  const response = await page.request.post(`${baseUrl}/api/calendars/`, {
     headers,
     data: {
       name,
@@ -331,7 +315,7 @@ export async function createCalendarViaApi(
 export async function deleteCalendarById(page: Page, calendarId: string) {
   try {
     const { baseUrl, headers } = await getAuthenticatedApiContext(page);
-    const response = await page.request.delete(`${baseUrl}/api/v1/calendars/${calendarId}/`, {
+    const response = await page.request.delete(`${baseUrl}/api/calendars/${calendarId}/`, {
       headers,
     });
 
@@ -396,7 +380,7 @@ export async function createEventViaApi(
     };
   });
 
-  const response = await page.request.post(`${baseUrl}/api/v1/events/`, {
+  const response = await page.request.post(`${baseUrl}/api/events/`, {
     headers,
     data: {
       calendar_id: calendarId,
@@ -420,7 +404,7 @@ export async function createEventViaApi(
 export async function deleteEventById(page: Page, eventId: string) {
   try {
     const { baseUrl, headers } = await getAuthenticatedApiContext(page);
-    const response = await page.request.delete(`${baseUrl}/api/v1/events/${eventId}/`, {
+    const response = await page.request.delete(`${baseUrl}/api/events/${eventId}/`, {
       headers,
     });
 

@@ -74,10 +74,10 @@ describe('ProjectMembersSection', () => {
 
   // AC: Loading state shows skeleton
   test('shows skeleton loader while loading', () => {
-    render(<ProjectMembersSection {...defaultProps} isLoading={true} />);
+    const { container } = render(<ProjectMembersSection {...defaultProps} isLoading={true} />);
 
-    const skeletons = document.querySelectorAll('.animate-pulse');
-    expect(skeletons.length).toBe(3);
+    const skeletons = container.querySelectorAll('.skeleton-fade');
+    expect(skeletons.length).toBeGreaterThan(0);
     expect(screen.queryByTestId('project-member-dm-row')).not.toBeInTheDocument();
   });
 

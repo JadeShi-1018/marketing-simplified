@@ -78,6 +78,8 @@ export interface TaskData {
   origin_meeting?: OriginMeetingPayload | null;
   /** Provenance: action item this task was converted from, if any (task detail only). */
   origin_action_item?: OriginActionItemPayload | null;
+  /** Set when this task was imported from Linear. */
+  linear_issue_id?: string | null;
 }
 
 // Type for creating a new task (current_approver_id is user ID)

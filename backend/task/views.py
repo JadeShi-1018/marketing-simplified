@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 from datetime import datetime
 from django.core.exceptions import ValidationError
+from django.db import DatabaseError
 from django.db.models import Q
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -450,7 +451,14 @@ class TaskViewSet(viewsets.ModelViewSet):
                         print(f"Error deleting RetrospectiveTask {instance.object_id}: {e}")
             except Exception as e:
                 print(f"Error checking RetrospectiveTask for deletion: {e}")
-        
+
+        try:
+            from linear_integration.models import LinearTaskLink
+
+            LinearTaskLink.objects.filter(task_id=instance.pk).delete()
+        except (ImportError, DatabaseError):
+            pass
+
         # Delete the task itself
         instance.delete()
 

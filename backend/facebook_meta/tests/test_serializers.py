@@ -277,9 +277,10 @@ class AdCreativeObjectStorySpecSerializerTest(TestCase):
         self.video_data = AdCreativeVideoData.objects.create(
             title='Test Video Title',
             video_id='video_123',
-            message='Test video message'
+            message='Test video message',
+            image_url='https://example.com/video-thumbnail.jpg'
         )
-        
+
         self.link_data = AdCreativeLinkData.objects.create(
             name='Test Link',
             link='https://example.com',
