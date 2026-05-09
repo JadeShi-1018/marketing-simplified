@@ -36,6 +36,10 @@ export interface FieldDef {
   label: string;
   kind: FieldKind;
   required: boolean;
+  conditionalRequired?: {
+    dependsOn: string;
+    values: string[];
+  };
   placeholder?: string;
   /** Rows for textarea kind. */
   rows?: number;
@@ -180,17 +184,28 @@ const REPORT: TypeSchema = {
     {
       key: 'audience_type',
       label: 'Audience type',
-      kind: 'text',
+      kind: 'select',
       required: true,
-      placeholder: 'e.g. executive, client, internal',
+      options: [
+        { value: 'client',        label: 'Client' },
+        { value: 'manager',       label: 'Manager' },
+        { value: 'internal_team', label: 'Internal Team' },
+        { value: 'self',          label: 'Self' },
+        { value: 'other',         label: 'Other' },
+      ],
     },
     {
       key: 'audience_details',
       label: 'Audience details',
       kind: 'textarea',
       required: false,
+      conditionalRequired: {
+        dependsOn: 'audience_type',
+        values: ['other'],
+      },
       rows: 2,
       placeholder: 'Names, roles, or distribution list',
+      helpText: 'Required when audience type is "Other"', 
     },
     {
       key: 'outcome_summary',
@@ -405,12 +420,11 @@ const COMMUNICATION: TypeSchema = {
       kind: 'select',
       required: true,
       options: [
-        { value: 'status_update', label: 'Status update' },
-        { value: 'policy_change', label: 'Policy change' },
-        { value: 'performance_review', label: 'Performance review' },
-        { value: 'budget_change', label: 'Budget change' },
-        { value: 'incident', label: 'Incident' },
-        { value: 'other', label: 'Other' },
+        { value: 'budget_change',     label: 'Budget Change' },
+        { value: 'creative_approval', label: 'Creative Approval' },
+        { value: 'kpi_update',        label: 'KPI Update' },
+        { value: 'targeting_change',  label: 'Targeting Change' },
+        { value: 'other',             label: 'Other' },
       ],
     },
     {
@@ -422,10 +436,22 @@ const COMMUNICATION: TypeSchema = {
       placeholder: 'Names or roles to notify',
     },
     {
+      key: 'impacted_areas',
+      label: 'Impacted areas',
+      kind: 'select',
+      required: true,
+      options: [
+        { value: 'budget',    label: 'Budget' },
+        { value: 'creative',  label: 'Creative' },
+        { value: 'kpi',       label: 'KPI' },
+        { value: 'targeting', label: 'Targeting' },
+      ],
+    },
+    {
       key: 'required_actions',
       label: 'Required actions',
       kind: 'textarea',
-      required: false,
+      required: true,
       rows: 2,
       placeholder: 'What you need the client to do',
     },

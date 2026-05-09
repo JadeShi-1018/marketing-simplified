@@ -50,6 +50,7 @@ export default function TaskTypeFieldsSection({ schema, values, onChange }: Prop
           value={values[field.key] ?? ''}
           options={field.options ?? optionsByKey[field.key] ?? []}
           onChange={(v) => onChange(field.key, v)}
+          values={values}
         />
       ))}
     </div>
@@ -65,20 +66,26 @@ function FieldRow({
   value,
   options,
   onChange,
+  values,
 }: {
   schemaType: string;
   field: FieldDef;
   value: string;
   options: FieldOption[];
   onChange: (v: string) => void;
+  values: Record<string, string>;
 }) {
   const id = fieldId(schemaType, field.key);
+  const isConditionallyRequired = field.conditionalRequired
+    ? field.conditionalRequired.values.includes(values[field.conditionalRequired.dependsOn] ?? '')
+    : false;
+  const isRequired = field.required || isConditionallyRequired;
 
   return (
     <div>
       <label htmlFor={id} className="mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-gray-500">
         {field.label}
-        {field.required && <span className="ml-1 text-rose-500">*</span>}
+        {isRequired && <span className="ml-1 text-rose-500">*</span>}
       </label>
       {renderControl(id, field, value, options, onChange)}
       {field.helpText && (
