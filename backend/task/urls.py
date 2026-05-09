@@ -1,9 +1,12 @@
 from django.urls import path
-from task.views import TaskViewSet, TaskCommentListView, TaskAttachmentListView, TaskAttachmentDetailView, TaskAttachmentDownloadView, get_task_types
+from task.views import TaskViewSet, TaskCommentListView, TaskAttachmentListView, TaskAttachmentDetailView, TaskAttachmentDownloadView, get_task_types, TaskFormAutosaveView
 
 urlpatterns = [
     # Task types endpoint
     path('task-types/', get_task_types, name='task-types'),
+
+    # Task form autosave endpoint
+    path('task-form-autosave/', TaskFormAutosaveView.as_view(), name='task-form-autosave'),
     
     # Task CRUD endpoints (static paths like gantt before generic tasks/ if ever ambiguous)
     path('tasks/gantt/', TaskViewSet.as_view({'get': 'gantt'}), name='task-gantt'),
