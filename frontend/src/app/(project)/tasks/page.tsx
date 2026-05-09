@@ -12,10 +12,11 @@ import TabNav, { type TasksTab } from '@/components/tasks/TabNav';
 import SummaryView from '@/components/tasks/SummaryView';
 import ListView from '@/components/tasks/ListView';
 import BoardView from '@/components/tasks/BoardView';
+import GanttView from '@/components/tasks/GanttView';
 import { Skeleton } from '@/components/ui/skeleton';
 import LinearImportModal from '@/components/linear/LinearImportModal';
 
-const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board'];
+const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt'];
 
 export default function TasksV2Page() {
   const router = useRouter();
@@ -144,6 +145,9 @@ export default function TasksV2Page() {
             />
           )}
           {tab === 'board' && <BoardView tasks={tasks} loading={taskListLoading} error={error} />}
+          {tab === 'gantt' && (
+            <GanttView projectId={projectId} projectContextLoading={projectContextLoading} />
+          )}
         </div>
         <LinearImportModal
           isOpen={linearImportOpen}

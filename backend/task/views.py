@@ -14,6 +14,8 @@ from django.shortcuts import get_object_or_404
 from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskHierarchy, TaskRelation, ApprovalChain
 from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer
 from task.services import bulk_update_tasks
+from task.gantt_service import build_gantt_payload, resolve_sprint_label_from_tasks
+from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from core.models import ProjectMember, Project
@@ -336,7 +338,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         # Order by order_in_project, then by creation date (newest first)
         queryset = queryset.order_by('order_in_project', '-id')
         # List response does not include draft_payload; defer it so list works if migration adding the column is not yet applied.
-        if getattr(self, 'action', None) == 'list':
+        if getattr(self, 'action', None) in ('list', 'gantt'):
             queryset = queryset.defer('draft_payload')
         # region agent log
         _debug_log("70a616", "task/views.py:get_queryset", "get_queryset_end", None, "H2")
@@ -362,6 +364,19 @@ class TaskViewSet(viewsets.ModelViewSet):
             }, "H2_H3_H5")
             # endregion
             raise
+
+    def gantt(self, request, *args, **kwargs):
+        """
+        Return chart-ready task rows for the Gantt view (same filters as list).
+
+        GET /api/tasks/gantt/?project_id=...
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        tasks = list(queryset)
+        today = timezone.now().date()
+        label = resolve_sprint_label_from_tasks(tasks)
+        data = build_gantt_payload(tasks, today=today, sprint_label=label)
+        return Response(data)
 
     def get_object(self):
         """

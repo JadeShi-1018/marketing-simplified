@@ -8,7 +8,8 @@ urlpatterns = [
     # Task form autosave endpoint
     path('task-form-autosave/', TaskFormAutosaveView.as_view(), name='task-form-autosave'),
     
-    # Task CRUD endpoints
+    # Task CRUD endpoints (static paths like gantt before generic tasks/ if ever ambiguous)
+    path('tasks/gantt/', TaskViewSet.as_view({'get': 'gantt'}), name='task-gantt'),
     path('tasks/', TaskViewSet.as_view({'get': 'list', 'post': 'create'}), name='task-list'),
     path('tasks/bulk_action/', TaskViewSet.as_view({'post': 'bulk_action'}), name='task-bulk-action'),
     path('tasks/force-create/', TaskViewSet.as_view({'post': 'force_create'}), name='task-force-create'),
