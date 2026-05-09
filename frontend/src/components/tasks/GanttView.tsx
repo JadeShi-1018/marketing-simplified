@@ -332,13 +332,13 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
       } else {
         nextEnd = Math.max(Math.min(dragState.origEndIdx + deltaCols, lastIdx), dragState.origStartIdx);
       }
-      if (nextEnd <= nextStart) {
-        if (dragState.side === 'left') nextStart = nextEnd - 1;
-        else nextEnd = nextStart + 1;
+      if (nextEnd < nextStart) {
+        if (dragState.side === 'left') nextStart = nextEnd;
+        else nextEnd = nextStart;
       }
       nextStart = Math.max(0, Math.min(nextStart, lastIdx));
       nextEnd = Math.max(0, Math.min(nextEnd, lastIdx));
-      if (nextEnd <= nextStart) return;
+
       const nextStartIso = formatLocalIsoDay(days[nextStart]);
       const nextEndIso = formatLocalIsoDay(days[nextEnd]);
       setBarOverrides((prev) => ({
