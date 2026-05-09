@@ -3,6 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
+from django.core.cache import cache
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError
@@ -1233,3 +1234,75 @@ def get_task_types(request):
     ]
     
     return Response({'task_types': task_types}, status=status.HTTP_200_OK)
+
+
+_AUTOSAVE_TTL = 604800  # 7 days
+_AUTOSAVE_MAX_BYTES = 16 * 1024  # 16 KB
+_VALID_TASK_TYPES = frozenset(
+    choice[0] for choice in Task._meta.get_field('type').choices
+)
+
+
+class TaskFormAutosaveView(APIView):
+    """
+    Cache-backed form autosave for the task creation form.
+
+    All data is scoped to request.user — a user can only read and write
+    their own drafts.  Cache key: task_form_autosave:{user_id}:{task_type}
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _cache_key(self, user_id: int, task_type: str) -> str:
+        return f'task_form_autosave:{user_id}:{task_type}'
+
+    def _validated_type(self, request) -> tuple[str | None, Response | None]:
+        task_type = request.query_params.get('type', '').strip()
+        if not task_type:
+            return None, Response(
+                {'error': '`type` query parameter is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if task_type not in _VALID_TASK_TYPES:
+            return None, Response(
+                {'error': f'Invalid task type: {task_type!r}. '
+                          f'Must be one of: {sorted(_VALID_TASK_TYPES)}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return task_type, None
+
+    def get(self, request):
+        task_type, err = self._validated_type(request)
+        if err:
+            return err
+        key = self._cache_key(request.user.id, task_type)
+        payload = cache.get(key)
+        if payload is None:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return Response(payload, status=status.HTTP_200_OK)
+
+    def put(self, request):
+        task_type, err = self._validated_type(request)
+        if err:
+            return err
+        raw = request.body
+        if len(raw) > _AUTOSAVE_MAX_BYTES:
+            return Response(
+                {'error': f'Payload too large. Maximum size is {_AUTOSAVE_MAX_BYTES} bytes.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not isinstance(request.data, dict):
+            return Response(
+                {'error': 'Request body must be a JSON object.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        key = self._cache_key(request.user.id, task_type)
+        cache.set(key, request.data, timeout=_AUTOSAVE_TTL)
+        return Response(request.data, status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        task_type, err = self._validated_type(request)
+        if err:
+            return err
+        key = self._cache_key(request.user.id, task_type)
+        cache.delete(key)
+        return Response(status=status.HTTP_204_NO_CONTENT)
