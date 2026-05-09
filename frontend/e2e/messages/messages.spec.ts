@@ -1,11 +1,14 @@
 import { test, expect } from '@playwright/test';
 import {
 	waitForLayoutMain,
-	getProjectSelector,
-	getMessagesProjectToggle,
-	getMessagesProjectDropdownPanel,
-	openMessagesProjectDropdown,
-	selectProjectOptionByVisibleName,
+	seedAuthenticatedUser,
+	mockAuthenticatedUserApis,
+	mockProjectShellApis,
+	seedActiveProject,
+	clearProjectStore,
+	getMessagesHeader,
+	getMessagesNewChatButton,
+	getChatRows,
 	selectFirstProject,
 	assertChatListOrEmptyState,
 	openFirstChatIfPresent,
@@ -13,7 +16,7 @@ import {
 } from './messages-helpers';
 
 async function mockProjects(page: any, projects: Array<Record<string, any>>) {
-	await page.route('**/api/core/projects/', async (route: any) => {
+	await page.route('**/api/core/projects**', async (route: any) => {
 		await route.fulfill({
 			status: 200,
 			contentType: 'application/json',
@@ -22,27 +25,47 @@ async function mockProjects(page: any, projects: Array<Record<string, any>>) {
 	});
 }
 
+async function mockStarredChats(page: any) {
+	await page.route('**/api/chat/starred/**', async (route: any) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify([]),
+		});
+	});
+}
+
+test.beforeEach(async ({ page }) => {
+	await seedAuthenticatedUser(page);
+	await mockAuthenticatedUserApis(page);
+	await mockProjectShellApis(page);
+});
+
 
 test.describe('Messages and main layout', () => {
 	test.describe.configure({ mode: 'serial', timeout: 90_000});
 
-	test('Logged-in user opens /messages → assert project selector and initial state', async ({
+	test('Logged-in user opens /messages → assert current Messages layout and initial state', async ({
 		page,
 	}) => {
 		await page.goto('/messages');
 		await waitForLayoutMain(page);
-		await expect(getProjectSelector(page)).toBeVisible();
+		await expect(getMessagesHeader(page)).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Messages', level: 1 })).toBeVisible();
+		await expect(page.getByTestId('messages-layout')).toBeVisible();
+		await expect(page.getByTestId('messages-left')).toBeVisible();
+		await expect(page.getByTestId('messages-chat-panel')).toBeVisible();
 		await assertChatListOrEmptyState(page);
 	});
 
-	test('Project selector (mocked): open dropdown, choose another project, toggle label updates', async ({
+	test('Active project store (mocked): project name and empty chat state render', async ({
 		page,
 	}) => {
 		const alpha = { id: 701, name: 'E2E Selector Alpha', member_count: 1 };
-		const beta = { id: 702, name: 'E2E Selector Beta', member_count: 2 };
 
-		await mockProjects(page, [alpha, beta]);
+		await seedActiveProject(page, alpha);
+		await mockProjects(page, [alpha]);
+		await mockStarredChats(page);
 
 		await page.route('**/api/core/projects/*/members/**', async (route) => {
 			await route.fulfill({
@@ -72,21 +95,11 @@ test.describe('Messages and main layout', () => {
 		await page.goto('/messages');
 		await waitForLayoutMain(page);
 
-		const toggle = getMessagesProjectToggle(page);
-		await expect(toggle).toBeVisible();
-		await expect(toggle).toContainText(alpha.name);
-
-		await openMessagesProjectDropdown(page);
-		const panel = getMessagesProjectDropdownPanel(page);
-		await expect(panel.locator('button').filter({ hasText: alpha.name })).toBeVisible();
-		await expect(panel.locator('button').filter({ hasText: beta.name })).toBeVisible();
-
-		await selectProjectOptionByVisibleName(page, beta.name);
-
-		await expect(panel).toBeHidden();
-		await expect(toggle).toContainText(beta.name);
-		// Chats API mocked empty → list shows empty state for the selected project
-		await expect(page.getByRole('heading', { name: 'No chats yet' })).toBeVisible({
+		await expect(getMessagesHeader(page)).toContainText(alpha.name);
+		await expect(page.getByText('No direct messages', { exact: true })).toBeVisible({
+			timeout: 15_000,
+		});
+		await expect(page.getByRole('heading', { name: 'Select a conversation' })).toBeVisible({
 			timeout: 15_000,
 		});
 		await assertChatListOrEmptyState(page);
@@ -141,6 +154,8 @@ test.describe('Messages and main layout', () => {
 				attachments: [],
 			},
 		];
+
+		await mockStarredChats(page);
 
 		await page.route('**/api/core/projects/', async (route) => {
 			await route.fulfill({
@@ -264,6 +279,8 @@ test.describe('Messages and main layout', () => {
 		const teammate = { id: 2, username: 'teammate', email: 'teammate@example.com' };
 		const chatsStore: Array<Record<string, any>> = [];
 
+		await mockStarredChats(page);
+
 		await page.route('**/api/core/projects/', async (route) => {
 			await route.fulfill({
 				status: 200,
@@ -358,13 +375,45 @@ test.describe('Messages and main layout', () => {
 			await route.fallback();
 		});
 
+		await page.route('**/api/chat/messages**', async (route) => {
+			if (route.request().method() !== 'GET') {
+				await route.fallback();
+				return;
+			}
+
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					results: [],
+					next_cursor: null,
+					prev_cursor: null,
+					page_size: 50,
+				}),
+			});
+		});
+
+		await page.route('**/api/chat/messages/unread_count/**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ unread_count: 0 }),
+			});
+		});
+
+		await page.route('**/api/chat/chats/*/mark_as_read/**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({}),
+			});
+		});
+
 		await page.goto(`/messages?projectId=${projectId}`);
 		await waitForLayoutMain(page);
 
-		await page
-			.locator('div.bg-white.border-b.border-gray-200')
-			.getByRole('button', { name: 'New Chat', exact: true })
-			.click();
+		await page.getByText('Direct messages', { exact: true }).hover();
+		await getMessagesNewChatButton(page).click();
 		await expect(page.getByRole('heading', { name: 'Create New Chat' })).toBeVisible();
 
 		await page
@@ -374,7 +423,7 @@ test.describe('Messages and main layout', () => {
 			.check();
 
 		await expect(page.getByText('Selected: 1 member')).toBeVisible();
-		const chatRows = page.locator('div.max-w-sm div[role="button"]');
+		const chatRows = getChatRows(page);
 		const beforeCount = await chatRows.count();
 		await page.getByRole('button', { name: 'Create Chat' }).click();
 
@@ -395,49 +444,53 @@ test.describe('Messages edge cases without mock', () => {
 		await assertChatListOrEmptyState(page);
 	});
 
-	test('No projects (mocked): banner, select-project hints, New Chat disabled', async ({ page }) => {
+	test('No selected project: select-project hints render and New Chat is unavailable', async ({ page }) => {
+		await clearProjectStore(page);
 		await mockProjects(page, []);
 		await page.goto('/messages');
 		await waitForLayoutMain(page);
 
 		await expect(page.getByRole('heading', { name: 'Messages', level: 1 })).toBeVisible();
-		await expect(page.getByText('No projects available')).toBeVisible({ timeout: 15_000 });
-
 		await expect(page.getByText('Select a project to view chats')).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Select a project to start' })).toBeVisible();
 		await expect(
 			page.getByText('Choose a project from the dropdown above to view and manage your team conversations.')
 		).toBeVisible();
-
-		const newChatBtn = page
-			.locator('main')
-			.locator('div.bg-white.border-b.border-gray-200')
-			.filter({ has: page.getByRole('heading', { name: 'Messages', level: 1 }) })
-			.getByRole('button', { name: 'New Chat', exact: true });
-		await expect(newChatBtn).toBeVisible();
-		await expect(newChatBtn).toBeDisabled();
+		await expect(getMessagesNewChatButton(page)).toHaveCount(0);
 
 		await assertChatListOrEmptyState(page);
 	});
 
-	test('New Chat button state follows project selection availability', async ({ page }) => {
+	test('New Chat button is enabled when a project is selected', async ({ page }) => {
+		const project = { id: 403, name: 'Button State Project', member_count: 1 };
+		await seedActiveProject(page, project);
+		await mockProjects(page, [project]);
+		await mockStarredChats(page);
+		await page.route('**/api/core/projects/*/members/**', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ results: [], next: null }),
+			});
+		});
+		await page.route('**/api/chat/chats/**', async (route) => {
+			if (route.request().method() !== 'GET') {
+				await route.fallback();
+				return;
+			}
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+			});
+		});
+
 		await page.goto('/messages');
 		await waitForLayoutMain(page);
-		const newChatBtn = page
-			.locator('div.bg-white.border-b.border-gray-200')
-			.getByRole('button', { name: 'New Chat', exact: true });
+
+		const newChatBtn = getMessagesNewChatButton(page);
+		await page.getByText('Direct messages', { exact: true }).hover();
 		await expect(newChatBtn).toBeVisible();
-
-		const hasProject = await selectFirstProject(page);
-		if (!hasProject) {
-			const noProjectBanner = page.getByText('No projects available');
-			if (await noProjectBanner.isVisible().catch(() => false)) {
-				await expect(newChatBtn).toBeDisabled();
-			}
-			await assertChatListOrEmptyState(page);
-			return;
-		}
-
 		await expect(newChatBtn).toBeEnabled();
 		await assertChatListOrEmptyState(page);
 	});
@@ -446,6 +499,7 @@ test('Open chat then back to list (mocked)', async ({ page }) => {
 		const projectId = 405;
 		const chatId = 505;
 		await mockProjects(page, [{ id: projectId, name: 'Back Flow Project', member_count: 2 }]);
+		await mockStarredChats(page);
 
 		await page.route(`**/api/core/projects/${projectId}/members/**`, async (route) => {
 			await route.fulfill({
@@ -531,12 +585,14 @@ test('Open chat then back to list (mocked)', async ({ page }) => {
 
 		await page.goto(`/messages?projectId=${projectId}`);
 		await waitForLayoutMain(page);
-		await expect(page.locator('div.max-w-sm div[role="button"]')).toHaveCount(1);
+		await expect(getChatRows(page)).toHaveCount(1);
 
-		await page.locator('div.max-w-sm div[role="button"]').first().click();
+		await getChatRows(page).first().click();
+		await page.waitForURL((url) => url.searchParams.get('chatId') === String(chatId));
 		await expect(page.getByRole('button', { name: 'Back to chat list' })).toBeVisible();
 
 		await page.getByRole('button', { name: 'Back to chat list' }).click();
+		await page.waitForURL((url) => url.searchParams.get('chatId') === null);
 		await expect(page.getByRole('heading', { name: 'Select a conversation' })).toBeVisible();
 	});
 });

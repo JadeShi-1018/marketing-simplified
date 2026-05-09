@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AdCreative } from '@/lib/api/facebookMetaApi';
 import { useFacebookMetaPreview } from '@/hooks/useFacebookMetaPreview';
@@ -40,23 +40,34 @@ export default function EditAdCreativePage({ adCreative }: EditAdCreativePagePro
   const [displayLink, setDisplayLink] = useState('');
   const [callToAction, setCallToAction] = useState('Download');
   const [optimizeCreative, setOptimizeCreative] = useState(true);
-  // Load initial media from adCreative
+  // Load initial media from adCreative.
+  // Dedup by content hash (image_hash / video_id) — fall back to URL / id —
+  // so the Media list and Preview never render the same file twice even
+  // when the AdCreative has multiple associated rows pointing at identical
+  // content (legacy duplicates from before the upload-side dedup fix).
   const getInitialMedia = (): MediaFile[] => {
     const loadedMedia: MediaFile[] = [];
-    
+    const seen = new Set<string>();
+    const pushUnique = (key: string, item: MediaFile) => {
+      if (seen.has(key)) return;
+      seen.add(key);
+      loadedMedia.push(item);
+    };
+
     // Load photos from object_story_spec
     if (adCreative.object_story_spec?.photo_data) {
-      const photoData = Array.isArray(adCreative.object_story_spec.photo_data) 
-        ? adCreative.object_story_spec.photo_data 
+      const photoData = Array.isArray(adCreative.object_story_spec.photo_data)
+        ? adCreative.object_story_spec.photo_data
         : [adCreative.object_story_spec.photo_data];
-      
+
       photoData.forEach((photo: any) => {
         if (photo) {
-          const photoUrl = photo.url?.startsWith('http') 
-            ? photo.url 
+          const photoUrl = photo.url?.startsWith('http')
+            ? photo.url
             : `${window.location.origin}${photo.url}`;
-          
-          loadedMedia.push({
+
+          const key = `photo:${photo.image_hash || photo.url || photo.id}`;
+          pushUnique(key, {
             id: photo.id,
             type: 'photo',
             url: photoUrl,
@@ -66,20 +77,22 @@ export default function EditAdCreativePage({ adCreative }: EditAdCreativePagePro
         }
       });
     }
-    
+
     // Load videos from object_story_spec
     if (adCreative.object_story_spec?.video_data) {
       const videoData = Array.isArray(adCreative.object_story_spec.video_data)
         ? adCreative.object_story_spec.video_data
         : [adCreative.object_story_spec.video_data];
-      
+
       videoData.forEach((video: any) => {
         if (video) {
-          const videoUrl = (video.image_url || video.url)?.startsWith('http')
-            ? (video.image_url || video.url)
-            : `${window.location.origin}${video.image_url || video.url}`;
-          
-          loadedMedia.push({
+          const videoSrc = video.image_url || video.url;
+          const videoUrl = videoSrc?.startsWith('http')
+            ? videoSrc
+            : `${window.location.origin}${videoSrc}`;
+
+          const key = `video:${video.video_id || videoSrc || video.id}`;
+          pushUnique(key, {
             id: video.id,
             type: 'video',
             url: videoUrl,
@@ -89,12 +102,53 @@ export default function EditAdCreativePage({ adCreative }: EditAdCreativePagePro
         }
       });
     }
-    
+
     return loadedMedia;
   };
 
   const [selectedMedia, setSelectedMedia] = useState<MediaFile[]>(getInitialMedia());
-  
+
+  // Frontend safety net: orphan AdCreativePhotoData / AdCreativeVideoData rows
+  // (DB record exists but file on disk was removed) can leak through the
+  // detail-endpoint serializer until the backend container is restarted, and
+  // they then render as broken image tiles in both the Media list and the
+  // FacebookAdPreviews placements. Probe each URL on mount and drop entries
+  // whose file is no longer reachable so the UI stays consistent with the
+  // (already-filtered) media library.
+  useEffect(() => {
+    if (selectedMedia.length === 0) return;
+    let cancelled = false;
+
+    const probe = async () => {
+      const checks = await Promise.all(
+        selectedMedia.map(async (item) => {
+          if (!item.url) return { item, ok: false };
+          try {
+            const res = await fetch(item.url, { method: 'HEAD' });
+            return { item, ok: res.ok };
+          } catch {
+            // Network errors / CORS for non-local hosts: don't prune those.
+            return { item, ok: true };
+          }
+        })
+      );
+      if (cancelled) return;
+      const reachable = checks.filter((c) => c.ok).map((c) => c.item);
+      if (reachable.length !== selectedMedia.length) {
+        setSelectedMedia(reachable);
+      }
+    };
+
+    probe();
+    return () => {
+      cancelled = true;
+    };
+    // Only run when the loaded ad creative changes (i.e. on initial mount /
+    // navigation). User-driven changes via the modal go through the API and
+    // are already validated server-side.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adCreative.id]);
+
   const {
     isPreviewEnabled,
     selectedFormat,

@@ -60,6 +60,7 @@ export default function UpcomingMeetingsPanel({
       }`}
       data-upcoming-meetings-panel
     >
+      {!isOpen ? null : (
       <div className="w-[320px] h-full flex flex-col">
         {/* Header */}
         <div className="px-4 py-3 border-b border-gray-100 flex items-center gap-2">
@@ -119,6 +120,7 @@ export default function UpcomingMeetingsPanel({
           )}
         </div>
       </div>
+      )}
     </aside>
   );
 }
