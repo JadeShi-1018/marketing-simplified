@@ -28,6 +28,7 @@ import {
   Notebook,
   Bot,
   Presentation,
+  PiggyBank,
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePathname } from "next/navigation";
@@ -100,6 +101,12 @@ const getNavigationItems = (
       href: "/decisions",
       icon: CheckSquare,
       description: "Decision workbench and history",
+    },
+    {
+      name: "Budget Pools",
+      href: "/budget-pools",
+      icon: PiggyBank,
+      description: "Manage ad channel budget pools",
     },
     {
       name: t ? t('sidebar.notion') : 'Notion',

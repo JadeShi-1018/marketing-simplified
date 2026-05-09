@@ -223,8 +223,8 @@ export default function SummaryView({
   const recent = data?.recent_activity ?? [];
 
   return (
-    <div className="space-y-6">
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+    <div data-testid="tab-content-summary" className="space-y-6">
+      <section data-testid="summary-total-work-items" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
           icon={CheckCircle2}
           iconGradient="bg-gradient-to-br from-emerald-400 to-teal-500"
@@ -256,7 +256,7 @@ export default function SummaryView({
       </section>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_1fr]">
-        <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
+        <div data-testid="summary-work-type-overview" className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
           <header className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-900">Work type overview</h2>
             <span className="text-[11px] uppercase tracking-wider text-gray-400">

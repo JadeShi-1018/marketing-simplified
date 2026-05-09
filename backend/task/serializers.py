@@ -61,6 +61,7 @@ class TaskSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     origin_action_item = serializers.SerializerMethodField()
+    linked_object = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
@@ -68,7 +69,8 @@ class TaskSerializer(serializers.ModelSerializer):
             'id', 'summary', 'description', 'status', 'type', 'priority',
             'owner', 'owner_id', 'project', 'project_id',
             'current_approver', 'current_approver_id',
-            'content_type', 'object_id', 'start_date', 'due_date', 'planned_start_date',
+            'content_type', 'object_id', 'linked_object',
+            'start_date', 'due_date', 'planned_start_date',
             'is_subtask', 'parent_relationship', 'order_in_project',
             'anomaly_status', 'approval_chain_progress',
             # Revision tracking fields for SMP-501
@@ -81,7 +83,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'linear_issue_id',
         ]
         read_only_fields = [
-            'id', 'status', 'owner', 'content_type', 'object_id',
+            'id', 'status', 'owner', 'content_type', 'object_id', 'linked_object',
             'is_subtask', 'parent_relationship', 'anomaly_status',
             'approval_chain_progress', 'can_lock', 'approvals_summary',
             'revision_round', 'revision_label', # SMP-501
@@ -100,6 +102,35 @@ class TaskSerializer(serializers.ModelSerializer):
         if not obj.content_type:
             return None
         return obj.content_type.model
+
+    _LINKED_SERIALIZERS = {
+        'budgetrequest':       ('budget_approval.serializers', 'BudgetRequestSerializer'),
+        'asset':               ('asset.serializers',           'AssetSerializer'),
+        'retrospectivetask':   ('retrospective.serializers',   'RetrospectiveTaskDetailSerializer'),
+        'scalingplan':         ('optimization.serializers',    'ScalingPlanSerializer'),
+        'alerttask':           ('alerting.serializers',        'AlertTaskSerializer'),
+        'clientcommunication': ('client_communication.serializers', 'ClientCommunicationSerializer'),
+        'experiment':          ('experiment.serializers',      'ExperimentSerializer'),
+        'optimization':        ('optimization.serializers',    'OptimizationSerializer'),
+        'reporttask':          ('report.serializers',          'ReportTaskSerializer'),
+        'platformpolicyupdate':('policy.serializers',          'PlatformPolicyUpdateSerializer'),
+    }
+
+    def get_linked_object(self, obj):
+        linked = obj.linked_object
+        if linked is None:
+            return None
+        ct = obj.content_type.model if obj.content_type else None
+        entry = self._LINKED_SERIALIZERS.get(ct)
+        if not entry:
+            return None
+        import importlib
+        try:
+            module = importlib.import_module(entry[0])
+            serializer_cls = getattr(module, entry[1])
+            return serializer_cls(linked).data
+        except Exception:
+            return None
 
     def get_origin_meeting(self, obj):
         try:
@@ -493,6 +524,7 @@ class TaskListSerializer(TaskSerializer):
                 'origin_meeting',
                 'origin_meeting_id',
                 'origin_action_item',
+                'linked_object',
             )
         ]
     

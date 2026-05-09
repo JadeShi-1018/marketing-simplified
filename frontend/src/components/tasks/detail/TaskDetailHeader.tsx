@@ -103,6 +103,7 @@ export default function TaskDetailHeader({
         <nav className="flex items-center gap-2 text-xs text-gray-500">
           <Link
             href="/tasks"
+            data-testid="back-to-tasks"
             title="Back to Tasks"
             aria-label="Back to Tasks"
             className="inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-50 hover:text-gray-900"
@@ -121,7 +122,7 @@ export default function TaskDetailHeader({
             {projectName}
           </Link>
           <ChevronRight className="h-3 w-3 text-gray-300" />
-          <span className="font-semibold text-gray-900">{issueKey}</span>
+          <span data-testid="task-id-label" className="font-semibold text-gray-900">{issueKey}</span>
           </div>
         </nav>
         <div className="flex items-center gap-1">

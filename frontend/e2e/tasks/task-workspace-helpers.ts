@@ -28,29 +28,31 @@ export async function switchView(page: Page, mode: TasksViewMode): Promise<void>
 }
 
 /**
- * Click the first task in the task listbox (role="option") and return
- * the visible summary text so the caller can assert on the detail page.
+ * Click the first task row in the task list table and return the visible
+ * summary text so the caller can assert on the detail page.
  */
 export async function openFirstTask(page: Page): Promise<string> {
-  const listbox = page.getByRole('listbox', { name: 'Task list' });
-  await expect(listbox).toBeVisible({ timeout: 10_000 });
+  const taskList = page.getByTestId('task-list');
+  await expect(taskList).toBeVisible({ timeout: 10_000 });
 
-  const firstOption = listbox.getByRole('option').first();
-  await expect(firstOption).toBeVisible({ timeout: 5_000 });
+  const firstRow = page.getByTestId('task-row').first();
+  await expect(firstRow).toBeVisible({ timeout: 5_000 });
 
-  const summary = (await firstOption.innerText()).split('\n')[0].trim();
+  // Summary is in the second data column (after priority-dot icon column).
+  // Click the summary cell specifically — other cells stop propagation.
+  const summaryCell = firstRow.locator('td').nth(1);
+  const summary = ((await summaryCell.innerText()) || '').split('\n')[0].trim();
 
-  await firstOption.click();
+  await summaryCell.click();
   return summary;
 }
 
 /**
- * In Tasks (list) view: click the first task to select it, then click the
- * "Open" button in the detail panel to navigate to the task detail page.
+ * In Tasks (list) view: click the first task row — this navigates directly
+ * to the task detail page (no separate "Open" button required).
  */
 export async function openFirstTaskFromListAndNavigate(page: Page): Promise<void> {
   await openFirstTask(page);
-  await page.getByTestId('task-open-button').click();
 }
 
 /**

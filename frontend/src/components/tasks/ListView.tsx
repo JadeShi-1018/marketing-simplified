@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDownToLine, ArrowUpToLine, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { TaskBulkFailureItem, TaskData } from '@/types/task';
+import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
 import {
   PRIORITY_META,
   PRIORITY_OPTIONS,
@@ -22,6 +22,7 @@ import TaskListRowContextMenu, {
   type TaskListRowContextMenuState,
 } from '@/components/tasks/TaskListRowContextMenu';
 import LinearBulkOutputModal from '@/components/linear/LinearBulkOutputModal';
+import { TaskFilterPanel } from './TaskFilterPanel';
 
 interface ListViewProps {
   tasks: TaskData[];
@@ -62,6 +63,42 @@ const STATUS_DOT_CLASS: Record<string, string> = {
 
 const LIST_PAGE_SIZE = 10;
 
+type SortKey = 'id_desc' | 'id_asc' | 'due_asc' | 'due_desc' | 'priority' | 'status' | 'owner_asc' | 'name_asc';
+type GroupBy = 'none' | 'status' | 'priority' | 'type' | 'owner';
+
+const PRIORITY_SORT_ORDER: Record<string, number> = {
+  HIGHEST: 0, HIGH: 1, MEDIUM: 2, LOW: 3, LOWEST: 4,
+};
+const STATUS_SORT_ORDER: Record<string, number> = {
+  DRAFT: 0, SUBMITTED: 1, UNDER_REVIEW: 2, APPROVED: 3, REJECTED: 4, LOCKED: 5, CANCELLED: 6,
+};
+
+const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: 'id_desc', label: 'Newest first' },
+  { value: 'id_asc', label: 'Oldest first' },
+  { value: 'due_asc', label: 'Due date ↑' },
+  { value: 'due_desc', label: 'Due date ↓' },
+  { value: 'priority', label: 'Priority' },
+  { value: 'status', label: 'Status' },
+  { value: 'owner_asc', label: 'Owner A→Z' },
+  { value: 'name_asc',  label: 'Task name A→Z' },
+];
+
+function highlight(text: string, query: string): React.ReactNode {
+  const str = text || '';
+  if (!query.trim()) return str;
+  const q = query.trim().toLowerCase();
+  const idx = str.toLowerCase().indexOf(q);
+  if (idx < 0) return str;
+  return (
+    <>
+      {str.slice(0, idx)}
+      <mark className="rounded-[2px] bg-yellow-100 px-0 text-yellow-900">{str.slice(idx, idx + q.length)}</mark>
+      {str.slice(idx + q.length)}
+    </>
+  );
+}
+
 export default function ListView({
   tasks,
   loading,
@@ -73,6 +110,7 @@ export default function ListView({
   const router = useRouter();
   const removeTask = useTaskStore((s) => s.removeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
+  const sessionKey = `tasks-list-state-${projectId ?? 'all'}`;
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [bulkMode, setBulkMode] = useState(false);
@@ -94,6 +132,34 @@ export default function ListView({
   const [truncatedSummaryIds, setTruncatedSummaryIds] = useState<number[]>([]);
   const updateTaskInStore = useTaskStore((s) => s.updateTask);
   const updateTasksBulkInStore = useTaskStore((s) => s.updateTasksBulk);
+
+  const [filters, setFilters] = useState<TaskListFilters>({});
+  const [sortKey, setSortKey] = useState<SortKey>('id_desc');
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
+
+  // Restore filter/sort state from sessionStorage once projectId is known.
+  // Using a ref so this only runs once per project (not on every projectId re-render).
+  const restoredForProject = useRef<number | null | 'all'>(undefined as any);
+  useEffect(() => {
+    const key = projectId ?? 'all';
+    if (restoredForProject.current === key) return;
+    restoredForProject.current = key;
+    try {
+      const saved = sessionStorage.getItem(`tasks-list-state-${key}`);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as { filters?: TaskListFilters; sortKey?: SortKey; groupBy?: GroupBy; search?: string };
+      if (parsed.filters) setFilters(parsed.filters);
+      if (parsed.sortKey) setSortKey(parsed.sortKey);
+      if (parsed.groupBy) setGroupBy(parsed.groupBy);
+      if (parsed.search !== undefined) setSearch(parsed.search);
+    } catch { /* ignore */ }
+  }, [projectId]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(sessionKey, JSON.stringify({ filters, sortKey, groupBy, search }));
+    } catch { /* ignore quota errors */ }
+  }, [sessionKey, filters, sortKey, groupBy, search]);
 
   const parseApiError = (err: unknown, fallback: string) => {
     const data = (err as any)?.response?.data;
@@ -235,27 +301,116 @@ export default function ListView({
   );
 
   const visible = useMemo(() => {
+    let result = tasks;
     const q = search.trim().toLowerCase();
-    if (!q) return tasks;
-    return tasks.filter((t) =>
-      `${t.summary ?? ''} ${t.type ?? ''} ${t.owner?.username ?? ''} ${t.current_approver?.username ?? ''}`
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [search, tasks]);
+    if (q) {
+      result = result.filter((t) =>
+        `${t.summary ?? ''} ${t.type ?? ''} ${t.owner?.username ?? ''} ${t.current_approver?.username ?? ''}`
+          .toLowerCase()
+          .includes(q)
+      );
+    }
+    // Panel filters
+    if (filters.status) {
+      const vals = Array.isArray(filters.status) ? filters.status : [filters.status];
+      result = result.filter((t) => t.status && vals.includes(t.status));
+    }
+    if (filters.priority) {
+      const vals = Array.isArray(filters.priority) ? filters.priority : [filters.priority];
+      result = result.filter((t) => t.priority && vals.includes(t.priority));
+    }
+    if (filters.type) {
+      const vals = Array.isArray(filters.type) ? filters.type : [filters.type];
+      result = result.filter((t) => t.type && vals.includes(t.type));
+    }
+    if (filters.owner_id) {
+      const ids = (Array.isArray(filters.owner_id) ? filters.owner_id : [filters.owner_id]) as number[];
+      result = result.filter((t) => t.owner?.id != null && ids.includes(t.owner.id));
+    }
+    if (filters.current_approver_id) {
+      const ids = (Array.isArray(filters.current_approver_id) ? filters.current_approver_id : [filters.current_approver_id]) as number[];
+      result = result.filter((t) => t.current_approver?.id != null && ids.includes(t.current_approver.id));
+    }
+    if (filters.due_date_after) {
+      result = result.filter((t) => t.due_date && t.due_date >= filters.due_date_after!);
+    }
+    if (filters.due_date_before) {
+      result = result.filter((t) => t.due_date && t.due_date <= filters.due_date_before!);
+    }
+    return result;
+  }, [search, tasks, filters]);
 
-  const totalPages = Math.max(1, Math.ceil(visible.length / LIST_PAGE_SIZE));
+  const sorted = useMemo(() => {
+    const arr = [...visible];
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case 'id_asc':  return (a.id ?? 0) - (b.id ?? 0);
+        case 'id_desc': return (b.id ?? 0) - (a.id ?? 0);
+        case 'due_asc':  return ((a.due_date ?? '9999') < (b.due_date ?? '9999') ? -1 : 1);
+        case 'due_desc': return ((a.due_date ?? '9999') > (b.due_date ?? '9999') ? -1 : 1);
+        case 'priority': return (PRIORITY_SORT_ORDER[a.priority ?? 'MEDIUM'] ?? 2) - (PRIORITY_SORT_ORDER[b.priority ?? 'MEDIUM'] ?? 2);
+        case 'status':   return (STATUS_SORT_ORDER[a.status ?? 'DRAFT'] ?? 0) - (STATUS_SORT_ORDER[b.status ?? 'DRAFT'] ?? 0);
+        case 'owner_asc': return (a.owner?.username ?? '').localeCompare(b.owner?.username ?? '');
+        case 'name_asc':  return (a.summary ?? '').localeCompare(b.summary ?? '');
+        default: return 0;
+      }
+    });
+    return arr;
+  }, [visible, sortKey]);
+
+  const isGrouped = groupBy !== 'none';
+  const totalPages = Math.max(1, Math.ceil(sorted.length / LIST_PAGE_SIZE));
   const safeCurrentPage = Math.min(Math.max(currentPage, 1), totalPages);
   const paginatedVisible = useMemo(() => {
     const start = (safeCurrentPage - 1) * LIST_PAGE_SIZE;
-    return visible.slice(start, start + LIST_PAGE_SIZE);
-  }, [safeCurrentPage, visible]);
-  const pageStart = visible.length === 0 ? 0 : (safeCurrentPage - 1) * LIST_PAGE_SIZE + 1;
-  const pageEnd = Math.min(visible.length, safeCurrentPage * LIST_PAGE_SIZE);
+    return sorted.slice(start, start + LIST_PAGE_SIZE);
+  }, [safeCurrentPage, sorted]);
+  const pageStart = sorted.length === 0 ? 0 : (safeCurrentPage - 1) * LIST_PAGE_SIZE + 1;
+  const pageEnd = Math.min(sorted.length, safeCurrentPage * LIST_PAGE_SIZE);
+
+  // Build display rows with optional group headers
+  type DisplayRow =
+    | { kind: 'header'; key: string; label: string }
+    | { kind: 'task'; task: TaskData };
+
+  const displayRows = useMemo((): DisplayRow[] => {
+    if (!isGrouped) return paginatedVisible.map((task) => ({ kind: 'task' as const, task }));
+    const groups = new Map<string, { label: string; tasks: TaskData[] }>();
+    paginatedVisible.forEach((task) => {
+      let key = '';
+      let label = '';
+      if (groupBy === 'status') {
+        key = `status-${task.status ?? 'DRAFT'}`;
+        label = STATUS_META[task.status ?? 'DRAFT']?.label ?? (task.status ?? 'Draft');
+      } else if (groupBy === 'priority') {
+        key = `priority-${task.priority ?? 'MEDIUM'}`;
+        label = PRIORITY_META[task.priority ?? 'MEDIUM']?.label ?? (task.priority ?? 'Medium');
+      } else if (groupBy === 'type') {
+        key = `type-${task.type ?? 'none'}`;
+        label = TASK_TYPES.find((t) => t.value === task.type)?.label ?? task.type ?? 'No type';
+      } else if (groupBy === 'owner') {
+        const ownerName = task.owner?.username ?? task.owner?.email ?? null;
+        key = `owner-${ownerName ?? 'unassigned'}`;
+        label = ownerName ?? 'Unassigned';
+      }
+      if (!groups.has(key)) groups.set(key, { label, tasks: [] });
+      groups.get(key)!.tasks.push(task);
+    });
+    const rows: DisplayRow[] = [];
+    groups.forEach(({ label, tasks: groupTasks }, key) => {
+      rows.push({ kind: 'header', key, label: `${label} (${groupTasks.length})` });
+      groupTasks.forEach((task) => rows.push({ kind: 'task', task }));
+    });
+    return rows;
+  }, [isGrouped, groupBy, paginatedVisible]);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [search]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters, sortKey, groupBy]);
 
   useEffect(() => {
     setCurrentPage((page) => Math.min(Math.max(page, 1), totalPages));
@@ -312,6 +467,11 @@ export default function ListView({
     });
     return Array.from(unique.entries()).map(([id, label]) => ({ id, label }));
   }, [members, tasks]);
+
+  const filterMemberOptions = useMemo(
+    () => memberOptions.map((m) => ({ id: m.id, name: m.label })),
+    [memberOptions]
+  );
 
   const toggleSelection = (taskId: number, checked: boolean) => {
     setSelectedIds((prev) => {
@@ -586,15 +746,69 @@ export default function ListView({
         onTaskPatched={handleTaskPatched}
       />
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {/* Search + clear */}
         <div className="relative min-w-[12rem] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search summary, type or owner…"
-            className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
+            className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-8 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
           />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 hover:text-gray-600"
+              aria-label="Clear search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
+
+        {/* Filter panel */}
+        <TaskFilterPanel
+          filters={filters}
+          onChange={setFilters}
+          onClearAll={() => setFilters({})}
+          ownerOptions={filterMemberOptions}
+          approverOptions={filterMemberOptions}
+          typeOptions={TASK_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+        />
+
+        {/* Sort */}
+        <div className="relative shrink-0">
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+          <select
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as SortKey)}
+            className="h-9 appearance-none rounded-lg border border-gray-200 bg-white pl-3 pr-8 text-xs font-medium text-gray-700 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
+            aria-label="Sort tasks"
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Group by */}
+        <div className="relative shrink-0">
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+          <select
+            value={groupBy}
+            onChange={(e) => setGroupBy(e.target.value as GroupBy)}
+            className="h-9 appearance-none rounded-lg border border-gray-200 bg-white pl-3 pr-8 text-xs font-medium text-gray-700 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
+            aria-label="Group tasks"
+          >
+            <option value="none">No grouping</option>
+            <option value="status">By status</option>
+            <option value="priority">By priority</option>
+            <option value="type">By type</option>
+            <option value="owner">By owner</option>
+          </select>
+        </div>
+
         <button
           type="button"
           onClick={() => setBulkMode((v) => !v)}
@@ -690,7 +904,7 @@ export default function ListView({
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         {error ? (
           <div className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>
-        ) : !loading && visible.length === 0 ? (
+        ) : !loading && sorted.length === 0 ? (
           <div className="px-6 py-16 text-center">
             <p className="text-sm font-medium text-gray-900">No tasks yet</p>
             <p className="mt-1 text-xs text-gray-500">
@@ -698,7 +912,7 @@ export default function ListView({
             </p>
           </div>
         ) : (
-          <table className="w-full table-fixed text-xs">
+          <table data-testid="task-list" className="w-full table-fixed text-xs">
             <colgroup>
               <col className={TABLE_COLUMN_WIDTHS.icon} />
               {bulkMode ? <col className={TABLE_COLUMN_WIDTHS.select} /> : null}
@@ -731,48 +945,40 @@ export default function ListView({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-gray-700">
-              {(loading ? Array.from({ length: 6 }, () => undefined) : paginatedVisible).map((task, index) => {
-                if (loading) {
+              {loading ? Array.from({ length: 6 }, (_, index) => (
+                <tr key={`tasks-list-skeleton-${index}`}>
+                  <td className={`${TABLE_COLUMN_WIDTHS.icon} px-4 py-3`}>
+                    <Skeleton className="h-2 w-2 rounded-full" />
+                  </td>
+                  {bulkMode ? (
+                    <td className={`${TABLE_COLUMN_WIDTHS.select} px-2 py-3`}>
+                      <Skeleton className="h-4 w-4 rounded-sm" />
+                    </td>
+                  ) : null}
+                  <td className="px-4 py-3">
+                    <div className="min-w-0 max-w-[32rem] space-y-2">
+                      <Skeleton className="h-4 w-full max-w-[22rem]" />
+                      <Skeleton className="h-3 w-full max-w-[32rem]" />
+                    </div>
+                  </td>
+                  <td className={`${TABLE_COLUMN_WIDTHS.type} px-4 py-3`}><Skeleton className="h-3 w-16" /></td>
+                  <td className={`${TABLE_COLUMN_WIDTHS.status} px-4 py-3`}><Skeleton className="h-5 w-16 rounded-full" /></td>
+                  <td className={`${TABLE_COLUMN_WIDTHS.owner} px-4 py-3`}><Skeleton className="h-3 w-16" /></td>
+                  <td className={`${TABLE_COLUMN_WIDTHS.approver} px-4 py-3`}><Skeleton className="h-3 w-16" /></td>
+                  <td className={`${TABLE_COLUMN_WIDTHS.due} px-5 py-3`}><div className="flex justify-start"><Skeleton className="h-3 w-14" /></div></td>
+                </tr>
+              )) : displayRows.map((row, index) => {
+                if (row.kind === 'header') {
+                  const colspan = bulkMode ? 8 : 7;
                   return (
-                    <tr key={`tasks-list-skeleton-${index}`}>
-                      <td className={`${TABLE_COLUMN_WIDTHS.icon} px-4 py-3`}>
-                        <Skeleton className="h-2 w-2 rounded-full" />
-                      </td>
-                      {bulkMode ? (
-                        <td className={`${TABLE_COLUMN_WIDTHS.select} px-2 py-3`}>
-                          <Skeleton className="h-4 w-4 rounded-sm" />
-                        </td>
-                      ) : null}
-                      <td className="px-4 py-3">
-                        <div className="min-w-0 max-w-[32rem] space-y-2">
-                          <Skeleton className="h-4 w-full max-w-[22rem]" />
-                          <Skeleton className="h-3 w-full max-w-[32rem]" />
-                        </div>
-                      </td>
-                      <td className={`${TABLE_COLUMN_WIDTHS.type} px-4 py-3`}>
-                        <Skeleton className="h-3 w-16" />
-                      </td>
-                      <td className={`${TABLE_COLUMN_WIDTHS.status} px-4 py-3`}>
-                        <Skeleton className="h-5 w-16 rounded-full" />
-                      </td>
-                      <td className={`${TABLE_COLUMN_WIDTHS.owner} px-4 py-3`}>
-                        <Skeleton className="h-3 w-16" />
-                      </td>
-                      <td className={`${TABLE_COLUMN_WIDTHS.approver} px-4 py-3`}>
-                        <Skeleton className="h-3 w-16" />
-                      </td>
-                      <td className={`${TABLE_COLUMN_WIDTHS.due} px-5 py-3`}>
-                        <div className="flex justify-start">
-                          <Skeleton className="h-3 w-14" />
-                        </div>
+                    <tr key={row.key} className="bg-gray-50/80">
+                      <td colSpan={colspan} className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                        {row.label}
                       </td>
                     </tr>
                   );
                 }
-
-                if (!task) {
-                  return null;
-                }
+                const { task } = row;
 
                 const priority = task.priority ?? 'MEDIUM';
                 const status = task.status ?? 'DRAFT';
@@ -784,6 +990,7 @@ export default function ListView({
                 return (
                   <tr
                     key={task.id}
+                    data-testid="task-row"
                     className={`cursor-pointer transition-colors duration-150 hover:bg-gray-50/50 ${task.id && recentlyUpdatedIds.includes(task.id)
                         ? 'bg-emerald-50/45'
                         : bulkMode && isSelected
@@ -876,7 +1083,7 @@ export default function ListView({
                               data-summary-id={task.id}
                               className="block w-full truncate text-sm font-medium leading-5 text-gray-900"
                             >
-                              {task.summary || `Task #${task.id}`}
+                              {highlight(task.summary || `Task #${task.id}`, search)}
                             </span>
                             {task.id && truncatedSummaryIds.includes(task.id) ? (
                               <div className="pointer-events-none absolute bottom-full left-0 z-20 mb-1 hidden w-[24rem] rounded-lg border border-gray-200 bg-white p-2 text-xs text-gray-700 shadow-lg group-hover:block">
@@ -1167,7 +1374,7 @@ export default function ListView({
             </tbody>
           </table>
         )}
-        {!loading && !error && visible.length > LIST_PAGE_SIZE ? (
+        {!loading && !error && sorted.length > LIST_PAGE_SIZE ? (
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-2.5 text-xs text-gray-600">
             <span className="text-gray-400">
               {pageStart}–{pageEnd} of {visible.length}

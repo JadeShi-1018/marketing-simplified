@@ -1,18 +1,20 @@
-from rest_framework import viewsets, generics, status
+from rest_framework import viewsets, generics, status, serializers as drf_serializers
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.contrib.auth import get_user_model
 
+from core.models import AdChannel
 from .models import BudgetRequest, BudgetPool, BudgetRequestStatus
 from .serializers import (
-    BudgetRequestSerializer, 
-    ApprovalDecisionSerializer, 
+    BudgetRequestSerializer,
+    ApprovalDecisionSerializer,
     BudgetPoolSerializer
 )
 from .permissions import (
-    BudgetRequestPermission, 
+    BudgetRequestPermission,
     ApprovalPermission, 
     BudgetPoolPermission,
     EscalationPermission
@@ -129,6 +131,13 @@ class BudgetPoolViewSet(viewsets.ModelViewSet):
     serializer_class = BudgetPoolSerializer
     permission_classes = [BudgetPoolPermission]
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        project_id = self.request.query_params.get('project_id')
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        return qs
+
     def destroy(self, request, *args, **kwargs):
         """Delete budget pool with proper error handling for protected foreign keys"""
         instance = self.get_object()
@@ -220,3 +229,29 @@ class BudgetEscalationView(generics.GenericAPIView):
             return Response({
                 'error': str(e)
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class AdChannelSerializer(drf_serializers.Serializer):
+    id = drf_serializers.IntegerField()
+    name = drf_serializers.CharField()
+    project = drf_serializers.IntegerField(source='project_id')
+
+
+class AdChannelViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        qs = AdChannel.objects.all()
+        project_id = request.query_params.get('project_id')
+        if project_id:
+            qs = qs.filter(project_id=project_id)
+        data = [{'id': ch.id, 'name': ch.name, 'project': ch.project_id} for ch in qs]
+        return Response(data)
+
+    def create(self, request):
+        name = request.data.get('name', '').strip()
+        project_id = request.data.get('project')
+        if not name or not project_id:
+            return Response({'error': 'name and project are required'}, status=status.HTTP_400_BAD_REQUEST)
+        ch = AdChannel.objects.create(name=name, project_id=project_id)
+        return Response({'id': ch.id, 'name': ch.name, 'project': ch.project_id}, status=status.HTTP_201_CREATED)

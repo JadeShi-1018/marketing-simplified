@@ -101,7 +101,7 @@ export default function TaskV2DetailPage() {
       <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="bg-gray-50">
           {error && !loading && (
-          <div className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>
+          <div data-testid="task-detail-error" className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>
         )}
           {(!error && (task || loading)) && (
           <div className="mx-auto max-w-[1440px] px-6 py-4">
@@ -123,7 +123,7 @@ export default function TaskV2DetailPage() {
                   onUpdated={onMutated}
                   loading={loading}
                 />
-                <TaskTypeBlock task={taskShell} loading={loading} />
+                <TaskTypeBlock task={taskShell} loading={loading} readOnly={Boolean(readOnly)} onUpdated={onMutated} />
                 <TaskSubtasksBlock
                   task={taskShell}
                   readOnly={Boolean(readOnly)}

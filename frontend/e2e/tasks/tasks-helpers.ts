@@ -26,24 +26,21 @@ export async function waitForTasksPageReady(page: Page) {
  */
 export async function navigateToTasksAndSelectProject(page: Page): Promise<number> {
   await page.goto('/tasks');
-
   await expect(page.getByText('Preparing your workspace')).not.toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole('heading', { name: 'Select a project' })).toBeVisible({ timeout: 10_000 });
-
-  const projectName = process.env.E2E_PROJECT_NAME || 'E2E Test Project';
-  
-  const projectCard = page
-    .locator('button.group')
-    .filter({ has: page.locator('span.font-semibold.text-slate-900', { hasText: projectName }) })
-    .first();
-  await projectCard.click();
-
-  await page.waitForURL(/\/tasks\?project_id=\d+/, { timeout: 10_000 });
   await waitForTasksPageReady(page);
 
-  const url = new URL(page.url());
-  const projectId = parseInt(url.searchParams.get('project_id') ?? '0', 10);
-  if (!projectId) throw new Error('Could not parse project_id from URL');
+  // Get the active project from the Zustand persisted store in localStorage.
+  const projectId: number | null = await page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('project-storage');
+      if (!raw) return null;
+      return (JSON.parse(raw) as any)?.state?.activeProject?.id ?? null;
+    } catch {
+      return null;
+    }
+  });
+
+  if (!projectId) throw new Error('No active project found in store — ensure the test user has at least one project');
   return projectId;
 }
 
@@ -70,6 +67,7 @@ export const goToTasksWithProject = goToTasks;
 /**
  * Click the Create button, capture the task ID from the POST response,
  * and wait for the panel to close.
+ * @deprecated Use submitNewTaskAndGetId for the /tasks/new page flow.
  */
 export async function submitCreateAndGetId(
   page: Page,
@@ -94,6 +92,31 @@ export async function submitCreateAndGetId(
 
   await expect(panel).not.toBeVisible({ timeout: 10_000 });
   return taskId;
+}
+
+/**
+ * Navigate to the /tasks/new page for the given project.
+ */
+export async function navigateToNewTaskPage(page: Page, projectId: number): Promise<void> {
+  await page.goto(`/tasks/new?project_id=${projectId}`);
+  await expect(page.getByPlaceholder('Summary of this task')).toBeVisible({ timeout: 15_000 });
+}
+
+/**
+ * On the /tasks/new page: intercept the POST, click "Create task", return the new task ID.
+ */
+export async function submitNewTaskAndGetId(page: Page): Promise<number | null> {
+  const responsePromise = page.waitForResponse((resp) => {
+    const path = new URL(resp.url()).pathname;
+    return (path === '/api/tasks/' || path === '/api/tasks') && resp.request().method() === 'POST';
+  });
+
+  await page.getByRole('button', { name: 'Create task', exact: true }).click();
+
+  const response = await responsePromise;
+  if (!response.ok()) return null;
+  const body = await response.json();
+  return body.id ?? null;
 }
 
 /**

@@ -10,7 +10,7 @@ import {
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
   User as UserIcon, CreditCard, Plug, LogOut,
-  Shield, UserCog, UserCheck, BarChart3, Sparkles,
+  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
 import { useAuthStore } from '@/lib/authStore';
@@ -75,6 +75,7 @@ const navGroups: NavGroup[] = [
       { label: 'Meta Ads', href: '/meta-ads', icon: BarChart3 },
       { label: 'Tasks', href: '/tasks', icon: CheckSquare },
       { label: 'Decisions', href: '/decisions', icon: GitBranch },
+      { label: 'Budget Pools', href: '/budget-pools', icon: PiggyBank },
       { label: 'Spreadsheets', href: '/spreadsheets', icon: Table2 },
     ],
   },

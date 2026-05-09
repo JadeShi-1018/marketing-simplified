@@ -1,4 +1,7 @@
+import logging
 from rest_framework import viewsets, status, generics, permissions
+
+logger = logging.getLogger(__name__)
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -584,6 +587,34 @@ class TaskViewSet(viewsets.ModelViewSet):
             # Save all changes
             task.save()
 
+            # Sync budget request status when a budget task is approved or rejected
+            if task.type == 'budget' and task.linked_object is not None:
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from budget_approval.services import BudgetRequestService
+                    br = task.linked_object
+                    if isinstance(br, BudgetRequest):
+                        if is_approved:
+                            # Advance through all intermediate states to LOCKED in one go
+                            if br.status == BudgetRequestStatus.DRAFT:
+                                br.submit()
+                                br.save()
+                            if br.status == BudgetRequestStatus.SUBMITTED:
+                                br.send_for_review()
+                                br.save()
+                            if br.status == BudgetRequestStatus.UNDER_REVIEW:
+                                br.approve()
+                                br.save()
+                            if br.status == BudgetRequestStatus.APPROVED:
+                                br.lock()
+                                br.save()
+                        elif not is_approved:
+                            if br.status in (BudgetRequestStatus.SUBMITTED, BudgetRequestStatus.UNDER_REVIEW):
+                                br.reject()
+                                br.save()
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s approval: %s', task.id, e, exc_info=True)
+
             # Return both the approval record and updated task data
             approval_serializer = ApprovalRecordSerializer(
                 task.approval_records.latest('step_number')
@@ -623,6 +654,17 @@ class TaskViewSet(viewsets.ModelViewSet):
             # Cancel the task
             task.cancel()
             task.save()
+
+            # If this is a budget task, cancel the linked budget request (reverses pool if locked)
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest
+                    br = task.linked_object
+                    if isinstance(br, BudgetRequest):
+                        br.cancel()
+                        br.save()
+                except Exception as e:
+                    logger.error('Budget cancel sync failed on task %s: %s', task.id, e, exc_info=True)
 
             # Delete all approval records
             task.approval_records.all().delete()
@@ -703,6 +745,19 @@ class TaskViewSet(viewsets.ModelViewSet):
 
             # Save the task to persist the state change
             task.save()
+
+            # If this is a budget task, reset the BR back to DRAFT so it can flow through approval again
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    br = task.linked_object
+                    if isinstance(br, BudgetRequest) and br.status in (
+                        BudgetRequestStatus.CANCELLED, BudgetRequestStatus.REJECTED
+                    ):
+                        br.revise()
+                        br.save()
+                except Exception as e:
+                    logger.error('Budget revise sync failed on task %s: %s', task.id, e, exc_info=True)
             
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})

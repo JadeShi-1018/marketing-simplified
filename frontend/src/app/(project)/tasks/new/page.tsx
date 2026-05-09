@@ -144,7 +144,7 @@ export default function CreateTaskPage() {
       {
         key: 'approver',
         label: 'Approver',
-        required: false,
+        required: type === 'budget',
         filled: approverId.length > 0,
         anchorId: COMMON_ANCHOR.approver,
       },
@@ -235,9 +235,18 @@ export default function CreateTaskPage() {
               if (subId) {
                 await TaskAPI.linkTask(createdTaskId, cfg.contentType, String(subId));
               }
+            } else {
+              if (type === 'budget') {
+                toast.error('Task created but budget request was not saved — make sure you selected a pool and assigned an approver.');
+              }
             }
-          } catch {
-            toast.error('Task created but failed to save type-specific fields. You can edit the task to retry.');
+          } catch (subErr: unknown) {
+            const detail =
+              (subErr as any)?.response?.data
+                ? JSON.stringify((subErr as any).response.data)
+                : (subErr as any)?.message ?? 'Unknown error';
+            console.error('[task-create] type-specific save failed:', detail);
+            toast.error(`Task created but failed to save type-specific fields: ${detail}`);
           }
         }
       }
@@ -363,6 +372,7 @@ export default function CreateTaskPage() {
                     schema={schema}
                     values={typeFormState}
                     onChange={updateTypeField}
+                    context={{ projectId }}
                   />
                 </div>
               </>
