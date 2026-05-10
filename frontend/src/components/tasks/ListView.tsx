@@ -337,7 +337,8 @@ export default function ListView({
       if (parsed.search !== undefined) setSearch(parsed.search);
       if (parsed.activeViewId) {
         setActiveViewId(parsed.activeViewId);
-        sessionStorage.removeItem(preViewKey(projectId ?? null));
+        // Do NOT remove preViewKey here — it must survive back-navigation so that
+        // "Clear active view" can restore the state the user had before applying the view.
       }
     } catch { /* ignore */ }
   }, [projectId]);
@@ -1731,6 +1732,15 @@ export default function ListView({
         onClose={() => setDrawerTaskId(null)}
         onTaskUpdate={() => {
           // Optionally refresh the list when a task is updated in the drawer
+        }}
+        taskIds={paginatedVisible.map((t) => t.id).filter(Boolean) as number[]}
+        onNavigate={(dir) => {
+          if (!drawerTaskId) return;
+          const ids = paginatedVisible.map((t) => t.id).filter(Boolean) as number[];
+          const idx = ids.indexOf(drawerTaskId);
+          if (idx === -1) return;
+          const next = dir === 'next' ? ids[idx + 1] : ids[idx - 1];
+          if (next != null) setDrawerTaskId(next);
         }}
       />
     </div>

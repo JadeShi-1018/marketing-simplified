@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { X, ExternalLink } from 'lucide-react';
+import { X, ExternalLink, ChevronUp, ChevronDown } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
@@ -21,9 +21,11 @@ interface TaskDrawerProps {
   taskId: number | null;
   onClose: () => void;
   onTaskUpdate?: () => void;
+  taskIds?: number[];
+  onNavigate?: (dir: 'next' | 'prev') => void;
 }
 
-export default function TaskDrawer({ taskId, onClose, onTaskUpdate }: TaskDrawerProps) {
+export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = [], onNavigate }: TaskDrawerProps) {
   const router = useRouter();
 
   const [task, setTask] = useState<TaskData | null>(null);
@@ -92,15 +94,21 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate }: TaskDrawer
     onTaskUpdate?.();
   }, [load, onTaskUpdate]);
 
-  // Escape key handler
+  // Keyboard handler: Escape closes, j/k navigates (skip when an input is focused)
   useEffect(() => {
     if (taskId === null) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') { onClose(); return; }
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable;
+      if (!isEditable && onNavigate) {
+        if (e.key === 'j') { e.preventDefault(); onNavigate('next'); }
+        if (e.key === 'k') { e.preventDefault(); onNavigate('prev'); }
+      }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [taskId, onClose]);
+  }, [taskId, onClose, onNavigate]);
 
   // Prevent body scroll while drawer is open
   useEffect(() => {
@@ -115,6 +123,10 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate }: TaskDrawer
   }, [taskId]);
 
   if (taskId === null) return null;
+
+  const currentIndex = taskIds.indexOf(taskId);
+  const hasPrev = currentIndex > 0;
+  const hasNext = currentIndex !== -1 && currentIndex < taskIds.length - 1;
 
   const readOnly = task?.status === 'LOCKED';
   const taskShell = (task ?? {
@@ -152,7 +164,35 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate }: TaskDrawer
       >
         {/* Drawer header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-4 py-3">
-          <span className="text-xs font-medium text-gray-500">Task #{taskId}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-500">Task #{taskId}</span>
+            {onNavigate && taskIds.length > 1 && (
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => onNavigate('prev')}
+                  disabled={!hasPrev}
+                  title="Previous task (k)"
+                  aria-label="Previous task"
+                  data-testid="drawer-nav-prev"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  <ChevronUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('next')}
+                  disabled={!hasNext}
+                  title="Next task (j)"
+                  aria-label="Next task"
+                  data-testid="drawer-nav-next"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-1">
             <a
               href={`/tasks/${taskId}`}

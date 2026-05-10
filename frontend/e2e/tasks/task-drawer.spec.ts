@@ -80,4 +80,69 @@ test.describe('Quick task drawer', () => {
     // Task list still in DOM
     await expect(page.getByTestId('task-list')).toBeAttached();
   });
+
+  test('j/k nav buttons appear when multiple tasks are visible', async ({ page }) => {
+    const rows = page.getByTestId('task-row-open');
+    const count = await rows.count();
+    // Only run if there are at least 2 tasks
+    if (count < 2) return;
+
+    await rows.first().click();
+    await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
+
+    // Nav buttons should be visible
+    await expect(page.getByTestId('drawer-nav-prev')).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByTestId('drawer-nav-next')).toBeVisible({ timeout: 5_000 });
+
+    // First task: prev button should be disabled
+    await expect(page.getByTestId('drawer-nav-prev')).toBeDisabled();
+    await expect(page.getByTestId('drawer-nav-next')).not.toBeDisabled();
+  });
+
+  test('j key navigates to next task', async ({ page }) => {
+    const rows = page.getByTestId('task-row-open');
+    const count = await rows.count();
+    if (count < 2) return;
+
+    await rows.first().click();
+    await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
+
+    const firstLabel = await page.getByTestId('task-drawer').getByText(/Task #\d+/).textContent();
+
+    // Press j to move to next task
+    await page.keyboard.press('j');
+
+    // Wait for the task # to change
+    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).not.toHaveText(firstLabel ?? '', { timeout: 5_000 });
+  });
+
+  test('k key navigates to previous task after j', async ({ page }) => {
+    const rows = page.getByTestId('task-row-open');
+    const count = await rows.count();
+    if (count < 2) return;
+
+    await rows.first().click();
+    await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
+
+    const firstLabel = await page.getByTestId('task-drawer').getByText(/Task #\d+/).textContent();
+
+    await page.keyboard.press('j');
+    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).not.toHaveText(firstLabel ?? '', { timeout: 5_000 });
+
+    // k should go back to the first task
+    await page.keyboard.press('k');
+    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).toHaveText(firstLabel ?? '', { timeout: 5_000 });
+  });
+
+  test('priority chip opens dropdown when clicked', async ({ page }) => {
+    await page.getByTestId('task-row-open').first().click();
+    await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
+
+    const priorityTrigger = page.getByTestId('header-priority-trigger');
+    await expect(priorityTrigger).toBeVisible({ timeout: 10_000 });
+    await priorityTrigger.click();
+
+    // Priority options should appear
+    await expect(page.getByRole('button', { name: /urgent/i }).or(page.getByRole('button', { name: /high/i })).first()).toBeVisible({ timeout: 3_000 });
+  });
 });
