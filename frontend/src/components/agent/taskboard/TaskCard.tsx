@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Checkbox } from "@/components/ui/checkbox"
 import { cn } from "@/lib/utils"
+import { X } from "lucide-react"
 
 export type TaskType =
   | "budget"
@@ -72,13 +73,15 @@ interface TaskCardProps {
   isSelected?: boolean
   onToggleSelect?: () => void
   onClick?: () => void
+  onDeleteClick?: () => void
 }
 
-export function TaskCard({ task, isManaging, isSelected, onToggleSelect, onClick }: TaskCardProps) {
+export function TaskCard({ task, isManaging, isSelected, onToggleSelect, onClick, onDeleteClick }: TaskCardProps) {
+  const showDelete = task.status === "DRAFT" && !isManaging && Boolean(onDeleteClick)
   return (
     <div
       className={cn(
-        "rounded-lg border bg-card p-3 shadow-sm transition-colors",
+        "rounded-lg border bg-card p-3 shadow-sm transition-colors group",
         isManaging && isSelected
           ? "border-blue-500/50 bg-blue-500/5"
           : "border-border hover:border-muted-foreground/30",
@@ -97,9 +100,25 @@ export function TaskCard({ task, isManaging, isSelected, onToggleSelect, onClick
           </div>
         )}
         <div className="flex flex-col gap-2 flex-1 min-w-0">
-          <p className="text-sm font-medium text-card-foreground line-clamp-1">
-            {task.summary}
-          </p>
+          <div className="flex items-start gap-2">
+            <p className="text-sm font-medium text-card-foreground line-clamp-1 flex-1 min-w-0">
+              {task.summary}
+            </p>
+            {showDelete && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onDeleteClick?.()
+                }}
+                className="opacity-0 group-hover:opacity-100 text-muted-foreground/60 hover:text-red-500 transition-opacity shrink-0"
+                title="Delete draft task"
+                aria-label="Delete draft task"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
 
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">

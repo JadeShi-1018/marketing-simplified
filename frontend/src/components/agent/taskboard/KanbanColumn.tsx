@@ -13,6 +13,7 @@ interface KanbanColumnProps {
   exitingIds?: Set<string | number>
   onToggleSelect?: (id: string | number) => void
   onCardClick?: (task: Task) => void
+  onDeleteDraftTask?: (task: Task) => void
 }
 
 const statusLabels: Record<ColumnStatus, string> = {
@@ -22,9 +23,9 @@ const statusLabels: Record<ColumnStatus, string> = {
   APPROVED: "Approved",
 }
 
-export function KanbanColumn({ status, tasks, isManaging, selectedIds, exitingIds, onToggleSelect, onCardClick }: KanbanColumnProps) {
+export function KanbanColumn({ status, tasks, isManaging, selectedIds, exitingIds, onToggleSelect, onCardClick, onDeleteDraftTask }: KanbanColumnProps) {
   return (
-    <div className="flex min-w-[280px] flex-1 flex-col rounded-lg bg-card/50">
+    <div className="flex w-full flex-col rounded-lg bg-card/50 min-h-0">
       <div className="flex items-center justify-between p-3 border-b border-border">
         <h3 className="text-sm font-semibold text-foreground">
           {statusLabels[status]}
@@ -50,6 +51,7 @@ export function KanbanColumn({ status, tasks, isManaging, selectedIds, exitingId
                 isSelected={selectedIds?.has(task.id)}
                 onToggleSelect={() => onToggleSelect?.(task.id)}
                 onClick={() => onCardClick?.(task)}
+                onDeleteClick={() => onDeleteDraftTask?.(task)}
               />
             </div>
           ))}

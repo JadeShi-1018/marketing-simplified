@@ -6,7 +6,6 @@ the logic for that particular action.
 """
 import logging
 import os
-import requests as http_requests
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +13,19 @@ logger = logging.getLogger(__name__)
 class StepResult:
     """Unified return type for all executors."""
 
-    def __init__(self, success, output_data=None, error=None, sse_events=None):
+    def __init__(
+        self,
+        success,
+        output_data=None,
+        error=None,
+        sse_events=None,
+        pause_external_approval=False,
+    ):
         self.success = success
         self.output_data = output_data
         self.error = error
         self.sse_events = sse_events or []
+        self.pause_external_approval = pause_external_approval
 
 
 class BaseStepExecutor:
@@ -29,6 +36,7 @@ class BaseStepExecutor:
         self.workflow_run = workflow_run
         self.orchestrator = orchestrator
         self.config = step.config or {}
+        self.step_execution = None  # set by workflow engine before execute()
 
     def execute(self, input_data: dict) -> StepResult:
         raise NotImplementedError
@@ -195,15 +203,10 @@ class CreateDecisionExecutor(BaseStepExecutor):
 
 
 class CreateTasksExecutor(BaseStepExecutor):
-    """Creates Tasks from analysis recommended_tasks.
-
-    Mirrors the logic in AgentOrchestrator.create_tasks_from_analysis().
-    """
+    """Creates Tasks from analysis recommended_tasks via the external approval gate."""
 
     def execute(self, input_data):
-        from django.contrib.contenttypes.models import ContentType
-        from decision.models import Decision
-        from task.models import Task
+        from .approval_gate import KIND_TASK, request_external_commit
 
         analysis = input_data.get('analysis_result')
         if not analysis:
@@ -211,51 +214,43 @@ class CreateTasksExecutor(BaseStepExecutor):
 
         try:
             tasks_data = analysis.get('recommended_tasks', [])
-            user = self.orchestrator.user
-            project = self.orchestrator.project
+            if not tasks_data:
+                return StepResult(success=False, error='No recommended_tasks in analysis.')
+
             decision = self.workflow_run.decision
+            draft = {'recommended_tasks': tasks_data}
+            commit_context = {
+                'input_data': input_data,
+                'analysis_result': analysis,
+                'decision_id': decision.id if decision else None,
+            }
+            gate = request_external_commit(
+                orchestrator=self.orchestrator,
+                workflow_run=self.workflow_run,
+                step_execution=self.step_execution,
+                kind=KIND_TASK,
+                draft=draft,
+                commit_context=commit_context,
+            )
 
-            if decision:
-                decision_ct = ContentType.objects.get_for_model(Decision)
-                link_kwargs = {
-                    'content_type': decision_ct,
-                    'object_id': str(decision.id),
-                }
-                desc_suffix = f" (Decision: {decision.title})"
-            else:
-                link_kwargs = {}
-                desc_suffix = ""
-
-            created_ids = []
-            for task_data in tasks_data:
-                summary = task_data.get('summary', 'AI Agent Generated Task')[:255]
-                ai_description = (task_data.get('description') or '').strip()
-                description = ai_description or f"Auto-generated from AI analysis{desc_suffix}"
-                task = Task.objects.create(
-                    summary=summary,
-                    description=description,
-                    type=task_data.get('type', 'optimization'),
-                    priority=task_data.get('priority', 'MEDIUM'),
-                    project=project,
-                    owner=user,
-                    **link_kwargs,
+            if gate.paused:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=gate.sse_events,
+                    pause_external_approval=True,
                 )
-                created_ids.append(task.id)
 
+            wf = gate.workflow_run_patch or {}
+            created_ids = wf.get('created_tasks') or []
             self.workflow_run.created_tasks = created_ids
             self.workflow_run.save(update_fields=['created_tasks'])
 
+            base_out = gate.output_data or {**input_data, 'analysis_result': analysis}
             return StepResult(
                 success=True,
-                output_data={**input_data, 'created_task_ids': created_ids},
-                sse_events=[{
-                    'type': 'task_created',
-                    'content': f'Created {len(created_ids)} tasks.',
-                    'data': {
-                        'task_ids': created_ids,
-                        'decision_id': decision.id if decision else None,
-                    },
-                }],
+                output_data={**base_out, 'created_task_ids': created_ids},
+                sse_events=gate.sse_events,
             )
         except Exception as e:
             logger.exception("CreateTasksExecutor failed")
@@ -302,6 +297,7 @@ class CreateMiroBoardExecutor(BaseStepExecutor):
     """Create a persisted Miro board from a validated snapshot."""
 
     def execute(self, input_data):
+        from .approval_gate import KIND_MIRO_BOARD, request_external_commit
         from .miro_board_service import create_board_from_snapshot
 
         snapshot = input_data.get('miro_snapshot') or self.workflow_run.miro_snapshot
@@ -309,29 +305,74 @@ class CreateMiroBoardExecutor(BaseStepExecutor):
             return StepResult(success=False, error='No miro_snapshot available for board creation')
 
         try:
-            board, persisted_snapshot = create_board_from_snapshot(
-                project=self.orchestrator.project,
-                session=self.orchestrator.session,
-                workflow_run=self.workflow_run,
-                snapshot=snapshot,
-            )
+            # For sessions that don't require approval, persist immediately.
+            # This also keeps unit tests (which use stub workflow runs) isolated from DB lookups.
+            if not bool(getattr(self.orchestrator.session, 'approval_required', False)):
+                board, persisted_snapshot = create_board_from_snapshot(
+                    project=self.orchestrator.project,
+                    session=self.orchestrator.session,
+                    workflow_run=self.workflow_run,
+                    snapshot=snapshot,
+                )
+                self.workflow_run.miro_board = board
+                self.workflow_run.miro_snapshot = persisted_snapshot
+                self.workflow_run.save(update_fields=['miro_board', 'miro_snapshot'])
+                return StepResult(
+                    success=True,
+                    output_data={
+                        **input_data,
+                        'miro_snapshot': persisted_snapshot,
+                        'miro_board_id': str(getattr(board, 'id', None)),
+                    },
+                    sse_events=[{
+                        'type': 'miro_board_created',
+                        'content': f'Miro board created: {getattr(board, "title", "")}'.strip(),
+                        'data': {'board_id': str(getattr(board, 'id', None))},
+                    }],
+                )
 
-            self.workflow_run.miro_board = board
-            self.workflow_run.miro_snapshot = persisted_snapshot
+            draft = {'snapshot': snapshot}
+            commit_context = {
+                'workflow_run_id': str(self.workflow_run.id),
+                'merge_output': {**input_data},
+            }
+            gate = request_external_commit(
+                orchestrator=self.orchestrator,
+                workflow_run=self.workflow_run,
+                step_execution=self.step_execution,
+                kind=KIND_MIRO_BOARD,
+                draft=draft,
+                commit_context=commit_context,
+            )
+            if gate.paused:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=gate.sse_events,
+                    pause_external_approval=True,
+                )
+
+            wf = gate.workflow_run_patch or {}
+            bid = wf.get('miro_board_id')
+            persisted_snapshot = wf.get('miro_snapshot')
+            if bid:
+                # Only hit DB if we actually need to attach the persisted Board object.
+                from miro.models import Board
+
+                self.workflow_run.miro_board = Board.objects.get(id=bid)
+            if persisted_snapshot is not None:
+                self.workflow_run.miro_snapshot = persisted_snapshot
             self.workflow_run.save(update_fields=['miro_board', 'miro_snapshot'])
 
             return StepResult(
                 success=True,
-                output_data={
+                output_data=gate.output_data
+                or {
                     **input_data,
                     'miro_snapshot': persisted_snapshot,
-                    'miro_board_id': str(board.id),
+                    'miro_board_id': bid,
                 },
-                sse_events=[{
-                    'type': 'miro_board_created',
-                    'content': f'Miro board created: {board.title}',
-                    'data': {'board_id': str(board.id)},
-                }],
+                sse_events=gate.sse_events,
             )
         except Exception as e:
             logger.exception("CreateMiroBoardExecutor failed")
@@ -360,6 +401,8 @@ class CustomAPIExecutor(BaseStepExecutor):
     def execute(self, input_data):
         import json
 
+        from .approval_gate import KIND_CUSTOM_API, request_external_commit
+
         method = self.config.get('method', 'POST').upper()
         url = self.config.get('url')
         headers = self.config.get('headers', {})
@@ -374,18 +417,34 @@ class CustomAPIExecutor(BaseStepExecutor):
             if body_template:
                 body = json.dumps(input_data) if body_template == '__input__' else body_template
 
-            resp = http_requests.request(
-                method, url, headers=headers, data=body, timeout=timeout,
+            draft = {'method': method, 'url': url, 'headers': dict(headers), 'body': body}
+            commit_context = {
+                'method': method,
+                'url': url,
+                'headers': dict(headers),
+                'timeout': timeout,
+                'merge_output': {**input_data},
+            }
+            gate = request_external_commit(
+                orchestrator=self.orchestrator,
+                workflow_run=self.workflow_run,
+                step_execution=self.step_execution,
+                kind=KIND_CUSTOM_API,
+                draft=draft,
+                commit_context=commit_context,
             )
-            resp.raise_for_status()
+            if gate.paused:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=gate.sse_events,
+                    pause_external_approval=True,
+                )
 
             return StepResult(
                 success=True,
-                output_data={**input_data, 'api_response': resp.json()},
-                sse_events=[{
-                    'type': 'text',
-                    'content': f'Custom API call completed ({resp.status_code}).',
-                }],
+                output_data=gate.output_data or {**input_data},
+                sse_events=gate.sse_events,
             )
         except Exception as e:
             logger.exception("CustomAPIExecutor failed")

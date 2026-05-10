@@ -21,6 +21,11 @@ from .agent_utils import json_input, serialize_agent_messages
 
 logger = logging.getLogger(__name__)
 
+# Legacy SSE + persisted assistant row — distinct from the board-ready message Celery sends later.
+MIRO_LEGACY_BG_QUEUED_MESSAGE = (
+    "Queued Miro board generation — we'll notify you here when the board is ready."
+)
+
 
 def _create_agent_status_message(session, content, *, event_type, message_type='text', **metadata):
     if not isinstance(session, AgentSession):
@@ -470,30 +475,54 @@ def _call_gemini_chat(
 
 
 def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
-    """Generate and persist a Miro board from an existing workflow run."""
-    from .miro_board_service import create_board_from_snapshot
+    """Generate Miro snapshot (Gemini), then persist (optionally via approval gate)."""
     from .miro_generation import (
         build_miro_generation_context_from_run,
         call_gemini_miro_generator,
     )
+    from .approval_gate import KIND_MIRO_BOARD, request_external_commit
+    from .miro_board_service import create_board_from_snapshot
 
     context = build_miro_generation_context_from_run(
         session=orchestrator.session,
         workflow_run=workflow_run,
     )
-    snapshot = call_gemini_miro_generator(context, user_id=orchestrator.user.id)
-    board, persisted_snapshot = create_board_from_snapshot(
-        project=orchestrator.project,
-        session=orchestrator.session,
-        workflow_run=workflow_run,
-        snapshot=snapshot,
+    snapshot = call_gemini_miro_generator(
+        context,
+        user_id=str(orchestrator.user.id),
     )
 
-    workflow_run.miro_snapshot = persisted_snapshot
-    workflow_run.miro_board = board
-    workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
+    # If approval isn't required for the session, persist immediately without gating.
+    if not bool(getattr(orchestrator.session, 'approval_required', False)):
+        board, persisted_snapshot = create_board_from_snapshot(
+            project=orchestrator.project,
+            session=orchestrator.session,
+            workflow_run=workflow_run,
+            snapshot=snapshot,
+        )
+        workflow_run.miro_snapshot = persisted_snapshot
+        workflow_run.miro_board = board
+        workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
+        return persisted_snapshot, board
 
-    return persisted_snapshot, board
+    gate = request_external_commit(
+        orchestrator=orchestrator,
+        workflow_run=workflow_run,
+        step_execution=None,
+        kind=KIND_MIRO_BOARD,
+        draft={'snapshot': snapshot},
+        commit_context={
+            'workflow_run_id': str(workflow_run.id),
+            'merge_output': {},
+        },
+    )
+    if gate.paused:
+        workflow_run.miro_snapshot = snapshot
+        workflow_run.save(update_fields=['miro_snapshot', 'updated_at'])
+        return snapshot, None
+
+    workflow_run.refresh_from_db()
+    return workflow_run.miro_snapshot, workflow_run.miro_board
 
 
 def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
@@ -506,6 +535,8 @@ def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
         orchestrator.session.id,
     )
     generate_miro_board_for_workflow_run_task.delay(str(workflow_run.id))
+
+
 def _get_or_create_bot_private_chat(bot, target_user, project):
     """Find or create a private chat with exactly 2 participants: bot and target.
 
@@ -626,13 +657,104 @@ class AgentOrchestrator:
         self.project = project
         self.session = session
 
+    def resolve_external_approval_stream(
+        self,
+        approval_id,
+        decision,
+        draft=None,
+        destination=None,
+    ):
+        """Complete or reject a pending external commit; resume workflow when applicable."""
+        from django.utils import timezone as tz
+
+        from .approval_gate import resolve_pending
+        from .models import AgentPendingExternalApproval
+        from miro.models import Board
+
+        try:
+            result = resolve_pending(
+                orchestrator=self,
+                pending_id=str(approval_id),
+                decision=decision,
+                draft=draft or {},
+                destination=destination,
+            )
+        except ValueError as e:
+            yield {'type': 'error', 'content': str(e)}
+            return
+
+        for ev in result.sse_events:
+            yield ev
+
+        try:
+            pending = AgentPendingExternalApproval.objects.get(
+                id=approval_id, session=self.session, is_deleted=False,
+            )
+        except AgentPendingExternalApproval.DoesNotExist:
+            return
+
+        wr = pending.workflow_run
+        ex = pending.step_execution
+
+        if decision == 'reject':
+            if wr:
+                wr.status = 'failed'
+                wr.error_message = 'External action rejected by user.'
+                wr.save(update_fields=['status', 'error_message', 'updated_at'])
+            if ex:
+                ex.status = 'failed'
+                ex.error_message = 'Rejected by user'
+                ex.completed_at = tz.now()
+                ex.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+            return
+
+        if ex and wr and wr.workflow_definition_id:
+            ex.status = 'completed'
+            ex.output_data = result.output_data
+            ex.completed_at = tz.now()
+            ex.save(update_fields=['status', 'output_data', 'completed_at', 'updated_at'])
+
+            wf_patch = result.workflow_run_patch or {}
+            uf = ['status', 'current_step_order', 'updated_at', 'error_message']
+            wr.error_message = None
+            if 'created_tasks' in wf_patch:
+                wr.created_tasks = wf_patch['created_tasks']
+                uf.append('created_tasks')
+            if wf_patch.get('miro_board_id'):
+                wr.miro_board = Board.objects.get(id=wf_patch['miro_board_id'])
+                uf.append('miro_board')
+            if wf_patch.get('miro_snapshot') is not None:
+                wr.miro_snapshot = wf_patch['miro_snapshot']
+                uf.append('miro_snapshot')
+
+            wr.status = 'analyzing'
+            wr.current_step_order = ex.step_order + 1
+            wr.save(update_fields=uf)
+
+            yield from self._execute_steps(wr, result.output_data or {})
+
     def handle_message(self, message, spreadsheet_id=None, csv_filename=None,
                        action=None, file_id=None, calendar_context=None,
-                       workflow_id=None, column_mapping=None):
+                       workflow_id=None, column_mapping=None,
+                       approval_id=None, approval_decision=None,
+                       approval_draft=None):
         """Main entry point. Routes calendar context first, then workflow engine or legacy logic.
 
         Yields SSE chunks as dicts.
         """
+        if action == 'resolve_external_approval':
+            if not approval_id or not approval_decision:
+                yield {'type': 'error', 'content': 'approval_id and approval_decision are required.'}
+                return
+            yield from self.resolve_external_approval_stream(
+                approval_id,
+                approval_decision,
+                draft=approval_draft,
+                destination=None,
+            )
+            yield {'type': 'done'}
+            return
+
         # --- Calendar context takes priority over all other routing ---
         if calendar_context:
             yield from self.answer_calendar_question(message, calendar_context)
@@ -976,31 +1098,55 @@ class AgentOrchestrator:
             events_to_create = []
             had_creation_intent = False
 
-        # Create all suggested events
         org_id = getattr(self.user, 'organization_id', None)
         created_count = 0
         failed_count = 0
+        calendar_refresh_emitted = False
         if events_to_create and org_id:
-            for event_spec in events_to_create:
-                if not isinstance(event_spec, dict):
-                    continue
-                event_id_created = self._create_calendar_event(org_id, event_spec, user_tz=user_tz)
-                if event_id_created:
-                    created_count += 1
-                else:
-                    failed_count += 1
+            from .approval_gate import KIND_CALENDAR_EVENT, request_external_commit
 
-            if created_count:
-                answer_text += f"\n\n✅ {created_count} calendar event{'s' if created_count != 1 else ''} created successfully."
-            if failed_count:
-                answer_text += f"\n⚠️ {failed_count} event{'s' if failed_count != 1 else ''} could not be created automatically."
+            draft_events = [e for e in events_to_create if isinstance(e, dict)]
+            gate = request_external_commit(
+                orchestrator=self,
+                workflow_run=None,
+                step_execution=None,
+                kind=KIND_CALENDAR_EVENT,
+                draft={'events': draft_events},
+                commit_context={
+                    'organization_id': str(org_id),
+                    'user_timezone': user_tz_name,
+                },
+            )
+            for ev in gate.sse_events:
+                yield ev
+                if ev.get('type') == 'calendar_updated':
+                    calendar_refresh_emitted = True
+            if gate.paused:
+                answer_text += (
+                    '\n\n⏸ Event creation is waiting for your approval '
+                    'in the approval panel.'
+                )
+            else:
+                wf = gate.workflow_run_patch or {}
+                created_ids = wf.get('created_event_ids') or []
+                created_count = len(created_ids)
+                failed_count = max(0, len(draft_events) - created_count)
+                if created_count:
+                    answer_text += (
+                        f"\n\n✅ {created_count} calendar event"
+                        f"{'s' if created_count != 1 else ''} created successfully."
+                    )
+                if failed_count:
+                    answer_text += (
+                        f"\n\n⚠️ {failed_count} event"
+                        f"{'s' if failed_count != 1 else ''} could not be created automatically."
+                    )
 
         yield {
             "type": "text",
             "content": answer_text,
         }
-        if created_count:
-            # Notify the calendar page to refresh
+        if created_count and not calendar_refresh_emitted:
             yield {"type": "calendar_updated"}
         elif not had_creation_intent:
             # Only invite when the user asked a general calendar question,
@@ -1259,23 +1405,20 @@ class AgentOrchestrator:
             return
 
         forwards = [{"username": m["username"], "content": content} for m in members]
-        results = _forward_to_users(forwards, sender, project)
+        from .approval_gate import KIND_DISTRIBUTE_BULK, request_external_commit
 
-        sent = [r for r in results if r.get("status") == "sent"]
-        failed = [r for r in results if r.get("status") != "sent"]
-
-        summary_parts = []
-        if sent:
-            names = ", ".join(r["username"] for r in sent)
-            summary_parts.append(f"Message sent to {len(sent)} member(s): {names}.")
-        if failed:
-            names = ", ".join(r["username"] for r in failed)
-            summary_parts.append(f"Failed to send to: {names}.")
-
-        yield {
-            "type": "text",
-            "content": " ".join(summary_parts) if summary_parts else "Distribution complete.",
-        }
+        gate = request_external_commit(
+            orchestrator=self,
+            workflow_run=workflow_run,
+            step_execution=None,
+            kind=KIND_DISTRIBUTE_BULK,
+            draft={'forwards': forwards, 'body': content},
+            commit_context={},
+        )
+        for ev in gate.sse_events:
+            yield ev
+        if gate.paused:
+            return
 
     def create_decision_draft(self, analysis_result, workflow_run=None):
         """Create a Decision draft with Signals and Options from analysis."""
@@ -1373,41 +1516,31 @@ class AgentOrchestrator:
             yield {"type": "error", "content": "No recommended tasks found in analysis."}
             return
 
-        # If a decision exists, link tasks to it; otherwise leave unlinked
         decision = workflow_run.decision
-        if decision:
-            decision_ct = ContentType.objects.get_for_model(Decision)
-            link_kwargs = {
-                "content_type": decision_ct,
-                "object_id": str(decision.id),
-            }
-            desc_suffix = f" (Decision: {decision.title})"
-        else:
-            link_kwargs = {}
-            desc_suffix = ""
+        from .approval_gate import KIND_TASK, request_external_commit
 
-        task_ids = []
-        for task_data in recommended_tasks:
-            summary = task_data.get("summary", "AI Agent Generated Task")[:255]
-            task = Task.objects.create(
-                summary=summary,
-                description=f"Auto-generated from AI analysis{desc_suffix}",
-                type=task_data.get("type", "optimization"),
-                priority=task_data.get("priority", "MEDIUM"),
-                project=self.project,
-                owner=self.user,
-                **link_kwargs,
-            )
-            task_ids.append(task.id)
+        draft = {'recommended_tasks': recommended_tasks}
+        commit_context = {
+            'input_data': {'analysis_result': analysis},
+            'analysis_result': analysis,
+            'decision_id': decision.id if decision else None,
+        }
+        gate = request_external_commit(
+            orchestrator=self,
+            workflow_run=workflow_run,
+            step_execution=None,
+            kind=KIND_TASK,
+            draft=draft,
+            commit_context=commit_context,
+        )
+        for ev in gate.sse_events:
+            yield ev
+        if gate.paused:
+            return
 
+        task_ids = (gate.workflow_run_patch or {}).get('created_tasks') or []
         workflow_run.created_tasks = task_ids
         workflow_run.save(update_fields=['created_tasks'])
-
-        yield {
-            "type": "task_created",
-            "content": f"Created {len(task_ids)} tasks.",
-            "data": {"task_ids": task_ids, "decision_id": decision.id if decision else None},
-        }
 
         workflow_run.status = 'completed'
         workflow_run.save(update_fields=['status'])
@@ -1542,9 +1675,19 @@ class AgentOrchestrator:
             }
 
             executor = get_executor(step, workflow_run, self)
+            executor.step_execution = execution
             result = executor.execute(current_data)
 
             if result.success:
+                if getattr(result, 'pause_external_approval', False):
+                    execution.status = 'awaiting'
+                    execution.save(update_fields=['status', 'updated_at'])
+                    workflow_run.status = 'awaiting_external_approval'
+                    workflow_run.save(update_fields=['status', 'updated_at'])
+                    for event in result.sse_events:
+                        yield event
+                    return
+
                 execution.status = 'completed'
                 execution.output_data = result.output_data
                 execution.completed_at = tz.now()
@@ -1576,6 +1719,50 @@ class AgentOrchestrator:
 
         workflow_run.status = 'completed'
         workflow_run.save()
+
+    def _legacy_start_miro_background_if_needed(self, workflow_run):
+        """Enqueue Celery job and persist started row at most once per workflow run."""
+        from django.db import transaction
+
+        from .models import AgentMessage, AgentWorkflowRun
+
+        wr_pk = workflow_run.pk
+        with transaction.atomic():
+            # IMPORTANT: do not join the nullable `miro_board` FK while taking a row lock.
+            # Postgres rejects `FOR UPDATE` on the nullable side of an outer join.
+            locked = AgentWorkflowRun.objects.select_for_update().get(pk=wr_pk)
+
+            if getattr(locked, 'miro_board_id', None):
+                # Fetch title without a locking join.
+                title = ''
+                try:
+                    from miro.models import Board
+                    board = Board.objects.filter(id=locked.miro_board_id).only('title').first()
+                    title = (getattr(board, 'title', None) or '') if board else ''
+                except Exception:
+                    title = ''
+                return 'already_exists', locked, title
+
+            dup = AgentMessage.objects.filter(
+                session=self.session,
+                role='assistant',
+                metadata__contains={
+                    'event_type': 'miro_generation_started',
+                    'workflow_run_id': str(locked.id),
+                },
+            ).exists()
+
+            if dup:
+                return 'already_started', locked, None
+
+            _enqueue_miro_generation_for_workflow_run(self, locked)
+            _create_agent_status_message(
+                self.session,
+                MIRO_LEGACY_BG_QUEUED_MESSAGE,
+                event_type='miro_generation_started',
+                workflow_run_id=str(locked.id),
+            )
+            return 'started', locked, None
 
     def _resume_workflow(self, workflow_run, extra_input=None):
         """Resume a paused workflow from the last completed step's output.
@@ -1610,33 +1797,35 @@ class AgentOrchestrator:
             if not workflow_run or not workflow_run.analysis_result:
                 yield {"type": "error", "content": "No analysis found to generate a Miro board from."}
                 return
-            if getattr(workflow_run, "miro_board_id", None):
+            try:
+                outcome, locked_run, board_title = self._legacy_start_miro_background_if_needed(
+                    workflow_run
+                )
+            except Exception as e:
+                logger.exception(
+                    "Failed to enqueue legacy Miro generation for workflow_run=%s",
+                    getattr(workflow_run, 'id', workflow_run),
+                )
+                yield {"type": "error", "content": f"Failed to start Miro generation: {e}"}
+                return
+
+            if outcome == 'already_exists':
                 logger.info(
                     "Generate Miro requested but board already exists for workflow_run=%s board=%s",
-                    workflow_run.id,
-                    workflow_run.miro_board_id,
+                    locked_run.id,
+                    locked_run.miro_board_id,
                 )
                 yield {
                     "type": "text",
-                    "content": f"Miro board already exists: {workflow_run.miro_board.title}",
+                    "content": f"Miro board already exists: {board_title}",
                 }
                 return
-            try:
-                _enqueue_miro_generation_for_workflow_run(self, workflow_run)
-                _create_agent_status_message(
-                    self.session,
-                    "Miro board generation started in background.",
-                    event_type="miro_generation_started",
-                    workflow_run_id=str(workflow_run.id),
-                )
-                yield {
-                    "type": "miro_status",
-                    "content": "Miro board generation started in background.",
-                    "data": {"workflow_run_id": str(workflow_run.id), "status": "running"},
-                }
-            except Exception as e:
-                logger.exception("Failed to enqueue legacy Miro generation for workflow_run=%s", workflow_run.id)
-                yield {"type": "error", "content": f"Failed to start Miro generation: {e}"}
+
+            yield {
+                "type": "miro_status",
+                "content": MIRO_LEGACY_BG_QUEUED_MESSAGE,
+                "data": {"workflow_run_id": str(locked_run.id), "status": "running"},
+            }
 
     def _legacy_handle(self, message, spreadsheet_id=None, csv_filename=None,
                        action=None, file_id=None):
@@ -1724,13 +1913,18 @@ class AgentOrchestrator:
                     yield {"type": "text", "content": reply}
 
                     if forwards:
-                        fwd_results = _forward_to_users(forwards, self.user, self.project)
-                        sent = [r["username"] for r in fwd_results if r["status"] == "sent"]
-                        failed = [r["username"] for r in fwd_results if r["status"] != "sent"]
-                        if sent:
-                            yield {"type": "text", "content": f"Message forwarded to: {', '.join(sent)}"}
-                        if failed:
-                            yield {"type": "text", "content": f"Could not forward to: {', '.join(failed)}"}
+                        from .approval_gate import KIND_FORWARD_MESSAGE, request_external_commit
+
+                        gate = request_external_commit(
+                            orchestrator=self,
+                            workflow_run=latest_run,
+                            step_execution=None,
+                            kind=KIND_FORWARD_MESSAGE,
+                            draft={'forwards': forwards},
+                            commit_context={},
+                        )
+                        for ev in gate.sse_events:
+                            yield ev
                 except Exception as e:
                     logger.error(f"Dify chat call failed: {e}")
                     yield {"type": "error", "content": str(e)}
