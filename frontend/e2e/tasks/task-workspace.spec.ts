@@ -71,7 +71,7 @@ test.describe('Tasks workspace flows', () => {
 
   // ── Flow 3: Open task ───────────────────────────────────────────────
 
-  test('clicking a task navigates to the task detail page', async ({ page }) => {
+  test('opening a task via drawer navigates to the task detail page', async ({ page }) => {
     await page.getByTestId('tab-tasks').click();
     const taskList = page.getByTestId('task-list');
     const isTasksView = await taskList.isVisible().catch(() => false);

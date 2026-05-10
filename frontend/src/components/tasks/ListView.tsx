@@ -23,6 +23,7 @@ import TaskListRowContextMenu, {
 } from '@/components/tasks/TaskListRowContextMenu';
 import LinearBulkOutputModal from '@/components/linear/LinearBulkOutputModal';
 import { TaskFilterPanel } from './TaskFilterPanel';
+import TaskDrawer from './TaskDrawer';
 
 interface ListViewProps {
   tasks: TaskData[];
@@ -395,6 +396,7 @@ export default function ListView({
       mounted = false;
     };
   }, [projectId]);
+  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
   const [rowMenu, setRowMenu] = useState<TaskListRowContextMenuState>(null);
   const [menuMembers, setMenuMembers] = useState<ProjectMemberData[]>([]);
   const [menuMembersLoading, setMenuMembersLoading] = useState(false);
@@ -1316,7 +1318,7 @@ export default function ListView({
                         toggleSelection(task.id, !isSelected);
                         return;
                       }
-                      router.push(`/tasks/${task.id}`);
+                      setDrawerTaskId(task.id);
                     }}
                     onContextMenu={(e) => openRowMenu(e, task)}
                   >
@@ -1391,7 +1393,7 @@ export default function ListView({
                             className="w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-medium text-gray-900 outline-none focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
                           />
                         ) : (
-                          <div className="group relative flex w-full items-center gap-2 text-left">
+                          <div data-testid="task-row-open" className="group relative flex w-full items-center gap-2 text-left">
                             <span
                               data-summary-id={task.id}
                               className="block w-full truncate text-sm font-medium leading-5 text-gray-900"
@@ -1475,7 +1477,6 @@ export default function ListView({
                     </td>
                     <td
                       className={`${TABLE_COLUMN_WIDTHS.owner} align-middle px-4 py-1.5 text-xs text-gray-600`}
-                      onClick={(e) => e.stopPropagation()}
                     >
                       <div className="relative">
                         <button
@@ -1530,7 +1531,6 @@ export default function ListView({
                     </td>
                     <td
                       className={`${TABLE_COLUMN_WIDTHS.approver} align-middle px-4 py-1.5 text-xs text-gray-600`}
-                      onClick={(e) => e.stopPropagation()}
                     >
                       {(() => {
                         const disabledReason = getApproverDisabledReason(task.status);
@@ -1619,7 +1619,6 @@ export default function ListView({
                     </td>
                     <td
                       className={`${TABLE_COLUMN_WIDTHS.due} relative align-middle px-3 py-1.5 text-left text-xs tabular-nums text-gray-500`}
-                      onClick={(e) => e.stopPropagation()}
                     >
                       <button
                         type="button"
@@ -1725,6 +1724,13 @@ export default function ListView({
         tasks={tasks}
         onComplete={() => {
           void onLinearBulkSynced?.();
+        }}
+      />
+      <TaskDrawer
+        taskId={drawerTaskId}
+        onClose={() => setDrawerTaskId(null)}
+        onTaskUpdate={() => {
+          // Optionally refresh the list when a task is updated in the drawer
         }}
       />
     </div>

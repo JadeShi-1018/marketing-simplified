@@ -28,31 +28,30 @@ export async function switchView(page: Page, mode: TasksViewMode): Promise<void>
 }
 
 /**
- * Click the first task row in the task list table and return the visible
- * summary text so the caller can assert on the detail page.
+ * Click the first task row's summary area to open the quick drawer, then
+ * return the summary text for callers that need it.
  */
 export async function openFirstTask(page: Page): Promise<string> {
   const taskList = page.getByTestId('task-list');
   await expect(taskList).toBeVisible({ timeout: 10_000 });
 
-  const firstRow = page.getByTestId('task-row').first();
-  await expect(firstRow).toBeVisible({ timeout: 5_000 });
+  const firstOpen = page.getByTestId('task-row-open').first();
+  await expect(firstOpen).toBeVisible({ timeout: 5_000 });
 
-  // Summary is in the second data column (after priority-dot icon column).
-  // Click the summary cell specifically — other cells stop propagation.
-  const summaryCell = firstRow.locator('td').nth(1);
-  const summary = ((await summaryCell.innerText()) || '').split('\n')[0].trim();
-
-  await summaryCell.click();
+  const summary = ((await firstOpen.innerText()) || '').split('\n')[0].trim();
+  await firstOpen.click();
   return summary;
 }
 
 /**
- * In Tasks (list) view: click the first task row — this navigates directly
- * to the task detail page (no separate "Open" button required).
+ * In Tasks (list) view: click the first task row to open the quick drawer,
+ * then click "Open full page" to navigate to the task detail page.
  */
 export async function openFirstTaskFromListAndNavigate(page: Page): Promise<void> {
   await openFirstTask(page);
+  // Row click now opens the quick drawer — navigate via the "Open full page" button.
+  await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId('task-drawer-open-full').click();
 }
 
 /**
