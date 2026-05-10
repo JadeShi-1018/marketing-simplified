@@ -197,7 +197,7 @@ export default function DashboardLayout({
       <div className="min-h-0 flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <header className="flex items-center justify-between px-5 h-12 border-b border-gray-200 bg-white shrink-0">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
             {showBack && (
               <button
                 type="button"
@@ -209,9 +209,9 @@ export default function DashboardLayout({
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               </button>
             )}
-            <span className="text-gray-400">{breadcrumb.root}</span>
+            <span className="truncate text-gray-400">{breadcrumb.root}</span>
             <span className="text-gray-300">/</span>
-            <span className="font-medium text-gray-900">{breadcrumb.leaf}</span>
+            <span className="truncate font-medium text-gray-900">{breadcrumb.leaf}</span>
           </div>
           <div className="flex items-center gap-2">
             <NotificationBell alerts={alerts} />
@@ -220,12 +220,12 @@ export default function DashboardLayout({
                 variant="ghost"
                 size="sm"
                 onClick={toggleMeetingsPanel}
-                className="h-7 px-2 text-xs text-gray-500 hover:text-gray-700"
+                className="h-7 px-2 text-xs text-gray-500 hover:text-gray-700 [&_svg]:mr-0 sm:[&_svg]:mr-1"
               >
                 {isPanelOpen ? (
-                  <><PanelRightClose className="w-4 h-4 mr-1" /> Hide Panel</>
+                  <><PanelRightClose className="w-4 h-4" /> <span className="hidden sm:inline">Hide Panel</span></>
                 ) : (
-                  <><PanelRightOpen className="w-4 h-4 mr-1" /> Show Panel</>
+                  <><PanelRightOpen className="w-4 h-4" /> <span className="hidden sm:inline">Show Panel</span></>
                 )}
               </Button>
             )}
@@ -239,11 +239,22 @@ export default function DashboardLayout({
       </div>
 
       {!hideRightPanel && (
-        <UpcomingMeetingsPanel
-          meetings={meetingsForPanel}
-          isOpen={isPanelOpen}
-          loading={meetingsLoading}
-        />
+        <>
+          {isPanelOpen && (
+            <button
+              type="button"
+              aria-label="Close upcoming meetings overlay"
+              className="fixed bottom-0 left-14 right-0 top-12 z-30 bg-gray-900/20 sm:hidden"
+              onClick={() => setIsPanelOpen(false)}
+            />
+          )}
+          <UpcomingMeetingsPanel
+            meetings={meetingsForPanel}
+            isOpen={isPanelOpen}
+            loading={meetingsLoading}
+            onClose={() => setIsPanelOpen(false)}
+          />
+        </>
       )}
       <AgentSidePanel />
     </div>

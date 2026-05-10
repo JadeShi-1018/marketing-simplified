@@ -71,8 +71,8 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
   }
 
   return (
-    <div className="overflow-x-auto pb-3">
-      <div className="flex min-w-full gap-4">
+    <div className="max-w-full overflow-x-auto pb-3">
+      <div className="flex min-w-full gap-3 sm:gap-4">
         {sortedTypes.map((meta) => {
           const tasksInColumn = grouped[meta.value] ?? [];
           const currentPage = pageByType[meta.value] ?? 1;
@@ -82,7 +82,7 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
           return (
             <div
               key={meta.value}
-              className="flex w-[280px] flex-shrink-0 flex-col gap-2 rounded-xl bg-gray-50 p-3"
+              className="flex w-[260px] flex-shrink-0 flex-col gap-2 rounded-xl bg-gray-50 p-3 sm:w-[280px]"
             >
               <header className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

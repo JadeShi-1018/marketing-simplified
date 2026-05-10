@@ -618,12 +618,12 @@ export default function HomeSidebar({
 
   return (
     <div
-      className="h-full w-full flex flex-col bg-white"
+      className="h-full min-w-0 w-full flex flex-col bg-white"
       data-testid="messages-home-sidebar"
       aria-label="Chats"
     >
       <div
-        className="flex items-stretch border-b border-gray-200 px-1"
+        className="flex min-w-0 items-stretch overflow-x-auto border-b border-gray-200 px-1"
         data-testid="messages-nav-rail"
       >
         {tabItems.map((tab) => {
@@ -634,7 +634,7 @@ export default function HomeSidebar({
               type="button"
               onClick={() => onChangeView(tab.id)}
               className={[
-                'flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors border-b-2',
+                'min-w-[4.5rem] flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium transition-colors border-b-2',
                 isActive
                   ? 'text-[#3CCED7] border-[#3CCED7]'
                   : 'text-gray-500 border-transparent hover:text-gray-900',

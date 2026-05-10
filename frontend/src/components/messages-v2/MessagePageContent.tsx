@@ -238,17 +238,17 @@ export default function MessagePageContent() {
     <div className="flex-1 flex flex-col bg-white min-h-0">
       {/* Header */}
       <div
-        className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4"
+        className="flex flex-col gap-3 border-b border-gray-200 bg-white px-3 py-3 sm:flex-row sm:items-center sm:gap-4 sm:px-6"
         data-testid="messages-header"
       >
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex min-w-0 items-center gap-2 sm:shrink-0">
           <MessageSquare className="w-5 h-5 text-[#3CCED7]" />
           <h1 className="text-lg font-semibold text-gray-900">Messages</h1>
           {activeProject?.name && (
-            <span className="text-sm text-gray-400 ml-2">· {activeProject.name}</span>
+            <span className="ml-2 truncate text-sm text-gray-400">· {activeProject.name}</span>
           )}
         </div>
-        <div className="relative flex-1 max-w-md ml-auto">
+        <div className="relative w-full sm:ml-auto sm:max-w-md sm:flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
             type="text"

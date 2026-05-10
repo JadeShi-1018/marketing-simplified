@@ -633,7 +633,8 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
             </p>
           </div>
         ) : (
-          <table className="w-full table-fixed text-xs">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] table-fixed text-xs">
             <colgroup>
               <col className={TABLE_COLUMN_WIDTHS.icon} />
               {bulkMode ? <col className={TABLE_COLUMN_WIDTHS.select} /> : null}
@@ -1101,6 +1102,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
               })}
             </tbody>
           </table>
+          </div>
         )}
         {!loading && !error && visible.length > LIST_PAGE_SIZE ? (
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-2.5 text-xs text-gray-600">

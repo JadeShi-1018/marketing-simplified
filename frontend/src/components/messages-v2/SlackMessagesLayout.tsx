@@ -52,7 +52,7 @@ export default function SlackMessagesLayout({
       {/* Single inline sidebar (288px) — drop ProjectRail + vertical NavRail */}
       <div
         className={[
-          'h-full w-72 shrink-0 border-r border-gray-200 flex flex-col',
+          'h-full w-full shrink-0 border-r border-gray-200 flex flex-col md:w-72',
           isMobileChatOpen ? 'hidden md:flex' : 'flex',
         ].join(' ')}
         data-testid="messages-left"

@@ -287,7 +287,7 @@ export default function SummaryView({
                       className="inline-block h-2 w-2 flex-shrink-0 rounded-sm"
                       style={{ backgroundColor: t.hex }}
                     />
-                    <span className="w-32 truncate text-gray-700">{t.label}</span>
+                <span className="min-w-0 w-24 truncate text-gray-700 sm:w-32">{t.label}</span>
                     <div className="flex-1 overflow-hidden rounded-full bg-gray-100">
                       <div
                         className="h-1.5 rounded-full"

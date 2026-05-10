@@ -327,9 +327,9 @@ function ChartPanel({ section, title, children, right, full = false }: {
 }) {
   return (
     <div style={{ background: '#fff', borderRadius: SURFACE_RADIUS, border: `1px solid ${SURFACE_BORDER}`, padding: PANEL_PAD, gridColumn: full ? '1 / -1' : undefined, boxShadow: 'none' }}>
-      <div style={{ fontSize: 10, color: TEXT_MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{section}</div>
+      <div style={{ fontSize: 9, color: TEXT_MUTED, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>{section}</div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: TEXT_PRIMARY }}>{title}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: TEXT_PRIMARY }}>{title}</span>
         {right}
       </div>
       {children}
@@ -618,7 +618,7 @@ function LineChart({ labels, series }: {
           <g key={gv}>
             <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
               stroke="rgba(0,0,0,0.05)" strokeWidth={1} />
-            <text x={PAD.left - 4} y={y + 4} textAnchor="end" fontSize={9} fill="#aaa">{gv}</text>
+            <text x={PAD.left - 4} y={y + 4} textAnchor="end" fontSize={8} fill="#aaa">{gv}</text>
           </g>
         );
       })}
@@ -628,7 +628,7 @@ function LineChart({ labels, series }: {
         if (!lbl) return null;
         const { x } = toXY(i, 0);
         return (
-          <text key={i} x={x} y={H - 4} textAnchor="middle" fontSize={9}
+          <text key={i} x={x} y={H - 4} textAnchor="middle" fontSize={8}
             fill={activeIdx === i ? '#555' : '#aaa'}
             fontWeight={activeIdx === i ? 600 : 400}
             style={{ transition: 'fill 0.1s' }}
@@ -679,14 +679,14 @@ function LineChart({ labels, series }: {
             {/* Tooltip box */}
             <rect x={tipX} y={tipY} width={TIP_W} height={TIP_H} rx={5} fill="#475569" />
             {/* Date label */}
-            <text x={tipX + 8} y={tipY + 13} fontSize={9} fill="#aaa" fontWeight={600}>
+            <text x={tipX + 8} y={tipY + 13} fontSize={8} fill="#aaa" fontWeight={600}>
               {labels[activeIdx] || `Day ${activeIdx + 1}`}
             </text>
             {/* Series values */}
             {series.map((s, si) => (
               <g key={s.label}>
                 <circle cx={tipX + 10} cy={tipY + 22 + si * 16} r={3} fill={s.color} />
-                <text x={tipX + 17} y={tipY + 26 + si * 16} fontSize={10} fill="#fff">
+                <text x={tipX + 17} y={tipY + 26 + si * 16} fontSize={9} fill="#fff">
                   {s.label}: {s.values[activeIdx] ?? 0}
                 </text>
               </g>
@@ -1141,7 +1141,7 @@ export default function WorkspaceDashboard({ projectId }: Props) {
                 type="button"
                 onClick={() => setTrendDays(d)}
                 style={{
-                  fontSize: 11, padding: '3px 10px',
+                  fontSize: 10, padding: '2px 8px',
                   border: '1px solid #e8eaed', borderRadius: 5,
                   background: trendDays === d ? '#0f766e' : 'transparent',
                   color: trendDays === d ? '#fff' : '#aaa',
@@ -1162,7 +1162,7 @@ export default function WorkspaceDashboard({ projectId }: Props) {
             { label: 'Completed', values: trendCompleted, color: COLOR.green },
           ]}
         />
-        <div style={{ display: 'flex', gap: 14, marginTop: 8 }}>
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
           <LegendItem color={COLOR.blue} label="Created" />
           <LegendItem color={COLOR.green} label="Completed" />
         </div>
