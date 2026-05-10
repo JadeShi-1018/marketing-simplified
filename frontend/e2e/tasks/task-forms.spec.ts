@@ -4,6 +4,7 @@ import {
   navigateToNewTaskPage,
   submitNewTaskAndGetId,
   deleteTaskById,
+  deleteAllE2ETasks,
 } from './tasks-helpers';
 
 const tomorrow = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -19,6 +20,8 @@ test.describe('Task-type specific forms', () => {
     const context = await browser.newContext({ storageState: 'e2e/.auth/user.json' });
     const page = await context.newPage();
     projectId = await navigateToTasksAndSelectProject(page);
+    // Clean up any E2E tasks left over from interrupted prior runs.
+    await deleteAllE2ETasks(page);
     await context.close();
   });
 

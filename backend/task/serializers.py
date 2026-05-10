@@ -116,19 +116,51 @@ class TaskSerializer(serializers.ModelSerializer):
         'platformpolicyupdate':('policy.serializers',          'PlatformPolicyUpdateSerializer'),
     }
 
+    # Maps task.type → (reverse_accessor_or_None, is_manager, ct_model_name)
+    # reverse_accessor=None means no direct reverse FK exists on Task
+    _REVERSE_ACCESSORS = {
+        'experiment':             ('experiment',              False, 'experiment'),
+        'platform_policy_update': ('platform_policy_update', False, 'platformpolicyupdate'),
+        'alert':                  ('alert_task',             False, 'alerttask'),
+        'communication':          ('client_communications',  True,  'clientcommunication'),
+        'scaling':                ('scaling_plan',           False, 'scalingplan'),
+        'optimization':           ('optimization',           False, 'optimization'),
+    }
+
     def get_linked_object(self, obj):
-        linked = obj.linked_object
-        if linked is None:
-            return None
-        ct = obj.content_type.model if obj.content_type else None
-        entry = self._LINKED_SERIALIZERS.get(ct)
-        if not entry:
-            return None
         import importlib
+
+        def _serialize(instance, ct_model):
+            entry = self._LINKED_SERIALIZERS.get(ct_model)
+            if not entry:
+                return None
+            try:
+                module = importlib.import_module(entry[0])
+                serializer_cls = getattr(module, entry[1])
+                return serializer_cls(instance).data
+            except Exception:
+                return None
+
+        # Primary path: GenericFK already set
+        linked = obj.linked_object
+        if linked is not None:
+            ct = obj.content_type.model if obj.content_type else None
+            return _serialize(linked, ct)
+
+        # Fallback: GenericFK not set — resolve via reverse accessor by task.type
+        # (self-heals tasks created before link_to_object was wired in perform_create)
+        accessor_info = self._REVERSE_ACCESSORS.get(obj.type)
+        if not accessor_info:
+            return None
+        accessor, is_manager, ct_model = accessor_info
         try:
-            module = importlib.import_module(entry[0])
-            serializer_cls = getattr(module, entry[1])
-            return serializer_cls(linked).data
+            rel = getattr(obj, accessor, None)
+            if rel is None:
+                return None
+            linked = rel.first() if is_manager else rel
+            if linked is None:
+                return None
+            return _serialize(linked, ct_model)
         except Exception:
             return None
 

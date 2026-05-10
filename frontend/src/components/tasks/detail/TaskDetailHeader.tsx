@@ -30,6 +30,7 @@ interface Props {
   onMutated: () => void | Promise<void>;
   onDelete: () => void;
   loading?: boolean;
+  isDrawer?: boolean;
 }
 
 export default function TaskDetailHeader({
@@ -40,6 +41,7 @@ export default function TaskDetailHeader({
   onMutated,
   onDelete,
   loading = false,
+  isDrawer = false,
 }: Props) {
   const [value, setValue] = useState(task.summary || '');
   const [saving, setSaving] = useState(false);
@@ -99,32 +101,34 @@ export default function TaskDetailHeader({
 
   return (
     <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
-      <div className="flex items-center justify-between border-b border-gray-100 px-6 py-2">
-        <nav className="flex items-center gap-2 text-xs text-gray-500">
-          <Link
-            href="/tasks"
-            data-testid="back-to-tasks"
-            title="Back to Tasks"
-            aria-label="Back to Tasks"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-50 hover:text-gray-900"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-          </Link>
-          <div className="flex items-center gap-1.5">
-          <Link href="/tasks" className="hover:text-gray-900">
-            Tasks
-          </Link>
-          <ChevronRight className="h-3 w-3 text-gray-300" />
-          <Link
-            href={projectId ? `/tasks?project_id=${projectId}` : '/tasks'}
-            className="hover:text-gray-900"
-          >
-            {projectName}
-          </Link>
-          <ChevronRight className="h-3 w-3 text-gray-300" />
-          <span data-testid="task-id-label" className="font-semibold text-gray-900">{issueKey}</span>
-          </div>
-        </nav>
+      <div className={`flex items-center border-b border-gray-100 px-6 py-2 ${isDrawer ? 'justify-end' : 'justify-between'}`}>
+        {!isDrawer && (
+          <nav className="flex items-center gap-2 text-xs text-gray-500">
+            <Link
+              href="/tasks"
+              data-testid="back-to-tasks"
+              title="Back to Tasks"
+              aria-label="Back to Tasks"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-50 hover:text-gray-900"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </Link>
+            <div className="flex items-center gap-1.5">
+            <Link href="/tasks" className="hover:text-gray-900">
+              Tasks
+            </Link>
+            <ChevronRight className="h-3 w-3 text-gray-300" />
+            <Link
+              href={projectId ? `/tasks?project_id=${projectId}` : '/tasks'}
+              className="hover:text-gray-900"
+            >
+              {projectName}
+            </Link>
+            <ChevronRight className="h-3 w-3 text-gray-300" />
+            <span data-testid="task-id-label" className="font-semibold text-gray-900">{issueKey}</span>
+            </div>
+          </nav>
+        )}
         <div className="flex items-center gap-1">
           {task.id ? (
             <button

@@ -103,7 +103,12 @@ export async function navigateToNewTaskPage(page: Page, projectId: number): Prom
 }
 
 /**
- * On the /tasks/new page: intercept the POST, click "Create task", return the new task ID.
+ * On the /tasks/new page: intercept the task POST, click "Create task", wait for the page to
+ * navigate away (which means the linked-object creation + /link/ call have both finished),
+ * then return the new task ID.
+ *
+ * Waiting for navigation is critical: without it, afterEach can delete the Task while the
+ * browser is still POSTing the linked object, leaving the object orphaned or the link unset.
  */
 export async function submitNewTaskAndGetId(page: Page): Promise<number | null> {
   const responsePromise = page.waitForResponse((resp) => {
@@ -111,12 +116,59 @@ export async function submitNewTaskAndGetId(page: Page): Promise<number | null> 
     return (path === '/api/tasks/' || path === '/api/tasks') && resp.request().method() === 'POST';
   });
 
+  // Set up navigation wait BEFORE clicking so we don't miss a fast redirect.
+  const navigationPromise = page.waitForURL((url) => !url.pathname.startsWith('/tasks/new'), {
+    timeout: 30_000,
+  }).catch(() => {});
+
   await page.getByRole('button', { name: 'Create task', exact: true }).click();
 
   const response = await responsePromise;
   if (!response.ok()) return null;
   const body = await response.json();
-  return body.id ?? null;
+  const taskId = body.id ?? null;
+
+  // Wait for navigation to complete — this means the full create flow (linked object + link)
+  // has finished in the browser before afterEach can clean up.
+  await navigationPromise;
+
+  return taskId;
+}
+
+/**
+ * Delete all tasks whose summary starts with "E2E " (left over from interrupted test runs).
+ * Fetches up to 100 tasks per page and deletes any E2E ones.
+ */
+export async function deleteAllE2ETasks(page: Page): Promise<void> {
+  const token: string | null = await page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('auth-storage');
+      if (!raw) return null;
+      return (JSON.parse(raw) as any)?.state?.token ?? null;
+    } catch {
+      return null;
+    }
+  });
+  if (!token) return;
+
+  const origin = new URL(page.url()).origin;
+  let nextUrl: string | null = `${origin}/api/tasks/?page_size=100`;
+  while (nextUrl) {
+    const listRes = await page.request.get(nextUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!listRes.ok()) break;
+    const data = await listRes.json();
+    const tasks: { id: number; summary: string }[] = data.results ?? data ?? [];
+    for (const t of tasks) {
+      if (typeof t.summary === 'string' && t.summary.startsWith('E2E ')) {
+        await page.request.delete(`${origin}/api/tasks/${t.id}/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      }
+    }
+    nextUrl = typeof data.next === 'string' ? data.next : null;
+  }
 }
 
 /**

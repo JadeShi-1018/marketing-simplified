@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { X, ExternalLink } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import type { TaskData } from '@/types/task';
@@ -193,8 +194,18 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate }: TaskDrawer
                 readOnly={Boolean(readOnly)}
                 onUpdated={onMutated}
                 onMutated={onMutated}
-                onDelete={() => {/* no-op: delete not available in drawer */}}
+                onDelete={async () => {
+                  if (!task?.id) return;
+                  try {
+                    await TaskAPI.deleteTask(task.id);
+                    onTaskUpdate?.();
+                    onClose();
+                  } catch (e) {
+                    toast.error((e as any)?.response?.data?.detail || 'Delete failed');
+                  }
+                }}
                 loading={loading}
+                isDrawer
               />
 
               <div className="space-y-4">

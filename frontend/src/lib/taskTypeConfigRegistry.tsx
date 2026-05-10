@@ -155,6 +155,10 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       confidence_level: formData.confidence_level ? Number(formData.confidence_level) : undefined,
       primary_assumption: formData.primary_assumption || "",
       key_risk_ignore: formData.key_risk_ignore?.trim() || undefined,
+      outcome_compared_to_expectation: formData.outcome_compared_to_expectation || null,
+      biggest_wrong_assumption: formData.biggest_wrong_assumption || "",
+      would_make_same_decision_again: formData.would_make_same_decision_again || null,
+      report_url: formData.report_url || "",
     }),
     initEditState: (linked) => ({
       scheduled_at: toEditStr(linked.scheduled_at).substring(0, 10),
@@ -163,6 +167,10 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       confidence_level: linked.confidence_level != null ? String(linked.confidence_level) : "",
       primary_assumption: toEditStr(linked.primary_assumption),
       key_risk_ignore: toEditStr(linked.key_risk_ignore),
+      outcome_compared_to_expectation: toEditStr(linked.outcome_compared_to_expectation),
+      biggest_wrong_assumption: toEditStr(linked.biggest_wrong_assumption),
+      would_make_same_decision_again: toEditStr(linked.would_make_same_decision_again),
+      report_url: toEditStr(linked.report_url),
     }),
   },
   scaling: {
@@ -203,6 +211,9 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       affected_entities: parseArr(formData.affected_entities).length
         ? parseArr(formData.affected_entities)
         : null,
+      review_summary: formData.review_summary || "",
+      review_lessons_learned: formData.review_lessons_learned || "",
+      review_future_actions: formData.review_future_actions || "",
     }),
     initEditState: (linked) => ({
       strategy: toEditStr(linked.strategy),
@@ -215,6 +226,9 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       affected_entities: Array.isArray(linked.affected_entities)
         ? (linked.affected_entities as string[]).join(", ")
         : toEditStr(linked.affected_entities),
+      review_summary: toEditStr(linked.review_summary),
+      review_lessons_learned: toEditStr(linked.review_lessons_learned),
+      review_future_actions: toEditStr(linked.review_future_actions),
     }),
   },
   alert: {
@@ -279,6 +293,8 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
         investigation_notes: formData.investigation_notes || "",
         resolution_steps: formData.resolution_steps || "",
         affected_entities: parseArr(formData.affected_entities),
+        postmortem_root_cause: formData.postmortem_root_cause || "",
+        postmortem_prevention: formData.postmortem_prevention || "",
         initial_metrics: {
           metric_key: formData.metric_key || "spend",
           change_type: formData.change_type || "percent",
@@ -300,6 +316,8 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
         affected_entities: Array.isArray(linked.affected_entities)
           ? (linked.affected_entities as string[]).join(", ")
           : toEditStr(linked.affected_entities),
+        postmortem_root_cause: toEditStr(linked.postmortem_root_cause),
+        postmortem_prevention: toEditStr(linked.postmortem_prevention),
         metric_key: toEditStr(m.metric_key),
         change_type: toEditStr(m.change_type),
         change_value: toEditStr(m.change_value),
@@ -379,6 +397,8 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       success_metric: formData.success_metric || "",
       constraints: formData.constraints || "",
       status: formData.status || "draft",
+      experiment_outcome: formData.experiment_outcome || null,
+      outcome_notes: formData.outcome_notes || "",
     }),
     initEditState: (linked) => ({
       hypothesis: toEditStr(linked.hypothesis),
@@ -387,6 +407,8 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       success_metric: toEditStr(linked.success_metric),
       constraints: toEditStr(linked.constraints),
       status: toEditStr(linked.status),
+      experiment_outcome: toEditStr(linked.experiment_outcome),
+      outcome_notes: toEditStr(linked.outcome_notes),
     }),
   },
   optimization: {
@@ -403,10 +425,16 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
     getUpdatePayload: (formData) => ({
       action_type: formData.action_type,
       rationale: formData.rationale || "",
+      execution_status: formData.execution_status || "detected",
+      planned_action: formData.planned_action || "",
+      outcome_notes: formData.outcome_notes || "",
     }),
     initEditState: (linked) => ({
       action_type: toEditStr(linked.action_type),
       rationale: toEditStr(linked.rationale),
+      execution_status: toEditStr(linked.execution_status),
+      planned_action: toEditStr(linked.planned_action),
+      outcome_notes: toEditStr(linked.outcome_notes),
     }),
   },
   report: {
