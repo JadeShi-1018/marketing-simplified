@@ -15,10 +15,8 @@ test.describe('Task list filter/sort persistence', () => {
   });
 
   test.beforeEach(async ({ page }) => {
-    // Clear sessionStorage so each test starts clean
+    // Fresh page load — state always resets on reload now.
     await page.goto(`/tasks?project_id=${projectId}`);
-    await page.evaluate(() => sessionStorage.clear());
-    await page.reload();
     await waitForTasksPageReady(page);
     await page.getByTestId('tab-tasks').click();
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });
@@ -73,18 +71,16 @@ test.describe('Task list filter/sort persistence', () => {
     await expect(page.getByPlaceholder('Search summary, type or owner…')).toHaveValue('Q');
   });
 
-  test('clearing sessionStorage resets sort to default', async ({ page }) => {
+  test('page reload always resets sort to default', async ({ page }) => {
     const sortSelect = page.getByRole('combobox', { name: 'Sort tasks' });
     await sortSelect.selectOption('name_asc');
     await expect(sortSelect).toHaveValue('name_asc');
 
-    await page.evaluate(() => sessionStorage.clear());
     await page.reload();
     await waitForTasksPageReady(page);
     await page.getByTestId('tab-tasks').click();
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });
 
-    // Default is 'id_desc'
     await expect(page.getByRole('combobox', { name: 'Sort tasks' })).toHaveValue('id_desc');
   });
 });

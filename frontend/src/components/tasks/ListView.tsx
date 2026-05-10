@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Save, Search, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
 import {
@@ -65,6 +65,24 @@ const LIST_PAGE_SIZE = 10;
 
 type SortKey = 'id_desc' | 'id_asc' | 'due_asc' | 'due_desc' | 'priority' | 'status' | 'owner_asc' | 'name_asc';
 type GroupBy = 'none' | 'status' | 'priority' | 'type' | 'owner';
+
+type SavedView = {
+  id: string;
+  name: string;
+  filters: TaskListFilters;
+  sortKey: SortKey;
+  groupBy: GroupBy;
+  search: string;
+};
+
+const savedViewsKey = (projectId: number | null) => `tasks-saved-views-${projectId ?? 'all'}`;
+const preViewKey = (projectId: number | null) => `tasks-pre-view-state-${projectId ?? 'all'}`;
+
+const backNavFlag = (projectId: number | null) => `tasks-back-nav-${projectId ?? 'all'}`;
+// Unique ID for this page load — resets on every reload, stays constant within a session.
+// Stored alongside the back-nav flag so we can tell if the flag was written in this
+// page load (client-side nav) or a previous one (stale after reload).
+const PAGE_SESSION_ID = `${Date.now()}-${Math.random()}`;
 
 const PRIORITY_SORT_ORDER: Record<string, number> = {
   HIGHEST: 0, HIGH: 1, MEDIUM: 2, LOW: 3, LOWEST: 4,
@@ -137,29 +155,197 @@ export default function ListView({
   const [sortKey, setSortKey] = useState<SortKey>('id_desc');
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
 
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [viewsOpen, setViewsOpen] = useState(false);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [savingViewName, setSavingViewName] = useState('');
+  const [showSaveInput, setShowSaveInput] = useState(false);
+  const viewsRef = useRef<HTMLDivElement>(null);
+
+  // Load per-project saved views when projectId is known.
+  // Note: we do NOT reset activeViewId here. The restore effect sets it from sessionStorage
+  // on back-navigation, and the deactivate-on-drift effect clears it if the view no longer
+  // exists in the newly loaded views (e.g. after switching projects).
+  useEffect(() => {
+    if (projectId === null) return;
+    try {
+      const raw = localStorage.getItem(savedViewsKey(projectId));
+      setSavedViews(raw ? (JSON.parse(raw) as SavedView[]) : []);
+    } catch { /* ignore */ }
+  }, [projectId]);
+
+  // Fix #1 — sync saved views across tabs via storage event.
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === savedViewsKey(projectId)) {
+        try {
+          const views = e.newValue ? (JSON.parse(e.newValue) as SavedView[]) : [];
+          setSavedViews(views);
+        } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, [projectId]);
+
+  // Close views dropdown on outside click.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if (viewsRef.current && !viewsRef.current.contains(e.target as Node)) {
+        setViewsOpen(false);
+        setShowSaveInput(false);
+        setSavingViewName('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Fix #2 — deactivate when state drifts; also deactivate if the view was deleted in another tab.
+  useEffect(() => {
+    if (!activeViewId) return;
+    const view = savedViews.find((v) => v.id === activeViewId);
+    if (!view) {
+      // View was deleted (e.g. from another tab) — deactivate silently.
+      setActiveViewId(null);
+      return;
+    }
+    const matches =
+      JSON.stringify(view.filters) === JSON.stringify(filters) &&
+      view.sortKey === sortKey &&
+      view.groupBy === groupBy &&
+      view.search === search;
+    if (!matches) setActiveViewId(null);
+  }, [filters, sortKey, groupBy, search, savedViews]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const persistViews = (views: SavedView[]) => {
+    setSavedViews(views);
+    try { localStorage.setItem(savedViewsKey(projectId), JSON.stringify(views)); } catch { /* ignore */ }
+  };
+
+  const savePreViewState = () => {
+    try {
+      sessionStorage.setItem(
+        preViewKey(projectId),
+        JSON.stringify({ filters, sortKey, groupBy, search }),
+      );
+    } catch { /* ignore */ }
+  };
+
+  const restorePreViewState = () => {
+    try {
+      const raw = sessionStorage.getItem(preViewKey(projectId));
+      if (!raw) return;
+      const s = JSON.parse(raw) as { filters: TaskListFilters; sortKey: SortKey; groupBy: GroupBy; search: string };
+      setFilters(s.filters ?? {});
+      setSortKey(s.sortKey ?? 'id_desc');
+      setGroupBy(s.groupBy ?? 'none');
+      setSearch(s.search ?? '');
+    } catch { /* ignore */ }
+  };
+
+  const confirmSaveView = () => {
+    const name = savingViewName.trim();
+    if (!name) return;
+    const view: SavedView = {
+      id: `${Date.now()}`,
+      name,
+      filters,
+      sortKey,
+      groupBy,
+      search,
+    };
+    persistViews([...savedViews, view]);
+    setActiveViewId(view.id);
+    setSavingViewName('');
+    setShowSaveInput(false);
+    setViewsOpen(false);
+    toast.success(`View "${name}" saved`);
+  };
+
+  const applyView = (view: SavedView) => {
+    if (!activeViewId) savePreViewState();
+    setFilters(view.filters);
+    setSortKey(view.sortKey);
+    setGroupBy(view.groupBy);
+    setSearch(view.search);
+    setActiveViewId(view.id);
+    setViewsOpen(false);
+    setCurrentPage(1);
+  };
+
+  // Fix #4 — update an existing saved view with the current state.
+  const updateView = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updated = savedViews.map((v) =>
+      v.id === id ? { ...v, filters, sortKey, groupBy, search } : v,
+    );
+    persistViews(updated);
+    setActiveViewId(id);
+    toast.success('View updated');
+  };
+
+  const deleteView = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    persistViews(savedViews.filter((v) => v.id !== id));
+    if (activeViewId === id) {
+      setActiveViewId(null);
+      restorePreViewState();
+      sessionStorage.removeItem(preViewKey(projectId));
+    }
+  };
+
   // Restore filter/sort state from sessionStorage once projectId is known.
   // Using a ref so this only runs once per project (not on every projectId re-render).
+  // On unmount (navigating away), set a back-nav flag so the next mount knows to restore.
+  // This flag lives in sessionStorage so it survives the component re-creating, but is
+  // absent on a true page reload (restore would not happen).
+  useEffect(() => {
+    if (!projectId) return;
+    return () => {
+      try { sessionStorage.setItem(backNavFlag(projectId), PAGE_SESSION_ID); } catch { /* ignore */ }
+    };
+  }, [projectId]);
+
   const restoredForProject = useRef<number | null | 'all'>(undefined as any);
   useEffect(() => {
     const key = projectId ?? 'all';
     if (restoredForProject.current === key) return;
     restoredForProject.current = key;
+
+    const flagValue = sessionStorage.getItem(backNavFlag(projectId));
+    // Always clear the flag — whether we restore or not.
+    sessionStorage.removeItem(backNavFlag(projectId));
+
+    // Only restore if the flag was written in THIS page load (same PAGE_SESSION_ID).
+    // A stale flag from a previous session (after a reload) won't match.
+    if (flagValue !== PAGE_SESSION_ID) {
+      // No flag → fresh page load. Clear any stale state and use defaults.
+      sessionStorage.removeItem(`tasks-list-state-${key}`);
+      sessionStorage.removeItem(preViewKey(projectId ?? null));
+      return;
+    }
+
     try {
       const saved = sessionStorage.getItem(`tasks-list-state-${key}`);
       if (!saved) return;
-      const parsed = JSON.parse(saved) as { filters?: TaskListFilters; sortKey?: SortKey; groupBy?: GroupBy; search?: string };
+      const parsed = JSON.parse(saved) as { filters?: TaskListFilters; sortKey?: SortKey; groupBy?: GroupBy; search?: string; activeViewId?: string };
       if (parsed.filters) setFilters(parsed.filters);
       if (parsed.sortKey) setSortKey(parsed.sortKey);
       if (parsed.groupBy) setGroupBy(parsed.groupBy);
       if (parsed.search !== undefined) setSearch(parsed.search);
+      if (parsed.activeViewId) {
+        setActiveViewId(parsed.activeViewId);
+        sessionStorage.removeItem(preViewKey(projectId ?? null));
+      }
     } catch { /* ignore */ }
   }, [projectId]);
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(sessionKey, JSON.stringify({ filters, sortKey, groupBy, search }));
+      sessionStorage.setItem(sessionKey, JSON.stringify({ filters, sortKey, groupBy, search, activeViewId }));
     } catch { /* ignore quota errors */ }
-  }, [sessionKey, filters, sortKey, groupBy, search]);
+  }, [sessionKey, filters, sortKey, groupBy, search, activeViewId]);
 
   const parseApiError = (err: unknown, fallback: string) => {
     const data = (err as any)?.response?.data;
@@ -776,6 +962,133 @@ export default function ListView({
           approverOptions={filterMemberOptions}
           typeOptions={TASK_TYPES.map((t) => ({ value: t.value, label: t.label }))}
         />
+
+        {/* Saved Views */}
+        <div className="relative shrink-0" ref={viewsRef}>
+          <button
+            type="button"
+            onClick={() => setViewsOpen((v) => !v)}
+            aria-label="Saved views"
+            data-testid="saved-views-button"
+            className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition ${
+              activeViewId
+                ? 'border-[#3CCED7] bg-[#3CCED7]/10 text-[#2ab5be]'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <Bookmark className="h-3.5 w-3.5 shrink-0" />
+            {activeViewId ? (savedViews.find((v) => v.id === activeViewId)?.name ?? 'View') : 'Views'}
+            {savedViews.length > 0 && !activeViewId && (
+              <span className="ml-0.5 rounded-full bg-gray-100 px-1.5 py-px text-[10px] font-semibold text-gray-500">
+                {savedViews.length}
+              </span>
+            )}
+          </button>
+
+          {viewsOpen && (
+            <div
+              className="absolute right-0 top-full z-30 mt-1.5 w-56 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg"
+              data-testid="saved-views-dropdown"
+            >
+              {activeViewId && (
+                <div className="border-b border-gray-100 p-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveViewId(null);
+                      restorePreViewState();
+                      sessionStorage.removeItem(preViewKey(projectId));
+                      setCurrentPage(1);
+                      setViewsOpen(false);
+                    }}
+                    className="w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+                    data-testid="clear-view-button"
+                  >
+                    ✕ Clear active view
+                  </button>
+                </div>
+              )}
+              {savedViews.length === 0 ? (
+                <p className="px-3 py-3 text-xs text-gray-400">No saved views yet.</p>
+              ) : (
+                <ul className="max-h-60 overflow-y-auto py-1">
+                  {savedViews.map((v) => (
+                    <li key={v.id}>
+                      <button
+                        type="button"
+                        onClick={() => applyView(v)}
+                        className={`group flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs transition hover:bg-gray-50 ${
+                          activeViewId === v.id ? 'font-semibold text-[#2ab5be]' : 'text-gray-700'
+                        }`}
+                        data-testid="saved-view-item"
+                      >
+                        <span className="truncate">{v.name}</span>
+                        <div className="flex shrink-0 items-center gap-0.5">
+                          <button
+                            type="button"
+                            aria-label={`Update view ${v.name}`}
+                            data-testid="update-view-button"
+                            onClick={(e) => updateView(v.id, e)}
+                            className="rounded p-0.5 text-gray-300 transition hover:text-[#2ab5be] group-hover:text-gray-400"
+                            title="Update view with current filters"
+                          >
+                            <Save className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Delete view ${v.name}`}
+                            data-testid="delete-view-button"
+                            onClick={(e) => deleteView(v.id, e)}
+                            className="rounded p-0.5 text-gray-300 transition hover:text-rose-500 group-hover:text-gray-400"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="border-t border-gray-100 p-1.5">
+                {showSaveInput ? (
+                  <div className="flex items-center gap-1">
+                    <input
+                      autoFocus
+                      type="text"
+                      value={savingViewName}
+                      onChange={(e) => setSavingViewName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') confirmSaveView();
+                        if (e.key === 'Escape') { setShowSaveInput(false); setSavingViewName(''); }
+                      }}
+                      placeholder="View name…"
+                      className="h-7 flex-1 rounded border border-gray-200 px-2 text-xs outline-none focus:border-[#3CCED7]"
+                      data-testid="save-view-name-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={confirmSaveView}
+                      disabled={!savingViewName.trim()}
+                      className="h-7 rounded bg-[#3CCED7] px-2 text-xs font-semibold text-white disabled:opacity-40 hover:bg-[#2ab5be]"
+                      data-testid="save-view-confirm-button"
+                    >
+                      Save
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowSaveInput(true)}
+                    className="w-full rounded-lg px-3 py-2 text-left text-xs font-medium text-[#2ab5be] transition hover:bg-[#3CCED7]/10"
+                    data-testid="save-view-button"
+                  >
+                    + Save current view
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Sort */}
         <div className="relative shrink-0">
