@@ -135,11 +135,15 @@ class ChatView(EnglishResponseMixin, APIView):
         calendar_context = serializer.validated_data.get('calendar_context')
         workflow_id = serializer.validated_data.get('workflow_id')
         column_mapping = serializer.validated_data.get('column_mapping')
+        approval_id = serializer.validated_data.get('approval_id')
+        approval_decision = serializer.validated_data.get('approval_decision')
+        approval_draft = serializer.validated_data.get('approval_draft')
 
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
             'confirm_decision', 'create_tasks', 'generate_miro',
             'distribute_message', 'confirm_columns',
+            'resolve_external_approval',
         }
 
         # Auto-generate title from first real user message
@@ -169,7 +173,6 @@ class ChatView(EnglishResponseMixin, APIView):
             assistant_content_parts = []
             assistant_metadata = {}
             last_message_type = 'text'
-            standalone_message_types = {'miro_status', 'miro_suggestion'}
 
             def _flush_message():
                 """Save accumulated content as an assistant message and reset state."""
@@ -197,6 +200,9 @@ class ChatView(EnglishResponseMixin, APIView):
                     calendar_context=calendar_context,
                     workflow_id=workflow_id,
                     column_mapping=column_mapping,
+                    approval_id=approval_id,
+                    approval_decision=approval_decision,
+                    approval_draft=approval_draft,
                 ):
                     chunk_type = chunk.get('type', 'text')
                     content = chunk.get('content', '')
@@ -216,6 +222,28 @@ class ChatView(EnglishResponseMixin, APIView):
                                 message_type='calendar_invite',
                                 metadata={},
                             )
+                        continue
+
+                    if chunk_type == 'approval_request':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        AgentMessage.objects.create(
+                            session=session,
+                            role='assistant',
+                            content=content or 'Approval required.',
+                            message_type='approval_request',
+                            metadata=data or {},
+                        )
+                        continue
+
+                    # Miro status is persisted separately (_create_agent_status_message in the
+                    # orchestrator). Do not merge its text into the prior assistant bubble or
+                    # the final flush — that would duplicate the same line in chat history.
+                    if chunk_type == 'miro_status':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
                         continue
 
                     # Skip internal signalling events from content accumulation

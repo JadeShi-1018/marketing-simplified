@@ -10,9 +10,11 @@ interface WelcomeScreenProps {
   onSend: (message: string) => void
   onFileUpload: (file: File) => void
   disabled?: boolean
+  /** When the parent renders its own composer, hide the built-in ChatInput. */
+  showComposer?: boolean
 }
 
-export function WelcomeScreen({ onSend, onFileUpload, disabled }: WelcomeScreenProps) {
+export function WelcomeScreen({ onSend, onFileUpload, disabled, showComposer = true }: WelcomeScreenProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleUploadClick = () => {
@@ -64,14 +66,16 @@ export function WelcomeScreen({ onSend, onFileUpload, disabled }: WelcomeScreenP
         </div>
       </div>
 
-      <div className="shrink-0">
-        <ChatInput
-          onSend={onSend}
-          onFileUpload={onFileUpload}
-          disabled={disabled}
-          placeholder="Or type your question..."
-        />
-      </div>
+      {showComposer ? (
+        <div className="shrink-0">
+          <ChatInput
+            onSend={onSend}
+            onFileUpload={onFileUpload}
+            disabled={disabled}
+            placeholder="Or type your question..."
+          />
+        </div>
+      ) : null}
     </div>
   )
 }
