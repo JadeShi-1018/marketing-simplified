@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { ChevronRight } from 'lucide-react';
@@ -10,19 +10,21 @@ import GoogleDocsIntegrationModal from '@/components/google-docs/GoogleDocsInteg
 import GoogleCalendarIntegrationModal from '@/components/google-calendar/GoogleCalendarIntegrationModal';
 import FacebookIntegrationModal from '@/components/facebook/FacebookIntegrationModal';
 import NotionIntegrationModal from '@/components/notion/NotionIntegrationModal';
+import LinearIntegrationModal from '@/components/linear/LinearIntegrationModal';
 import { slackApi, SlackConnectionStatus } from '@/lib/api/slackApi';
 import { zoomApi } from '@/lib/api/zoomApi';
 import { googleDocsApi } from '@/lib/api/googleDocsApi';
 import { googleCalendarApi, type GoogleCalendarStatus } from '@/lib/api/googleCalendarApi';
 import { facebookApi, type FacebookStatus } from '@/lib/api/facebookApi';
 import { notionIntegrationApi } from '@/lib/api/notionIntegrationApi';
+import { linearApi } from '@/lib/api/linearApi';
 import { useProjectStore } from '@/lib/projectStore';
 
 interface IntegrationsPanelProps {
   userId: number | string | null;
 }
 
-type IntegrationId = 'slack' | 'zoom' | 'gdocs' | 'gcal' | 'meta' | 'notion';
+type IntegrationId = 'slack' | 'zoom' | 'gdocs' | 'gcal' | 'meta' | 'notion' | 'linear';
 
 interface IntegrationRow {
   id: IntegrationId;
@@ -95,6 +97,18 @@ const INTEGRATIONS: IntegrationRow[] = [
     iconBg: '#111827',
     iconNode: <span className="text-sm font-semibold text-white">N</span>,
   },
+  {
+    id: 'linear',
+    name: 'Linear',
+    description: 'Issue tracking & product development',
+    iconBg: '#5E6AD2',
+    iconNode: (
+      <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+        <path d="M3.35 12.93 12.1 4.18c.2-.2.52-.2.72 0l2.12 2.12c.2.2.2.52 0 .72L7.9 13.96H4.8c-.41 0-.62-.5-.33-.79l-1.12-1.24Z" />
+        <path d="M13.04 16.1h6.16c.41 0 .62.5.33.79l-1.85 2.05c-.2.22-.55.22-.75 0l-4.9-5.45 1.01-1.12 4.9 5.45c.2.22.55.22.75 0l1.85-2.05c.29-.29.08-.79-.33-.79H13.9l-1.86-2.07-1.01 1.12L13.04 16.1Z" />
+      </svg>
+    ),
+  },
 ];
 
 export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
@@ -108,6 +122,7 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
   const [isGoogleCalendarModalOpen, setIsGoogleCalendarModalOpen] = useState(false);
   const [isFacebookModalOpen, setIsFacebookModalOpen] = useState(false);
   const [isNotionModalOpen, setIsNotionModalOpen] = useState(false);
+  const [isLinearModalOpen, setIsLinearModalOpen] = useState(false);
 
   const [slackStatus, setSlackStatus] = useState<SlackConnectionStatus | null>(null);
   const [zoomConnected, setZoomConnected] = useState<boolean | null>(null);
@@ -117,7 +132,12 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
   const [facebookStatus, setFacebookStatus] = useState<FacebookStatus | null>(null);
   const [notionConnected, setNotionConnected] = useState<boolean | null>(null);
   const [notionWorkspaceName, setNotionWorkspaceName] = useState<string | null>(null);
+  const [linearConnected, setLinearConnected] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const handleLinearStatusChange = useCallback((connected: boolean) => {
+    setLinearConnected(connected);
+  }, []);
 
   const hasOpenedSlackRef = useRef(false);
   const hasOpenedZoomRef = useRef(false);
@@ -135,6 +155,7 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
       setFacebookStatus(null);
       setNotionConnected(null);
       setNotionWorkspaceName(null);
+      setLinearConnected(null);
       setLoading(false);
       return;
     }
@@ -143,13 +164,14 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
     const context = activeProject?.id ? { projectId: activeProject.id } : undefined;
 
     const loadAll = async () => {
-      const [slackRes, zoomRes, gdocsRes, gcalRes, metaRes, notionRes] = await Promise.allSettled([
+      const [slackRes, zoomRes, gdocsRes, gcalRes, metaRes, notionRes, linearRes] = await Promise.allSettled([
         slackApi.getStatus(context),
         zoomApi.getStatus(),
         googleDocsApi.getStatus(),
         googleCalendarApi.getStatus(),
         facebookApi.getStatus(),
         notionIntegrationApi.getStatus(),
+        linearApi.getStatus(),
       ]);
       if (!isActive) return;
       if (slackRes.status === 'fulfilled') {
@@ -184,6 +206,11 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
       } else {
         setNotionConnected(false);
         setNotionWorkspaceName(null);
+      }
+      if (linearRes.status === 'fulfilled') {
+        setLinearConnected(linearRes.value.connected);
+      } else {
+        setLinearConnected(false);
       }
       setLoading(false);
     };
@@ -296,6 +323,35 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
       toast.error(messages[notionError] ?? 'Notion connection failed. Please try again.');
       stripParam('notion_error');
     }
+    const linearError = searchParams.get('linear_error');
+    const linearDetail = searchParams.get('linear_detail');
+    if (linearError) {
+      const messages: Record<string, string> = {
+        oauth_incomplete:
+          'Linear: this address is only used after you approve access in Linear. Go to Integrations and click Connect Linear — do not open the callback URL by itself.',
+        invalid_state: 'Linear connection failed: invalid state. Please try Connect again.',
+        state_expired:
+          'Linear: this sign-in link expired (often if the tab sat open too long). Click Connect Linear again and finish within about an hour.',
+        user_not_found: 'Linear connection failed: user mismatch. Please log in again.',
+        token_exchange_failed:
+          'Linear connection failed: token exchange failed. Check LINEAR_CLIENT_ID, LINEAR_CLIENT_SECRET, and that LINEAR_REDIRECT_URI matches your Linear app Callback URL.',
+        access_denied: 'Linear authorization was cancelled.',
+      };
+      let linearMsg = messages[linearError] ?? `Linear connection failed (${linearError}).`;
+      if (
+        (linearError === 'token_exchange_failed' || linearError === 'oauth_incomplete') &&
+        linearDetail
+      ) {
+        try {
+          linearMsg = `${linearMsg} ${decodeURIComponent(linearDetail)}`;
+        } catch {
+          linearMsg = `${linearMsg} ${linearDetail}`;
+        }
+      }
+      toast.error(linearMsg, { duration: 12000 });
+      stripParam('linear_error');
+      stripParam('linear_detail');
+    }
   }, [slackStatus, loading, searchParams, router]);
 
   const canManageSlack = !!slackStatus?.can_manage_slack;
@@ -361,6 +417,10 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
         return notionConnected
           ? { connected: true, label: notionWorkspaceName ? `Connected · ${notionWorkspaceName}` : 'Connected' }
           : { connected: false, label: 'Not connected' };
+      case 'linear':
+        return linearConnected
+          ? { connected: true, label: 'Connected' }
+          : { connected: false, label: 'Not connected' };
     }
   };
 
@@ -376,8 +436,10 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
       setIsGoogleCalendarModalOpen(true);
     } else if (id === 'meta') {
       setIsFacebookModalOpen(true);
-    } else {
+    } else if (id === 'notion') {
       setIsNotionModalOpen(true);
+    } else if (id === 'linear') {
+      setIsLinearModalOpen(true);
     }
   };
 
@@ -461,9 +523,11 @@ export default function IntegrationsPanel({ userId }: IntegrationsPanelProps) {
         isOpen={isFacebookModalOpen}
         onClose={() => setIsFacebookModalOpen(false)}
       />
-      <NotionIntegrationModal
-        isOpen={isNotionModalOpen}
-        onClose={() => setIsNotionModalOpen(false)}
+      <NotionIntegrationModal isOpen={isNotionModalOpen} onClose={() => setIsNotionModalOpen(false)} />
+      <LinearIntegrationModal
+        isOpen={isLinearModalOpen}
+        onClose={() => setIsLinearModalOpen(false)}
+        onStatusChange={handleLinearStatusChange}
       />
     </div>
   );

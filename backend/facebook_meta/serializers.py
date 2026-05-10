@@ -4,6 +4,7 @@ from .models import (
     AdLabel, AdCreative, AdCreativePhotoData,
     AdCreativeTextData, AdCreativeVideoData, AdCreativeLinkData
 )
+from .services import facebook_media_file_exists
 import re
 
 User = get_user_model()
@@ -133,13 +134,42 @@ class AdCreativeObjectStorySpecSerializer(serializers.Serializer):
         if hasattr(instance, 'object_story_spec_link_data') and instance.object_story_spec_link_data:
             data['link_data'] = AdCreativeLinkDataSerializer(instance.object_story_spec_link_data).data
         
-        # Add photo_data if exists (now ManyToMany)
+        # Add photo_data if exists (now ManyToMany).
+        # Filter out orphaned rows whose underlying file is no longer on disk
+        # AND collapse rows that share the same content hash, so the
+        # preview/media UI never shows the same image twice — even if the
+        # creative was associated with multiple AdCreativePhotoData rows
+        # that all point at identical content (legacy duplicates).
         if hasattr(instance, 'object_story_spec_photo_data') and instance.object_story_spec_photo_data.exists():
-            data['photo_data'] = AdCreativePhotoDataSerializer(instance.object_story_spec_photo_data.all(), many=True).data
-        
-        # Add video_data if exists (now ManyToMany)
+            seen_photo_keys = set()
+            existing_photos = []
+            for photo in instance.object_story_spec_photo_data.all():
+                if not facebook_media_file_exists(photo.url):
+                    continue
+                key = photo.image_hash or f'noop:{photo.id}'
+                if key in seen_photo_keys:
+                    continue
+                seen_photo_keys.add(key)
+                existing_photos.append(photo)
+            if existing_photos:
+                data['photo_data'] = AdCreativePhotoDataSerializer(existing_photos, many=True).data
+
+        # Add video_data if exists (now ManyToMany).
+        # Same orphan + content-hash dedup as photo_data above (video_id stores
+        # the sha256[:32] of the file).
         if hasattr(instance, 'object_story_spec_video_data') and instance.object_story_spec_video_data.exists():
-            data['video_data'] = AdCreativeVideoDataSerializer(instance.object_story_spec_video_data.all(), many=True).data
+            seen_video_keys = set()
+            existing_videos = []
+            for video in instance.object_story_spec_video_data.all():
+                if not facebook_media_file_exists(video.image_url):
+                    continue
+                key = video.video_id or f'noop:{video.id}'
+                if key in seen_video_keys:
+                    continue
+                seen_video_keys.add(key)
+                existing_videos.append(video)
+            if existing_videos:
+                data['video_data'] = AdCreativeVideoDataSerializer(existing_videos, many=True).data
         
         # Add text_data if exists
         if hasattr(instance, 'object_story_spec_text_data') and instance.object_story_spec_text_data:

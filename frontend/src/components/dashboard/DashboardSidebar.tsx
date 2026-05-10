@@ -10,7 +10,7 @@ import {
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
   User as UserIcon, CreditCard, Plug, LogOut,
-  Shield, UserCog, UserCheck, BarChart3,
+  Shield, UserCog, UserCheck, BarChart3, Sparkles,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
 import { useAuthStore } from '@/lib/authStore';
@@ -82,6 +82,7 @@ const navGroups: NavGroup[] = [
     title: 'CONTENT',
     items: [
       { label: 'Ad Variations', href: '/variations', icon: Target },
+      { label: 'Variations Studio', href: '/variations-studio', icon: Sparkles },
       {
         label: 'Ads Draft',
         href: '#',
@@ -200,16 +201,24 @@ export default function DashboardSidebar() {
   };
 
   return (
-    <aside className="w-[255px] h-full flex flex-col border-r border-gray-200 bg-white shrink-0">
+    <aside className="h-full w-14 shrink-0 flex flex-col border-r border-gray-200 bg-white sm:w-[255px]">
       {/* Logo */}
-      <div className="px-4 py-4 border-b border-gray-100">
-        <Link href="/" className="flex items-center">
+      <div className="border-b border-gray-100 px-2 py-3 sm:px-4 sm:py-4">
+        <Link href="/" className="flex items-center justify-center sm:justify-start">
+          <Image
+            src="/homepage_logo_square.jpeg"
+            alt="Marketing Simplified Logo"
+            width={36}
+            height={36}
+            className="h-9 w-9 rounded-md object-cover sm:hidden"
+            priority
+          />
           <Image
             src="/marketing_simplified_logo.png"
             alt="Marketing Simplified Logo"
             width={220}
             height={104}
-            className="h-20 w-auto"
+            className="hidden h-20 w-auto sm:block"
             priority
           />
         </Link>
@@ -218,10 +227,11 @@ export default function DashboardSidebar() {
       {/* Project header — clickable to switch project */}
       <button
         onClick={() => router.push('/select-project')}
-        className="px-4 py-3 border-b border-gray-100 w-full hover:bg-gray-50 transition-colors text-left group"
+        className="w-full border-b border-gray-100 px-2 py-3 text-left transition-colors hover:bg-gray-50 sm:px-4 group"
         title="Switch project"
+        aria-label="Switch project"
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-center gap-3 sm:justify-start">
           {projectHeaderLoading ? (
             <Skeleton className="h-8 w-8 rounded-md shrink-0" />
           ) : (
@@ -231,7 +241,7 @@ export default function DashboardSidebar() {
               </span>
             </div>
           )}
-          <div className="min-w-0 flex-1">
+          <div className="hidden min-w-0 flex-1 sm:block">
             {projectHeaderLoading ? (
               <div className="space-y-2">
                 <Skeleton className="h-4 w-28" />
@@ -259,15 +269,15 @@ export default function DashboardSidebar() {
               </>
             )}
           </div>
-          <ChevronsUpDown className="w-4 h-4 text-gray-400 group-hover:text-gray-600 shrink-0" />
+          <ChevronsUpDown className="hidden w-4 h-4 text-gray-400 group-hover:text-gray-600 shrink-0 sm:block" />
         </div>
       </button>
 
       {/* Navigation */}
-      <nav className="dashboard-scrollbar flex-1 overflow-y-auto pt-4 pb-2 px-2">
+      <nav className="dashboard-scrollbar flex-1 overflow-y-auto px-1 pb-2 pt-3 sm:px-2 sm:pt-4">
         {visibleNavGroups.map((group, gi) => (
-          <div key={group.title} className={gi > 0 ? 'mt-5' : ''}>
-            <div className="px-3 mb-1.5 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+          <div key={group.title} className={gi > 0 ? 'mt-2 sm:mt-5' : ''}>
+            <div className="mb-1.5 hidden px-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400 sm:block">
               {group.title}
             </div>
             {group.items.map((item) => {
@@ -278,39 +288,102 @@ export default function DashboardSidebar() {
 
               return (
                 <div key={item.label}>
-                  <button
-                    onClick={() => {
-                      if (item.href === '/agent') {
-                        toggleAgentPanel();
-                      } else if (hasChildren) {
-                        toggle(item.label);
-                      } else {
-                        router.push(item.href);
-                      }
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors relative ${
-                      (item.href === '/agent' ? isAgentPanelOpen : isActive || childActive)
-                        ? 'bg-[#3CCED7]/8 text-[#3CCED7]'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
-                    aria-expanded={hasChildren ? isOpen : undefined}
-                  >
-                    {(item.href === '/agent' ? isAgentPanelOpen : isActive) && (
-                      <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-[#3CCED7]" />
-                    )}
-                    <item.icon className="w-[18px] h-[18px] shrink-0" />
-                    <span className="flex-1 text-left">{item.label}</span>
-                    {hasChildren && (
-                      isOpen ? (
-                        <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
-                      ) : (
-                        <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
-                      )
-                    )}
-                  </button>
+                  {hasChildren ? (
+                    <>
+                      <button
+                        onClick={() => toggle(item.label)}
+                        className={`relative hidden w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors sm:flex ${
+                          childActive
+                            ? 'bg-[#3CCED7]/8 text-[#3CCED7]'
+                            : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                        }`}
+                        aria-expanded={isOpen}
+                      >
+                        {childActive && (
+                          <div className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-[#3CCED7]" />
+                        )}
+                        <item.icon className="w-[18px] h-[18px] shrink-0" />
+                        <span className="flex-1 text-left">{item.label}</span>
+                        {isOpen ? (
+                          <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
+                        ) : (
+                          <ChevronRight className="w-4 h-4 text-gray-400 shrink-0" />
+                        )}
+                      </button>
+
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            title={item.label}
+                            aria-label={item.label}
+                            className={`relative flex h-10 w-full items-center justify-center rounded-md text-sm font-medium transition-colors sm:hidden ${
+                              childActive
+                                ? 'bg-[#3CCED7]/8 text-[#3CCED7]'
+                                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                            }`}
+                          >
+                            {childActive && (
+                              <div className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-[#3CCED7]" />
+                            )}
+                            <item.icon className="h-[18px] w-[18px] shrink-0" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          side="right"
+                          align="start"
+                          sideOffset={8}
+                          className="w-44 p-1"
+                        >
+                          <DropdownMenuLabel className="px-2 py-1 text-[11px] font-medium text-gray-500">
+                            {item.label}
+                          </DropdownMenuLabel>
+                          <DropdownMenuSeparator className="my-1" />
+                          {item.children!.map((child) => {
+                            const childIsActive = pathname === child.href;
+                            return (
+                              <DropdownMenuItem
+                                key={child.href}
+                                className={`gap-2 px-2 py-1.5 text-[13px] [&>svg]:size-3.5 ${
+                                  childIsActive ? 'text-[#3CCED7]' : ''
+                                }`}
+                                onSelect={() => router.push(child.href)}
+                              >
+                                <child.icon className="text-gray-500" />
+                                <span>{child.label}</span>
+                              </DropdownMenuItem>
+                            );
+                          })}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        if (item.href === '/agent') {
+                          toggleAgentPanel();
+                        } else {
+                          router.push(item.href);
+                        }
+                      }}
+                      title={item.label}
+                      aria-label={item.label}
+                      className={`relative flex h-10 w-full items-center justify-center rounded-md text-sm font-medium transition-colors sm:h-auto sm:justify-start sm:gap-3 sm:px-3 sm:py-2 ${
+                        (item.href === '/agent' ? isAgentPanelOpen : isActive)
+                          ? 'bg-[#3CCED7]/8 text-[#3CCED7]'
+                          : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      }`}
+                    >
+                      {(item.href === '/agent' ? isAgentPanelOpen : isActive) && (
+                        <div className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-[#3CCED7]" />
+                      )}
+                      <item.icon className="w-[18px] h-[18px] shrink-0" />
+                      <span className="hidden flex-1 text-left sm:block">{item.label}</span>
+                    </button>
+                  )}
 
                   {hasChildren && isOpen && (
-                    <div className="ml-8 mt-1 mb-1 space-y-0.5">
+                    <div className="ml-8 mt-1 mb-1 hidden space-y-0.5 sm:block">
                       {item.children!.map((child) => {
                         const childIsActive = pathname === child.href;
                         return (
@@ -341,10 +414,11 @@ export default function DashboardSidebar() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="px-4 py-3 border-t border-gray-100 w-full hover:bg-gray-50 transition-colors text-left focus:outline-none focus:bg-gray-50"
+            className="w-full border-t border-gray-100 px-2 py-3 text-left transition-colors hover:bg-gray-50 focus:bg-gray-50 focus:outline-none sm:px-4"
             title="Account menu"
-        >
-          <div className="flex items-center gap-3">
+            aria-label="Account menu"
+          >
+            <div className="flex items-center justify-center gap-3 sm:justify-start">
               {userCardLoading ? (
                 <Skeleton className="h-8 w-8 rounded-full shrink-0" />
               ) : (
@@ -354,7 +428,7 @@ export default function DashboardSidebar() {
                   </span>
                 </div>
               )}
-              <div className="min-w-0 flex-1">
+              <div className="hidden min-w-0 flex-1 sm:block">
                 {userCardLoading ? (
                   <div className="space-y-2">
                     <Skeleton className="h-4 w-24" />
@@ -371,7 +445,7 @@ export default function DashboardSidebar() {
                   </>
                 )}
               </div>
-              <ChevronsUpDown className="w-4 h-4 text-gray-400 shrink-0" />
+              <ChevronsUpDown className="hidden w-4 h-4 text-gray-400 shrink-0 sm:block" />
             </div>
           </button>
         </DropdownMenuTrigger>

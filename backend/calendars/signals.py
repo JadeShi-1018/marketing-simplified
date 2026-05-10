@@ -7,6 +7,26 @@ from task.models import Task
 from .models import CalendarEvent
 
 
+def _calendar_event_title(prefix="", title="", suffix=""):
+    max_length = CalendarEvent._meta.get_field('title').max_length
+    prefix = prefix or ""
+    title = title or ""
+    suffix = suffix or ""
+    full_title = f"{prefix}{title}{suffix}"
+    if len(full_title) <= max_length:
+        return full_title
+
+    available_title_length = max_length - len(prefix) - len(suffix)
+    if available_title_length <= 0:
+        return full_title[:max_length]
+
+    if available_title_length > 3:
+        title = f"{title[:available_title_length - 3]}..."
+    else:
+        title = title[:available_title_length]
+    return f"{prefix}{title}{suffix}"
+
+
 @receiver(post_save, sender=Decision)
 def generate_calendar_events_for_decision(sender, instance, created, **kwargs):
     """
@@ -48,7 +68,7 @@ def generate_calendar_events_for_decision(sender, instance, created, **kwargs):
             decision=instance,
             defaults={
                 'organization': organization,
-                'title': f"{project_prefix}{title}",
+                'title': _calendar_event_title(project_prefix, title),
                 'start_time': event_time,
             }
         )
@@ -71,7 +91,7 @@ def generate_calendar_events_for_decision(sender, instance, created, **kwargs):
             decision=instance,
             defaults={
                 'organization': organization,
-                'title': f"{project_prefix}Review: {title}",
+                'title': _calendar_event_title(f"{project_prefix}Review: ", title),
                 'start_time': instance.approved_at,
             }
         )
@@ -130,7 +150,7 @@ def generate_calendar_events_for_task(sender, instance, created, **kwargs):
             task=instance,
             defaults={
                 'organization': organization,
-                'title': f"{project_prefix}{title}{status_suffix}",
+                'title': _calendar_event_title(project_prefix, title, status_suffix),
                 'start_time': start_time,
                 'end_time': end_time,
             }
