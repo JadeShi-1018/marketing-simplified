@@ -74,6 +74,28 @@ def generate_miro_board_for_workflow_run_task(workflow_run_id: str):
         )
         return
 
+    if board is None:
+        from .models import AgentPendingExternalApproval
+
+        pend = AgentPendingExternalApproval.objects.filter(
+            workflow_run=workflow_run,
+            status='pending',
+            kind='miro_board',
+        ).order_by('-created_at').first()
+        if pend:
+            AgentMessage.objects.create(
+                session=workflow_run.session,
+                role='assistant',
+                content='Approval required before creating the Miro board.',
+                message_type='approval_request',
+                metadata={
+                    'approval_id': str(pend.id),
+                    'kind': pend.kind,
+                    'draft': pend.draft,
+                },
+            )
+        return
+
     logger.info(
         "Background Miro generation completed for workflow_run=%s board=%s",
         workflow_run_id,

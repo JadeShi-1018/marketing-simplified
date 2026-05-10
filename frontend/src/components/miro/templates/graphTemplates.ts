@@ -247,4 +247,3 @@ export function templateNodeToCreateData(
     z_index: 0,
   };
 }
-

@@ -78,6 +78,8 @@ export interface TaskData {
   origin_meeting?: OriginMeetingPayload | null;
   /** Provenance: action item this task was converted from, if any (task detail only). */
   origin_action_item?: OriginActionItemPayload | null;
+  /** Set when this task was imported from Linear. */
+  linear_issue_id?: string | null;
 }
 
 // Type for creating a new task (current_approver_id is user ID)
@@ -184,6 +186,35 @@ export interface TaskListFilters {
   created_before?: string;
   include_subtasks?: boolean;
   all_projects?: boolean;
+}
+
+/** GET /api/tasks/gantt/ — chart payload derived server-side from tasks + dates */
+export interface GanttLegendItem {
+  band: 'highest' | 'high' | 'medium' | 'low' | 'lowest';
+  label: string;
+}
+
+export interface GanttRow {
+  id: number;
+  display_key: string;
+  summary: string;
+  status_label: string;
+  priority?: string;
+  band: 'highest' | 'high' | 'medium' | 'low' | 'lowest';
+  owner_initials: string;
+  owner_color_index: number;
+  bar_start: string;
+  bar_end: string;
+  duration_days: number;
+}
+
+export interface GanttChartPayload {
+  sprint_label: string;
+  task_count: number;
+  today: string;
+  range: { start: string; end: string };
+  legend: GanttLegendItem[];
+  rows: GanttRow[];
 }
 
 export interface TaskBulkUpdateRequest {

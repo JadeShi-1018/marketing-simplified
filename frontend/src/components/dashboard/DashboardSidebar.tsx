@@ -10,7 +10,7 @@ import {
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
   User as UserIcon, CreditCard, Plug, LogOut,
-  Shield, UserCog, UserCheck, BarChart3,
+  Shield, UserCog, UserCheck, BarChart3, Sparkles,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
 import { useAuthStore } from '@/lib/authStore';
@@ -82,6 +82,7 @@ const navGroups: NavGroup[] = [
     title: 'CONTENT',
     items: [
       { label: 'Ad Variations', href: '/variations', icon: Target },
+      { label: 'Variations Studio', href: '/variations-studio', icon: Sparkles },
       {
         label: 'Ads Draft',
         href: '#',

@@ -84,6 +84,9 @@ services:
       #   condition: service_healthy
     volumes:
       # - sonar-token-data:/token
+      # Host source so backend picks up local edits without docker cp / image rebuild
+      # (matches celery-worker pattern; previously absent — caused dev pain across MBI-03)
+      - ./backend:/app
       - ../agentdoc/databackup:/app/agent_data
     command: ["/bin/bash", "/app/entrypoint-dev"]
     logging:

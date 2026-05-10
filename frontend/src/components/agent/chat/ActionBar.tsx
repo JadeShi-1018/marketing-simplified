@@ -1,6 +1,6 @@
 "use client"
 
-import { FileCheck, ListTodo, UploadCloud } from "lucide-react"
+import { FileCheck, UploadCloud } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { WorkflowStepState } from "@/types/agent"
 
@@ -28,20 +28,6 @@ export function ActionBar({ stepState, onAction, onReupload, disabled }: ActionB
           Create Decision
         </Button>
       )}
-
-      {stepState.decisionCreated && !stepState.tasksCreated && (
-        <Button
-          size="sm"
-          variant="outline"
-          className="gap-1.5 text-xs"
-          disabled={disabled}
-          onClick={() => onAction("create_tasks")}
-        >
-          <ListTodo className="h-3.5 w-3.5" />
-          Create Tasks
-        </Button>
-      )}
-
 
       <Button
         size="sm"

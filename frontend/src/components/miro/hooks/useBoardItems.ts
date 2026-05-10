@@ -218,4 +218,3 @@ export function useBoardItems(boardId: string) {
     restoreItemsOptimistic,
   };
 }
-

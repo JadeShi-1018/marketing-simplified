@@ -1,21 +1,34 @@
 "use client"
 
-import { useEffect, useRef } from "react"
+import { useEffect, useLayoutEffect, useRef } from "react"
 import { Bot, User, FileSpreadsheet, ArrowRight, CalendarPlus, UploadCloud } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { AGENT_MESSAGES } from "@/lib/agentMessages"
 import { AnomalyCard } from "./AnomalyCard"
 import { ColumnMappingCard } from "./ColumnMappingCard"
-import { DecisionCard } from "./DecisionCard"
 import { FollowUpCard } from "./FollowUpCard"
 import { MiroGenerateCard } from "./MiroGenerateCard"
 import { DistributeMessageCard } from "./DistributeMessageCard"
 import { TaskListCard } from "./TaskListCard"
+import { RecommendedMiroBoardCard } from "./RecommendedMiroBoardCard"
 import type { AnomalyItem, SuggestedDecision, RecommendedTask, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
 import { StepProgress, type StepProgressItem } from "./StepProgress"
+import type { PendingExternalApproval } from "./ExternalApprovalModal"
+import type { TaskGenerationStatus } from "./TaskListCard"
 
-export type ChatMessageType = "text" | "analysis" | "file_uploaded" | "decision_created" | "tasks_created" | "miro_status" | "step_progress" | "error" | "calendar_invite" | "column_mapping"
+export type ChatMessageType =
+  | "text"
+  | "analysis"
+  | "file_uploaded"
+  | "decision_created"
+  | "tasks_created"
+  | "miro_status"
+  | "step_progress"
+  | "error"
+  | "calendar_invite"
+  | "column_mapping"
+  | "approval_request"
 
 export interface ChatMessage {
   id: string
@@ -36,18 +49,37 @@ export interface ChatMessage {
   workflowRunId?: string
   decisionId?: number
   stepProgress?: StepProgressItem[]
+  approval?: PendingExternalApproval
 }
 
-interface MessageListProps {
+export interface MessageListProps {
   messages: ChatMessage[]
   onAction?: (action: string) => void
   onNavigate?: (view: string, message?: ChatMessage) => void
   onConfirmColumns?: (mapping: Record<string, string>) => void
   onReupload?: () => void
+  sessionId?: string | null
+  approvalDisabled?: boolean
+  approvalRequired?: boolean
+  generatedTaskIndexes?: number[]
+  skippedTaskIndexes?: number[]
+  createdTaskIdByIndex?: Record<number, number>
+  generatingTasks?: boolean
+  pendingTaskApproval?: PendingExternalApproval | null
+  selectedTaskIndexes?: number[]
+  onSelectedTaskIndexesChange?: (next: number[]) => void
+  tasksApprovalGenerating?: boolean
+  onApproveSelectedTasks?: (selectedIndexes: number[], destination?: Record<string, unknown>) => void
+  onRejectTasksApproval?: () => void
+  pendingMiroApproval?: PendingExternalApproval | null
+  miroApprovalGenerating?: boolean
+  onApproveMiroApproval?: (destination?: Record<string, unknown>) => void
+  onRejectMiroApproval?: () => void
   latestAnalysisMessageId?: string | null
   showFollowUpToggle?: boolean
   followUpActive?: boolean
   stepState?: WorkflowStepState
+  taskGenerationStatus?: TaskGenerationStatus
 }
 
 export function MessageList({
@@ -56,20 +88,86 @@ export function MessageList({
   onNavigate,
   onConfirmColumns,
   onReupload,
+  sessionId,
+  approvalDisabled,
+  approvalRequired,
+  generatedTaskIndexes,
+  skippedTaskIndexes,
+  createdTaskIdByIndex,
+  generatingTasks,
+  pendingTaskApproval,
+  selectedTaskIndexes,
+  onSelectedTaskIndexesChange,
+  tasksApprovalGenerating,
+  onApproveSelectedTasks,
+  onRejectTasksApproval,
+  pendingMiroApproval,
+  miroApprovalGenerating,
+  onApproveMiroApproval,
+  onRejectMiroApproval,
   latestAnalysisMessageId,
   showFollowUpToggle,
   followUpActive,
   stepState,
+  taskGenerationStatus,
 }: MessageListProps) {
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const prevScrollTopRef = useRef(0)
+  const prevScrollHeightRef = useRef(0)
+  const wasAtBottomRef = useRef(true)
+  const hasAnalysisTaskCard = messages.some(
+    (m) => m.type === "analysis" && Array.isArray(m.recommendedTasks) && m.recommendedTasks.length > 0
+  )
+  const latestAnalysisWithTasks = [...messages]
+    .reverse()
+    .find((m) => m.type === "analysis" && Array.isArray(m.recommendedTasks) && m.recommendedTasks.length > 0)
 
+  // Track whether the user is currently at (or near) the bottom.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+    const el = scrollContainerRef.current
+    if (!el) return
+
+    const thresholdPx = 24
+    const update = () => {
+      const distanceFromBottom = el.scrollHeight - (el.scrollTop + el.clientHeight)
+      wasAtBottomRef.current = distanceFromBottom <= thresholdPx
+      prevScrollTopRef.current = el.scrollTop
+      prevScrollHeightRef.current = el.scrollHeight
+    }
+
+    update()
+    el.addEventListener("scroll", update, { passive: true })
+    return () => el.removeEventListener("scroll", update)
+  }, [])
+
+  // On new messages:
+  // - if user is at bottom, keep them at bottom
+  // - otherwise, preserve their viewport position (so new messages don't jump the scroll)
+  useLayoutEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+
+    const prevScrollTop = prevScrollTopRef.current
+    const prevScrollHeight = prevScrollHeightRef.current
+    const nextScrollHeight = el.scrollHeight
+
+    if (wasAtBottomRef.current) {
+      el.scrollTop = nextScrollHeight
+    } else {
+      const delta = nextScrollHeight - prevScrollHeight
+      if (Number.isFinite(delta) && delta !== 0) {
+        el.scrollTop = prevScrollTop + delta
+      }
+    }
+
+    prevScrollTopRef.current = el.scrollTop
+    prevScrollHeightRef.current = el.scrollHeight
   }, [messages])
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+    <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
       {messages.map((message) => (
+        message.type === "approval_request" ? null : (
         <div
           key={message.id}
           className={cn(
@@ -151,37 +249,31 @@ export function MessageList({
               <AnomalyCard anomalies={message.anomalies} />
             )}
 
-            {/* DecisionCard: show when analysis complete and decision not yet created (or no stepState = backward compat) */}
-            {message.suggestedDecision && (!stepState || (stepState.analysisComplete && !stepState.decisionCreated)) && (
-              <DecisionCard
-                decision={message.suggestedDecision}
-                onCreateDecision={() => onAction?.("confirm_decision")}
-                onDismiss={() => {}}
-              />
-            )}
-
-            {/* TaskListCard:
-                - On analysis messages: show only BEFORE decision is created (decision card is still active)
-                - On decision_created messages: show AFTER decision created but before tasks created
-                This prevents the card from appearing twice when both message types have recommendedTasks. */}
-            {message.recommendedTasks && message.recommendedTasks.length > 0 && (
-              (message.type === "decision_created" && (!stepState || (stepState.decisionCreated && !stepState.tasksCreated))) ||
-              (message.type !== "decision_created" && (!stepState || (stepState.decisionCreated && !stepState.tasksCreated)) && !stepState?.decisionCreated)
-            ) && (
-              <TaskListCard
-                tasks={message.recommendedTasks}
-                onCreateAll={() => onAction?.("create_tasks")}
-              />
-            )}
-
-            {/* MiroGenerateCard + DistributeMessageCard: only on decision_created message, after tasks created */}
-            {message.type === "decision_created" && message.recommendedTasks && message.recommendedTasks.length > 0 && (!stepState || stepState.tasksCreated) && (
-              <MiroGenerateCard onGenerate={() => onAction?.("generate_miro")} />
-            )}
-
-            {message.type === "decision_created" && message.recommendedTasks && message.recommendedTasks.length > 0 && (!stepState || stepState.tasksCreated) && (
-              <DistributeMessageCard onDistribute={() => onAction?.("distribute_message")} />
-            )}
+            {/* TaskListCard: primary review surface. Prefer rendering on analysis messages. */}
+            {message.recommendedTasks &&
+              message.recommendedTasks.length > 0 &&
+              (message.type === "analysis" || (!hasAnalysisTaskCard && message.type === "decision_created")) && (
+                <TaskListCard
+                  tasks={message.recommendedTasks}
+                  approvalRequired={approvalRequired}
+                  generatedTaskIndexes={generatedTaskIndexes}
+                  skippedTaskIndexes={skippedTaskIndexes}
+                  createdTaskIdByIndex={createdTaskIdByIndex}
+                  generating={Boolean(tasksApprovalGenerating) || Boolean(generatingTasks)}
+                  generationStatus={taskGenerationStatus}
+                  approvalMode={Boolean(pendingTaskApproval)}
+                  selectedIndexes={selectedTaskIndexes}
+                  onSelectedIndexesChange={onSelectedTaskIndexesChange}
+                  onCreateSelected={pendingTaskApproval ? onApproveSelectedTasks : undefined}
+                  onRejectApproval={pendingTaskApproval ? onRejectTasksApproval : undefined}
+                  createButtonDisabled={Boolean(approvalDisabled) || Boolean(tasksApprovalGenerating)}
+                  onCreateAll={
+                    !pendingTaskApproval && stepState?.decisionCreated && !stepState?.tasksCreated
+                      ? () => onAction?.("create_tasks")
+                      : undefined
+                  }
+                />
+              )}
 
             {showFollowUpToggle && message.id === latestAnalysisMessageId && (!stepState || stepState.tasksCreated) && (
               <FollowUpCard
@@ -191,7 +283,36 @@ export function MessageList({
             )}
           </div>
         </div>
+        )
       ))}
+
+      {/* Action cards shown at the bottom so they're immediately visible after task creation. */}
+      {latestAnalysisWithTasks &&
+        (Boolean(stepState?.tasksCreated) || Boolean(pendingTaskApproval) || taskGenerationStatus === "awaiting_approval") && (
+        <div className="space-y-3">
+          <MiroGenerateCard
+            onGenerate={() => onAction?.("generate_miro")}
+            disabled={!Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)}
+            disabledHint={
+              !Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)
+                ? "Approve task creation to enable Miro generation."
+                : undefined
+            }
+          />
+          <DistributeMessageCard onDistribute={() => onAction?.("distribute_message")} />
+        </div>
+      )}
+
+      {pendingMiroApproval && (
+        <RecommendedMiroBoardCard
+          pending={pendingMiroApproval}
+          disabled={Boolean(approvalDisabled)}
+          generating={Boolean(miroApprovalGenerating)}
+          onApprove={onApproveMiroApproval}
+          onReject={onRejectMiroApproval}
+        />
+      )}
+
       {stepState?.analysisComplete && (
         <div className="flex justify-center pt-2 pb-1">
           <Button
@@ -205,7 +326,6 @@ export function MessageList({
           </Button>
         </div>
       )}
-      <div ref={bottomRef} />
     </div>
   )
 }

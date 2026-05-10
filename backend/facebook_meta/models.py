@@ -13,6 +13,7 @@ class AdCreativePhotoData(models.Model):
     image_hash = models.CharField(max_length=255, blank=True, default="", help_text="Hash of an image in your image library with Facebook.")
     page_welcome_message = models.CharField(max_length=512, blank=True, default="", help_text="A welcome text from page to user on Messenger once a user performs send message action on an ad")
     url = models.CharField(max_length=512, blank=True, default="", help_text="URL of an image to use in the ad.")
+    uploaded_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="uploaded_photos")
 
     def __str__(self) -> str:
         return f"PhotoData - {self.caption[:50]}"
@@ -45,6 +46,7 @@ class AdCreativeVideoData(models.Model):
     targeting = models.JSONField(blank=True, null=True, help_text="The post gating for the video.")
     title = models.CharField(max_length=255, blank=True, default="", help_text="The title of the video.")
     video_id = models.CharField(max_length=64, blank=True, default="", help_text="ID of video that user has permission to or a video in ad account video library.")
+    uploaded_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name="uploaded_videos")
 
     def __str__(self) -> str:
         return f"VideoData - {self.title}"

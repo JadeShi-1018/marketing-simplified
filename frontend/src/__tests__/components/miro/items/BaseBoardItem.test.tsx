@@ -45,8 +45,9 @@ describe('BaseBoardItem Component', () => {
       const item = createMockBoardItem({ type: 'frame' });
       const { container } = render(<BaseBoardItem {...defaultProps} item={item} />);
       
-      const frameElement = container.querySelector('.border-2.border-blue-500');
+      const frameElement = container.firstChild as HTMLElement;
       expect(frameElement).toBeInTheDocument();
+      expect(frameElement).toHaveClass('border-2', 'border-[#3CCED7]', 'bg-[#3CCED7]/10');
     });
 
     test('renders placeholder for line type', () => {
@@ -109,4 +110,3 @@ describe('BaseBoardItem Component', () => {
     });
   });
 });
-
