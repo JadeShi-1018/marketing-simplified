@@ -108,6 +108,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting_id',
             'origin_action_item',
             'tags',
+            'linear_issue_id',
         ]
         read_only_fields = [
             'id', 'status', 'owner', 'content_type', 'object_id',
@@ -116,6 +117,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'revision_round', 'revision_label', # SMP-501
             'origin_meeting',
             'origin_action_item',
+            'linear_issue_id',
         ]
 
     def to_representation(self, instance):

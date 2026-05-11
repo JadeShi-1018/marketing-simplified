@@ -7,6 +7,8 @@ import { AnomalyAlerts } from "../overview/AnomalyAlerts"
 import { RecentDecisions } from "../overview/RecentDecisions"
 import { AgentAPI } from "@/lib/api/agentApi"
 import { AgentDecisionListSkeleton } from "@/components/agent/skeletons/AgentSkeletons"
+import { Button } from "@/components/ui/button"
+import { CheckCircle2, X, XCircle } from "lucide-react"
 
 type TabValue = "alerts" | "decisions"
 
@@ -15,11 +17,21 @@ const tabs: { value: TabValue; label: string }[] = [
   { value: "decisions", label: "Decisions" },
 ]
 
+type MiroDialogState =
+  | null
+  | {
+      status: "success" | "failed"
+      boardId?: string
+      workflowRunId?: string
+      lastUpdatedAt: number
+    }
+
 export function RightPanel() {
   const { isRightPanelOpen, setActiveView, setPendingDecisionId } = useAgentLayout()
   const [activeTab, setActiveTab] = useState<TabValue>("alerts")
   const [anomalies, setAnomalies] = useState<{ type: string; severity: string; campaign: string; description: string; cost: number; roas?: number }[]>([])
   const [anomaliesLoading, setAnomaliesLoading] = useState(true)
+  const [miroDialog, setMiroDialog] = useState<MiroDialogState>(null)
 
   // Load latest anomalies from backend on mount
   useEffect(() => {
@@ -68,6 +80,24 @@ export function RightPanel() {
     return () => window.removeEventListener("agent:add-alert", handler)
   }, [])
 
+  // Listen for Miro generation completion events from chat.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { status?: "success" | "failed"; boardId?: string; workflowRunId?: string }
+        | undefined
+      if (!detail?.status) return
+      setMiroDialog({
+        status: detail.status,
+        boardId: detail.boardId,
+        workflowRunId: detail.workflowRunId,
+        lastUpdatedAt: Date.now(),
+      })
+    }
+    window.addEventListener("agent:miro-status", handler)
+    return () => window.removeEventListener("agent:miro-status", handler)
+  }, [])
+
   const handleDecisionSelect = (decisionId: number) => {
     setActiveView("decisions")
     setPendingDecisionId(decisionId)
@@ -104,6 +134,63 @@ export function RightPanel() {
         <div className="flex-1 overflow-y-auto">
           {/* Alerts Tab */}
           <div className={cn("p-3", activeTab !== "alerts" && "hidden")}>
+            {miroDialog && (
+              <div
+                className={cn(
+                  "mb-3 rounded-lg border px-3 py-2 text-sm",
+                  miroDialog.status === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+                    : "border-destructive/20 bg-destructive/10 text-foreground"
+                )}
+              >
+                <div className="flex items-start gap-2">
+                  <div className="mt-0.5 shrink-0">
+                    {miroDialog.status === "success" ? (
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    ) : (
+                      <XCircle className="h-4 w-4 text-destructive" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-medium">
+                          {miroDialog.status === "success"
+                            ? "Miro board generated successfully."
+                            : "Miro board generation failed."}
+                        </p>
+                        {miroDialog.status !== "success" && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Please try again.
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 rounded-md p-1 hover:bg-black/5"
+                        aria-label="Dismiss"
+                        onClick={() => setMiroDialog(null)}
+                      >
+                        <X className="h-4 w-4 text-muted-foreground" />
+                      </button>
+                    </div>
+                    {miroDialog.status === "success" && miroDialog.boardId && (
+                      <div className="mt-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            window.location.href = `/miro/${miroDialog.boardId}`
+                          }}
+                        >
+                          Open Miro board
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
             <AnomalyAlerts anomalies={anomalies} loading={anomaliesLoading} compact />
           </div>
 

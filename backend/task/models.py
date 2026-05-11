@@ -181,6 +181,23 @@ class Task(models.Model):
         help_text="Immutable lineage: meeting action item this task was converted from.",
     )
 
+    linear_issue_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Linear issue UUID when this task was imported from Linear.",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "linear_issue_id"],
+                condition=models.Q(linear_issue_id__isnull=False),
+                name="task_unique_linear_issue_per_project",
+            ),
+        ]
+
     def __str__(self):
         return f"Task #{self.id} - {self.summary} ({self.status})"
 

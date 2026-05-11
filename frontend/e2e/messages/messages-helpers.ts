@@ -1,5 +1,181 @@
 import { type Page, expect } from '@playwright/test';
 
+type MessagesProjectSeed = {
+	id: number;
+	name: string;
+	[key: string]: unknown;
+};
+
+type MessagesUserSeed = {
+	id: number;
+	email: string;
+	username: string;
+	roles?: string[];
+	[key: string]: unknown;
+};
+
+export const DEFAULT_MESSAGES_E2E_USER: MessagesUserSeed = {
+	id: 1,
+	email: 'e2e@example.com',
+	username: 'e2e-user',
+	is_verified: true,
+	is_staff: false,
+	roles: ['Media Buyer'],
+};
+
+export async function seedAuthenticatedUser(
+	page: Page,
+	user: MessagesUserSeed = DEFAULT_MESSAGES_E2E_USER
+) {
+	await page.addInitScript((authUser) => {
+		window.localStorage.setItem(
+			'auth-storage',
+			JSON.stringify({
+				state: {
+					token: 'e2e-access-token',
+					refreshToken: 'e2e-refresh-token',
+					organizationAccessToken: 'e2e-organization-token',
+					user: authUser,
+					isAuthenticated: true,
+					loading: false,
+					initialized: true,
+					hasHydrated: true,
+					userTeams: [],
+					selectedTeamId: null,
+				},
+				version: 0,
+			})
+		);
+	}, user);
+}
+
+export async function mockAuthenticatedUserApis(
+	page: Page,
+	user: MessagesUserSeed = DEFAULT_MESSAGES_E2E_USER
+) {
+	await page.route('**/auth/me/', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify(user),
+		});
+	});
+
+	await page.route('**/auth/me/teams/', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ team_ids: [] }),
+		});
+	});
+}
+
+export async function mockProjectShellApis(page: Page) {
+	await page.route('**/api/core/projects**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify([]),
+		});
+	});
+
+	await page.route('**/api/core/invitations/pending**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify([]),
+		});
+	});
+
+	await page.route('**/api/projects/*/meetings**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+		});
+	});
+
+	await page.route('**/api/dashboard/summary**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({}),
+		});
+	});
+
+	await page.route('**/api/decisions**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+		});
+	});
+
+	await page.route('**/api/campaigns**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify([]),
+		});
+	});
+
+	await page.route('**/api/assets**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ results: [] }),
+		});
+	});
+
+	await page.route('**/api/alerting/alert-tasks**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ results: [] }),
+		});
+	});
+}
+
+export async function seedActiveProject(page: Page, project: MessagesProjectSeed) {
+	await page.addInitScript((activeProject) => {
+		window.localStorage.setItem(
+			'project-storage',
+			JSON.stringify({
+				state: {
+					activeProject,
+					activeProjectIds: [activeProject.id],
+					inactiveProjectIds: [],
+					completedProjectIds: [],
+					hasHydrated: true,
+					loading: false,
+					error: null,
+				},
+				version: 0,
+			})
+		);
+	}, project);
+}
+
+export async function clearProjectStore(page: Page) {
+	await page.addInitScript(() => {
+		window.localStorage.setItem(
+			'project-storage',
+			JSON.stringify({
+				state: {
+					activeProject: null,
+					activeProjectIds: [],
+					inactiveProjectIds: [],
+					completedProjectIds: [],
+					hasHydrated: true,
+					loading: false,
+					error: null,
+				},
+				version: 0,
+			})
+		);
+	});
+}
+
 export async function waitForLayoutMain(page: Page) {
 	await page.setViewportSize({ width: 1280, height: 800});
 	await page.waitForLoadState('domcontentloaded');
@@ -13,98 +189,57 @@ export async function waitForLayoutMain(page: Page) {
 		timeout: 20_000,
 	});
 
-	await expect(page.locator('body')).toBeVisible({ timeout: 15_000});
+	await expect(page.locator('body')).toBeAttached({ timeout: 15_000});
+}
+
+export function getMessagesHeader(page: Page) {
+	return page.getByTestId('messages-header');
 }
 
 export function getProjectSelector(page: Page) {
-	// Sidebar also uses border-b + buttons and appears before <main> in DOM; scope to Messages chrome.
-	return page
-		.locator('main')
-		.locator('div.border-b.border-gray-200')
-		.filter({ has: page.getByRole('heading', { name: 'Messages', level: 1 }) })
-		.filter({ has: page.getByRole('button') })
-		.first();
+	return getMessagesHeader(page);
 }
 
-/** Toggle control in Messages header (folder icon + project name / “Select Project”). */
-export function getMessagesProjectToggle(page: Page) {
-	return getProjectSelector(page).getByRole('button').first();
+export function getChatRows(page: Page) {
+	return page.getByTestId('messages-chat-row');
 }
 
-/** Dropdown list panel under the project toggle (project rows are buttons inside). */
-export function getMessagesProjectDropdownPanel(page: Page) {
-	return getProjectSelector(page).locator('div.absolute.top-full.left-0.mt-1');
-}
-
-export async function openMessagesProjectDropdown(page: Page) {
-	const toggle = getMessagesProjectToggle(page);
-	await expect(toggle).toBeVisible();
-	await toggle.click();
-	await expect(getMessagesProjectDropdownPanel(page)).toBeVisible({ timeout: 5000 });
-}
-
-/** Assumes dropdown is already open. Matches option row by visible project title text. */
-export async function selectProjectOptionByVisibleName(page: Page, projectTitle: string) {
-	const panel = getMessagesProjectDropdownPanel(page);
-	await expect(panel).toBeVisible();
-	await panel.locator('button').filter({ hasText: projectTitle }).first().click();
+export function getMessagesNewChatButton(page: Page) {
+	return page.getByTestId('messages-new-chat');
 }
 
 export async function selectFirstProject(page: Page): Promise<boolean> {
-	const selector = getProjectSelector(page);
-	await expect(selector).toBeVisible();
-
-	const toggleButton = selector.getByRole('button').first();
-	const currentLabel = (await toggleButton.textContent())?.trim() || '';
-
-	// If a project is already selected (not placeholder), skip selection.
-	if (currentLabel && !/Select Project/i.test(currentLabel)) {
+	await expect(getMessagesHeader(page)).toBeVisible();
+	const newChatButton = getMessagesNewChatButton(page);
+	const newChatCount = await newChatButton.count();
+	if (newChatCount > 0 && !(await newChatButton.first().isDisabled().catch(() => true))) {
 		return true;
 	}
 
-	// No-project environment: banner is rendered instead of selectable options.
-	const noProjectBanner = page.getByText('No projects available');
-	if (await noProjectBanner.isVisible().catch(() => false)) {
-		return false;
-	}
-
-	await toggleButton.click();
-
-	const optionButtons = selector.locator('button');
-	const optionCount = await optionButtons.count();
-	if (optionCount <= 1) {
-		// Some UIs may auto-select the only project or render options outside this container.
-		// Re-check current label after opening; if selected now, continue safely.
-		const refreshedLabel = (await toggleButton.textContent())?.trim() || '';
-		if (refreshedLabel && !/Select Project/i.test(refreshedLabel)) {
-			return true;
-		}
-		return false;
-	}
-
-	await optionButtons.nth(1).click();
-	return true;
+	return !(await page.getByText('Select a project to view chats').isVisible().catch(() => false));
 }
 
 export async function assertChatListOrEmptyState(page: Page) {
-	const chatRows = page.locator('div.max-w-sm div[role="button"]');
-	const noChatsState = page.getByRole('heading', { name: 'No chats yet' });
+	const chatRows = getChatRows(page);
+	const noChatsState = page.getByText('No chats yet', { exact: true });
 	const selectProjectHint = page.getByText('Select a project to view chats');
-	const noProjectBanner = page.getByText('No projects available');
+	const selectProjectStart = page.getByRole('heading', { name: 'Select a project to start' });
+	const noDirectMessages = page.getByText('No direct messages', { exact: true });
 
 	await expect
 		.poll(async () => {
 			const rows = await chatRows.count();
 			const noChatsVisible = await noChatsState.isVisible().catch(() => false);
 			const selectHintVisible = await selectProjectHint.isVisible().catch(() => false);
-			const noProjectVisible = await noProjectBanner.isVisible().catch(() => false);
-			return rows > 0 || noChatsVisible || selectHintVisible || noProjectVisible;
+			const selectStartVisible = await selectProjectStart.isVisible().catch(() => false);
+			const noDirectMessagesVisible = await noDirectMessages.isVisible().catch(() => false);
+			return rows > 0 || noChatsVisible || selectHintVisible || selectStartVisible || noDirectMessagesVisible;
 		}, { timeout: 20_000 })
 		.toBeTruthy();
 }
 
 export async function openFirstChatIfPresent(page: Page) {
-	const chatRows = page.locator('div.max-w-sm div[role="button"]');
+	const chatRows = getChatRows(page);
 	const count = await chatRows.count();
 
 	if (count === 0) {
@@ -112,7 +247,7 @@ export async function openFirstChatIfPresent(page: Page) {
 	}
 
 	await chatRows.first().click();
-	await expect(page.getByRole('button', { name: 'Back to chat list' })).toBeVisible({
+	await expect(page.getByTestId('messages-chat-window')).toBeVisible({
 		timeout: 15_000,
 	});
 	return true;

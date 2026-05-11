@@ -24,6 +24,10 @@ class AgentSession(TimeStampedModel):
     )
     title = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    approval_required = models.BooleanField(
+        default=False,
+        help_text="When true, external side effects require user approval before commit.",
+    )
 
     class Meta:
         ordering = ['-created_at']
@@ -44,6 +48,7 @@ class AgentMessage(TimeStampedModel):
         ('decision_draft', 'Decision Draft'),
         ('task_created', 'Task Created'),
         ('confirmation_request', 'Confirmation Request'),
+        ('approval_request', 'Approval Request'),
         ('follow_up_prompt', 'Follow-up Prompt'),
         ('error', 'Error'),
     ]
@@ -455,6 +460,7 @@ class AgentWorkflowRun(TimeStampedModel):
     STATUS_CHOICES = [
         ('analyzing', 'Analyzing'),
         ('awaiting_confirmation', 'Awaiting Confirmation'),
+        ('awaiting_external_approval', 'Awaiting External Approval'),
         ('creating_decision', 'Creating Decision'),
         ('creating_tasks', 'Creating Tasks'),
         ('completed', 'Completed'),
@@ -488,7 +494,7 @@ class AgentWorkflowRun(TimeStampedModel):
         blank=True,
         related_name='workflow_runs',
     )
-    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='analyzing')
+    status = models.CharField(max_length=40, choices=STATUS_CHOICES, default='analyzing')
     current_step_order = models.PositiveIntegerField(null=True, blank=True)
     analysis_result = models.JSONField(null=True, blank=True)
     created_tasks = models.JSONField(default=list, blank=True)
@@ -548,3 +554,49 @@ class AgentStepExecution(TimeStampedModel):
 
     def __str__(self):
         return f"Run {self.workflow_run_id} - Step {self.step_order}: {self.status}"
+
+
+class AgentPendingExternalApproval(TimeStampedModel):
+    """Human-in-the-loop gate before agent commits an external side effect."""
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(
+        AgentSession,
+        on_delete=models.CASCADE,
+        related_name='pending_external_approvals',
+    )
+    workflow_run = models.ForeignKey(
+        AgentWorkflowRun,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='pending_external_approvals',
+    )
+    step_execution = models.ForeignKey(
+        AgentStepExecution,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pending_external_approvals',
+    )
+    kind = models.CharField(
+        max_length=64,
+        help_text='Registry key, e.g. task, miro_board, calendar_event, forward_message.',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    draft = models.JSONField(default=dict)
+    commit_context = models.JSONField(default=dict)
+    destination_options = models.JSONField(default=list)
+    default_destination = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PendingExternalApproval {self.id} ({self.kind}) {self.status}"

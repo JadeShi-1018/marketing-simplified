@@ -34,8 +34,11 @@ test.describe('Calendar page', () => {
       page.getByRole('button', { name: 'Next period' }),
     ).toBeVisible();
     await expect(
-      page.getByRole('button', { name: 'Calendar view' }),
-    ).toContainText('Week');
+      page.locator('[data-testid="calendar-view-tabs"]').getByRole('tab', {
+        name: 'Week',
+        exact: true,
+      }),
+    ).toHaveAttribute('aria-selected', 'true');
     await expect(page.locator('[data-testid="calendar-header-title"]')).toBeVisible();
     await expect(page.locator('[data-testid="calendar-week-view"]')).toBeVisible();
     await expect(page.locator('[data-testid="calendar-week-slot"]')).toHaveCount(24 * 7);

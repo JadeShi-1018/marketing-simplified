@@ -11,20 +11,20 @@ import {
 import { toast } from 'react-hot-toast';
 import AdDraftActionBar, {
   type ActionSpec,
-} from '@/components/ads-draft-v2/AdDraftActionBar';
-import CampaignScopeBanner from '@/components/ads-draft-v2/CampaignScopeBanner';
-import PlatformBadge from '@/components/ads-draft-v2/PlatformBadge';
-import SharePreviewModal from '@/components/ads-draft-v2/SharePreviewModal';
+} from '@/components/ads-draft/AdDraftActionBar';
+import CampaignScopeBanner from '@/components/ads-draft/CampaignScopeBanner';
+import PlatformBadge from '@/components/ads-draft/PlatformBadge';
+import SharePreviewModal from '@/components/ads-draft/SharePreviewModal';
 import DraftEditor, {
   type CtaMode,
   type DraftEditorValue,
-} from '@/components/ads-draft-v2/tiktok/DraftEditor';
-import MediaLibraryDialog from '@/components/ads-draft-v2/tiktok/MediaLibraryDialog';
-import WorkspaceSidebar from '@/components/ads-draft-v2/tiktok/WorkspaceSidebar';
+} from '@/components/ads-draft/tiktok/DraftEditor';
+import MediaLibraryDialog from '@/components/ads-draft/tiktok/MediaLibraryDialog';
+import WorkspaceSidebar from '@/components/ads-draft/tiktok/WorkspaceSidebar';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import TiktokPreview from '@/components/tiktok/TiktokPreview';
-import BrandDialog from '@/components/tasks-v2/detail/BrandDialog';
+import BrandDialog from '@/components/tasks/detail/BrandDialog';
 import {
   deleteAdDraft,
   deleteAdGroup,
@@ -141,6 +141,7 @@ function TiktokV2Content() {
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const suspendAutoSaveRef = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unavailableNoticeRef = useRef<number | null>(null);
 
   const [placement, setPlacement] = useState<Placement>('In feed');
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -250,7 +251,7 @@ function TiktokV2Content() {
         assets.primaryCreative = { ...editor.images[0] };
       }
     }
-    return Object.keys(assets).length > 0 ? assets : undefined;
+    return assets;
   }, [editor]);
 
   const saveCurrent = useCallback(async () => {
@@ -402,6 +403,23 @@ function TiktokV2Content() {
     setCurrentImageIndex(0);
   };
 
+  const handleCreativeUnavailable = useCallback((brokenCreative: TiktokMaterialItem) => {
+    setEditor((prev) => {
+      const images = prev.images.filter((item) => item.id !== brokenCreative.id);
+      const primary = prev.primary?.id === brokenCreative.id
+        ? images[0] ?? null
+        : prev.primary;
+
+      return { ...prev, primary, images };
+    });
+    setCurrentImageIndex(0);
+
+    if (unavailableNoticeRef.current !== brokenCreative.id) {
+      unavailableNoticeRef.current = brokenCreative.id;
+      toast.error('Selected media is unavailable. Please upload it again.');
+    }
+  }, []);
+
   const handleEditorChange = (patch: Partial<EditorState>) => {
     setEditor((prev) => ({ ...prev, ...patch }));
   };
@@ -540,6 +558,7 @@ function TiktokV2Content() {
                     const next = editor.images[clamped];
                     if (next) setEditor((prev) => ({ ...prev, primary: next }));
                   }}
+                  onCreativeUnavailable={handleCreativeUnavailable}
                 />
                 </div>
               </section>

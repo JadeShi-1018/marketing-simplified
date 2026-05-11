@@ -23,20 +23,28 @@ export function FloatingChatWindow() {
   } = useFloatingChat()
   const dragControls = useDragControls()
   const [title, setTitle] = useState("New Chat")
+  const [approvalRequired, setApprovalRequired] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const isOpen = floatingChat.mode !== "closed"
   const isMaximized = floatingChat.mode === "maximized"
 
-  // Fetch session title when sessionId changes
+  // Fetch session title + approval toggle when sessionId changes
   useEffect(() => {
     if (!floatingChat.sessionId) {
       setTitle("New Chat")
+      setApprovalRequired(false)
       return
     }
     AgentAPI.getSession(floatingChat.sessionId)
-      .then((s) => setTitle(s.title || "Untitled"))
-      .catch(() => setTitle("Chat"))
+      .then((s) => {
+        setTitle(s.title || "Untitled")
+        setApprovalRequired(Boolean(s.approval_required))
+      })
+      .catch(() => {
+        setTitle("Chat")
+        setApprovalRequired(false)
+      })
   }, [floatingChat.sessionId])
 
   // Listen for session changes — update title or close if deleted
@@ -44,7 +52,10 @@ export function FloatingChatWindow() {
     const handler = () => {
       if (!floatingChat.sessionId) return
       AgentAPI.getSession(floatingChat.sessionId)
-        .then((s) => setTitle(s.title || "Untitled"))
+        .then((s) => {
+          setTitle(s.title || "Untitled")
+          setApprovalRequired(Boolean(s.approval_required))
+        })
         .catch(() => closeFloatingChat())
     }
     window.addEventListener("agent:sessions-changed", handler)
@@ -125,9 +136,12 @@ export function FloatingChatWindow() {
           <FloatingTitleBar
             title={title}
             onPointerDown={handleTitleBarPointerDown}
+            sessionId={floatingChat.sessionId}
+            approvalRequired={approvalRequired}
+            onApprovalChange={setApprovalRequired}
           />
           <div className="flex-1 overflow-hidden min-h-0">
-            <AgentChatPage />
+            <AgentChatPage embeddedInFloating />
           </div>
 
           {/* Resize handle — bottom-right corner, visible only when floating */}

@@ -7,6 +7,7 @@ urlpatterns = [
     path('file/image/ad/upload/', views.upload_image_ad, name='tiktok-image-ad-upload'),
     path('material/list/', views.material_list, name='tiktok-material-list'),
     path('material/info/<int:id>/', views.material_info, name='tiktok-material-info'),
+    path('material/delete/<int:id>/', views.material_delete, name='tiktok-material-delete'),
 
     # Creation API
     path('creation/sidebar/brief_info_list/', views.brief_info_list, name='tiktok-brief-info-list'),

@@ -16,22 +16,34 @@ export interface PhotoListResponse {
   results: PhotoData[];
 }
 
+export interface PhotoUploadResponse {
+  success: boolean;
+  photo?: PhotoData;
+}
+
 /**
  * Upload a photo file
  */
-export const uploadPhoto = async (file: File, caption?: string): Promise<{ success: boolean }> => {
+export const uploadPhoto = async (file: File, caption?: string): Promise<PhotoUploadResponse> => {
   const formData = new FormData();
   formData.append('file', file);
   if (caption) {
     formData.append('caption', caption);
   }
 
-  const response = await api.post<{ success: boolean }>(
+  const response = await api.post<PhotoUploadResponse>(
     '/api/facebook_meta/photos/upload/',
     formData
   );
 
   return response.data;
+};
+
+/**
+ * Delete a photo by ID
+ */
+export const deletePhoto = async (id: number): Promise<void> => {
+  await api.delete(`/api/facebook_meta/photos/${id}/`);
 };
 
 /**
@@ -50,4 +62,3 @@ export const getPhotos = async (page = 1, pageSize = 12): Promise<PhotoListRespo
 
   return response.data;
 };
-

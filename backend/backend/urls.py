@@ -48,6 +48,7 @@ urlpatterns = [
     # Must be before any path("api/", include(...)) so /api/google-*/ is not routed to task.urls.
     path("api/google-docs/", include("google_docs_integration.urls")),
     path("api/google-calendar/", include("google_calendar_integration.urls")),
+    path("api/v1/linear/", include("linear_integration.urls")),
     path('api/', include('task.urls')),
     path('api/policy/', include('policy.urls')),
     path('api/dashboard/', include('dashboard.urls')),
@@ -73,6 +74,7 @@ urlpatterns = [
     path('api/experiment/', include('experiment.urls')),
     path('api/', include('calendars.urls')),
     path('api/', include('ad_variations.urls')),
+    path('api/ad_copy_variation/', include('ad_copy_variation.urls')),
     path('api/', include('campaign.urls')),
     path('api/slack/', include('slack_integration.urls')),
     path('api/agent/', include('agent.urls')),
