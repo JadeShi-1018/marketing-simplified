@@ -262,7 +262,7 @@ export default function DashboardLayout({
         </header>
 
         {/* Scrollable content */}
-        <main className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-4 sm:p-5 ${mainClassName}`}>
+        <main className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-1 space-y-4 sm:p-5 ${mainClassName}`}>
           {children}
         </main>
       </div>
