@@ -45,6 +45,7 @@ class TaskSerializer(serializers.ModelSerializer):
     create_as_draft = serializers.BooleanField(write_only=True, required=False, default=False)
     draft_payload = serializers.JSONField(required=False, allow_null=True)
     is_subtask = serializers.BooleanField(read_only=True)
+    subtask_count = serializers.IntegerField(read_only=True, default=0)
     parent_relationship = serializers.SerializerMethodField()
     order_in_project = serializers.IntegerField(required=False)
     approval_chain_progress = serializers.SerializerMethodField()
@@ -71,7 +72,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'current_approver', 'current_approver_id',
             'content_type', 'object_id', 'linked_object',
             'start_date', 'due_date', 'planned_start_date',
-            'is_subtask', 'parent_relationship', 'order_in_project',
+            'is_subtask', 'subtask_count', 'parent_relationship', 'order_in_project',
             'anomaly_status', 'approval_chain_progress',
             # Revision tracking fields for SMP-501
             'revision_round', 'revision_label',

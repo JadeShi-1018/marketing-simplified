@@ -9,7 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError as DRFVa
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
@@ -123,7 +123,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             'owner',
             'current_approver',
             'meeting_origin__meeting__type_definition',
-        )
+        ).annotate(subtask_count=Count('subtasks', distinct=True))
         accessible_project_ids = set(
             ProjectMember.objects.filter(
                 user=user,
@@ -992,11 +992,20 @@ class TaskViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['delete'], url_path='subtasks/(?P<subtask_id>[^/.]+)')
     def subtask_detail(self, request, pk=None, subtask_id=None):
-        """Remove a subtask relationship - DISABLED: Subtask relationships cannot be removed"""
-        return Response(
-            {'error': 'Subtask relationships cannot be removed. Subtasks are automatically deleted when all parent tasks are deleted.'},
-            status=status.HTTP_403_FORBIDDEN
-        )
+        """Remove a subtask relationship (unlink only — does not delete the task)."""
+        parent_task = self.get_object()
+        child_task = get_object_or_404(Task, pk=subtask_id)
+        qs = TaskHierarchy.objects.filter(parent_task=parent_task, child_task=child_task)
+        if not qs.exists():
+            return Response({'error': 'Subtask relationship not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # Clear is_subtask before deleting so the post_delete signal knows this
+        # is a deliberate unlink (not a cascade) and leaves the task intact.
+        has_other_parents = TaskHierarchy.objects.filter(child_task=child_task).exclude(parent_task=parent_task).exists()
+        if not has_other_parents:
+            child_task.is_subtask = False
+            child_task.save(update_fields=['is_subtask'])
+        qs.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
     
     @action(detail=True, methods=['post'], url_path='subtasks/(?P<subtask_id>[^/.]+)/move')
     def move_subtask(self, request, pk=None, subtask_id=None):

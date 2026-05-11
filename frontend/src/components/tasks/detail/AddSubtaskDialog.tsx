@@ -54,14 +54,18 @@ export default function AddSubtaskDialog({
   useEffect(() => {
     if (mode !== 'choose' || !open) return;
     const handle = setTimeout(() => {
-      TaskAPI.getTasks({ include_subtasks: true, project_id: parentProjectId })
-        .then((resp) => {
-          const rows: TaskData[] = Array.isArray(resp.data)
-            ? resp.data
-            : (resp.data as any)?.results || [];
+      Promise.all([
+        TaskAPI.getTasks({ include_subtasks: true, project_id: parentProjectId }),
+        TaskAPI.getSubtasks(parentTaskId),
+      ])
+        .then(([tasksResp, existingSubtasks]) => {
+          const rows: TaskData[] = Array.isArray(tasksResp.data)
+            ? tasksResp.data
+            : (tasksResp.data as any)?.results || [];
+          const existingIds = new Set(existingSubtasks.map((s) => s.id));
           const q = search.trim().toLowerCase();
           const filtered = rows
-            .filter((t) => t.id !== parentTaskId)
+            .filter((t) => t.id !== parentTaskId && !existingIds.has(t.id))
             .filter((t) =>
               q
                 ? (t.summary || '').toLowerCase().includes(q) ||

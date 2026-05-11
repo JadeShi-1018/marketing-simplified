@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Save, Search, Trash2, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Loader2, Save, Search, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
 import {
@@ -34,6 +34,8 @@ interface ListViewProps {
   onOpenLinearImport?: () => void;
   /** After a successful bulk push to Linear, refresh task list from parent. */
   onLinearBulkSynced?: () => void | Promise<void>;
+  /** Refresh the task list from the parent (e.g. after a drawer mutation). */
+  onRefresh?: () => void;
 }
 
 const TYPE_LABEL = TASK_TYPES.reduce<Record<string, string>>((acc, t) => {
@@ -125,6 +127,7 @@ export default function ListView({
   projectId,
   onOpenLinearImport,
   onLinearBulkSynced,
+  onRefresh,
 }: ListViewProps) {
   const router = useRouter();
   const removeTask = useTaskStore((s) => s.removeTask);
@@ -151,6 +154,30 @@ export default function ListView({
   const [truncatedSummaryIds, setTruncatedSummaryIds] = useState<number[]>([]);
   const updateTaskInStore = useTaskStore((s) => s.updateTask);
   const updateTasksBulkInStore = useTaskStore((s) => s.updateTasksBulk);
+
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [subtasksMap, setSubtasksMap] = useState<Map<number, TaskData[]>>(new Map());
+  const [loadingSubtaskIds, setLoadingSubtaskIds] = useState<Set<number>>(new Set());
+
+  const toggleSubtasks = async (e: MouseEvent, taskId: number) => {
+    e.stopPropagation();
+    if (expandedIds.has(taskId)) {
+      setExpandedIds((prev) => { const next = new Set(prev); next.delete(taskId); return next; });
+      return;
+    }
+    if (!subtasksMap.has(taskId)) {
+      setLoadingSubtaskIds((prev) => new Set(prev).add(taskId));
+      try {
+        const subs = await TaskAPI.getSubtasks(taskId);
+        setSubtasksMap((prev) => new Map(prev).set(taskId, subs));
+      } catch {
+        setSubtasksMap((prev) => new Map(prev).set(taskId, []));
+      } finally {
+        setLoadingSubtaskIds((prev) => { const next = new Set(prev); next.delete(taskId); return next; });
+      }
+    }
+    setExpandedIds((prev) => new Set(prev).add(taskId));
+  };
 
   const [filters, setFilters] = useState<TaskListFilters>({});
   const [sortKey, setSortKey] = useState<SortKey>('id_desc');
@@ -525,6 +552,11 @@ export default function ListView({
     }
     if (filters.due_date_before) {
       result = result.filter((t) => t.due_date && t.due_date <= filters.due_date_before!);
+    }
+    if (filters.has_subtasks === true) {
+      result = result.filter((t) => (t.subtask_count ?? 0) > 0);
+    } else if (filters.has_subtasks === false) {
+      result = result.filter((t) => (t.subtask_count ?? 0) === 0);
     }
     return result;
   }, [search, tasks, filters]);
@@ -1303,7 +1335,11 @@ export default function ListView({
                 const isSelected = !!task.id && selectedIds.includes(task.id);
                 const openPriorityUpward = index >= Math.max(paginatedVisible.length - 3, 0);
                 const openOverlayUpward = index >= Math.max(paginatedVisible.length - 3, 0);
+                const colSpan = bulkMode ? 8 : 7;
+                const subtasks = task.id ? (subtasksMap.get(task.id) ?? []) : [];
+                const isExpanded = !!task.id && expandedIds.has(task.id);
                 return (
+                  <React.Fragment key={task.id}>
                   <tr
                     key={task.id}
                     data-testid="task-row"
@@ -1394,13 +1430,38 @@ export default function ListView({
                             className="w-full rounded-md border border-gray-200 px-2 py-1.5 text-sm font-medium text-gray-900 outline-none focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
                           />
                         ) : (
-                          <div data-testid="task-row-open" className="group relative flex w-full items-center gap-2 text-left">
+                          <div
+                            data-testid="task-row-open"
+                            data-summary-id={task.id}
+                            className="group relative flex w-full items-center gap-2 text-left"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (bulkMode) { task.id && toggleSelection(task.id, !isSelected); return; }
+                              if (task.id) setDrawerTaskId(task.id);
+                            }}
+                          >
                             <span
-                              data-summary-id={task.id}
-                              className="block w-full truncate text-sm font-medium leading-5 text-gray-900"
+                              className="block min-w-0 flex-1 truncate text-sm font-medium leading-5 text-gray-900"
                             >
                               {highlight(task.summary || `Task #${task.id}`, search)}
                             </span>
+                            {(task.subtask_count ?? 0) > 0 && (
+                              <button
+                                data-toggle-subtasks
+                                type="button"
+                                onClick={(e) => task.id && toggleSubtasks(e as unknown as MouseEvent, task.id)}
+                                className="flex-shrink-0 text-gray-300 hover:text-gray-500"
+                                title="Toggle subtasks"
+                              >
+                                {task.id && loadingSubtaskIds.has(task.id) ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : task.id && expandedIds.has(task.id) ? (
+                                  <ChevronDown className="h-3.5 w-3.5" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            )}
                             {task.id && truncatedSummaryIds.includes(task.id) ? (
                               <div className="pointer-events-none absolute bottom-full left-0 z-20 mb-1 hidden w-[24rem] rounded-lg border border-gray-200 bg-white p-2 text-xs text-gray-700 shadow-lg group-hover:block">
                                 <div className="mb-1 font-semibold text-gray-900">{task.summary || `Task #${task.id}`}</div>
@@ -1682,6 +1743,29 @@ export default function ListView({
                       ) : null}
                     </td>
                   </tr>
+                  {isExpanded && subtasks.length === 0 && (
+                    <tr key={`${task.id}-empty`}>
+                      <td colSpan={colSpan} className="py-1.5 pl-14 text-xs text-gray-400">
+                        No subtasks.
+                      </td>
+                    </tr>
+                  )}
+                  {isExpanded && subtasks.map((sub) => (
+                    <tr
+                      key={`sub-${sub.id}`}
+                      className="cursor-pointer bg-gray-50/60 hover:bg-gray-100/60"
+                      onClick={() => sub.id && setDrawerTaskId(sub.id)}
+                    >
+                      <td colSpan={colSpan} className="py-1.5 pl-14 pr-4">
+                        <div className="flex items-center gap-3 text-sm text-gray-700">
+                          <span className="truncate font-medium">{sub.summary || `Task #${sub.id}`}</span>
+                          <span className="flex-shrink-0 text-xs text-gray-400">{sub.type}</span>
+                          <span className="flex-shrink-0 text-xs text-gray-400">{sub.owner?.username || sub.owner?.email || 'Unassigned'}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  </React.Fragment>
                 );
               })}
             </tbody>
@@ -1730,9 +1814,7 @@ export default function ListView({
       <TaskDrawer
         taskId={drawerTaskId}
         onClose={() => setDrawerTaskId(null)}
-        onTaskUpdate={() => {
-          // Optionally refresh the list when a task is updated in the drawer
-        }}
+        onTaskUpdate={() => { onRefresh?.(); }}
         taskIds={paginatedVisible.map((t) => t.id).filter(Boolean) as number[]}
         onNavigate={(dir) => {
           if (!drawerTaskId) return;

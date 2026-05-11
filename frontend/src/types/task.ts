@@ -62,7 +62,8 @@ export interface TaskData {
   priority?: string;
   planned_start_date?: string | null;
   linked_object?: unknown;
-  is_subtask?: boolean; // Indicates if this task is a subtask
+  is_subtask?: boolean;
+  subtask_count?: number;
   parent_relationship?: any; // Parent relationship if this is a subtask
   order_in_project?: number; // Order of task within its project
   approval_chain_progress?: ApprovalChainProgress | null;
@@ -179,7 +180,8 @@ export interface TaskListFilters {
   priority?: string | string[];
   owner_id?: number | number[];
   current_approver_id?: number | number[];
-  has_parent?: boolean; // true = subtasks only, false = top-level only
+  has_parent?: boolean;
+  has_subtasks?: boolean;
   due_date_after?: string; // YYYY-MM-DD
   due_date_before?: string;
   created_after?: string;

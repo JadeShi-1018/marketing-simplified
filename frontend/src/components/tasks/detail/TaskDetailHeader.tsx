@@ -81,7 +81,6 @@ export default function TaskDetailHeader({
   const lastSaved = useRef(task.summary || '');
   const titleTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const dueDateInputRef = useRef<HTMLInputElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
   const resizeTitle = useCallback(() => {
     const textarea = titleTextareaRef.current;
@@ -104,17 +103,7 @@ export default function TaskDetailHeader({
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }, [editingTitle, resizeTitle]);
 
-  // Close priority/owner popovers on outside click
-  useEffect(() => {
-    if (!openField) return;
-    const handler = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setOpenField(null);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [openField]);
+  // Popover outside-click is handled by the transparent overlay rendered below
 
   // Auto-focus the date input when editing starts
   useEffect(() => {
@@ -166,7 +155,7 @@ export default function TaskDetailHeader({
   const overdue = isDueOverdue(task.due_date);
 
   return (
-    <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
+    <section className="rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
       {/* Top bar */}
       <div className={`flex items-center border-b border-gray-100 px-6 py-2 ${isDrawer ? 'justify-end' : 'justify-between'}`}>
         {!isDrawer && (
@@ -280,7 +269,15 @@ export default function TaskDetailHeader({
 
         {/* Pills row — status, priority (editable), type, owner (editable), due date (editable) */}
         {!loading && (
-          <div ref={popoverRef} className="relative mt-4 flex flex-wrap items-center gap-2">
+          <>
+          {openField && (
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setOpenField(null)}
+              aria-hidden="true"
+            />
+          )}
+          <div className="relative mt-4 flex flex-wrap items-center gap-2">
             {/* Status — display only; FSMActionBar handles transitions */}
             <StatusPill status={task.status} />
 
@@ -298,7 +295,7 @@ export default function TaskDetailHeader({
                 {priorityMeta.label}
               </button>
               {openField === 'priority' && (
-                <div className="absolute left-0 top-full z-20 mt-1 w-32 overflow-hidden rounded-lg bg-white py-1 shadow-lg ring-1 ring-gray-100">
+                <div className="absolute left-0 top-full z-20 mt-1 w-32 overflow-y-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-gray-100" style={{ maxHeight: '40vh' }}>
                   {PRIORITY_VALUES.map((p) => {
                     const meta = PRIORITY_TOKEN[p];
                     const { Icon } = meta;
@@ -338,7 +335,7 @@ export default function TaskDetailHeader({
                 {ownerName}
               </button>
               {openField === 'owner' && (
-                <div className="absolute left-0 top-full z-20 mt-1 w-48 overflow-hidden rounded-lg bg-white py-1 shadow-lg ring-1 ring-gray-100">
+                <div className="absolute left-0 top-full z-20 mt-1 w-48 overflow-y-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-gray-100" style={{ maxHeight: '40vh' }}>
                   <button
                     type="button"
                     onClick={() => { setOpenField(null); patchField({ owner_id: null }); }}
@@ -403,11 +400,12 @@ export default function TaskDetailHeader({
               </button>
             )}
           </div>
+          </>
         )}
       </div>
 
       {/* FSM action bar */}
-      <div className="border-t border-gray-100 bg-gray-50/40 px-6 py-3">
+      <div className="overflow-hidden rounded-b-xl border-t border-gray-100 bg-gray-50/40 px-6 py-3">
         {loading ? (
           <div className="flex flex-wrap items-center gap-2">
             <Skeleton className="h-8 w-28 rounded-md" />

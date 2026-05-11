@@ -34,6 +34,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [visible, setVisible] = useState(false);
+  const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -94,21 +95,21 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     onTaskUpdate?.();
   }, [load, onTaskUpdate]);
 
-  // Keyboard handler: Escape closes, j/k navigates (skip when an input is focused)
+  // Keyboard handler: Escape closes, j/k navigates (skip when an input or lightbox is focused)
   useEffect(() => {
     if (taskId === null) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { onClose(); return; }
       const tag = (e.target as HTMLElement)?.tagName;
       const isEditable = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable;
-      if (!isEditable && onNavigate) {
+      if (!isEditable && !attachmentPreviewOpen && onNavigate) {
         if (e.key === 'j') { e.preventDefault(); onNavigate('next'); }
         if (e.key === 'k') { e.preventDefault(); onNavigate('prev'); }
       }
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [taskId, onClose, onNavigate]);
+  }, [taskId, onClose, onNavigate, attachmentPreviewOpen]);
 
   // Prevent body scroll while drawer is open
   useEffect(() => {
@@ -266,6 +267,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                   readOnly={Boolean(readOnly)}
                   refreshKey={refreshKey}
                   loading={loading}
+                  onMutated={onMutated}
                 />
                 <TaskRelationsBlock
                   task={taskShell}
@@ -277,6 +279,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                     taskId={task?.id ?? 0}
                     readOnly={Boolean(readOnly)}
                     loading={loading}
+                    onPreviewChange={setAttachmentPreviewOpen}
                   />
                 )}
                 <PropertiesPanel

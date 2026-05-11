@@ -41,7 +41,9 @@ def handle_subtask_orphan_check(sender, instance, **kwargs):
         child_task=child_task
     )
     
-    if not remaining_parents.exists():
-        # No remaining parents, delete the orphaned subtask
+    if not remaining_parents.exists() and child_task.is_subtask:
+        # No remaining parents and still marked as subtask → parent was cascade-deleted;
+        # delete the now-orphaned subtask.  If is_subtask is already False the unlink
+        # view cleared it intentionally, so we leave the task alone.
         child_task.delete()
 
