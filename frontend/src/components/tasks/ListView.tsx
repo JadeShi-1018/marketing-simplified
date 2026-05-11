@@ -626,7 +626,7 @@ export default function ListView({
                   : 'Import Linear issues as tasks in this project'
               }
               onClick={onOpenLinearImport}
-              className="inline-flex h-8 items-center gap-1.5 border-r border-gray-200 px-2.5 text-xs font-semibold text-gray-800 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap border-r border-gray-200 px-2.5 py-2 text-xs font-semibold leading-none text-gray-800 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ArrowDownToLine className="h-3.5 w-3.5 shrink-0 text-[#5E6AD2]" aria-hidden />
               Import from Linear
@@ -642,7 +642,7 @@ export default function ListView({
                     : 'Push selected tasks to Linear'
               }
               onClick={openLinearOutput}
-              className="inline-flex h-8 items-center gap-1.5 bg-[#5E6AD2]/10 px-2.5 text-xs font-semibold text-[#4a55b8] transition hover:bg-[#5E6AD2]/15 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-9 items-center gap-1.5 whitespace-nowrap bg-[#5E6AD2]/10 px-2.5 py-2 text-xs font-semibold leading-none text-[#4a55b8] transition hover:bg-[#5E6AD2]/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ArrowUpToLine className="h-3.5 w-3.5 shrink-0 text-[#5E6AD2]" aria-hidden />
               Output to Linear

@@ -88,6 +88,16 @@ const ROOT_PATHS = new Set([
   '/timeline',
 ]);
 
+const MOBILE_VIEWPORT_QUERY = '(max-width: 639px)';
+
+const isMobileViewport = (): boolean =>
+  typeof window !== 'undefined' && window.matchMedia(MOBILE_VIEWPORT_QUERY).matches;
+
+const persistUpcomingMeetingsPanelPreference = (next: boolean) => {
+  localStorage.setItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY, String(next));
+  document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(next)}; path=/; max-age=31536000; samesite=lax`;
+};
+
 export default function DashboardLayout({
   children,
   alerts = [],
@@ -117,13 +127,33 @@ export default function DashboardLayout({
   const useExplicit = upcomingMeetings && upcomingMeetings.length > 0;
 
   useEffect(() => {
-    const stored = localStorage.getItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY);
-    if (stored === 'false' || stored === 'true') {
-      const storedOpen = normalizeUpcomingMeetingsPanelOpen(stored);
-      setIsPanelOpen(storedOpen);
-      document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(storedOpen)}; path=/; max-age=31536000; samesite=lax`;
-    }
+    const mediaQuery = window.matchMedia(MOBILE_VIEWPORT_QUERY);
+    const syncPanelStateForViewport = () => {
+      if (mediaQuery.matches) {
+        setIsPanelOpen(false);
+        return;
+      }
+      const stored = localStorage.getItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY);
+      if (stored === 'false' || stored === 'true') {
+        const storedOpen = normalizeUpcomingMeetingsPanelOpen(stored);
+        setIsPanelOpen(storedOpen);
+        document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(storedOpen)}; path=/; max-age=31536000; samesite=lax`;
+      }
+    };
+
+    syncPanelStateForViewport();
+    mediaQuery.addEventListener('change', syncPanelStateForViewport);
+
+    return () => {
+      mediaQuery.removeEventListener('change', syncPanelStateForViewport);
+    };
   }, [setIsPanelOpen]);
+
+  useEffect(() => {
+    if (isMobileViewport()) {
+      setIsPanelOpen(false);
+    }
+  }, [pathname, setIsPanelOpen]);
 
   useEffect(() => {
     const previousHtmlOverflow = document.documentElement.style.overflow;
@@ -177,10 +207,13 @@ export default function DashboardLayout({
 
   const meetingsForPanel = useExplicit ? upcomingMeetings! : autoMeetings;
   const toggleMeetingsPanel = () => {
+    if (isMobileViewport()) {
+      setIsPanelOpen((prev) => !prev);
+      return;
+    }
     setIsPanelOpen((prev) => {
       const next = !prev;
-      localStorage.setItem(UPCOMING_MEETINGS_PANEL_STORAGE_KEY, String(next));
-      document.cookie = `${UPCOMING_MEETINGS_PANEL_STORAGE_KEY}=${String(next)}; path=/; max-age=31536000; samesite=lax`;
+      persistUpcomingMeetingsPanelPreference(next);
       return next;
     });
   };
@@ -229,7 +262,7 @@ export default function DashboardLayout({
         </header>
 
         {/* Scrollable content */}
-        <main className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-5 space-y-4 ${mainClassName}`}>
+        <main className={`min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-4 sm:p-5 ${mainClassName}`}>
           {children}
         </main>
       </div>

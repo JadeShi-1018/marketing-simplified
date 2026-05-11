@@ -57,7 +57,7 @@ export default function TaskTypeFieldsSection({ schema, values, onChange }: Prop
 }
 
 const INPUT_BASE =
-  'w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30';
+  'min-w-0 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30';
 
 function FieldRow({
   schemaType,
@@ -82,7 +82,7 @@ function FieldRow({
       </label>
       {renderControl(id, field, value, options, onChange)}
       {field.helpText && (
-        <p className="mt-1 text-[11px] text-gray-400">{field.helpText}</p>
+        <p className="mt-1 break-words text-[11px] text-gray-400">{field.helpText}</p>
       )}
     </div>
   );

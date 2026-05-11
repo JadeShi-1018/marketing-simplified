@@ -105,8 +105,8 @@ export default function AgentSidePanel() {
         />
       )}
       <aside
-        className={`fixed bottom-0 right-0 top-12 z-50 flex w-[min(420px,calc(100vw-3.5rem))] shrink-0 overflow-hidden border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 sm:static sm:z-auto sm:h-screen sm:translate-x-0 sm:shadow-none ${
-          isOpen ? 'translate-x-0' : 'translate-x-full sm:w-0 pointer-events-none'
+        className={`fixed bottom-0 right-0 top-12 z-50 flex w-[min(420px,calc(100vw-3.5rem))] shrink-0 overflow-hidden border-l border-gray-200 bg-white shadow-2xl transition-transform duration-300 sm:static sm:z-auto sm:h-screen sm:shadow-none ${
+          isOpen ? 'translate-x-0 sm:translate-x-0' : 'translate-x-full sm:w-0 sm:translate-x-full pointer-events-none'
         }`}
         style={isOpen ? { width: `min(${width}px, calc(100vw - 3.5rem))` } : undefined}
         aria-hidden={!isOpen}
