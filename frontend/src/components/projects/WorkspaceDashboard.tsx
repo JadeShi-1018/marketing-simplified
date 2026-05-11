@@ -382,7 +382,7 @@ function HorizontalBarChart({ labels, values, colors }: {
           >
             {/* invisible hit area for easier hover */}
             <rect x={LABEL_W} y={y - 14} width={BAR_AREA} height={28} fill="transparent" />
-            <text x={LABEL_W - 8} y={y + 4} textAnchor="end" fontSize={11}
+            <text x={LABEL_W - 8} y={y + 4} textAnchor="end" fontSize={6}
               fill={dimmed ? '#ccc' : '#555'}
               style={{ transition: 'fill 0.15s' }}
             >
@@ -607,7 +607,7 @@ function LineChart({ labels, series }: {
   }
 
   // Tooltip box dimensions
-  const TIP_W = 96, TIP_H = series.length * 14 + 16;
+  const TIP_W = 82, TIP_H = series.length * 11 + 13;
 
   return (
     <svg
@@ -634,7 +634,7 @@ function LineChart({ labels, series }: {
         if (!lbl) return null;
         const { x } = toXY(i, 0);
         return (
-          <text key={i} x={x} y={H - 4} textAnchor="middle" fontSize={6}
+          <text key={i} x={x} y={H - 8} textAnchor="middle" fontSize={3.5}
             fill={activeIdx === i ? '#555' : '#aaa'}
             fontWeight={activeIdx === i ? 600 : 400}
             style={{ transition: 'fill 0.1s' }}
@@ -683,16 +683,16 @@ function LineChart({ labels, series }: {
               stroke="#c0c0c0" strokeWidth={1} strokeDasharray="3 2"
             />
             {/* Tooltip box */}
-            <rect x={tipX} y={tipY} width={TIP_W} height={TIP_H} rx={5} fill="#475569" />
+            <rect x={tipX} y={tipY} width={TIP_W} height={TIP_H} rx={4} fill="#475569" />
             {/* Date label */}
-            <text x={tipX + 7} y={tipY + 11} fontSize={5.5} fill="#aaa" fontWeight={600}>
+            <text x={tipX + 6} y={tipY + 9} fontSize={4.5} fill="#aaa" fontWeight={600}>
               {labels[activeIdx] || `Day ${activeIdx + 1}`}
             </text>
             {/* Series values */}
             {series.map((s, si) => (
               <g key={s.label}>
-                <circle cx={tipX + 9} cy={tipY + 18 + si * 14} r={2.5} fill={s.color} />
-                <text x={tipX + 15} y={tipY + 21 + si * 14} fontSize={6.5} fill="#fff">
+                <circle cx={tipX + 8} cy={tipY + 14 + si * 11} r={2} fill={s.color} />
+                <text x={tipX + 13} y={tipY + 16.5 + si * 11} fontSize={3.5} fill="#fff">
                   {s.label}: {s.values[activeIdx] ?? 0}
                 </text>
               </g>
