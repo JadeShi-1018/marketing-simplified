@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Loader2, Save, Search, Trash2, X } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Loader2, Plus, Save, Search, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
 import {
@@ -24,6 +24,7 @@ import TaskListRowContextMenu, {
 import LinearBulkOutputModal from '@/components/linear/LinearBulkOutputModal';
 import { TaskFilterPanel } from './TaskFilterPanel';
 import TaskDrawer from './TaskDrawer';
+import QuickTaskCreate from './QuickTaskCreate';
 
 interface ListViewProps {
   tasks: TaskData[];
@@ -425,6 +426,7 @@ export default function ListView({
     };
   }, [projectId]);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [rowMenu, setRowMenu] = useState<TaskListRowContextMenuState>(null);
   const [menuMembers, setMenuMembers] = useState<ProjectMemberData[]>([]);
   const [menuMembersLoading, setMenuMembersLoading] = useState(false);
@@ -1256,7 +1258,17 @@ export default function ListView({
           <div className="px-6 py-16 text-center">
             <p className="text-sm font-medium text-gray-900">No tasks yet</p>
             <p className="mt-1 text-xs text-gray-500">
-              Click <span className="font-medium text-gray-700">Create task</span> to add the first one.
+              {projectId ? (
+                <button
+                  type="button"
+                  onClick={() => setQuickCreateOpen(true)}
+                  className="font-medium text-[#2ab5be] underline-offset-2 hover:underline"
+                >
+                  Add the first task
+                </button>
+              ) : (
+                <>Click <span className="font-medium text-gray-700">Create task</span> to add the first one.</>
+              )}
             </p>
           </div>
         ) : (
@@ -1768,6 +1780,20 @@ export default function ListView({
                   </React.Fragment>
                 );
               })}
+              {!loading && !error && projectId && (
+                <tr data-testid="inline-add-task-row">
+                  <td colSpan={bulkMode ? 8 : 7} className="border-t border-dashed border-gray-100">
+                    <button
+                      type="button"
+                      onClick={() => setQuickCreateOpen(true)}
+                      className="flex w-full items-center gap-2 px-4 py-2.5 text-xs text-gray-400 transition hover:bg-gray-50/60 hover:text-gray-600"
+                    >
+                      <Plus className="h-3.5 w-3.5 shrink-0" />
+                      Add a task
+                    </button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         )}
@@ -1811,6 +1837,25 @@ export default function ListView({
           void onLinearBulkSynced?.();
         }}
       />
+      {projectId && (
+        <QuickTaskCreate
+          projectId={projectId}
+          open={quickCreateOpen}
+          onClose={() => setQuickCreateOpen(false)}
+          onCreated={(task) => {
+            setCurrentPage(1);
+            const q = search.trim().toLowerCase();
+            const hiddenBySearch = !!q && !`${task.summary ?? ''} ${task.type ?? ''} ${task.owner?.username ?? ''}`.toLowerCase().includes(q);
+            const hiddenByStatus = !!filters.status && !(Array.isArray(filters.status) ? filters.status : [filters.status]).includes(task.status ?? '');
+            const hiddenByPriority = !!filters.priority && !(Array.isArray(filters.priority) ? filters.priority : [filters.priority]).includes(task.priority ?? '');
+            const hiddenByType = !!filters.type && !(Array.isArray(filters.type) ? filters.type : [filters.type]).includes(task.type ?? '');
+            if (hiddenBySearch || hiddenByStatus || hiddenByPriority || hiddenByType) {
+              toast('Task created but hidden by your active filters — clear them to see it.', { icon: '⚠️', duration: 5000 });
+            }
+            if (task.id) setDrawerTaskId(task.id);
+          }}
+        />
+      )}
       <TaskDrawer
         taskId={drawerTaskId}
         onClose={() => setDrawerTaskId(null)}

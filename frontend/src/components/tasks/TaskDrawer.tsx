@@ -9,6 +9,7 @@ import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import type { TaskData } from '@/types/task';
 
 import TaskDetailHeader from '@/components/tasks/detail/TaskDetailHeader';
+import ConfirmDialog from '@/components/common/ConfirmDialog';
 import TaskDescriptionBlock from '@/components/tasks/detail/TaskDescriptionBlock';
 import TaskTypeBlock from '@/components/tasks/detail/TaskTypeBlock';
 import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
@@ -35,6 +36,8 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
   const [refreshKey, setRefreshKey] = useState(0);
   const [visible, setVisible] = useState(false);
   const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +50,12 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     } else {
       setVisible(false);
     }
+  }, [taskId]);
+
+  // Reset delete dialog when the task changes or drawer closes (fixes stale dialog on nav/backdrop)
+  useEffect(() => {
+    setDeleteConfirmOpen(false);
+    setDeleteBusy(false);
   }, [taskId]);
 
   const load = useCallback(async () => {
@@ -235,16 +244,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                 readOnly={Boolean(readOnly)}
                 onUpdated={onMutated}
                 onMutated={onMutated}
-                onDelete={async () => {
-                  if (!task?.id) return;
-                  try {
-                    await TaskAPI.deleteTask(task.id);
-                    onTaskUpdate?.();
-                    onClose();
-                  } catch (e) {
-                    toast.error((e as any)?.response?.data?.detail || 'Delete failed');
-                  }
-                }}
+                onDelete={() => setDeleteConfirmOpen(true)}
                 loading={loading}
                 isDrawer
               />
@@ -302,6 +302,34 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           )}
         </div>
       </div>
+      <ConfirmDialog
+        isOpen={deleteConfirmOpen}
+        title="Delete task"
+        message={
+          task
+            ? `"${task.summary || `Task #${task.id}`}" will be permanently removed. This cannot be undone.`
+            : ''
+        }
+        type="danger"
+        confirmText={deleteBusy ? 'Deleting…' : 'Delete'}
+        confirmDisabled={deleteBusy}
+        onConfirm={async () => {
+          if (!task?.id || deleteBusy) return;
+          setDeleteBusy(true);
+          try {
+            await TaskAPI.deleteTask(task.id);
+            toast.success('Task deleted');
+            setDeleteConfirmOpen(false);
+            onTaskUpdate?.();
+            onClose();
+          } catch (e) {
+            toast.error((e as any)?.response?.data?.detail || 'Delete failed');
+          } finally {
+            setDeleteBusy(false);
+          }
+        }}
+        onCancel={() => setDeleteConfirmOpen(false)}
+      />
     </div>
   );
 }

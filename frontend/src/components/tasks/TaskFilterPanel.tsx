@@ -506,6 +506,7 @@ export function TaskFilterPanel({
     <div ref={rootRef} className="relative inline-flex text-left">
       <button
         type="button"
+        data-testid="filter-panel-trigger"
         className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
         onClick={() => setOpen((prev) => !prev)}
       >

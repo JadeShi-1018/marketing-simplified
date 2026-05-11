@@ -9,6 +9,7 @@ interface ConfirmDialogProps {
   type?: "warning" | "danger" | "info";
   confirmText?: string;
   cancelText?: string;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -20,6 +21,7 @@ export default function ConfirmDialog({
   type = "warning",
   confirmText = "OK",
   cancelText = "Cancel",
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -81,7 +83,8 @@ export default function ConfirmDialog({
           </button>
           <button
             onClick={onConfirm}
-            className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors ${buttonColorMap[type]}`}
+            disabled={confirmDisabled}
+            className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${buttonColorMap[type]}`}
           >
             {confirmText}
           </button>
