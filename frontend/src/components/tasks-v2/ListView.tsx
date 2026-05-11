@@ -13,6 +13,10 @@ import {
   TASK_TYPES,
   formatDateShort,
 } from './TYPE_META';
+import {
+  START_MUST_BE_ON_OR_BEFORE_DUE,
+  violatesStartBeforeDue,
+} from '@/lib/tasks-v2/taskScheduleDates';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { useTaskStore } from '@/lib/taskStore';
@@ -41,6 +45,7 @@ const TABLE_COLUMN_WIDTHS = {
   status: 'w-[118px]',
   owner: 'w-[116px]',
   approver: 'w-[116px]',
+  start: 'w-[104px]',
   due: 'w-[104px]',
 } as const;
 
@@ -69,6 +74,8 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
   const [summaryDraft, setSummaryDraft] = useState('');
   const [openDuePickerTaskId, setOpenDuePickerTaskId] = useState<number | null>(null);
   const [dueDraftByTaskId, setDueDraftByTaskId] = useState<Record<number, string>>({});
+  const [openStartPickerTaskId, setOpenStartPickerTaskId] = useState<number | null>(null);
+  const [startDraftByTaskId, setStartDraftByTaskId] = useState<Record<number, string>>({});
   const [openPriorityTaskId, setOpenPriorityTaskId] = useState<number | null>(null);
   const [openStatusTaskId, setOpenStatusTaskId] = useState<number | null>(null);
   const [openOwnerTaskId, setOpenOwnerTaskId] = useState<number | null>(null);
@@ -103,6 +110,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
   useEffect(() => {
     const closeMenus = () => {
       setOpenDuePickerTaskId(null);
+      setOpenStartPickerTaskId(null);
       setOpenPriorityTaskId(null);
       setOpenStatusTaskId(null);
       setOpenOwnerTaskId(null);
@@ -467,6 +475,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
   const openDuePicker = (task: TaskData) => {
     if (!task.id) return;
     setOpenPriorityTaskId(null);
+    setOpenStartPickerTaskId(null);
     setOpenDuePickerTaskId(task.id);
     setDueDraftByTaskId((prev) => ({
       ...prev,
@@ -474,16 +483,50 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
     }));
   };
 
+  const openStartPicker = (task: TaskData) => {
+    if (!task.id) return;
+    setOpenPriorityTaskId(null);
+    setOpenDuePickerTaskId(null);
+    setOpenStartPickerTaskId(task.id);
+    setStartDraftByTaskId((prev) => ({
+      ...prev,
+      [task.id as number]: task.start_date ?? '',
+    }));
+  };
+
   const commitDueDate = async (task: TaskData, nextValue: string | null) => {
+    const nextDue = nextValue || undefined;
+    if (violatesStartBeforeDue(task.start_date ?? null, nextDue ?? null)) {
+      toast.error(START_MUST_BE_ON_OR_BEFORE_DUE);
+      return;
+    }
     const ok = await updateSingleTask(
       task,
-      { due_date: nextValue || undefined },
+      { due_date: nextDue },
       { due_date: nextValue },
       'Failed to update due date'
     );
     if (ok) {
       toast.success(nextValue ? 'Due date updated' : 'Due date cleared');
       setOpenDuePickerTaskId(null);
+    }
+  };
+
+  const commitStartDate = async (task: TaskData, nextValue: string | null) => {
+    const nextStart = nextValue || null;
+    if (violatesStartBeforeDue(nextStart, task.due_date ?? null)) {
+      toast.error(START_MUST_BE_ON_OR_BEFORE_DUE);
+      return;
+    }
+    const ok = await updateSingleTask(
+      task,
+      { start_date: nextStart },
+      { start_date: nextValue },
+      'Failed to update start date'
+    );
+    if (ok) {
+      toast.success(nextValue ? 'Start date updated' : 'Start date cleared');
+      setOpenStartPickerTaskId(null);
     }
   };
 
@@ -627,6 +670,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
               <col className={TABLE_COLUMN_WIDTHS.status} />
               <col className={TABLE_COLUMN_WIDTHS.owner} />
               <col className={TABLE_COLUMN_WIDTHS.approver} />
+              <col className={TABLE_COLUMN_WIDTHS.start} />
               <col className={TABLE_COLUMN_WIDTHS.due} />
             </colgroup>
             <thead className="border-b border-gray-100 bg-gray-50/60 text-[11px] font-medium uppercase tracking-wide text-gray-400">
@@ -647,6 +691,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                 <th className={`${TABLE_COLUMN_WIDTHS.status} px-4 py-2.5 text-left`}>Status</th>
                 <th className={`${TABLE_COLUMN_WIDTHS.owner} px-4 py-2.5 text-left`}>Owner</th>
                 <th className={`${TABLE_COLUMN_WIDTHS.approver} px-4 py-2.5 text-left`}>Approver</th>
+                <th className={`${TABLE_COLUMN_WIDTHS.start} px-4 py-2.5 text-left`}>Start</th>
                 <th className={`${TABLE_COLUMN_WIDTHS.due} px-5 py-2.5 text-left`}>Due</th>
               </tr>
             </thead>
@@ -681,6 +726,9 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                       <td className={`${TABLE_COLUMN_WIDTHS.approver} px-4 py-3`}>
                         <Skeleton className="h-3 w-16" />
                       </td>
+                      <td className={`${TABLE_COLUMN_WIDTHS.start} px-4 py-3`}>
+                        <Skeleton className="h-3 w-14" />
+                      </td>
                       <td className={`${TABLE_COLUMN_WIDTHS.due} px-5 py-3`}>
                         <div className="flex justify-start">
                           <Skeleton className="h-3 w-14" />
@@ -713,18 +761,6 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                         title={`Priority: ${priority}`}
                       />
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="min-w-0 max-w-[32rem]">
-                        <div className="truncate font-medium text-gray-900">
-                          {task.summary || `Task #${task.id}`}
-                        </div>
-                        {task.description?.trim() ? (
-                          <div className="mt-0.5 line-clamp-2 text-sm font-bold text-gray-900">
-                            {task.description.trim()}
-                          </div>
-                        ) : null}
-                      </div>
-                    </td>
                     {bulkMode ? (
                       <td
                         className={`${TABLE_COLUMN_WIDTHS.select} align-middle px-2 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}
@@ -739,7 +775,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                       </td>
                     ) : null}
                     <td className={`align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
-                      <div className="min-w-0">
+                      <div className="min-w-0 max-w-[32rem]">
                         {editingSummaryId === task.id ? (
                           <input
                             autoFocus
@@ -797,6 +833,11 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                             )}
                           </div>
                         )}
+                        {task.description?.trim() ? (
+                          <div className="mt-0.5 line-clamp-2 text-xs font-medium text-gray-600">
+                            {task.description.trim()}
+                          </div>
+                        ) : null}
                       </div>
                     </td>
                     <td className={`${TABLE_COLUMN_WIDTHS.type} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs font-medium uppercase tracking-wide text-gray-500`}>
@@ -811,6 +852,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                             setOpenOwnerTaskId(null);
                             setOpenApproverTaskId(null);
                             setOpenDuePickerTaskId(null);
+                            setOpenStartPickerTaskId(null);
                             setOpenStatusTaskId((prev) => (prev === task.id ? null : task.id ?? null));
                           }}
                           className={`inline-flex h-8 w-full items-center rounded-[6px] border border-transparent px-3 text-xs font-medium ${statusMeta.classes} outline-none transition hover:ring-1 hover:ring-gray-200`}
@@ -854,6 +896,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                             setOpenStatusTaskId(null);
                             setOpenApproverTaskId(null);
                             setOpenDuePickerTaskId(null);
+                            setOpenStartPickerTaskId(null);
                             setOpenOwnerTaskId((prev) => (prev === task.id ? null : task.id ?? null));
                           }}
                           className="inline-flex h-8 w-full items-center justify-start truncate rounded-md border border-transparent px-1 text-left text-xs text-gray-700 transition hover:border-[#2fc6d6]/70 hover:bg-[#2fc6d6]/5 hover:px-3"
@@ -914,6 +957,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                                 setOpenStatusTaskId(null);
                                 setOpenOwnerTaskId(null);
                                 setOpenDuePickerTaskId(null);
+                                setOpenStartPickerTaskId(null);
                                 setOpenApproverTaskId((prev) => (prev === task.id ? null : task.id ?? null));
                               }}
                               className={`inline-flex h-8 w-full items-center justify-start truncate rounded-md border border-transparent px-1 text-left text-xs transition ${isDisabled
@@ -985,6 +1029,69 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                           </div>
                         );
                       })()}
+                    </td>
+                    <td
+                      className={`${TABLE_COLUMN_WIDTHS.start} relative align-middle px-3 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-left text-xs tabular-nums text-gray-500`}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpenStatusTaskId(null);
+                          setOpenOwnerTaskId(null);
+                          setOpenApproverTaskId(null);
+                          openStartPicker(task);
+                        }}
+                        className="inline-flex h-7 w-full items-center justify-start rounded-md border border-transparent px-2 text-left text-xs tabular-nums text-gray-700 transition hover:border-[#2fc6d6]/70 hover:bg-[#2fc6d6]/5"
+                      >
+                        {task.start_date ? formatDateShort(task.start_date) : '—'}
+                      </button>
+                      {openStartPickerTaskId === task.id ? (
+                        <div
+                          className={`absolute right-0 z-20 w-52 rounded-lg border border-gray-200 bg-white p-2 shadow-lg ${index >= Math.max(visible.length - 3, 0) ? 'bottom-11' : 'top-11'}`}
+                        >
+                          <input
+                            type="date"
+                            lang="en-GB"
+                            value={startDraftByTaskId[task.id ?? -1] ?? ''}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) =>
+                              setStartDraftByTaskId((prev) => ({
+                                ...prev,
+                                [task.id as number]: e.target.value,
+                              }))
+                            }
+                            className="h-9 w-full rounded-md border border-gray-200 bg-white px-2 text-xs text-gray-700 outline-none focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
+                          />
+                          <div className="mt-2 flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const val = startDraftByTaskId[task.id ?? -1] || null;
+                                void commitStartDate(task, val);
+                              }}
+                              className="h-8 min-w-0 flex-1 rounded-lg bg-gradient-to-r from-[#7ee3e8] to-[#b9ee98] px-2 text-[11px] font-medium text-white shadow-sm transition hover:brightness-95"
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void commitStartDate(task, null)}
+                              className="h-8 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+                            >
+                              Clear
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setOpenStartPickerTaskId(null)}
+                              className="h-8 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-2 text-[11px] font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </td>
                     <td
                       className={`${TABLE_COLUMN_WIDTHS.due} relative align-middle px-3 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-left text-xs tabular-nums text-gray-500`}

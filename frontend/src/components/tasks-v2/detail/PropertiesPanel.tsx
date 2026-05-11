@@ -9,6 +9,12 @@ import StatusPill from './pills/StatusPill';
 import InlineSelect, { UserInitialsAvatar, type InlineSelectOption } from './InlineSelect';
 import { ChevronsUp, ChevronUp, Minus, ChevronDown, ChevronsDown } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import TaskLabelsPicker from '@/components/tasks-v2/TaskLabelsPicker';
+
+import {
+  START_MUST_BE_ON_OR_BEFORE_DUE,
+  violatesStartBeforeDue,
+} from '@/lib/tasks-v2/taskScheduleDates';
 
 const PRIORITY_LEADING: Record<string, { Icon: typeof Minus; cls: string }> = {
   HIGHEST: { Icon: ChevronsUp, cls: 'text-rose-600' },
@@ -65,6 +71,14 @@ export default function PropertiesPanel({
   const [saving, setSaving] = useState(false);
 
   const patch = async (data: Partial<TaskData>) => {
+    if (data.start_date !== undefined || data.due_date !== undefined) {
+      const nextStart = data.start_date !== undefined ? data.start_date : task.start_date;
+      const nextDue = data.due_date !== undefined ? data.due_date : task.due_date;
+      if (violatesStartBeforeDue(nextStart, nextDue)) {
+        toast.error(START_MUST_BE_ON_OR_BEFORE_DUE);
+        return;
+      }
+    }
     setSaving(true);
     try {
       await TaskAPI.updateTask(id, data);
@@ -160,6 +174,16 @@ export default function PropertiesPanel({
           options={approverOpts}
           disabled={saving || readOnly}
           placeholder="Unassigned"
+        />
+      </div>
+
+      <div className={ROW}>
+        <span className={LABEL}>Labels</span>
+        <TaskLabelsPicker
+          projectId={task.project?.id ?? task.project_id}
+          value={task.tags ?? []}
+          onChange={(next) => patch({ tags: next })}
+          disabled={saving || readOnly}
         />
       </div>
 

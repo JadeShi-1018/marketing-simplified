@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { TaskAPI } from "@/lib/api/taskApi";
 import api from "@/lib/api";
+import { normalizeTaskFromApi } from "@/lib/tasks-v2/normalizeTaskFromApi";
 import { TaskData, CreateTaskData, TaskListFilters } from "@/types/task";
 import { useTaskStore } from "@/lib/taskStore";
 
@@ -149,8 +150,9 @@ export const useTaskData = () => {
           if (page > 100) break;
         } while (nextUrl);
 
-        setTasks(allTasks);
-        return allTasks;
+        const normalized = allTasks.map((row) => normalizeTaskFromApi(row));
+        setTasks(normalized);
+        return normalized;
       } catch (err) {
         setError(err);
         throw err;

@@ -34,6 +34,11 @@ export interface ApprovalChainProgress {
   steps: ApprovalChainStepData[];
 }
 
+export interface TaskTag {
+  name: string;
+  color: string;
+}
+
 // Type for getting an existing task
 export interface TaskData {
   id?: number;
@@ -78,6 +83,8 @@ export interface TaskData {
   origin_meeting?: OriginMeetingPayload | null;
   /** Provenance: action item this task was converted from, if any (task detail only). */
   origin_action_item?: OriginActionItemPayload | null;
+  /** Frontend-owned colored tags `{ name, color }`; PATCH/create sends full replacement array */
+  tags?: TaskTag[];
 }
 
 // Type for creating a new task (current_approver_id is user ID)
@@ -97,6 +104,8 @@ export interface CreateTaskData {
   draft_payload?: unknown | null;
   /** When set, creates ``MeetingTaskOrigin`` on the server (same project as task). */
   origin_meeting_id?: number;
+  /** Stored on task JSON field (omit to leave empty). */
+  tags?: TaskTag[];
 }
 
 export interface UserSummary {

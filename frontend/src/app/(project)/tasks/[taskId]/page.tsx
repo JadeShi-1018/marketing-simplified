@@ -9,6 +9,7 @@ import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import type { TaskData } from '@/types/task';
+import { normalizeTaskFromApi } from '@/lib/tasks-v2/normalizeTaskFromApi';
 
 import TaskDetailHeader from '@/components/tasks-v2/detail/TaskDetailHeader';
 import TaskDescriptionBlock from '@/components/tasks-v2/detail/TaskDescriptionBlock';
@@ -34,9 +35,10 @@ export default function TaskV2DetailPage() {
 
   const load = useCallback(async () => {
     if (!taskId) return;
+    setLoading(true);
     try {
       const resp = await TaskAPI.getTask(taskId);
-      setTask(resp.data as TaskData);
+      setTask(normalizeTaskFromApi(resp.data));
       setError(null);
     } catch (e) {
       setError((e as any)?.response?.data?.detail || 'Failed to load task');

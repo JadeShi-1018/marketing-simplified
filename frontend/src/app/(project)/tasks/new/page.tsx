@@ -8,14 +8,20 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { useProjectStore } from '@/lib/projectStore';
 import { TaskAPI } from '@/lib/api/taskApi';
+import type { TaskTag } from '@/types/task';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import TaskTypeFieldsSection, { fieldId } from '@/components/tasks-v2/new/TaskTypeFieldsSection';
+import TaskLabelsPicker from '@/components/tasks-v2/TaskLabelsPicker';
 import TaskCreateChecklistAside, {
   type ChecklistItem,
 } from '@/components/tasks-v2/new/TaskCreateChecklistAside';
 import { getTypeSchema, getUnfilledRequiredKeys } from '@/lib/tasks-v2/typeFieldSchemas';
 import { TASK_TYPE_CONFIG_STATIC } from '@/lib/taskTypeConfigRegistry';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  START_MUST_BE_ON_OR_BEFORE_DUE,
+  violatesStartBeforeDue,
+} from '@/lib/tasks-v2/taskScheduleDates';
 
 const PRIORITIES: { value: string; label: string }[] = [
   { value: 'HIGHEST', label: 'Highest' },
@@ -35,6 +41,7 @@ const COMMON_ANCHOR = {
   type: 'task-common-type',
   priority: 'task-common-priority',
   schedule: 'task-common-schedule',
+  labels: 'task-common-labels',
   approver: 'task-common-approver',
 };
 
@@ -79,6 +86,7 @@ export default function CreateTaskPage() {
   const [startDate, setStartDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [approverId, setApproverId] = useState('');
+  const [tags, setTags] = useState<TaskTag[]>([]);
   const [typeFormState, setTypeFormState] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -184,6 +192,12 @@ export default function CreateTaskPage() {
       toast.error('Fill all required fields first.');
       return;
     }
+    if (violatesStartBeforeDue(startDate, dueDate)) {
+      toast.error(START_MUST_BE_ON_OR_BEFORE_DUE);
+      const scheduleEl = document.getElementById(COMMON_ANCHOR.schedule);
+      if (scheduleEl) flashAndFocus(scheduleEl);
+      return;
+    }
     setSubmitting(asDraft ? 'draft' : 'submit');
     try {
       const payload: Record<string, unknown> = {
@@ -198,6 +212,7 @@ export default function CreateTaskPage() {
       if (plannedStartDate) payload.planned_start_date = plannedStartDate;
       if (startDate) payload.start_date = startDate;
       if (dueDate) payload.due_date = dueDate;
+      if (tags.length) payload.tags = tags;
 
       const res = await TaskAPI.createTask(payload as never);
       const createdTask = (res?.data as any) ?? {};
@@ -419,6 +434,18 @@ export default function CreateTaskPage() {
                   placeholder={todayIso()}
                 />
               </div>
+            </div>
+
+            <div id={COMMON_ANCHOR.labels} className="px-8 py-5">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
+                Labels
+              </p>
+              <TaskLabelsPicker
+                projectId={projectId}
+                value={tags}
+                onChange={setTags}
+                disabled={submitting !== null}
+              />
             </div>
 
             <div id={COMMON_ANCHOR.approver} className="px-8 py-5">

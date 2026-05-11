@@ -165,6 +165,12 @@ class Task(models.Model):
         help_text="Draft form state captured from task create panel",
     )
 
+    tags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Frontend-owned task tags [{name, color}, ...]",
+    )
+
     # Lineage: optional one-to-one link when this task was converted from a meeting action item.
     origin_action_item = models.OneToOneField(
         "meetings.MeetingActionItem",
@@ -398,7 +404,6 @@ class Task(models.Model):
             parent_task=self,
             child_task=child_task
         ).delete()
-
 
 
 class ApprovalRecord(models.Model):

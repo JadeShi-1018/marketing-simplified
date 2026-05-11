@@ -191,6 +191,45 @@ class TaskAPITest(TestCase):
         task = Task.objects.get(pk=response.data['id'])
         self.assertIsNone(task.draft_payload)
 
+    def test_create_task_start_after_due_rejected(self):
+        url = reverse('task-list')
+        response = self.client.post(
+            url,
+            {
+                'summary': 'Bad schedule',
+                'type': 'budget',
+                'project_id': self.project.id,
+                'start_date': '2026-06-10',
+                'due_date': '2026-06-01',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('start_date', response.data)
+
+    def test_patch_task_start_after_existing_due_rejected(self):
+        url = reverse('task-list')
+        create = self.client.post(
+            url,
+            {
+                'summary': 'Has due',
+                'type': 'budget',
+                'project_id': self.project.id,
+                'due_date': '2026-06-01',
+            },
+            format='json',
+        )
+        self.assertEqual(create.status_code, status.HTTP_201_CREATED)
+        task_id = create.data['id']
+        patch_url = reverse('task-detail', kwargs={'pk': task_id})
+        bad = self.client.patch(
+            patch_url,
+            {'start_date': '2026-06-15'},
+            format='json',
+        )
+        self.assertEqual(bad.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('start_date', bad.data)
+
     def test_update_draft_payload_rejected_when_not_draft(self):
         """draft_payload updates are rejected for non-draft tasks (except clearing)."""
         url = reverse('task-list')
@@ -2404,6 +2443,29 @@ class TaskBulkActionAPITest(TestCase):
         self.assertEqual(str(t2.start_date), '2026-05-01')
         self.assertEqual(str(t1.planned_start_date), '2026-05-03')
         self.assertEqual(str(t2.planned_start_date), '2026-05-03')
+
+    def test_bulk_start_after_existing_due_fails_atomically(self):
+        from datetime import date
+
+        t_ok = self._make_task('No conflict')
+        t_bad = self._make_task('Has early due')
+        t_bad.start_date = date(2026, 5, 1)
+        t_bad.due_date = date(2026, 5, 10)
+        t_bad.save(update_fields=['start_date', 'due_date'])
+
+        response = self.client.post(
+            self.url,
+            {'task_ids': [t_ok.id, t_bad.id], 'start_date': '2026-05-15'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['result']['failed_count'], 1)
+        failed = response.data['result']['failed'][0]
+        self.assertEqual(failed['task_id'], t_bad.id)
+        t_ok_refresh = Task.objects.get(pk=t_ok.id)
+        t_bad_refresh = Task.objects.get(pk=t_bad.pk)
+        self.assertIsNone(t_ok_refresh.start_date)
+        self.assertEqual(str(t_bad_refresh.start_date), '2026-05-01')
 
     def test_bulk_status_success_updates_all_tasks(self):
         t1 = self._make_task('Task 1')

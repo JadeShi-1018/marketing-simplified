@@ -1,6 +1,7 @@
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from rest_framework import serializers
+from rest_framework.serializers import empty
 
 from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
@@ -13,11 +14,28 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.utils import OperationalError, ProgrammingError
 import logging
 import mimetypes
+import json
 import traceback
 
 logger = logging.getLogger(__name__)
 
 User = get_user_model()
+
+
+TASK_TAG_ALLOWED_HEX_COLORS = frozenset(
+    {
+        '#5E6AD2',
+        '#26B5CE',
+        '#4CB782',
+        '#F2C94C',
+        '#F2994A',
+        '#EB5757',
+        '#9B51E0',
+        '#6B7280',
+    }
+)
+TASK_TAG_MAX_COUNT = 10
+TASK_TAG_MAX_NAME_LENGTH = 15
 
 
 class UserSummarySerializer(serializers.ModelSerializer):
@@ -71,6 +89,8 @@ class TaskSerializer(serializers.ModelSerializer):
     )
     origin_action_item = serializers.SerializerMethodField()
 
+    tags = serializers.JSONField(required=False, default=list)
+
     class Meta:
         model = Task
         fields = [
@@ -87,6 +107,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting',
             'origin_meeting_id',
             'origin_action_item',
+            'tags',
         ]
         read_only_fields = [
             'id', 'status', 'owner', 'content_type', 'object_id',
@@ -96,6 +117,35 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting',
             'origin_action_item',
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # project_id is write-only on input; expose FK for clients that expect it on GET.
+        data['project_id'] = instance.project_id
+        # GET /api/tasks/:id/ — always serialize tags from the DB column for UI echo.
+        data['tags'] = self._normalize_tags_representation(instance.tags)
+        return data
+
+    @staticmethod
+    def _normalize_tags_representation(raw):
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return []
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get('name', '') or '').strip()
+            color = str(item.get('color', '') or '').strip()
+            if name and color:
+                out.append({'name': name, 'color': color.upper()})
+        return out
 
     def get_content_type(self, obj):
         """
@@ -130,6 +180,34 @@ class TaskSerializer(serializers.ModelSerializer):
         except MeetingActionItem.DoesNotExist:
             return None
         return serialize_origin_action_item(ai)
+
+    def validate_tags(self, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise serializers.ValidationError('tags must be a JSON array')
+        if len(value) > TASK_TAG_MAX_COUNT:
+            raise serializers.ValidationError(f'At most {TASK_TAG_MAX_COUNT} tags')
+
+        out = []
+        seen = set()
+        for idx, item in enumerate(value):
+            if not isinstance(item, dict):
+                raise serializers.ValidationError({'tags': f'Item {idx} must be an object'})
+            name = str(item.get('name', '')).strip()
+            if not name:
+                raise serializers.ValidationError({'tags': f'Invalid name at index {idx}'})
+            if len(name) > TASK_TAG_MAX_NAME_LENGTH:
+                raise serializers.ValidationError({'tags': f'Tag name too long at index {idx}'})
+            color = str(item.get('color', '')).strip().upper()
+            if color not in TASK_TAG_ALLOWED_HEX_COLORS:
+                raise serializers.ValidationError({'tags': f'Unsupported color at index {idx}'})
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({'name': name[:TASK_TAG_MAX_NAME_LENGTH], 'color': color})
+        return out
 
     def get_approval_chain_progress(self, obj):
         """
@@ -446,7 +524,8 @@ class TaskSerializer(serializers.ModelSerializer):
             else:
                 validated_data['current_approver'] = None
         
-        return super().update(instance, validated_data)
+        instance = super().update(instance, validated_data)
+        return instance
     
     def validate(self, attrs):
         """Validate the data"""
@@ -485,6 +564,19 @@ class TaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'type': 'Task type cannot be modified after creation.'
             })
+
+        start_date = attrs['start_date'] if 'start_date' in attrs else getattr(
+            self.instance, 'start_date', None
+        )
+        due_date = attrs['due_date'] if 'due_date' in attrs else getattr(
+            self.instance, 'due_date', None
+        )
+        if start_date is not None and due_date is not None and start_date > due_date:
+            raise serializers.ValidationError({
+                'start_date': 'Start date must be on or before due date.',
+                'due_date': 'Due date must be on or after start date.',
+            })
+
         return attrs
 
 

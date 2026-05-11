@@ -24,58 +24,73 @@ export default function TaskCardMini({ task, columnAccentHex }: TaskCardMiniProp
     <button
       type="button"
       onClick={() => router.push(`/tasks/${task.id}`)}
-      className={`group flex w-full flex-col rounded-md border-t-4 border-solid bg-white px-3 py-3.5 text-left shadow-sm ring-1 ring-gray-100 transition hover:shadow-md hover:ring-gray-200${columnAccentHex ? '' : ` ${statusMeta.cardTopBorder}`}`}
+      className={`group flex w-full flex-col rounded-md border-t-4 border-solid bg-white px-3 py-3 text-left shadow-sm ring-1 ring-gray-100 transition hover:shadow-md hover:ring-gray-200${columnAccentHex ? '' : ` ${statusMeta.cardTopBorder}`}`}
       style={columnAccentHex ? { borderTopColor: columnAccentHex } : undefined}
     >
-      <div className="flex w-full flex-1 flex-col gap-2.5">
-        <div
-          className={
-            columnAccentHex
-              ? 'inline-flex w-fit max-w-full items-start gap-2 self-start rounded-md px-1.5 py-1'
-              : `inline-flex w-fit max-w-full items-start gap-2 self-start rounded-md px-1.5 py-1 ${statusMeta.summaryStrip}`
-          }
-          style={
-            columnAccentHex
-              ? {
-                  backgroundColor: `color-mix(in srgb, ${columnAccentHex} 16%, white)`,
-                  color: columnAccentHex,
-                }
-              : undefined
-          }
-        >
-          <StatusIcon
-            className="mt-0.5 h-3.5 w-3.5 flex-shrink-0"
-            strokeWidth={2}
-            aria-hidden
-          />
-          <div className="min-w-0 text-sm font-medium leading-snug line-clamp-2">
-            {statusLabel}
+      <div className="flex w-full min-w-0 flex-1 flex-col gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-1 justify-start">
+            <div
+              className={
+                columnAccentHex
+                  ? 'inline-flex max-w-full min-w-0 items-center gap-1 rounded-full px-2 py-0.5 ring-1 ring-black/[0.06]'
+                  : `inline-flex max-w-full min-w-0 items-center gap-1 rounded-full px-2 py-0.5 ring-1 ring-black/[0.06] ${statusMeta.summaryStrip}`
+              }
+              style={
+                columnAccentHex
+                  ? {
+                      backgroundColor: `color-mix(in srgb, ${columnAccentHex} 12%, white)`,
+                      color: columnAccentHex,
+                    }
+                  : undefined
+              }
+            >
+              <StatusIcon className="h-3 w-3 shrink-0 opacity-90" strokeWidth={2} aria-hidden />
+              <span className="min-w-0 truncate text-[11px] font-medium leading-none">{statusLabel}</span>
+            </div>
           </div>
+          {task.owner ? (
+            <UserAvatar
+              size="sm"
+              emptyAvatar="user-icon"
+              className="shrink-0 ring-1 ring-gray-200/90"
+              user={{
+                name: task.owner.username,
+                email: task.owner.email,
+                avatar: task.owner.avatar ?? undefined,
+              }}
+            />
+          ) : null}
         </div>
+
         <p
           className={
             description
-              ? 'w-full text-left line-clamp-3 text-sm font-bold text-gray-900'
-              : 'w-full text-left line-clamp-3 text-sm font-normal text-gray-400'
+              ? 'w-full min-w-0 text-left text-sm font-semibold leading-snug text-gray-900 line-clamp-3'
+              : 'w-full min-w-0 text-left text-sm font-normal leading-snug text-gray-400 line-clamp-3'
           }
         >
           {description || 'No description'}
         </p>
+
+        {task.tags && task.tags.length > 0 ? (
+          <div className="flex w-full flex-wrap gap-1.5" aria-label="Task labels">
+            {task.tags.map((tag) => (
+              <span
+                key={`${tag.name.toLowerCase()}:${tag.color}`}
+                className="inline-flex max-w-full items-center gap-1 rounded-full bg-gray-50 py-0.5 pl-1.5 pr-2 ring-1 ring-gray-200/90"
+              >
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: tag.color }}
+                  aria-hidden
+                />
+                <span className="truncate text-[11px] font-medium text-gray-700">{tag.name}</span>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </div>
-      {task.owner ? (
-        <div className="mt-3 flex w-full justify-start">
-          <UserAvatar
-            size="sm"
-            emptyAvatar="user-icon"
-            className="ring-2 ring-white shadow-sm"
-            user={{
-              name: task.owner.username,
-              email: task.owner.email,
-              avatar: task.owner.avatar ?? undefined,
-            }}
-          />
-        </div>
-      ) : null}
     </button>
   );
 }
