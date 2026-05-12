@@ -5,8 +5,11 @@ import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
-import StatusPill from './pills/StatusPill';
-import InlineSelect, { UserInitialsAvatar, type InlineSelectOption } from './InlineSelect';
+import StatusPill from '@/components/tasks/detail/pills/StatusPill';
+import InlineSelect, {
+  UserInitialsAvatar,
+  type InlineSelectOption,
+} from '@/components/tasks/detail/InlineSelect';
 import { ChevronsUp, ChevronUp, Minus, ChevronDown, ChevronsDown } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import TaskLabelsPicker from '@/components/tasks-v2/TaskLabelsPicker';
