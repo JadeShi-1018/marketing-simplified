@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTaskTracking } from '@/lib/tracking/useTaskTracking';
 import toast from 'react-hot-toast';
 import { useParams, useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -26,6 +27,8 @@ export default function TaskV2DetailPage() {
   const taskId = params?.taskId ? Number(params.taskId) : null;
 
   const [task, setTask] = useState<TaskData | null>(null);
+  const projectId = task?.project?.id ?? task?.project_id ?? null;
+  const { markInteraction } = useTaskTracking(taskId ?? 0, projectId);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -144,6 +147,7 @@ export default function TaskV2DetailPage() {
                     readOnly={Boolean(readOnly)}
                     refreshKey={refreshKey}
                     loading={loading}
+                    onFirstInteraction={() => markInteraction('comment_box', 'click')}
                   />
                 )}
               </div>
@@ -155,6 +159,7 @@ export default function TaskV2DetailPage() {
                   readOnly={Boolean(readOnly)}
                   onUpdated={onMutated}
                   loading={loading}
+                  onFirstInteraction={() => markInteraction('priority_select', 'change')}
                 />
                 {(task?.id || loading) && (
                   <ApprovalTimelinePanel
