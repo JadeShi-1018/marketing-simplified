@@ -20,6 +20,7 @@ import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock
 import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
+import EngagementPanel from '@/components/tasks/detail/EngagementPanel';
 
 export default function TaskV2DetailPage() {
   const params = useParams();
@@ -165,6 +166,12 @@ export default function TaskV2DetailPage() {
                   <ApprovalTimelinePanel
                     taskId={task?.id ?? 0}
                     refreshKey={refreshKey}
+                    loading={loading}
+                  />
+                )}
+                {(task?.id || loading) && (
+                  <EngagementPanel
+                    taskId={task?.id ?? 0}
                     loading={loading}
                   />
                 )}
