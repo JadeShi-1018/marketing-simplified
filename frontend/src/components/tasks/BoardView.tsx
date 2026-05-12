@@ -82,7 +82,7 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
           return (
             <div
               key={meta.value}
-              className="flex w-[260px] flex-shrink-0 flex-col gap-2 rounded-xl bg-gray-50 p-3 sm:w-[280px]"
+              className="flex w-[calc(100vw-2rem)] max-w-[260px] flex-shrink-0 flex-col gap-2 rounded-xl bg-gray-50 p-3 sm:w-[280px] sm:max-w-none"
             >
               <header className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -107,10 +107,10 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
                       className="rounded-md bg-white p-3 shadow-sm ring-1 ring-gray-100"
                     >
                       <div className="space-y-2">
-                        <Skeleton className="h-4 w-36" />
+                        <Skeleton className="h-4 w-36 max-w-full" />
                         <div className="flex items-center justify-between gap-2">
-                          <Skeleton className="h-5 w-16 rounded-full" />
-                          <Skeleton className="h-3 w-20" />
+                          <Skeleton className="h-5 w-16 shrink-0 rounded-full" />
+                          <Skeleton className="h-3 w-20 max-w-[50%]" />
                         </div>
                       </div>
                     </div>

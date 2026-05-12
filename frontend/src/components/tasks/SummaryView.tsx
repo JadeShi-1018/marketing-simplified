@@ -69,60 +69,60 @@ function SummarySkeleton() {
         {Array.from({ length: 4 }).map((_, index) => (
           <div
             key={`tasks-summary-kpi-skeleton-${index}`}
-            className="flex items-center gap-4 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100"
+            className="flex min-w-0 items-center gap-4 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100"
           >
-            <Skeleton className="h-11 w-11 rounded-full" />
+            <Skeleton className="h-11 w-11 shrink-0 rounded-full" />
             <div className="min-w-0 flex-1 space-y-2">
-              <Skeleton className="h-7 w-16" />
-              <Skeleton className="h-3 w-20" />
-              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-7 w-16 max-w-full" />
+              <Skeleton className="h-3 w-20 max-w-full" />
+              <Skeleton className="h-3 w-16 max-w-full" />
             </div>
           </div>
         ))}
       </section>
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_1fr]">
-        <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
+        <div className="min-w-0 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100 sm:p-6">
           <div className="mb-4 flex items-center justify-between">
-            <Skeleton className="h-4 w-36" />
-            <Skeleton className="h-3 w-16" />
+            <Skeleton className="h-4 w-36 max-w-[70%]" />
+            <Skeleton className="h-3 w-16 shrink-0" />
           </div>
           <div className="flex items-center justify-center py-6">
-            <Skeleton className="h-48 w-48 rounded-full" />
+            <Skeleton className="aspect-square w-full max-w-[12rem] rounded-full" />
           </div>
         </div>
 
-        <div className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
+        <div className="min-w-0 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100 sm:p-6">
           <div className="mb-4 flex items-center justify-between">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-3 w-12" />
+            <Skeleton className="h-4 w-32 max-w-[70%]" />
+            <Skeleton className="h-3 w-12 shrink-0" />
           </div>
           <div className="space-y-3">
             {Array.from({ length: 6 }).map((_, index) => (
-              <div key={`tasks-summary-type-skeleton-${index}`} className="flex items-center gap-3">
-                <Skeleton className="h-2 w-2 rounded-sm" />
-                <Skeleton className="h-3 w-24" />
+              <div key={`tasks-summary-type-skeleton-${index}`} className="flex min-w-0 items-center gap-3">
+                <Skeleton className="h-2 w-2 shrink-0 rounded-sm" />
+                <Skeleton className="h-3 w-24 max-w-[35%]" />
                 <Skeleton className="h-1.5 flex-1" />
-                <Skeleton className="h-3 w-8" />
+                <Skeleton className="h-3 w-8 shrink-0" />
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      <section className="rounded-xl bg-white p-6 shadow-sm ring-1 ring-gray-100">
+      <section className="min-w-0 rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100 sm:p-6">
         <div className="mb-4 flex items-center justify-between">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-4 w-28 max-w-[65%]" />
+          <Skeleton className="h-3 w-20 shrink-0" />
         </div>
         <div className="space-y-3">
           {Array.from({ length: 5 }).map((_, index) => (
             <div
               key={`tasks-summary-activity-skeleton-${index}`}
-              className="flex items-center justify-between gap-3"
+              className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3"
             >
-              <Skeleton className="h-3 w-56" />
-              <Skeleton className="h-3 w-14" />
+              <Skeleton className="h-3 w-full max-w-[14rem]" />
+              <Skeleton className="h-3 w-14 shrink-0" />
             </div>
           ))}
         </div>

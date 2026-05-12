@@ -57,8 +57,8 @@ export default function DecisionsFilterBar({
   onSortDirToggle,
 }: Props) {
   return (
-    <div className="grid gap-3 border-b border-gray-100 px-3 py-3 sm:px-5 lg:flex lg:items-center lg:justify-between">
-      <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_11rem_9rem] lg:flex lg:flex-wrap lg:items-center">
+    <div className="grid gap-3 border-b border-gray-100 px-3 py-3 sm:px-5 lg:flex lg:flex-wrap lg:items-center lg:justify-between">
+      <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_11rem_9rem] lg:flex lg:flex-1 lg:flex-wrap lg:items-center">
         <div className="relative min-w-0 lg:w-64">
           <Search
             aria-hidden="true"
@@ -91,9 +91,9 @@ export default function DecisionsFilterBar({
         </div>
       </div>
 
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 sm:max-w-xs lg:max-w-none">
-        <span className="text-[11px] font-medium uppercase tracking-wide text-gray-500">Sort</span>
-        <div className="min-w-0 lg:w-36">
+      <div className="flex flex-wrap items-center gap-2 sm:max-w-xs lg:max-w-none lg:shrink-0">
+        <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-gray-500">Sort</span>
+        <div className="min-w-[8rem] flex-1 sm:w-36 sm:flex-none">
           <InlineSelect
             ariaLabel="Sort field"
             value={sortField}
@@ -106,7 +106,7 @@ export default function DecisionsFilterBar({
           onClick={onSortDirToggle}
           aria-label={sortDir === 'asc' ? 'Sort ascending (click to flip)' : 'Sort descending (click to flip)'}
           title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 transition hover:border-gray-300 hover:text-gray-900"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-500 transition hover:border-gray-300 hover:text-gray-900"
         >
           {sortDir === 'asc' ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
         </button>

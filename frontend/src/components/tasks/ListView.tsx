@@ -745,9 +745,8 @@ export default function ListView({
                         </td>
                       ) : null}
                       <td className="px-4 py-3">
-                        <div className="min-w-0 max-w-[32rem] space-y-2">
-                          <Skeleton className="h-4 w-full max-w-[22rem]" />
-                          <Skeleton className="h-3 w-full max-w-[32rem]" />
+                        <div className="min-w-0">
+                          <Skeleton className="h-4 w-36 max-w-full sm:w-full sm:max-w-[22rem]" />
                         </div>
                       </td>
                       <td className={`${TABLE_COLUMN_WIDTHS.type} px-4 py-3`}>
