@@ -29,7 +29,12 @@ class SessionCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        return Response({"stub": True})
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
+        session = TrackingSession.objects.create(
+            user=request.user,
+            user_agent=user_agent,
+        )
+        return Response({'session_id': str(session.pk)}, status=status.HTTP_201_CREATED)
 
 
 class HeartbeatView(APIView):
