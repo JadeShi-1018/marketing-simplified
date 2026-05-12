@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus, Search } from 'lucide-react';
 import type { TaskData } from '@/types/task';
-import { TASK_TYPES } from './TYPE_META';
+import { TASK_TYPES } from '@/components/tasks/TYPE_META';
 import TaskCardMini from './TaskCardMini';
 import { Skeleton } from '@/components/ui/skeleton';
 

@@ -385,9 +385,11 @@ jobs:
         if: always()
         run: |
           echo "Cleaning up containers and volumes..."
-          docker compose --profile ci down -v
+          # Ensure compose has an env file even if earlier steps failed before creating one.
+          touch .env
+          docker compose --profile ci --env-file .env down -v || true
           echo "Cleaning up unused Docker resources..."
-          docker system prune -f
+          docker system prune -f || true
 
   deploy:
     needs: [block, code_scan, image_scan, application_test]

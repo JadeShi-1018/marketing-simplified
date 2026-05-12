@@ -3,8 +3,8 @@
 import { useRouter } from 'next/navigation';
 import type { TaskData } from '@/types/task';
 import UserAvatar from '@/people/UserAvatar';
-import { STATUS_META } from './TYPE_META';
-import { getTaskStatusLucideIcon } from './taskStatusIcons';
+import { STATUS_META } from '@/components/tasks/TYPE_META';
+import { getTaskStatusLucideIcon } from '@/components/tasks/taskStatusIcons';
 
 interface TaskCardMiniProps {
   task: TaskData;

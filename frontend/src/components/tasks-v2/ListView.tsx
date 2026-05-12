@@ -12,7 +12,7 @@ import {
   STATUS_OPTIONS,
   TASK_TYPES,
   formatDateShort,
-} from './TYPE_META';
+} from '@/components/tasks/TYPE_META';
 import {
   START_MUST_BE_ON_OR_BEFORE_DUE,
   violatesStartBeforeDue,
@@ -21,10 +21,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { useTaskStore } from '@/lib/taskStore';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
-import BulkActionToolbar, { type BulkField } from './BulkActionToolbar';
+import BulkActionToolbar, { type BulkField } from '@/components/tasks/BulkActionToolbar';
 import TaskListRowContextMenu, {
   type TaskListRowContextMenuState,
-} from '@/components/tasks-v2/TaskListRowContextMenu';
+} from '@/components/tasks/TaskListRowContextMenu';
 
 interface ListViewProps {
   tasks: TaskData[];
