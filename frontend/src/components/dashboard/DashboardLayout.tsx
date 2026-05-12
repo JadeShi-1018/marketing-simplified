@@ -219,7 +219,7 @@ export default function DashboardLayout({
   };
 
   return (
-    <div className="fixed inset-0 flex bg-[#F7F8FA] overflow-hidden">
+    <div className="flex h-screen w-full bg-[#F7F8FA] overflow-hidden">
       <DashboardSidebar />
 
       {/* Main content */}
