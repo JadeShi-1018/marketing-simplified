@@ -99,8 +99,8 @@ export default function TaskDetailHeader({
 
   return (
     <section className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
-      <div className="flex items-center justify-between border-b border-gray-100 px-6 py-2">
-        <nav className="flex items-center gap-2 text-xs text-gray-500">
+      <div className="flex items-center justify-between gap-2 border-b border-gray-100 px-4 py-2 sm:px-6">
+        <nav className="flex min-w-0 items-center gap-2 text-xs text-gray-500">
           <Link
             href="/tasks"
             title="Back to Tasks"
@@ -109,22 +109,22 @@ export default function TaskDetailHeader({
           >
             <ArrowLeft className="h-3.5 w-3.5" />
           </Link>
-          <div className="flex items-center gap-1.5">
-          <Link href="/tasks" className="hover:text-gray-900">
+          <div className="flex min-w-0 items-center gap-1.5">
+          <Link href="/tasks" className="hidden hover:text-gray-900 sm:inline">
             Tasks
           </Link>
-          <ChevronRight className="h-3 w-3 text-gray-300" />
+          <ChevronRight className="hidden h-3 w-3 text-gray-300 sm:block" />
           <Link
             href={projectId ? `/tasks?project_id=${projectId}` : '/tasks'}
-            className="hover:text-gray-900"
+            className="max-w-[9rem] truncate hover:text-gray-900 sm:max-w-[14rem]"
           >
             {projectName}
           </Link>
-          <ChevronRight className="h-3 w-3 text-gray-300" />
-          <span className="font-semibold text-gray-900">{issueKey}</span>
+          <ChevronRight className="h-3 w-3 shrink-0 text-gray-300" />
+          <span className="shrink-0 font-semibold text-gray-900">{issueKey}</span>
           </div>
         </nav>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {task.id ? (
             <button
               type="button"
@@ -159,7 +159,7 @@ export default function TaskDetailHeader({
         </div>
       </div>
 
-      <div className="px-6 py-5">
+      <div className="px-4 py-4 sm:px-6 sm:py-5">
         {saving && !loading && (
           <div className="mb-1 text-[11px] text-gray-400">Saving…</div>
         )}
@@ -179,7 +179,7 @@ export default function TaskDetailHeader({
               <textarea
                 ref={titleTextareaRef}
                 rows={1}
-                className="block max-h-[92px] min-h-[40px] w-full resize-none overflow-y-auto rounded-md border-0 border-b-2 border-transparent bg-transparent px-1 py-1 text-[22px] font-semibold leading-tight text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-[#3CCED7] disabled:opacity-70"
+                className="block max-h-[92px] min-h-[40px] w-full resize-none overflow-y-auto rounded-md border-0 border-b-2 border-transparent bg-transparent px-1 py-1 text-xl font-semibold leading-tight text-gray-900 outline-none transition placeholder:text-gray-300 focus:border-[#3CCED7] disabled:opacity-70 sm:text-[22px]"
                 value={value}
                 onChange={(e) => {
                   setValue(e.target.value.replace(/[\r\n]+/g, ' '));
@@ -203,7 +203,7 @@ export default function TaskDetailHeader({
             ) : (
               <button
                 type="button"
-                className="block min-h-[40px] w-full rounded-md px-1 py-1 text-left text-[22px] font-semibold leading-tight text-gray-900 outline-none transition hover:bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#3CCED7]/30 disabled:cursor-default disabled:hover:bg-transparent"
+                className="block min-h-[40px] w-full rounded-md px-1 py-1 text-left text-xl font-semibold leading-tight text-gray-900 outline-none transition hover:bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#3CCED7]/30 disabled:cursor-default disabled:hover:bg-transparent sm:text-[22px]"
                 onClick={() => {
                   if (!readOnly) setEditingTitle(true);
                 }}
@@ -218,18 +218,18 @@ export default function TaskDetailHeader({
           </div>
         )}
         {!loading && (
-          <div className="mt-4 flex flex-wrap items-center gap-2">
+          <div className="mt-4 flex min-w-0 flex-wrap items-center gap-2">
             <StatusPill status={task.status} />
             <PriorityPill priority={priority} />
             <TypeBadge type={task.type} />
-            <span className="text-[11px] text-gray-400">
+            <span className="min-w-0 break-words text-[11px] text-gray-400">
               Owner: {task.owner?.username || task.owner?.email || 'Unassigned'}
             </span>
           </div>
         )}
       </div>
 
-      <div className="border-t border-gray-100 bg-gray-50/40 px-6 py-3">
+      <div className="border-t border-gray-100 bg-gray-50/40 px-4 py-3 sm:px-6">
         {loading ? (
           <div className="flex flex-wrap items-center gap-2">
             <Skeleton className="h-8 w-28 rounded-md" />

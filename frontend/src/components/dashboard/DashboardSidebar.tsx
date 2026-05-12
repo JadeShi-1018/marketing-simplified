@@ -206,11 +206,11 @@ export default function DashboardSidebar() {
       <div className="border-b border-gray-100 px-2 py-3 sm:px-4 sm:py-4">
         <Link href="/" className="flex items-center justify-center sm:justify-start">
           <Image
-            src="/homepage_logo_square.jpeg"
+            src="/marketing_simplified_logo.png"
             alt="Marketing Simplified Logo"
             width={36}
             height={36}
-            className="h-9 w-9 rounded-md object-cover sm:hidden"
+            className="h-9 w-9 object-contain sm:hidden"
             priority
           />
           <Image
