@@ -27,9 +27,7 @@ export async function getConfig(): Promise<TrackingConfig> {
 }
 
 export async function createSession(userAgent: string): Promise<CreateSessionResponse> {
-  const res = await api.post<CreateSessionResponse>(`${BASE}/sessions/`, {}, {
-    headers: { 'User-Agent': userAgent },
-  });
+  const res = await api.post<CreateSessionResponse>(`${BASE}/sessions/`, { user_agent: userAgent });
   return res.data;
 }
 

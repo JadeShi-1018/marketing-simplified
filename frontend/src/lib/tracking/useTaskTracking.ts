@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useTracking, type TrackingTarget } from './TrackingProvider';
 
-const TASK_CONTENT_TYPE = 'task.task';
+const TASK_CONTENT_TYPE = 'task';
 
 export function useTaskTracking(taskId: number, projectId?: number | null) {
   const { emit, setActiveTarget } = useTracking();

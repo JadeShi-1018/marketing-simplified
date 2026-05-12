@@ -104,8 +104,15 @@ export function TrackingProvider({ children }: { children: React.ReactNode }): R
     const batch = queueRef.current.splice(0, 100);
     try {
       await trackingApi.sendEvents(sid, batch);
-    } catch {
-      // Prepend back, cap at MAX_QUEUE to prevent unbounded growth
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      if (status && status >= 400 && status < 500) {
+        // 4xx means the request is permanently bad (wrong session, bad payload, etc.)
+        // Requeueing would loop forever, so drop the batch.
+        console.warn('[tracking] events dropped (4xx)', status);
+        return;
+      }
+      // 5xx or network error — requeue and retry next flush
       queueRef.current = [...batch, ...queueRef.current].slice(0, MAX_QUEUE);
     }
   }, []);
@@ -150,6 +157,9 @@ export function TrackingProvider({ children }: { children: React.ReactNode }): R
       if (!sid) return;
       const delta = Math.round(activeSecondsRef.current);
       activeSecondsRef.current = 0;
+      // Clear before ending so a refresh doesn't reuse the ended session ID
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionIdRef.current = null;
       trackingApi.endSession(sid, delta, true);
     }
 
@@ -178,6 +188,16 @@ export function TrackingProvider({ children }: { children: React.ReactNode }): R
 
         // Restore session from sessionStorage or create a new one
         let sid = sessionStorage.getItem(SESSION_KEY);
+        if (sid) {
+          // Probe: heartbeat(0) is a no-op for active_seconds but returns 404 if the
+          // session has already ended — catches stale IDs left by crashes / failed unload.
+          const alive = await trackingApi.heartbeat(sid, 0).then(() => true).catch(() => false);
+          if (cancelled) return;
+          if (!alive) {
+            sessionStorage.removeItem(SESSION_KEY);
+            sid = null;
+          }
+        }
         if (!sid) {
           const res = await trackingApi.createSession(navigator.userAgent);
           if (cancelled) return;
@@ -200,8 +220,20 @@ export function TrackingProvider({ children }: { children: React.ReactNode }): R
           if (delta > 0) {
             try {
               await trackingApi.heartbeat(currentSid, delta);
-            } catch {
-              // Session may have expired server-side; ignore
+            } catch (e: unknown) {
+              // Session expired server-side (Celery TIMEOUT or ended) — recreate
+              const status = (e as { response?: { status?: number } })?.response?.status;
+              if (status === 404) {
+                sessionStorage.removeItem(SESSION_KEY);
+                try {
+                  const res = await trackingApi.createSession(navigator.userAgent);
+                  sessionStorage.setItem(SESSION_KEY, res.session_id);
+                  setSessionId(res.session_id);
+                  sessionIdRef.current = res.session_id;
+                } catch {
+                  // ignore — will retry next heartbeat cycle
+                }
+              }
             }
           }
         }, config.heartbeat_seconds * 1000);
