@@ -56,7 +56,7 @@ interface Props {
 }
 
 const LABEL = 'text-[11px] font-medium uppercase tracking-wide text-gray-500';
-const ROW = 'grid grid-cols-[88px_1fr] items-center gap-3 py-2';
+const ROW = 'grid grid-cols-1 gap-1 py-2 sm:grid-cols-[88px_1fr] sm:items-center sm:gap-3';
 const DATE_INPUT =
   'w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none transition hover:border-gray-300 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500';
 
@@ -115,7 +115,7 @@ export default function PropertiesPanel({
 
   if (loading) {
     return (
-      <section className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100">
+      <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100">
         <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
           Properties
         </h3>
@@ -132,7 +132,7 @@ export default function PropertiesPanel({
   }
 
   return (
-    <section className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100">
+    <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100">
       <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
         Properties
       </h3>

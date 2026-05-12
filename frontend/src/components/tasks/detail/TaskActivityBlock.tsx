@@ -81,7 +81,7 @@ export default function TaskActivityBlock({
   };
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+    <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
       <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-gray-900">
         Activity
       </h2>
@@ -148,11 +148,11 @@ export default function TaskActivityBlock({
             }}
             disabled={posting}
           />
-          <div className="mt-2 flex items-center justify-end gap-2">
+          <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
             <span className="text-[11px] text-gray-400">⌘ + Enter to send</span>
             <button
               type="button"
-              className="inline-flex h-8 items-center rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-8 items-center justify-center rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 py-2 text-xs font-semibold leading-none text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={submit}
               disabled={posting || !body.trim()}
             >

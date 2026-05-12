@@ -106,7 +106,7 @@ export default function TaskV2DetailPage() {
           <div className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>
         )}
           {(!error && (task || loading)) && (
-          <div className="mx-auto max-w-[1440px] px-6 py-4">
+          <div className="mx-auto max-w-[1440px] px-0 py-3 sm:px-6 sm:py-4">
             <TaskDetailHeader
               task={taskShell}
               members={members}
@@ -117,7 +117,7 @@ export default function TaskV2DetailPage() {
               loading={loading}
             />
 
-            <div className="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_360px]">
+            <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
               <div className="min-w-0 space-y-5">
                 <TaskDescriptionBlock
                   task={taskShell}
@@ -150,7 +150,7 @@ export default function TaskV2DetailPage() {
                 )}
               </div>
 
-              <aside className="space-y-5">
+              <aside className="min-w-0 space-y-5">
                 <PropertiesPanel
                   task={taskShell}
                   members={members}
@@ -179,7 +179,7 @@ export default function TaskV2DetailPage() {
                 <p className="mt-2 text-sm text-gray-600">
                   &quot;{task.summary}&quot; will be permanently removed. This cannot be undone.
                 </p>
-                <div className="mt-5 flex justify-end gap-2">
+                <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   <button
                     type="button"
                     onClick={() => setConfirmDelete(false)}

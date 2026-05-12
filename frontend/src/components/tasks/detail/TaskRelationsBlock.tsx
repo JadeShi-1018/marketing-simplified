@@ -82,8 +82,8 @@ export default function TaskRelationsBlock({
     : 0;
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
-      <div className="mb-3 flex items-center justify-between">
+    <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-gray-900">
           Linked work items
           {totalCount > 0 && (
@@ -96,7 +96,7 @@ export default function TaskRelationsBlock({
           <button
             type="button"
             onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
           >
             <Plus className="h-3.5 w-3.5" />
             Link work item
@@ -142,21 +142,21 @@ export default function TaskRelationsBlock({
                   {items.map((item) => (
                     <li
                       key={item.relation_id}
-                      className="flex items-center gap-3 py-1.5"
+                      className="flex min-w-0 flex-wrap items-center gap-2 py-1.5 sm:flex-nowrap sm:gap-3"
                     >
                       <Link
                         href={`/tasks/${item.task.id}`}
-                        className="flex-1 truncate text-sm text-gray-900 hover:text-[#3CCED7] hover:underline"
+                        className="min-w-0 flex-1 truncate text-sm text-gray-900 hover:text-[#3CCED7] hover:underline"
                       >
                         {item.task.summary}
                       </Link>
-                      <span className="text-[11px] text-gray-500">{item.task.status}</span>
+                      <span className="max-w-[8rem] shrink-0 truncate text-[11px] text-gray-500">{item.task.status}</span>
                       {!readOnly && (
                         <button
                           type="button"
                           onClick={() => setConfirmRelationId(item.relation_id)}
                           title="Remove"
-                          className="rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                          className="shrink-0 rounded p-1 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
                         >
                           <X className="h-3.5 w-3.5" />
                         </button>
