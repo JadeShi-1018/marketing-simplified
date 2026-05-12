@@ -12,6 +12,8 @@ import {
   formatFileSize,
 } from '@/lib/api/attachmentApi';
 
+const MOBILE_QUERY = '(max-width: 640px)';
+
 // Dynamically import emoji picker to avoid SSR issues
 const EmojiPicker = dynamic(
   () => import('emoji-picker-react'),
@@ -48,11 +50,20 @@ export default function MessageInput({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia(MOBILE_QUERY);
+    const updateIsMobile = () => setIsMobile(media.matches);
+    updateIsMobile();
+    media.addEventListener('change', updateIsMobile);
+    return () => media.removeEventListener('change', updateIsMobile);
+  }, []);
 
   // Close emoji picker when clicking outside
   useEffect(() => {
@@ -262,6 +273,9 @@ export default function MessageInput({
   const hasAttachments = pendingAttachments.length > 0;
   const canSend = (hasContent || pendingAttachments.some(a => a.uploaded)) && 
                   !pendingAttachments.some(a => a.uploading);
+  const inputPlaceholder = hasAttachments
+    ? (isMobile ? 'Add...' : 'Add a message...')
+    : (isMobile ? 'Message...' : 'Type a message...');
 
   return (
     <div className="relative border-t border-gray-200 bg-white px-3 py-2 sm:px-4 sm:py-3">
@@ -373,10 +387,10 @@ export default function MessageInput({
           value={content}
           onChange={(e) => setContent(e.target.value)}
           onKeyPress={handleKeyPress}
-          placeholder={hasAttachments ? "Add a message..." : "Type a message..."}
+          placeholder={inputPlaceholder}
           disabled={disabled}
           rows={1}
-          className="min-w-0 flex-1 resize-none overflow-y-auto rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3CCED7] disabled:cursor-not-allowed disabled:bg-gray-100"
+          className="min-w-0 flex-1 resize-none overflow-y-auto rounded-lg border border-gray-300 px-2.5 py-2 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-[#3CCED7] disabled:cursor-not-allowed disabled:bg-gray-100 sm:px-3"
           style={{
             minHeight: '38px',
             maxHeight: '96px',

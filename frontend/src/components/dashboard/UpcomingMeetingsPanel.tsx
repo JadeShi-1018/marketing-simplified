@@ -57,7 +57,7 @@ export default function UpcomingMeetingsPanel({
 
   return (
     <aside
-      className={`fixed bottom-0 right-0 top-12 z-40 w-[min(360px,calc(100vw-3.5rem))] shrink-0 overflow-hidden border-l border-gray-200 bg-white shadow-none transition-transform duration-300 sm:static sm:top-auto sm:z-auto sm:h-full sm:translate-x-0 sm:transition-all ${
+      className={`fixed bottom-0 right-0 top-12 z-40 w-[min(360px,calc(100vw-3.5rem))] shrink-0 overflow-hidden border-l-0 bg-white shadow-none transition-transform duration-300 md:border-l md:border-gray-200 sm:static sm:top-auto sm:z-auto sm:h-full sm:translate-x-0 sm:transition-all ${
         isOpen ? 'translate-x-0 sm:w-[320px]' : 'translate-x-full sm:w-0'
       }`}
       data-upcoming-meetings-panel

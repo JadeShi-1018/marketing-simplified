@@ -382,7 +382,12 @@ function HorizontalBarChart({ labels, values, colors }: {
           >
             {/* invisible hit area for easier hover */}
             <rect x={LABEL_W} y={y - 14} width={BAR_AREA} height={28} fill="transparent" />
-            <text x={LABEL_W - 8} y={y + 4} textAnchor="end" fontSize={6}
+            <text
+              x={LABEL_W - 8}
+              y={y}
+              textAnchor="end"
+              dominantBaseline="middle"
+              fontSize={6}
               fill={dimmed ? '#ccc' : '#555'}
               style={{ transition: 'fill 0.15s' }}
             >
@@ -396,7 +401,10 @@ function HorizontalBarChart({ labels, values, colors }: {
             />
             {/* count label */}
             <text
-              x={LABEL_W + barW + 6} y={y + 4} fontSize={11}
+              x={LABEL_W + barW + 6}
+              y={y}
+              dominantBaseline="middle"
+              fontSize={11}
               fill={dimmed ? '#ddd' : '#aaa'}
               style={{ transition: 'fill 0.15s' }}
             >
@@ -624,7 +632,7 @@ function LineChart({ labels, series }: {
           <g key={gv}>
             <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y}
               stroke="rgba(0,0,0,0.05)" strokeWidth={1} />
-            <text x={PAD.left - 4} y={y + 3} textAnchor="end" fontSize={5.5} fill="#aaa">{gv}</text>
+            <text x={PAD.left - 4} y={y + 1.4} textAnchor="end" fontSize={3.5} fill="#aaa">{gv}</text>
           </g>
         );
       })}
@@ -634,7 +642,7 @@ function LineChart({ labels, series }: {
         if (!lbl) return null;
         const { x } = toXY(i, 0);
         return (
-          <text key={i} x={x} y={H - 8} textAnchor="middle" fontSize={3.5}
+          <text key={i} x={x} y={H - 10} textAnchor="middle" fontSize={3.5}
             fill={activeIdx === i ? '#555' : '#aaa'}
             fontWeight={activeIdx === i ? 600 : 400}
             style={{ transition: 'fill 0.1s' }}
@@ -685,14 +693,14 @@ function LineChart({ labels, series }: {
             {/* Tooltip box */}
             <rect x={tipX} y={tipY} width={TIP_W} height={TIP_H} rx={4} fill="#475569" />
             {/* Date label */}
-            <text x={tipX + 6} y={tipY + 9} fontSize={4.5} fill="#aaa" fontWeight={600}>
+            <text x={tipX + 6} y={tipY + 8} fontSize={4.5} fill="#aaa" fontWeight={600}>
               {labels[activeIdx] || `Day ${activeIdx + 1}`}
             </text>
             {/* Series values */}
             {series.map((s, si) => (
               <g key={s.label}>
-                <circle cx={tipX + 8} cy={tipY + 14 + si * 11} r={2} fill={s.color} />
-                <text x={tipX + 13} y={tipY + 16.5 + si * 11} fontSize={3.5} fill="#fff">
+                <circle cx={tipX + 8} cy={tipY + 12.5 + si * 11} r={2} fill={s.color} />
+                <text x={tipX + 13} y={tipY + 14 + si * 11} fontSize={3.5} fill="#fff">
                   {s.label}: {s.values[activeIdx] ?? 0}
                 </text>
               </g>
