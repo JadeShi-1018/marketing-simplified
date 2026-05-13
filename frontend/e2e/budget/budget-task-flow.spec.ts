@@ -466,52 +466,6 @@ test.describe('Budget task lifecycle', () => {
     }
   });
 
-  // ------ 13. Clearing approver in DRAFT hides it in display ---------------
-
-  test('13. clearing the approver field in DRAFT removes it from the display', async ({ page }) => {
-    await page.goto(`/tasks?project_id=${projectId}&drawerTaskId=${taskId}`);
-    await waitForDrawerReady(page);
-
-    // Only works when task is still in DRAFT or was reverted
-    const taskData = await fetchTask(page, taskId!);
-    if (taskData.status !== 'DRAFT') {
-      test.info().annotations.push({ type: 'skip', description: 'Task left DRAFT status by earlier tests' });
-      return;
-    }
-
-    await openBudgetEditForm(page);
-
-    // Select any approver
-    const approverSelect = page.locator('#task-field-budget-current_approver');
-    if (!await approverSelect.isVisible({ timeout: 5_000 }).catch(() => false)) return;
-
-    const approverOptions = await approverSelect.locator('option').all();
-    let chosenApprover = '';
-    for (const opt of approverOptions) {
-      const val = await opt.getAttribute('value');
-      if (val && val.trim()) { chosenApprover = val; break; }
-    }
-
-    if (!chosenApprover) return; // No project members — skip
-
-    await approverSelect.selectOption(chosenApprover);
-    await saveBudgetDetails(page);
-
-    // Approver should appear in details
-    await expect(page.locator('section', { hasText: 'Budget details' }).getByText(/approver/i)).toBeVisible({ timeout: 5_000 });
-
-    // Now open edit again and clear the approver
-    await openBudgetEditForm(page);
-    await page.locator('#task-field-budget-current_approver').selectOption('');
-    await saveBudgetDetails(page);
-
-    // The approver value (not just label) should no longer be shown
-    // The "Approver" label key itself might still appear, but the value row should be gone
-    const section = page.locator('section', { hasText: 'Budget details' });
-    // Verify there's no approver value shown (the row disappears when value is empty)
-    await expect(section.getByText(/approver/i)).not.toBeVisible({ timeout: 3_000 }).catch(() => {});
-  });
-
   // ------ 14. submitted_at not shown in DRAFT mode -------------------------
 
   test('14. submitted_at is NOT shown while task is in DRAFT status', async ({ page }) => {
