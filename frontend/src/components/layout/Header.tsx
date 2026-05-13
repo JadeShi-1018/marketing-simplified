@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Search, Bell, User, Check, Trash2, Settings } from 'lucide-react';
+import { Bell, User, Check, Trash2, Settings } from 'lucide-react';
 import Image from 'next/image';
 import { useAuthStore } from '@/lib/authStore';
 import { notificationsApi } from '@/lib/api/notificationsApi';
@@ -17,8 +17,6 @@ import { useNotificationDrawer } from '@/components/notifications/NotificationDr
 
 interface HeaderProps {
   className?: string;
-  onSearchChange?: (query: string) => void;
-  searchPlaceholder?: string;
   user?: {
     name: string;
     email: string;
@@ -43,8 +41,6 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({
   className = '',
-  onSearchChange,
-  searchPlaceholder = 'Search for anything...',
   user = {
     name: 'Admin',
     email: 'admin@company.com',
@@ -74,8 +70,6 @@ const Header: React.FC<HeaderProps> = ({
     setUnreadCount: setGlobalUnreadCount,
     triggerRefresh,
   } = useNotificationStore();
-
-  const [searchQuery, setSearchQuery] = useState('');
   const [showNotifications, setShowNotifications] = useState(false);
   const [panelItems, setPanelItems] = useState<NotificationItem[]>([]);
   const [panelTotal, setPanelTotal] = useState(0);
@@ -148,12 +142,6 @@ const Header: React.FC<HeaderProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const query = event.target.value;
-    setSearchQuery(query);
-    onSearchChange?.(query);
-  };
-
   const handleMarkAllRead = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isAuthenticated) return;
@@ -201,42 +189,24 @@ const Header: React.FC<HeaderProps> = ({
     <header className={`bg-white border-b border-gray-200 ${className}`}>
       <div className="px-6 py-4">
         <div className="flex items-center justify-between">
-          <div className="flex items-center">
+          {/* Logo */}
+          <Link href="/" className="flex items-center">
             <Image
-              src="/homepage_logo_square.jpeg"
+              src="/marketing_simplified_logo.png"
               alt="Marketing Simplified Logo"
-              width={278}
-              height={69}
-              className="h-16 w-auto"
+              width={400}
+              height={100}
+              className="h-20 w-auto"
               priority
             />
-            <h1 className="text-3xl font-bold">
-              <span className="text-blue-800">Marketing</span>
-              <span className="text-gray-900"> Simplified</span>
-            </h1>
-          </div>
-
-          <div className="flex-1 max-w-lg mx-8">
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-gray-400" />
-              </div>
-              <input
-                type="text"
-                placeholder={searchPlaceholder}
-                value={searchQuery}
-                onChange={handleSearchChange}
-                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors duration-200"
-              />
-            </div>
-          </div>
+          </Link>
 
           <div className="flex items-center gap-4">
             <div className="relative" ref={notificationRef}>
               <button
                 type="button"
                 onClick={() => setShowNotifications(!showNotifications)}
-                className="relative p-2 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded-full transition-colors duration-200"
+                className="relative p-2 text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-brand-teal rounded-full transition-colors duration-200"
                 aria-label="Notifications"
               >
                 <Bell className="h-6 w-6" />
@@ -389,7 +359,7 @@ const Header: React.FC<HeaderProps> = ({
             <div>
               <button
                 onClick={() => onUserMenuClick?.('profile')}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors duration-200"
+                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-brand-teal transition-colors duration-200"
                 aria-label="Go to profile"
               >
                 <div className="text-right">

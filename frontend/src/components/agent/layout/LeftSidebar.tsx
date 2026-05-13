@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils"
 import { AgentAPI } from "@/lib/api/agentApi"
 import { useBatchManage } from "@/hooks/useBatchManage"
 import ConfirmDialog from "@/components/common/ConfirmDialog"
+import { AgentRecentSessionsSkeleton } from "@/components/agent/skeletons/AgentSkeletons"
 
 const navItems: { id: AgentView; label: string; icon: React.ElementType }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -40,14 +41,19 @@ function formatTimeAgo(iso: string): string {
 }
 
 export function LeftSidebar() {
-  const { activeView, setActiveView, openFloatingChat, floatingChat, isInSnapZone } = useAgentLayout()
+  const { activeView, isViewReady, setActiveView, openFloatingChat, closeFloatingChat, floatingChat, isInSnapZone } = useAgentLayout()
   const [recentSessions, setRecentSessions] = useState<SessionItem[]>([])
+  const [sessionsLoading, setSessionsLoading] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState("")
   const editInputRef = useRef<HTMLInputElement>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [pendingDeleteSession, setPendingDeleteSession] = useState<SessionItem | null>(null)
 
-  const loadSessions = async () => {
+  const loadSessions = async (showLoading = false) => {
+    if (showLoading) {
+      setSessionsLoading(true)
+    }
     try {
       const sessions = await AgentAPI.listSessions()
       setRecentSessions(
@@ -59,6 +65,10 @@ export function LeftSidebar() {
       )
     } catch {
       // keep empty
+    } finally {
+      if (showLoading) {
+        setSessionsLoading(false)
+      }
     }
   }
 
@@ -73,7 +83,7 @@ export function LeftSidebar() {
   })
 
   useEffect(() => {
-    loadSessions()
+    loadSessions(true)
   }, [])
 
   // Refresh sessions when floating chat opens (replaces old "agent view" refresh)
@@ -98,10 +108,23 @@ export function LeftSidebar() {
     }
   }, [editingId])
 
-  const handleNewChat = (e: React.MouseEvent) => {
+  const handleNewChat = async (e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+
+    // Open immediately for responsiveness, then attach a real sessionId once created.
+    // The approval toggle only renders once sessionId exists.
     sessionStorage.removeItem("agent-session-id")
     openFloatingChat(null, rect)
+
+    try {
+      const session = await AgentAPI.createSession({})
+      const sid = String(session.id)
+      sessionStorage.setItem("agent-session-id", sid)
+      openFloatingChat(sid, rect)
+      window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
+    } catch {
+      // Keep the welcome screen (no session yet) on failure.
+    }
   }
 
   const handleSelectSession = (sessionId: string, e: React.MouseEvent) => {
@@ -146,6 +169,24 @@ export function LeftSidebar() {
     await batch.deleteSelected()
   }
 
+  const handleSingleDeleteConfirm = async () => {
+    const s = pendingDeleteSession
+    if (!s) return
+    setPendingDeleteSession(null)
+    try {
+      await AgentAPI.deleteSession(s.id)
+      setRecentSessions((prev) => prev.filter((x) => x.id !== s.id))
+      window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
+      if (floatingChat.sessionId === s.id && floatingChat.mode !== "closed") {
+        closeFloatingChat()
+        sessionStorage.removeItem("agent-session-id")
+        window.dispatchEvent(new CustomEvent("agent:new-chat"))
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   return (
     <div className="w-60 h-full bg-background border-r border-border flex flex-col">
       {/* Project Header */}
@@ -166,7 +207,7 @@ export function LeftSidebar() {
           <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">Workspaces</span>
         </div>
         {navItems.map(({ id, label, icon: Icon }) => {
-          const isActive = activeView === id
+          const isActive = isViewReady && activeView === id
           return (
             <button
               key={id}
@@ -249,7 +290,9 @@ export function LeftSidebar() {
           </button>
         </div>
         <div className="px-2 pb-2 space-y-0.5">
-          {recentSessions.length === 0 ? (
+          {sessionsLoading ? (
+            <AgentRecentSessionsSkeleton />
+          ) : recentSessions.length === 0 ? (
             <span className="px-2 text-xs text-muted-foreground/60">No recent sessions</span>
           ) : (
             recentSessions.map((session) => (
@@ -314,6 +357,17 @@ export function LeftSidebar() {
                     >
                       <Pencil className="w-3 h-3" />
                     </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setPendingDeleteSession(session)
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground/60 hover:text-red-500 shrink-0 transition-opacity"
+                      title="Delete"
+                      aria-label="Delete dialogue"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
                     <span className="text-[10px] text-muted-foreground/50 shrink-0">{session.time}</span>
                   </button>
                 )}
@@ -330,7 +384,7 @@ export function LeftSidebar() {
             onClick={() => setActiveView("settings")}
             className={cn(
               "flex items-center gap-2 text-sm transition-colors",
-              activeView === "settings"
+              isViewReady && activeView === "settings"
                 ? "text-foreground"
                 : "text-muted-foreground hover:text-card-foreground"
             )}
@@ -351,6 +405,21 @@ export function LeftSidebar() {
         cancelText="Cancel"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
+      />
+
+      <ConfirmDialog
+        isOpen={pendingDeleteSession != null}
+        title="Delete Dialogue"
+        message={
+          pendingDeleteSession
+            ? `Delete "${pendingDeleteSession.title}"? This action cannot be undone.`
+            : ""
+        }
+        type="danger"
+        confirmText="Delete"
+        cancelText="Cancel"
+        onConfirm={handleSingleDeleteConfirm}
+        onCancel={() => setPendingDeleteSession(null)}
       />
     </div>
   )

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   Upload,
@@ -247,16 +247,24 @@ export default function MediaSelectionModal({
         const placeholderId = placeholderPhotos[i].id;
 
         try {
-          await uploadPhoto(file);
+          const result = await uploadPhoto(file);
+          const uploadedPhoto = result.photo;
 
-          // Mark as successfully uploaded (will be replaced when we refetch)
-          setPhotos(prev =>
-            prev.map(p =>
-              p.id === placeholderId
-                ? { ...p, isUploading: false }
-                : p
-            )
-          );
+          if (uploadedPhoto) {
+            setPhotos(prev => [
+              uploadedPhoto,
+              ...prev.filter(p => p.id !== placeholderId && p.id !== uploadedPhoto.id)
+            ]);
+            setSelectedMedia(prev => new Set([...prev, uploadedPhoto.id]));
+          } else {
+            setPhotos(prev =>
+              prev.map(p =>
+                p.id === placeholderId
+                  ? { ...p, isUploading: false }
+                  : p
+              )
+            );
+          }
 
         } catch (error) {
           console.error('Upload failed:', error);
@@ -310,16 +318,24 @@ export default function MediaSelectionModal({
         const toastId = toast.loading(`Uploading video\nProcessing ${file.name}...`);
 
         try {
-          await uploadVideo(file, file.name);
+          const result = await uploadVideo(file, file.name);
+          const uploadedVideo = result.video;
 
-          // Mark as successfully uploaded (will be replaced when we refetch)
-          setVideos(prev =>
-            prev.map(v =>
-              v.id === placeholderId
-                ? { ...v, isUploading: false }
-                : v
-            )
-          );
+          if (uploadedVideo) {
+            setVideos(prev => [
+              uploadedVideo,
+              ...prev.filter(v => v.id !== placeholderId && v.id !== uploadedVideo.id)
+            ]);
+            setSelectedMedia(prev => new Set([...prev, uploadedVideo.id]));
+          } else {
+            setVideos(prev =>
+              prev.map(v =>
+                v.id === placeholderId
+                  ? { ...v, isUploading: false }
+                  : v
+              )
+            );
+          }
 
           // Update to success toast
           toast.success(
@@ -414,11 +430,55 @@ export default function MediaSelectionModal({
     setter(null);
   };
 
+  // Frontend dedup safety net: collapse photo/video rows that share the same
+  // content hash so the user only ever sees one tile per unique file, even
+  // when the backend returns legacy duplicates (e.g. before the upload-side
+  // dedup change has been deployed). Optimistic placeholders use negative ids
+  // and an empty image_hash; we key those off id so they remain distinct
+  // until the real upload result replaces them.
+  const dedupedPhotos = useMemo(() => {
+    const seen = new Set<string>();
+    const out: PhotoData[] = [];
+    for (const photo of photos) {
+      const key = photo.image_hash ? `h:${photo.image_hash}` : `i:${photo.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(photo);
+    }
+    return out;
+  }, [photos]);
+
+  const dedupedVideos = useMemo(() => {
+    const seen = new Set<string>();
+    const out: VideoData[] = [];
+    for (const video of videos) {
+      const key = video.video_id ? `h:${video.video_id}` : `i:${video.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(video);
+    }
+    return out;
+  }, [videos]);
+
+  const selectedDedupedPhotos = useMemo(
+    () => dedupedPhotos.filter(photo => selectedMedia.has(photo.id) && !photo.isUploading),
+    [dedupedPhotos, selectedMedia]
+  );
+
+  const selectedDedupedVideos = useMemo(
+    () => dedupedVideos.filter(video => selectedMedia.has(video.id) && !video.isUploading),
+    [dedupedVideos, selectedMedia]
+  );
+
+  const canContinue =
+    !isUploading &&
+    (mediaType === 'image' ? selectedDedupedPhotos.length > 0 : selectedDedupedVideos.length > 0);
+
   // Filter photos based on search query
   const getFilteredPhotos = () => {
-    if (!searchQuery.trim()) return photos;
-    
-    return photos.filter(photo => {
+    if (!searchQuery.trim()) return dedupedPhotos;
+
+    return dedupedPhotos.filter(photo => {
       const filename = photo.url.split('/').pop() || '';
       return filename.toLowerCase().includes(searchQuery.toLowerCase());
     });
@@ -443,7 +503,7 @@ export default function MediaSelectionModal({
               <FileImage className="w-20 h-20 text-gray-400" />
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No images match your search</h3>
-            <p className="text-gray-600 text-sm">We couldn't find any images that match your search. Try adjusting your filters or searching for something else.</p>
+            <p className="text-gray-600 text-sm">We could not find any images that match your search. Try adjusting your filters or searching for something else.</p>
           </div>
         </div>
       );
@@ -463,7 +523,7 @@ export default function MediaSelectionModal({
                 <span className="text-xs text-gray-500">Showing first {filteredPhotos.length} images</span>
                 <a
                   href="#"
-                  className="text-xs text-blue-600 hover:underline"
+                  className="text-xs text-[#3CCED7] hover:underline"
                   onClick={(e) => {
                     e.preventDefault();
                     handleTabChange('account');
@@ -512,7 +572,7 @@ export default function MediaSelectionModal({
                 <span className="text-xs text-gray-500">Showing first {filteredPhotos.filter(p => !p.isUploading).length} images</span>
                 <a
                   href="#"
-                  className="text-xs text-blue-600 hover:underline"
+                  className="text-xs text-[#3CCED7] hover:underline"
                   onClick={(e) => {
                     e.preventDefault();
                     handleTabChange('recommended');
@@ -577,7 +637,7 @@ export default function MediaSelectionModal({
                 <FileImage className="w-20 h-20 text-gray-400" />
               </div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">No images match your search</h3>
-              <p className="text-gray-600 text-sm">We couldn't find any images that match your search. Try adjusting your filters or searching for something else.</p>
+              <p className="text-gray-600 text-sm">We could not find any images that match your search. Try adjusting your filters or searching for something else.</p>
             </div>
           </div>
         );
@@ -602,10 +662,10 @@ export default function MediaSelectionModal({
       );
     }
 
-    // Render videos grid
+    // Render videos grid (deduped — see dedupedVideos useMemo above).
     return (
       <div className="flex flex-wrap gap-4">
-        {videos.map(video => (
+        {dedupedVideos.map(video => (
           <VideoCard
             key={video.id}
             video={video}
@@ -664,7 +724,7 @@ export default function MediaSelectionModal({
               value={mediaUrl}
               onChange={(e) => setMediaUrl(e.target.value)}
               placeholder={`Paste the link of your ${mediaType} file`}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:border-transparent text-sm"
             />
           </div>
 
@@ -680,7 +740,7 @@ export default function MediaSelectionModal({
                 onChange={(e) => setMediaTitle(e.target.value)}
                 placeholder={`Name your ${mediaType} file`}
                 maxLength={50}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:border-transparent text-sm"
               />
               <span className="absolute right-3 top-1/2 transform -translate-y-1/2 text-xs text-gray-400">
                 {mediaTitle.length}/50
@@ -690,7 +750,7 @@ export default function MediaSelectionModal({
 
           <button
             className={`w-full py-2 px-4 rounded-md text-sm font-medium transition-colors ${mediaUrl.trim()
-              ? 'bg-blue-600 text-white hover:bg-blue-700'
+              ? 'bg-[#3CCED7] text-white hover:bg-[#2AB5BD]'
               : 'bg-gray-100 text-gray-400 cursor-not-allowed'
               }`}
             disabled={!mediaUrl.trim()}
@@ -728,7 +788,7 @@ export default function MediaSelectionModal({
               <FileImage className="w-20 h-20 text-gray-400" />
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No images match your search</h3>
-            <p className="text-gray-600 text-sm">We couldn't find any images that match your search. Try adjusting your filters or searching for something else.</p>
+            <p className="text-gray-600 text-sm">We could not find any images that match your search. Try adjusting your filters or searching for something else.</p>
           </div>
         </div>
       );
@@ -748,7 +808,7 @@ export default function MediaSelectionModal({
               <Star className="w-20 h-20 text-gray-400" />
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No recommended images</h3>
-            <p className="text-gray-600 text-sm">We'll show recommended images here when available.</p>
+            <p className="text-gray-600 text-sm">We will show recommended images here when available.</p>
           </div>
         </div>
       );
@@ -763,7 +823,7 @@ export default function MediaSelectionModal({
               <FileImage className="w-20 h-20 text-gray-400" />
             </div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No images match your search</h3>
-            <p className="text-gray-600 text-sm">We couldn't find any images that match your search. Try adjusting your filters or searching for something else.</p>
+            <p className="text-gray-600 text-sm">We could not find any images that match your search. Try adjusting your filters or searching for something else.</p>
           </div>
         </div>
       );
@@ -822,7 +882,7 @@ export default function MediaSelectionModal({
                 <button
                   onClick={() => handleTabChange('account')}
                   className={`flex items-center px-3 py-2 rounded-sm text-sm font-medium transition-colors relative ${activeTab === 'account'
-                    ? 'border-blue-600 text-blue-600 bg-blue-100 hover:bg-blue-200 font-semibold'
+                    ? 'border-[#3CCED7] text-[#3CCED7] bg-[#3CCED7]/15 hover:bg-blue-200 font-semibold'
                     : 'border-transparent hover:bg-gray-100'
                     }`}
                 >
@@ -832,7 +892,7 @@ export default function MediaSelectionModal({
                 <button
                   onClick={() => handleTabChange('video-url')}
                   className={`flex items-center px-3 py-2 rounded-sm text-sm font-medium transition-colors ${activeTab === 'video-url'
-                    ? 'border-blue-600 text-blue-600 bg-blue-100 hover:bg-blue-200 font-semibold'
+                    ? 'border-[#3CCED7] text-[#3CCED7] bg-[#3CCED7]/15 hover:bg-blue-200 font-semibold'
                     : 'border-transparent hover:bg-gray-100'
                     }`}
                 >
@@ -845,7 +905,7 @@ export default function MediaSelectionModal({
                 <button
                   onClick={() => handleTabChange('all')}
                   className={`flex items-center px-3 py-2 rounded-sm text-sm font-medium transition-colors relative ${activeTab === 'all'
-                    ? 'border-blue-600 text-blue-600 bg-blue-100 hover:bg-blue-200 font-semibold'
+                    ? 'border-[#3CCED7] text-[#3CCED7] bg-[#3CCED7]/15 hover:bg-blue-200 font-semibold'
                     : 'border-transparent hover:bg-gray-100'
                     }`}
                 >
@@ -855,7 +915,7 @@ export default function MediaSelectionModal({
                 <button
                   onClick={() => handleTabChange('account')}
                   className={`flex items-center px-3 py-2 rounded-sm text-sm font-medium transition-colors ${activeTab === 'account'
-                    ? 'border-blue-600 text-blue-600 bg-blue-100 hover:bg-blue-200 font-semibold'
+                    ? 'border-[#3CCED7] text-[#3CCED7] bg-[#3CCED7]/15 hover:bg-blue-200 font-semibold'
                     : 'border-transparent hover:bg-gray-100'
                     }`}
                 >
@@ -865,7 +925,7 @@ export default function MediaSelectionModal({
                 <button
                   onClick={() => handleTabChange('recommended')}
                   className={`flex items-center px-3 py-2 rounded-sm text-sm font-medium transition-colors ${activeTab === 'recommended'
-                    ? 'border-blue-600 text-blue-600 bg-blue-100 hover:bg-blue-200 font-semibold'
+                    ? 'border-[#3CCED7] text-[#3CCED7] bg-[#3CCED7]/15 hover:bg-blue-200 font-semibold'
                     : 'border-transparent hover:bg-gray-100'
                     }`}
                 >
@@ -890,7 +950,7 @@ export default function MediaSelectionModal({
                 disabled={disableTopControls || isUploading}
                 className={`w-full pl-10 ${searchQuery ? 'pr-10' : 'pr-4'} py-2 border border-gray-300 rounded-md text-sm ${(disableTopControls || isUploading)
                     ? 'bg-gray-100 cursor-not-allowed text-gray-400'
-                    : 'focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                    : 'focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:border-transparent'
                   }`}
               />
               {searchQuery && !disableTopControls && !isUploading && (
@@ -956,23 +1016,21 @@ export default function MediaSelectionModal({
         </div>
 
         {/* Selected Images Bar - Shows above footer when images are selected */}
-        {selectedMedia.size > 0 && mediaType === 'image' && (
+        {selectedDedupedPhotos.length > 0 && mediaType === 'image' && (
           <div className="border-t border-gray-200 bg-gray-50 px-6 py-4 flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-semibold text-gray-900">
-                  Selected images ({selectedMedia.size} of {Math.min(10, photos.filter(p => !p.isUploading).length)})
+                  Selected images ({selectedDedupedPhotos.length} of {Math.min(10, dedupedPhotos.filter(p => !p.isUploading).length)})
                 </h4>
               </div>
             </div>
             <div className="flex items-center space-x-2 mt-3">
-              {Array.from(selectedMedia).slice(0, 10).map(photoId => {
-                const photo = photos.find(p => p.id === photoId);
-                if (!photo || photo.isUploading) return null;
+              {selectedDedupedPhotos.slice(0, 10).map(photo => {
                 return (
                   <div
-                    key={photoId}
-                    className="relative w-12 h-12 rounded-lg overflow-hidden border-2 border-blue-500 flex-shrink-0"
+                    key={photo.id}
+                    className="relative w-12 h-12 rounded-lg overflow-hidden border-2 border-[#3CCED7] flex-shrink-0"
                   >
                     <img
                       src={photo.url}
@@ -986,23 +1044,21 @@ export default function MediaSelectionModal({
           </div>
         )}
 
-        {selectedMedia.size > 0 && mediaType === 'video' && (
+        {selectedDedupedVideos.length > 0 && mediaType === 'video' && (
           <div className="border-t border-gray-200 bg-gray-50 px-6 py-4 flex-shrink-0">
             <div className="flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-semibold text-gray-900">
-                  Selected videos ({selectedMedia.size} of {Math.min(10, videos.filter(v => !v.isUploading).length)})
+                  Selected videos ({selectedDedupedVideos.length} of {Math.min(10, dedupedVideos.filter(v => !v.isUploading).length)})
                 </h4>
               </div>
             </div>
             <div className="flex items-center space-x-2 mt-3">
-              {Array.from(selectedMedia).slice(0, 10).map(videoId => {
-                const video = videos.find(v => v.id === videoId);
-                if (!video || video.isUploading) return null;
+              {selectedDedupedVideos.slice(0, 10).map(video => {
                 return (
                   <div
-                    key={videoId}
-                    className="relative w-12 h-12 rounded-lg overflow-hidden border-2 border-blue-500 flex-shrink-0"
+                    key={video.id}
+                    className="relative w-12 h-12 rounded-lg overflow-hidden border-2 border-[#3CCED7] flex-shrink-0"
                   >
                     <video
                       src={video.url}
@@ -1027,15 +1083,13 @@ export default function MediaSelectionModal({
           <button
             onClick={() => {
               if (mediaType === 'image') {
-                const selectedPhotos = photos.filter(photo => selectedMedia.has(photo.id));
-                onContinue(selectedPhotos);
+                onContinue(selectedDedupedPhotos);
               } else {
-                const selectedVideos = videos.filter(video => selectedMedia.has(video.id));
-                onContinue(selectedVideos);
+                onContinue(selectedDedupedVideos);
               }
             }}
-            disabled={selectedMedia.size === 0 || isUploading}
-            className={`px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md transition-colors ${(selectedMedia.size === 0 || isUploading) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-700'}`}
+            disabled={!canContinue}
+            className={`px-4 py-2 text-sm font-medium text-white bg-[#3CCED7] rounded-md transition-colors ${!canContinue ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[#2AB5BD]'}`}
           >
             Continue
           </button>

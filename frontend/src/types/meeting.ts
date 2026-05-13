@@ -1,6 +1,6 @@
 // frontend/src/types/meeting.ts
 
-export type MeetingStatus = 'draft';
+export type MeetingStatus = 'draft' | 'planned' | 'in_progress' | 'completed' | 'archived';
 
 /** In-app path + label from the API for contextual navigation (meetings ↔ decisions ↔ tasks). */
 export interface KnowledgeNavigationLink {
@@ -26,6 +26,70 @@ export interface OriginMeetingPayload {
   project_id?: number;
 }
 
+/** Stable code from GET meeting detail ``zoom_post_meeting.user_feedback_code`` (nullable when no issue copy). */
+export type ZoomPostMeetingUserFeedbackCode =
+  | 'auth_expired'
+  | 'pending'
+  | 'not_applicable'
+  | 'unavailable'
+  | 'error';
+
+export interface ZoomPostMeetingParticipantSnippet {
+  name: string | null;
+  email: string | null;
+}
+
+export interface ZoomPostMeetingRecordingFileSnippet {
+  file_type?: string | null;
+  recording_type?: string | null;
+  play_url?: string | null;
+  download_url?: string | null;
+}
+
+/** Matches ``ZoomMeetingData.SyncState`` (backend). */
+export type ZoomPostMeetingSyncState =
+  | 'never'
+  | 'in_progress'
+  | 'ok'
+  | 'partial'
+  | 'error';
+
+/** Matches ``ZoomMeetingData.MeetingStatus``. */
+export type ZoomPostMeetingMeetingStatus = 'unknown' | 'scheduled' | 'live' | 'ended';
+
+/** Matches ``ZoomMeetingData.RecordingStatus``. */
+export type ZoomPostMeetingRecordingStatus =
+  | 'unknown'
+  | 'none'
+  | 'processing'
+  | 'available'
+  | 'deleted';
+
+/** Matches ``ZoomMeetingData.SummaryStatus``. */
+export type ZoomPostMeetingSummaryStatus = 'not_applicable' | 'pending' | 'available' | 'failed';
+
+/** Nested Zoom post-meeting payload (snake_case, matches DRF). */
+export interface ZoomPostMeeting {
+  meeting_status: string;
+  start_time: string | null;
+  end_time: string | null;
+  duration_minutes: number | null;
+  actual_participants_count: number | null;
+  recording_status: string;
+  summary_status: string;
+  sync_state: string;
+  sync_error: string;
+  last_sync_at: string | null;
+  has_participant_breakdown: boolean;
+  participant_breakdown_count: number;
+  has_transcript_asset: boolean;
+  recording_file_count: number;
+  summary_text: string;
+  participants: ZoomPostMeetingParticipantSnippet[];
+  recording_files: ZoomPostMeetingRecordingFileSnippet[];
+  user_feedback_code: ZoomPostMeetingUserFeedbackCode | null;
+}
+
 export interface Meeting {
   id: number;
   project: number;
@@ -36,6 +100,9 @@ export interface Meeting {
   scheduled_time: string | null;
   external_reference: string | null;
   status: MeetingStatus;
+  is_archived?: boolean;
+  /** Zoom post-meeting snapshot when linked; ``null`` if not linked. */
+  zoom_post_meeting?: ZoomPostMeeting | null;
   /** Included on create/detail when the API returns embedded discovery fields. */
   participants?: MeetingListParticipant[];
   tags?: MeetingListTag[];
@@ -69,6 +136,7 @@ export interface MeetingListItem {
   scheduled_date: string | null;
   /** Time of day (`HH:MM:SS`) when present on detail; list rows omit this. */
   scheduled_time?: string | null;
+  status: MeetingStatus;
   meeting_type: string;
   meeting_type_slug: string;
   participants: MeetingListParticipant[];
@@ -240,4 +308,46 @@ export interface MeetingDocument {
   last_edited_by: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Follow-up row on a meeting before it becomes a task (SMP-489). */
+export interface MeetingActionItem {
+  id: number;
+  meeting: number;
+  title: string;
+  description: string;
+  order_index: number;
+  is_resolved: boolean;
+  created_at?: string;
+  updated_at?: string;
+  converted_task_id: number | null;
+}
+
+export interface MeetingActionItemCreateRequest {
+  title: string;
+  description?: string;
+  order_index?: number;
+}
+
+export interface MeetingActionItemPartialUpdateRequest {
+  title?: string;
+  description?: string;
+  order_index?: number;
+}
+
+export interface ConvertActionItemToTaskRequest {
+  owner_id?: number | null;
+  due_date?: string | null;
+  priority?: string | null;
+  type?: string;
+  current_approver_id?: number | null;
+  create_as_draft?: boolean;
+}
+
+export interface BulkConvertActionItemRow extends ConvertActionItemToTaskRequest {
+  action_item_id: number;
+}
+
+export interface BulkConvertActionItemsRequest {
+  items: BulkConvertActionItemRow[];
 }

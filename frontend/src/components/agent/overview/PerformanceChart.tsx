@@ -19,6 +19,7 @@ import {
 } from "recharts"
 import { AGENT_MESSAGES } from "@/lib/agentMessages"
 import { DecorativeGlow } from "@/components/ui/decorative-glow"
+import { AgentChartCardSkeleton } from "@/components/agent/skeletons/AgentSkeletons"
 
 interface TrendPoint {
   date: string
@@ -51,6 +52,10 @@ export function PerformanceChart() {
     setLoading(false)
   }, [])
 
+  if (loading) {
+    return <AgentChartCardSkeleton title="Performance Trend" />
+  }
+
   return (
     <Card className="relative overflow-hidden bg-card border-border">
       <DecorativeGlow variant="subtle" />
@@ -59,11 +64,7 @@ export function PerformanceChart() {
       </CardHeader>
       <CardContent className="relative">
         <div className="h-[280px]">
-          {loading ? (
-            <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
-              Loading trend data...
-            </div>
-          ) : data.length === 0 ? (
+          {data.length === 0 ? (
             <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
               {AGENT_MESSAGES.EMPTY_PERFORMANCE_CHART}
             </div>
@@ -74,14 +75,14 @@ export function PerformanceChart() {
                 <XAxis
                   dataKey="date"
                   stroke="hsl(var(--muted-foreground))"
-                  fontSize={12}
+                  fontSize={10}
                   tickLine={false}
                   axisLine={false}
                 />
                 <YAxis
                   yAxisId="left"
                   stroke="hsl(var(--muted-foreground))"
-                  fontSize={12}
+                  fontSize={10}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={(v) => `${v}x`}
@@ -90,13 +91,13 @@ export function PerformanceChart() {
                   yAxisId="right"
                   orientation="right"
                   stroke="hsl(var(--muted-foreground))"
-                  fontSize={12}
+                  fontSize={10}
                   tickLine={false}
                   axisLine={false}
                   tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
                 />
-                <ChartTooltip content={<ChartTooltipContent />} />
-                <ChartLegend content={<ChartLegendContent />} />
+                <ChartTooltip content={<ChartTooltipContent className="text-[11px]" labelClassName="text-[11px]" />} />
+                <ChartLegend content={<ChartLegendContent className="text-[11px]" />} />
                 <Line
                   yAxisId="left"
                   type="monotone"

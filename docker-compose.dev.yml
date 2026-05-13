@@ -84,6 +84,9 @@ services:
       #   condition: service_healthy
     volumes:
       # - sonar-token-data:/token
+      # Host source so backend picks up local edits without docker cp / image rebuild
+      # (matches celery-worker pattern; previously absent — caused dev pain across MBI-03)
+      - ./backend:/app
       - ../agentdoc/databackup:/app/agent_data
     command: ["/bin/bash", "/app/entrypoint-dev"]
     logging:
@@ -161,7 +164,27 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    command: celery -A backend worker --loglevel=info
+    command: celery -A backend worker --loglevel=info --pool=threads --concurrency=4
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    container_name: celery-beat-dev
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=host.docker.internal
+      - DEBUG=True
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A backend beat -l info
 
   # Ngrok tunnel service
   # ngrok:
@@ -312,7 +335,7 @@ services:
       context: ./devops/topic-init
       dockerfile: Dockerfile.dev
     container_name: topic-init
-    restart: always
+    restart: on-failure:3
     entrypoint: ["/bin/bash", "/usr/local/bin/entrypoint-dev"]
     depends_on:
       kafka:

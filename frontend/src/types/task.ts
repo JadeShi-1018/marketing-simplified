@@ -1,5 +1,15 @@
 import type { OriginMeetingPayload } from '@/types/meeting';
 
+/** Task provenance when created from a meeting action item (SMP-489). */
+export interface OriginActionItemPayload {
+  id: number;
+  title: string;
+  meeting_id: number;
+  project_id?: number;
+  detail_url?: string;
+  url?: string;
+}
+
 export interface ApprovalChainStepRecord {
   approved_by: UserSummary;
   is_approved: boolean;
@@ -49,6 +59,8 @@ export interface TaskData {
     | "REJECTED"
     | "LOCKED"
     | "CANCELLED";
+  priority?: string;
+  planned_start_date?: string | null;
   linked_object?: unknown;
   is_subtask?: boolean; // Indicates if this task is a subtask
   parent_relationship?: any; // Parent relationship if this is a subtask
@@ -64,6 +76,10 @@ export interface TaskData {
   draft_payload?: unknown | null;
   /** Provenance: meeting this task is anchored to, if any (task detail only). */
   origin_meeting?: OriginMeetingPayload | null;
+  /** Provenance: action item this task was converted from, if any (task detail only). */
+  origin_action_item?: OriginActionItemPayload | null;
+  /** Set when this task was imported from Linear. */
+  linear_issue_id?: string | null;
 }
 
 // Type for creating a new task (current_approver_id is user ID)
@@ -170,4 +186,65 @@ export interface TaskListFilters {
   created_before?: string;
   include_subtasks?: boolean;
   all_projects?: boolean;
+}
+
+/** GET /api/tasks/gantt/ — chart payload derived server-side from tasks + dates */
+export interface GanttLegendItem {
+  band: 'highest' | 'high' | 'medium' | 'low' | 'lowest';
+  label: string;
+}
+
+export interface GanttRow {
+  id: number;
+  display_key: string;
+  summary: string;
+  status_label: string;
+  priority?: string;
+  band: 'highest' | 'high' | 'medium' | 'low' | 'lowest';
+  owner_initials: string;
+  owner_color_index: number;
+  bar_start: string;
+  bar_end: string;
+  duration_days: number;
+}
+
+export interface GanttChartPayload {
+  sprint_label: string;
+  task_count: number;
+  today: string;
+  range: { start: string; end: string };
+  legend: GanttLegendItem[];
+  rows: GanttRow[];
+}
+
+export interface TaskBulkUpdateRequest {
+  task_ids: number[];
+  status?: TaskData['status'];
+  due_date?: string | null;
+  owner_id?: number | null;
+  current_approver_id?: number | null;
+  priority?: string;
+  start_date?: string | null;
+  planned_start_date?: string | null;
+}
+
+export interface TaskBulkFailureItem {
+  task_id: number | null;
+  reason: string;
+}
+
+export interface TaskBulkActionResult {
+  requested_count: number;
+  succeeded_count: number;
+  failed_count: number;
+  updated_count: number;
+  succeeded: number[];
+  failed: TaskBulkFailureItem[];
+  atomic: boolean;
+  applied_fields: string[];
+}
+
+export interface TaskBulkActionResponse {
+  detail: string;
+  result: TaskBulkActionResult;
 }

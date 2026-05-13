@@ -150,6 +150,8 @@ function CalendarPageStory(props: CalendarPageStoryProps = {}) {
           isLoading={sidebarLoading}
           error={sidebarError}
           onCalendarItemClick={() => {}}
+          activeEventTypes={new Set(["decision", "task"])}
+          onToggleActivityType={() => {}}
           />
         </div>
 
@@ -201,6 +203,7 @@ function CalendarPageStory(props: CalendarPageStoryProps = {}) {
           end={dialogEnd}
           event={dialogEvent}
           calendars={calendars}
+          primaryCalendar={calendars.find((c) => c.is_primary) ?? null}
           preferredCalendarId={calendars[0].id}
           onSave={async () => {}}
           onDelete={async () => {}}

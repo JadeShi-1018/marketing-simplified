@@ -18,8 +18,12 @@ interface NotionLayoutProps {
   onTitleChange: (value: string) => void;
   lastEditedLabel: string | null;
   onOpenPreview: () => void;
+  onImportGoogleDoc: () => void | Promise<void>;
+  onExportGoogleDoc: () => void | Promise<void>;
   onSave: () => void | Promise<void>;
   isSaving: boolean;
+  googleDocsImportBusy: boolean;
+  googleDocsExportBusy: boolean;
   hasChanges: boolean;
   isLoadingEditor: boolean;
   blocks: EditorBlock[];
@@ -39,8 +43,12 @@ export default function NotionLayout({
   onTitleChange,
   lastEditedLabel,
   onOpenPreview,
+  onImportGoogleDoc,
+  onExportGoogleDoc,
   onSave,
   isSaving,
+  googleDocsImportBusy,
+  googleDocsExportBusy,
   hasChanges,
   isLoadingEditor,
   blocks,
@@ -116,8 +124,24 @@ export default function NotionLayout({
             </button>
             <button
               type="button"
+              onClick={onImportGoogleDoc}
+              className="px-3 py-1.5 text-sm bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white hover:opacity-95 rounded-md transition-colors font-medium disabled:opacity-60"
+              disabled={!selectedDraftId || googleDocsImportBusy || googleDocsExportBusy}
+            >
+              {googleDocsImportBusy ? 'Importing…' : 'Import Doc'}
+            </button>
+            <button
+              type="button"
+              onClick={onExportGoogleDoc}
+              className="px-3 py-1.5 text-sm bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white hover:opacity-95 rounded-md transition-colors font-medium disabled:opacity-60"
+              disabled={!selectedDraftId || googleDocsImportBusy || googleDocsExportBusy}
+            >
+              {googleDocsExportBusy ? 'Exporting…' : 'Export Doc'}
+            </button>
+            <button
+              type="button"
               onClick={onSave}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 rounded-md transition-colors font-medium disabled:opacity-60"
+              className="px-3 py-1.5 text-sm bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white hover:opacity-95 rounded-md transition-colors font-medium disabled:opacity-60"
               disabled={!selectedDraftId || isSaving || !hasChanges}
             >
               {isSaving ? 'Saving…' : 'Save'}
@@ -148,7 +172,7 @@ export default function NotionLayout({
               <button
                 type="button"
                 onClick={onCreateDraft}
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                className="rounded-md bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:ring-offset-2"
               >
                 New draft
               </button>
@@ -168,7 +192,7 @@ export default function NotionLayout({
               <button
                 type="button"
                 onClick={onClosePreview}
-                className="rounded-full bg-gray-100 p-2 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="rounded-full bg-gray-100 p-2 text-gray-500 hover:text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
                 aria-label="Close preview"
               >
                 <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">

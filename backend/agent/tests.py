@@ -2,7 +2,7 @@ import json
 import uuid
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 
@@ -345,8 +345,8 @@ class OrchestratorTests(TestCase):
         self.assertEqual(workflow_run.status, 'completed')
 
 
-    @patch('agent.services._call_dify_chat')
-    def test_follow_up_completed_marks_run_and_passes_project_members(self, mock_call_dify_chat):
+    @patch('agent.services._call_gemini_chat')
+    def test_follow_up_completed_marks_run_and_passes_project_members(self, mock_call_gemini_chat):
         teammate = CustomUser.objects.create_user(
             email='alice@test.com',
             username='alice',
@@ -373,7 +373,7 @@ class OrchestratorTests(TestCase):
             role='assistant',
             content='Analysis complete.',
         )
-        mock_call_dify_chat.return_value = {
+        mock_call_gemini_chat.return_value = {
             'status': 'completed',
             'text': 'Prepared a summary.',
             'forwards': [],
@@ -389,24 +389,24 @@ class OrchestratorTests(TestCase):
         workflow_run.refresh_from_db()
         self.assertTrue(workflow_run.chat_followed_up)
 
-        self.assertTrue(mock_call_dify_chat.called)
-        project_members = mock_call_dify_chat.call_args.kwargs['project_members']
-        current_username = mock_call_dify_chat.call_args.kwargs['current_username']
+        self.assertTrue(mock_call_gemini_chat.called)
+        project_members = mock_call_gemini_chat.call_args.kwargs['project_members']
+        current_username = mock_call_gemini_chat.call_args.kwargs['current_username']
         usernames = {member['username'] for member in project_members}
         self.assertEqual(current_username, 'orchuser')
         self.assertIn('orchuser', usernames)
         self.assertIn('alice', usernames)
         self.assertNotIn('agent-bot', usernames)
 
-    @patch('agent.services._call_dify_chat')
-    def test_follow_up_needs_clarification_keeps_run_open(self, mock_call_dify_chat):
+    @patch('agent.services._call_gemini_chat')
+    def test_follow_up_needs_clarification_keeps_run_open(self, mock_call_gemini_chat):
         workflow_run = AgentWorkflowRun.objects.create(
             session=self.session,
             status='awaiting_confirmation',
             analysis_result=_test_analysis_data(),
             chat_follow_up_started=True,
         )
-        mock_call_dify_chat.return_value = {
+        mock_call_gemini_chat.return_value = {
             'status': 'needs_clarification',
             'text': 'Please provide the exact username.',
             'forwards': [],
@@ -420,7 +420,7 @@ class OrchestratorTests(TestCase):
             chunks,
         )
         self.assertEqual(
-            mock_call_dify_chat.call_args.kwargs['current_username'],
+            mock_call_gemini_chat.call_args.kwargs['current_username'],
             'orchuser',
         )
         workflow_run.refresh_from_db()
@@ -472,8 +472,8 @@ class OrchestratorTests(TestCase):
         self.assertFalse(workflow_run.chat_follow_up_started)
         self.assertFalse(workflow_run.chat_followed_up)
 
-    @patch('agent.services._call_dify_chat')
-    def test_follow_up_requires_explicit_start(self, mock_call_dify_chat):
+    @patch('agent.services._call_gemini_chat')
+    def test_follow_up_requires_explicit_start(self, mock_call_gemini_chat):
         AgentWorkflowRun.objects.create(
             session=self.session,
             status='awaiting_confirmation',
@@ -493,7 +493,7 @@ class OrchestratorTests(TestCase):
             },
             chunks,
         )
-        mock_call_dify_chat.assert_not_called()
+        mock_call_gemini_chat.assert_not_called()
 
     @patch('chat.tasks.notify_new_message.delay')
     def test_forward_to_users_does_not_match_first_name(self, mock_notify_delay):
@@ -869,15 +869,11 @@ class CalendarAgentTests(TestCase):
     # handle_message routing                                              #
     # ------------------------------------------------------------------ #
 
-    @patch.dict('os.environ', {'DIFY_CALENDAR_API_KEY': 'test-key'})
-    @patch('agent.services.requests.post')
-    def test_handle_message_routes_to_calendar_when_context_provided(self, mock_post):
-        """handle_message with calendar_context skips general chat and calls Dify calendar."""
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {'data': {'outputs': {'answer': '{"answer": "You have 1 event.", "create_events": []}'}}},
-        )
-        mock_post.return_value.raise_for_status = lambda: None
+    @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
+    @patch('agent.gemini_client.call_gemini')
+    def test_handle_message_routes_to_calendar_when_context_provided(self, mock_call_gemini):
+        """handle_message with calendar_context skips general chat and calls Gemini calendar."""
+        mock_call_gemini.return_value = '{"answer": "You have 1 event.", "create_events": []}'
 
         calendar_context = {'type': 'calendar', 'calendarIds': [], 'currentView': 'week'}
         chunks = list(self.orchestrator.handle_message(
@@ -887,8 +883,7 @@ class CalendarAgentTests(TestCase):
         types = [c['type'] for c in chunks]
         self.assertIn('text', types)
         self.assertIn('done', types)
-        # Dify calendar endpoint must have been called
-        self.assertTrue(mock_post.called)
+        self.assertTrue(mock_call_gemini.called)
 
     @patch('agent.services.requests.post')
     def test_handle_message_without_calendar_context_skips_calendar(self, mock_post):
@@ -953,15 +948,11 @@ class CalendarAgentTests(TestCase):
     # answer_calendar_question — Dify response handling                  #
     # ------------------------------------------------------------------ #
 
-    @patch.dict('os.environ', {'DIFY_CALENDAR_API_KEY': 'test-key'})
-    @patch('agent.services.requests.post')
-    def test_answer_calendar_question_yields_text_chunk(self, mock_post):
-        """A successful Dify response yields a text chunk with the answer."""
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {'data': {'outputs': {'answer': '{"answer": "You have 2 events this week.", "create_events": []}'}}},
-        )
-        mock_post.return_value.raise_for_status = lambda: None
+    @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
+    @patch('agent.gemini_client.call_gemini')
+    def test_answer_calendar_question_yields_text_chunk(self, mock_call_gemini):
+        """A successful Gemini response yields a text chunk with the answer."""
+        mock_call_gemini.return_value = '{"answer": "You have 2 events this week.", "create_events": []}'
 
         self._make_calendar_and_event(days_offset=1)
         context = {'type': 'calendar', 'calendarIds': []}
@@ -969,15 +960,15 @@ class CalendarAgentTests(TestCase):
         text_chunks = [c for c in chunks if c['type'] == 'text' and 'events this week' in c.get('content', '')]
         self.assertTrue(len(text_chunks) > 0)
 
-    @patch.dict('os.environ', {'DIFY_CALENDAR_API_KEY': 'test-key'})
-    @patch('agent.services.requests.post')
-    def test_answer_calendar_question_creates_event_from_dify(self, mock_post):
-        """When Dify returns create_events, the events are created in the DB."""
+    @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
+    @patch('agent.gemini_client.call_gemini')
+    def test_answer_calendar_question_creates_event_from_dify(self, mock_call_gemini):
+        """When Gemini returns create_events, the events are created in the DB."""
         from calendars.models import Calendar as CalendarModel, Event as EventModel
         CalendarModel.objects.create(
             organization=self.org, owner=self.user, name='My Calendar',
         )
-        dify_answer = json.dumps({
+        mock_call_gemini.return_value = json.dumps({
             'answer': 'I have scheduled a meeting for you.',
             'create_events': [{
                 'title': 'AI Scheduled Meeting',
@@ -986,11 +977,6 @@ class CalendarAgentTests(TestCase):
                 'end_datetime': '2026-04-01T11:00:00+00:00',
             }]
         })
-        mock_post.return_value = MagicMock(
-            status_code=200,
-            json=lambda: {'data': {'outputs': {'answer': dify_answer}}},
-        )
-        mock_post.return_value.raise_for_status = lambda: None
 
         before_count = EventModel.objects.filter(organization=self.org).count()
         context = {'type': 'calendar', 'calendarIds': []}
@@ -998,28 +984,24 @@ class CalendarAgentTests(TestCase):
         after_count = EventModel.objects.filter(organization=self.org).count()
         self.assertEqual(after_count, before_count + 1)
 
-    @patch('agent.services.requests.post')
-    def test_answer_calendar_question_dify_error_yields_error_chunk(self, mock_post):
-        """A Dify network error yields an error chunk without raising."""
-        mock_post.side_effect = Exception('Network timeout')
+    @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
+    @patch('agent.gemini_client.call_gemini')
+    def test_answer_calendar_question_dify_error_yields_error_chunk(self, mock_call_gemini):
+        """A Gemini error yields an error chunk without raising."""
+        mock_call_gemini.side_effect = Exception('Network timeout')
         context = {'type': 'calendar', 'calendarIds': []}
         chunks = list(self.orchestrator.answer_calendar_question('What is on my calendar?', context))
         error_chunks = [c for c in chunks if c['type'] == 'error']
         self.assertTrue(len(error_chunks) > 0)
 
-    @patch.dict('os.environ', {}, clear=False)
+    @override_settings(GEMINI_API_KEY='')
+    @patch.dict('os.environ', {'GEMINI_API_KEY': ''}, clear=False)
     def test_answer_calendar_question_no_api_key_yields_error(self):
-        """Missing DIFY_CALENDAR_API_KEY yields a configuration error chunk."""
-        import os
-        original = os.environ.pop('DIFY_CALENDAR_API_KEY', None)
-        try:
-            context = {'type': 'calendar', 'calendarIds': []}
-            chunks = list(self.orchestrator.answer_calendar_question('Any events?', context))
-            error_chunks = [c for c in chunks if c['type'] == 'error']
-            self.assertTrue(len(error_chunks) > 0)
-        finally:
-            if original is not None:
-                os.environ['DIFY_CALENDAR_API_KEY'] = original
+        """Missing GEMINI_API_KEY yields a configuration error chunk."""
+        context = {'type': 'calendar', 'calendarIds': []}
+        chunks = list(self.orchestrator.answer_calendar_question('Any events?', context))
+        error_chunks = [c for c in chunks if c['type'] == 'error']
+        self.assertTrue(len(error_chunks) > 0)
 
 
 def _create_default_workflow():
@@ -1117,6 +1099,8 @@ class WorkflowEngineTests(TestCase):
             'create_decision', 'create_tasks',
             'generate_miro_snapshot', 'create_miro_board',
             'await_confirmation', 'custom_api',
+            'detect_columns', 'normalize_data',
+            'generate_criteria',
         }
         self.assertEqual(set(EXECUTOR_REGISTRY.keys()), expected)
 
@@ -1250,3 +1234,312 @@ class WorkflowEngineTests(TestCase):
         types = [c['type'] for c in chunks]
         self.assertIn('text', types)
         self.assertIn('done', types)
+
+
+class ColumnDetectionTests(TestCase):
+    """AGENT-13: Column detection and data normalization tests."""
+
+    # ------------------------------------------------------------------ #
+    # Rule-based detection                                                #
+    # ------------------------------------------------------------------ #
+
+    def test_detect_known_meta_ads_columns(self):
+        """Standard Meta Ads headers are matched by DB template or rule without calling LLM."""
+        from .column_registry import detect_columns
+
+        headers = ['Campaign name', 'Amount spent', 'Impressions', 'Clicks', 'CTR']
+        result = detect_columns(headers)
+
+        # schema_key is either 'meta_ads' (rule) or a UUID string (db_template)
+        self.assertIsNotNone(result.schema_key)
+        self.assertIn(result.source, ('rule', 'db_template'))
+        self.assertGreaterEqual(result.confidence, 0.8)
+        self.assertEqual(result.mappings['Campaign name'], 'campaign_name')
+        self.assertEqual(result.mappings['Amount spent'], 'amount_spent')
+        self.assertEqual(result.mappings['Impressions'], 'impressions')
+        self.assertEqual(result.mappings['Clicks'], 'clicks')
+        self.assertEqual(result.mappings['CTR'], 'ctr')
+
+    def test_detect_columns_case_insensitive(self):
+        """Header matching ignores case differences."""
+        from .column_registry import detect_columns
+
+        headers = ['IMPRESSIONS', 'AMOUNT SPENT', 'cpc', 'campaign_name']
+        result = detect_columns(headers)
+
+        self.assertIn(result.source, ('rule', 'db_template'))
+        self.assertEqual(result.mappings['IMPRESSIONS'], 'impressions')
+        self.assertEqual(result.mappings['AMOUNT SPENT'], 'amount_spent')
+        self.assertEqual(result.mappings['cpc'], 'cpc')
+
+    def test_detect_columns_alias_variants(self):
+        """Alias variants map to the same canonical name."""
+        from .column_registry import detect_columns
+
+        # 'spend' is an alias for 'amount_spent'
+        headers = ['Campaign name', 'spend', 'Reach', 'Purchases']
+        result = detect_columns(headers)
+
+        self.assertEqual(result.mappings['spend'], 'amount_spent')
+        self.assertEqual(result.mappings['Reach'], 'reach')
+        self.assertEqual(result.mappings['Purchases'], 'purchases')
+
+    def test_detect_columns_unrecognized_labeled_unknown(self):
+        """Headers that do not match any alias are labeled 'unknown'."""
+        from .column_registry import detect_columns
+
+        headers = ['Campaign name', 'Amount spent', 'My Custom Metric']
+        result = detect_columns(headers)
+
+        self.assertEqual(result.mappings['My Custom Metric'], 'unknown')
+        self.assertIn('My Custom Metric', result.unrecognized)
+
+    def test_detect_columns_empty_headers(self):
+        """Empty header list returns an unknown result without error."""
+        from .column_registry import detect_columns
+
+        result = detect_columns([])
+
+        self.assertIsNone(result.schema_key)
+        self.assertEqual(result.confidence, 0.0)
+        self.assertEqual(result.mappings, {})
+
+    def test_detect_columns_below_threshold_falls_through(self):
+        """Headers that match < 50% of a known schema fall through to LLM path."""
+        from .column_registry import detect_columns, _try_rule_match
+
+        # Only 1 out of 5 headers matches — confidence 0.2 < threshold 0.5
+        headers = ['Campaign name', 'Revenue', 'Sessions', 'Bounce Rate', 'Goal Completions']
+        result = _try_rule_match(headers)
+        self.assertIsNone(result)
+
+    def test_to_dict_serializable(self):
+        """ColumnDetectionResult.to_dict() returns a plain dict."""
+        from .column_registry import detect_columns
+
+        headers = ['Campaign name', 'Amount spent']
+        result = detect_columns(headers)
+        d = result.to_dict()
+
+        self.assertIsInstance(d, dict)
+        self.assertIn('schema_key', d)
+        self.assertIn('mappings', d)
+        self.assertIn('confidence', d)
+        self.assertIn('source', d)
+        self.assertIn('unrecognized', d)
+
+    # ------------------------------------------------------------------ #
+    # Data normalization                                                  #
+    # ------------------------------------------------------------------ #
+
+    def test_normalize_spreadsheet_renames_columns(self):
+        """normalize_spreadsheet renames columns and row keys according to mapping."""
+        from .column_registry import normalize_spreadsheet
+
+        data = {
+            "name": "Test Report",
+            "sheets": [{
+                "name": "Sheet1",
+                "columns": ["Campaign name", "Amount spent", "Impressions"],
+                "rows": [
+                    {"Campaign name": "Summer Sale", "Amount spent": 500.0, "Impressions": 10000},
+                ],
+            }],
+        }
+        mapping = {
+            "Campaign name": "campaign_name",
+            "Amount spent": "amount_spent",
+            "Impressions": "impressions",
+        }
+
+        normalized = normalize_spreadsheet(data, mapping)
+
+        sheet = normalized["sheets"][0]
+        self.assertEqual(sheet["columns"], ["campaign_name", "amount_spent", "impressions"])
+        row = sheet["rows"][0]
+        self.assertIn("campaign_name", row)
+        self.assertIn("amount_spent", row)
+        self.assertEqual(row["campaign_name"], "Summer Sale")
+        self.assertEqual(row["amount_spent"], 500.0)
+
+    def test_normalize_spreadsheet_unknown_columns_keep_original_name(self):
+        """Columns mapped to 'unknown' retain their original header name."""
+        from .column_registry import normalize_spreadsheet
+
+        data = {
+            "name": "Test",
+            "sheets": [{
+                "name": "Sheet1",
+                "columns": ["Campaign name", "My Custom Metric"],
+                "rows": [{"Campaign name": "X", "My Custom Metric": 42}],
+            }],
+        }
+        mapping = {"Campaign name": "campaign_name", "My Custom Metric": "unknown"}
+
+        normalized = normalize_spreadsheet(data, mapping)
+        sheet = normalized["sheets"][0]
+        self.assertIn("campaign_name", sheet["columns"])
+        self.assertIn("My Custom Metric", sheet["columns"])
+        row = sheet["rows"][0]
+        self.assertIn("My Custom Metric", row)
+
+    def test_normalize_spreadsheet_empty_mapping_passthrough(self):
+        """normalize_spreadsheet with no mapping returns data unchanged."""
+        from .column_registry import normalize_spreadsheet
+
+        data = {"name": "X", "sheets": [{"name": "S", "columns": ["A"], "rows": [{"A": 1}]}]}
+        result = normalize_spreadsheet(data, {})
+        self.assertEqual(result, data)
+
+    # ------------------------------------------------------------------ #
+    # Executor integration                                                #
+    # ------------------------------------------------------------------ #
+
+    def setUp(self):
+        self.org = Organization.objects.create(name='Test Org CD', slug='test-org-cd')
+        self.user = CustomUser.objects.create_user(
+            email='cd@test.com',
+            username='cduser',
+            password='testpass123',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Test Project CD',
+            organization=self.org,
+            owner=self.user,
+        )
+        self.session = AgentSession.objects.create(
+            user=self.user,
+            project=self.project,
+        )
+        self.workflow = AgentWorkflowDefinition.objects.create(
+            name='Column Detection Workflow',
+            is_default=False,
+            is_system=False,
+            status='active',
+        )
+        AgentWorkflowStep.objects.create(
+            workflow=self.workflow,
+            name='Detect Columns',
+            step_type='detect_columns',
+            order=1,
+        )
+        AgentWorkflowStep.objects.create(
+            workflow=self.workflow,
+            name='Await Column Confirmation',
+            step_type='await_confirmation',
+            order=2,
+            config={'message': 'Please confirm or correct the detected columns.'},
+        )
+        AgentWorkflowStep.objects.create(
+            workflow=self.workflow,
+            name='Normalize Data',
+            step_type='normalize_data',
+            order=3,
+        )
+        self.orchestrator = AgentOrchestrator(self.user, self.project, self.session)
+
+    def test_detect_columns_executor_emits_column_mapping_event(self):
+        """DetectColumnsExecutor emits a column_mapping SSE event with detection data."""
+        from .executors import DetectColumnsExecutor
+
+        run = AgentWorkflowRun.objects.create(
+            session=self.session,
+            workflow_definition=self.workflow,
+            status='analyzing',
+        )
+        step = self.workflow.steps.get(order=1)
+        executor = DetectColumnsExecutor(step, run, self.orchestrator)
+
+        input_data = {
+            'spreadsheet_data': {
+                'name': 'Meta Report',
+                'sheets': [{
+                    'name': 'Sheet1',
+                    'columns': ['Campaign name', 'Amount spent', 'Impressions'],
+                    'rows': [{'Campaign name': 'Test', 'Amount spent': 100, 'Impressions': 500}],
+                }],
+            }
+        }
+        result = executor.execute(input_data)
+
+        self.assertTrue(result.success)
+        self.assertEqual(len(result.sse_events), 1)
+        self.assertEqual(result.sse_events[0]['type'], 'column_mapping')
+        self.assertIn('column_mapping', result.output_data)
+        self.assertIn('column_detection', result.output_data)
+
+    def test_normalize_data_executor_renames_columns(self):
+        """NormalizeDataExecutor renames columns using column_mapping from input."""
+        from .executors import NormalizeDataExecutor
+
+        run = AgentWorkflowRun.objects.create(
+            session=self.session,
+            workflow_definition=self.workflow,
+            status='analyzing',
+        )
+        step = self.workflow.steps.get(order=3)
+        executor = NormalizeDataExecutor(step, run, self.orchestrator)
+
+        input_data = {
+            'spreadsheet_data': {
+                'name': 'Report',
+                'sheets': [{
+                    'name': 'Sheet1',
+                    'columns': ['Campaign name', 'Amount spent'],
+                    'rows': [{'Campaign name': 'X', 'Amount spent': 100}],
+                }],
+            },
+            'column_mapping': {
+                'Campaign name': 'campaign_name',
+                'Amount spent': 'amount_spent',
+            },
+        }
+        result = executor.execute(input_data)
+
+        self.assertTrue(result.success)
+        sheet = result.output_data['spreadsheet_data']['sheets'][0]
+        self.assertIn('campaign_name', sheet['columns'])
+        self.assertIn('amount_spent', sheet['columns'])
+
+    def test_confirm_columns_action_resumes_workflow_with_mapping(self):
+        """confirm_columns action resumes the paused workflow with the user's mapping."""
+        run = AgentWorkflowRun.objects.create(
+            session=self.session,
+            workflow_definition=self.workflow,
+            status='awaiting_confirmation',
+            current_step_order=3,
+        )
+        # Simulate the last completed step (detect_columns at order=1)
+        step1 = self.workflow.steps.get(order=1)
+        AgentStepExecution.objects.create(
+            workflow_run=run,
+            step=step1,
+            step_order=1,
+            step_name='Detect Columns',
+            status='completed',
+            output_data={
+                'spreadsheet_data': {
+                    'name': 'Report',
+                    'sheets': [{
+                        'name': 'Sheet1',
+                        'columns': ['Campaign name', 'Amount spent'],
+                        'rows': [{'Campaign name': 'Y', 'Amount spent': 200}],
+                    }],
+                },
+                'column_mapping': {'Campaign name': 'campaign_name', 'Amount spent': 'amount_spent'},
+            },
+        )
+
+        user_mapping = {'Campaign name': 'campaign_name', 'Amount spent': 'spend_custom'}
+        chunks = list(self.orchestrator.handle_message(
+            '',
+            action='confirm_columns',
+            column_mapping=user_mapping,
+        ))
+
+        types = [c.get('type') for c in chunks]
+        self.assertIn('done', types)
+        # The normalize step should have emitted a text event
+        self.assertIn('text', types)

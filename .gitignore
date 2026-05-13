@@ -20,9 +20,13 @@ package*.json
 frontend/storybook-static/
 backend/venv/
 docker-compose.dev.override.yml
+.claude/
+**/.env.local
 .claude/.cursorrules
 CLAUDE.md
 figma/
 nul
 .claude/
 .cursorrules
+backend/celerybeat-schedule
+backend/celerybeat.pid

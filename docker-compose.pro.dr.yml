@@ -27,10 +27,10 @@ services:
       retries: 3
 
   backend:
-    build: 
-      context: ./backend
-      dockerfile: Dockerfile.dr
-    image: backend:prod
+    # build: 
+    #   context: ./backend
+    #   dockerfile: Dockerfile
+    image: backend_base_image
     container_name: backend-prod
     restart: always
     ports:
@@ -38,7 +38,10 @@ services:
     env_file:
       - .env
     environment:
-      - DB_HOST=${DB_HOST}
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      - POSTGRES_DB=${POSTGRES_DB:-}
+      - POSTGRES_USER=${POSTGRES_USER:-}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
@@ -48,6 +51,10 @@ services:
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI}
       - FRONTEND_URL=${FRONTEND_URL}
+      - DIFY_API_URL=${DIFY_API_URL}
+      - DIFY_API_KEY=${DIFY_API_KEY}
+      - DIFY_CHAT_API_KEY=${DIFY_CHAT_API_KEY}
+      - DIFY_MIRO_API_KEY=${DIFY_MIRO_API_KEY}
     volumes:
       # Mount host timezone and localtime to sync time with host (Linux/Mac)
       # Note: On Windows with Docker Desktop, time is automatically synced
@@ -71,9 +78,10 @@ services:
         labels: "service=django"
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile.dr
+    # build:
+    #   context: ./frontend
+    #   dockerfile: Dockerfile
+    image: frontend_base_image
     container_name: frontend-prod
     restart: always
     ports:
@@ -103,8 +111,8 @@ services:
       - "443:443"
     volumes:
       - ./nginx/nginx.conf.pro:/etc/nginx/nginx.conf:ro
-      - /etc/letsencrypt/live/marketing.simplified.dpdns.org:/etc/letsencrypt/live/marketing.simplified.dpdns.org:ro
-      - /etc/letsencrypt/archive/marketing.simplified.dpdns.org:/etc/letsencrypt/archive/marketing.simplified.dpdns.org:ro
+      - /etc/letsencrypt/live/zmarkio.com:/etc/letsencrypt/live/zmarkio.com:ro
+      - /etc/letsencrypt/archive/zmarkio.com:/etc/letsencrypt/archive/zmarkio.com:ro
     depends_on:
       backend:
         condition: service_started
@@ -114,19 +122,35 @@ services:
       - app-network
 
   celery-worker:
-    image: backend:prod
     # build:
     #   context: ./backend
-    #   dockerfile: Dockerfile.bak
+    #   dockerfile: Dockerfile
+    image: backend_base_image
     container_name: celery-worker-prod
     restart: always
     env_file:
       - .env
     environment:
-      - DB_HOST=${DB_HOST}
+      - DB_HOST=${DB_HOST:-host.docker.internal}
+      - POSTGRES_DB=${POSTGRES_DB:-}
+      - POSTGRES_USER=${POSTGRES_USER:-}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
       - DEBUG=False
-    # extra_hosts:
-    #   - "host.docker.internal:host-gateway"
+      - KAFKA_BROKER=${KAFKA_BROKER}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - DEBUG=False
+      - DIFY_API_URL=${DIFY_API_URL}
+      - DIFY_API_KEY=${DIFY_API_KEY}
+      - DIFY_CHAT_API_KEY=${DIFY_CHAT_API_KEY}
+      - DIFY_MIRO_API_KEY=${DIFY_MIRO_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy

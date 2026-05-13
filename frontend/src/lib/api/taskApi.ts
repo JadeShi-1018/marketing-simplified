@@ -10,28 +10,22 @@ import {
   TaskRelationAddRequest,
   TaskAttachment,
   TaskListFilters,
+  TaskBulkUpdateRequest,
+  TaskBulkActionResponse,
+  GanttChartPayload,
 } from "@/types/task";
 
 export const TaskAPI = {
   // Get available task types
   getTaskTypes: async (): Promise<{ value: string; label: string }[]> => {
     const response = await api.get('/api/task-types/');
-    return response.data.task_types;
+    const list = response.data?.task_types;
+    return Array.isArray(list) ? list : [];
   },
 
   // Force create a new task
   forceCreateTask: (data: CreateTaskData) =>
     api.post("/api/tasks/force-create/", data),
-
-  // Bulk action on multiple tasks
-  bulkAction: (data: {
-    task_ids: number[];
-    action: 'submit' | 'assign_approver' | 'change_status';
-    payload?: {
-      approver_id?: number;
-      status?: string;
-    };
-  }) => api.post('/api/tasks/bulk_action/', data),
 
   // Get all tasks with optional filters
   getTasks: (params?: TaskListFilters & { content_type?: string; object_id?: string; page?: number }) => {
@@ -48,12 +42,24 @@ export const TaskAPI = {
     return api.get("/api/tasks/", { params: queryParams });
   },
 
+  getTasksGantt: async (params?: { project_id?: number }): Promise<GanttChartPayload> => {
+    const response = await api.get("/api/tasks/gantt/", { params });
+    return response.data as GanttChartPayload;
+  },
+
   // Get a specific task by ID
   getTask: (taskId: number) => api.get(`/api/tasks/${taskId}/`),
 
   // Update a task
   updateTask: (taskId: number, data: Partial<TaskData>) =>
     api.patch(`/api/tasks/${taskId}/`, data),
+
+  bulkAction: async (
+    payload: TaskBulkUpdateRequest
+  ): Promise<TaskBulkActionResponse> => {
+    const response = await api.post('/api/tasks/bulk_action/', payload);
+    return response.data as TaskBulkActionResponse;
+  },
 
   // Create a new task
   createTask: (data: CreateTaskData) => api.post("/api/tasks/", data),
@@ -205,4 +211,18 @@ export const TaskAPI = {
 
   moveSubtask: (newParentId: number, subtaskId: number, data: { old_parent_id: number }) =>
     api.post(`/api/tasks/${newParentId}/subtasks/${subtaskId}/move/`, data),
+
+  getAutosave: async (type: string): Promise<Record<string, unknown> | null> => {
+    const response = await api.get('/api/task-form-autosave/', { params: { type } });
+    return response.status === 204 ? null : (response.data as Record<string, unknown>);
+  },
+
+  putAutosave: async (type: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const response = await api.put('/api/task-form-autosave/', payload, { params: { type } });
+    return response.data as Record<string, unknown>;
+  },
+
+  deleteAutosave: async (type: string): Promise<void> => {
+    await api.delete('/api/task-form-autosave/', { params: { type } });
+  },
 };

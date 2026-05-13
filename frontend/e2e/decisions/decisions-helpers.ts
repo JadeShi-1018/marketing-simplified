@@ -6,9 +6,6 @@ export interface DecisionCleanupRef {
 }
 
 export async function waitForDecisionsPageReady(page: Page) {
-  await expect(page.getByText('Initializing...')).not.toBeVisible({
-    timeout: 50_000,
-  });
   await expect(page.getByText('Preparing your workspace')).not.toBeVisible({
     timeout: 50_000,
   });
@@ -47,6 +44,24 @@ export async function resolveFirstProjectSection(
   );
   await expect(section).toBeVisible();
   return { projectId, header, section };
+}
+
+export async function getActiveProjectId(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('project-storage');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const state = parsed?.state ?? parsed;
+      const projectId =
+        state?.activeProject?.id ??
+        (Array.isArray(state?.activeProjectIds) ? state.activeProjectIds[0] : null);
+      const numeric = Number(projectId);
+      return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+    } catch {
+      return null;
+    }
+  });
 }
 
 async function getAuthToken(page: Page): Promise<string | null> {

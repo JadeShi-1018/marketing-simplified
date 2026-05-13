@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import useStripe from '@/hooks/useStripe';
 import usePlan from '@/hooks/usePlan';
 import { useRouter } from 'next/navigation';
+import { Skeleton } from '@/components/ui/skeleton';
 
 interface DashboardContentProps {
   user: {
@@ -19,16 +20,32 @@ interface DashboardContentProps {
       name: string;
     } | null;
   };
+  loading?: boolean;
 }
 
-export default function DashboardContent({ user }: DashboardContentProps) {
-  const { getSubscription, getUsage, getSubscriptionLoading, getUsageLoading } = useStripe();
+function DashboardSummarySkeleton({ showButton = false }: { showButton?: boolean }) {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-10 w-full rounded-lg" />
+      <Skeleton className="h-10 w-full rounded-lg" />
+      <Skeleton className="h-10 w-full rounded-lg" />
+      {showButton && <Skeleton className="h-10 w-full rounded-lg" />}
+    </div>
+  );
+}
+
+export default function DashboardContent({
+  user,
+  loading = false,
+}: DashboardContentProps) {
+  const { getSubscription, getUsage } = useStripe();
   const { cancelSubscription } = usePlan();
   const router = useRouter();
   const [subscription, setSubscription] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCanceling, setIsCanceling] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const authUser = useAuthStore((state) => state.user);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isOrgAdmin = !!authUser?.roles?.includes('Organization Admin');
@@ -102,7 +119,12 @@ export default function DashboardContent({ user }: DashboardContentProps) {
   };
 
   useEffect(() => {
+    setLastUpdated(new Date().toLocaleDateString());
+  }, []);
+
+  useEffect(() => {
     const fetchData = async () => {
+      if (loading) return;
       if (user?.organization?.id) {
         setIsLoading(true);
         try {
@@ -142,14 +164,21 @@ export default function DashboardContent({ user }: DashboardContentProps) {
         pollIntervalRef.current = null;
       }
     };
-  }, [user?.organization?.id]); // Only depend on organization ID
+  }, [getSubscription, getUsage, loading, user?.organization?.id]); // Only depend on organization ID
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="text-2xl font-bold">Dashboard</div>
         <div className="text-sm text-gray-500">
-          Last updated: {new Date().toLocaleDateString()}
+          <span className="inline-flex items-center gap-2">
+            <span>Last updated:</span>
+            {!loading && lastUpdated ? (
+              <span>{lastUpdated}</span>
+            ) : (
+              <Skeleton className="h-4 w-20" />
+            )}
+          </span>
         </div>
       </div>
 
@@ -164,15 +193,27 @@ export default function DashboardContent({ user }: DashboardContentProps) {
           <div className="space-y-3">
             <div className="flex justify-between items-center py-2 border-b border-gray-100">
               <span className="text-sm font-medium text-gray-600">Name</span>
-              <span className="text-sm text-gray-800">{user?.first_name} {user?.last_name}</span>
+              {loading ? (
+                <Skeleton className="h-4 w-24" />
+              ) : (
+                <span className="text-sm text-gray-800">{user?.first_name} {user?.last_name}</span>
+              )}
             </div>
             <div className="flex justify-between items-center py-2 border-b border-gray-100">
               <span className="text-sm font-medium text-gray-600">Email</span>
-              <span className="text-sm text-gray-800">{user?.email}</span>
+              {loading ? (
+                <Skeleton className="h-4 w-40" />
+              ) : (
+                <span className="text-sm text-gray-800">{user?.email}</span>
+              )}
             </div>
             <div className="flex justify-between items-center py-2">
               <span className="text-sm font-medium text-gray-600">Username</span>
-              <span className="text-sm text-gray-800">{user?.username}</span>
+              {loading ? (
+                <Skeleton className="h-4 w-28" />
+              ) : (
+                <span className="text-sm text-gray-800">{user?.username}</span>
+              )}
             </div>
           </div>
         </div>
@@ -188,12 +229,11 @@ export default function DashboardContent({ user }: DashboardContentProps) {
               <CheckCircle className="w-4 h-4 text-white" />
             </div>
           </div>
-          {user?.organization ? (
+          {loading ? (
+            <DashboardSummarySkeleton />
+          ) : user?.organization ? (
             isLoading ? (
-              <div className="text-center py-4">
-                <Loader2 className="w-6 h-6 text-gray-400 animate-spin mx-auto mb-2" />
-                <p className="text-sm text-gray-500">Loading subscription...</p>
-              </div>
+              <DashboardSummarySkeleton showButton={isOrgAdmin} />
             ) : subscription ? (
               <div className="space-y-3">
                 <div className="flex justify-between items-center py-2 border-b border-gray-100">
@@ -234,7 +274,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                   <AlertTriangle className="w-6 h-6 text-gray-400" />
                 </div>
                 <p className="text-sm text-gray-500 mb-2">No Subscription</p>
-                <p className="text-xs text-gray-400">You don't have an active subscription yet.</p>
+                <p className="text-xs text-gray-400">You don&apos;t have an active subscription yet.</p>
               </div>
             )
           ) : (
@@ -243,7 +283,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                 <AlertTriangle className="w-6 h-6 text-gray-400" />
               </div>
               <p className="text-sm text-gray-500 mb-2">Organization Required</p>
-              <p className="text-xs text-gray-400">You haven't joined any organization, so subscription information is not available.</p>
+                <p className="text-xs text-gray-400">You haven&apos;t joined any organization, so subscription information is not available.</p>
             </div>
           )}
         </div>
@@ -255,12 +295,11 @@ export default function DashboardContent({ user }: DashboardContentProps) {
               <BarChart3 className="w-4 h-4 text-white" />
             </div>
           </div>
-          {user?.organization ? (
+          {loading ? (
+            <DashboardSummarySkeleton />
+          ) : user?.organization ? (
             isLoading ? (
-              <div className="text-center py-4">
-                <Loader2 className="w-6 h-6 text-gray-400 animate-spin mx-auto mb-2" />
-                <p className="text-sm text-gray-500">Loading usage...</p>
-              </div>
+              <DashboardSummarySkeleton />
             ) : usage ? (
               <div className="space-y-3">
                 <div className="flex justify-between items-center py-2 border-b border-gray-100">
@@ -297,7 +336,7 @@ export default function DashboardContent({ user }: DashboardContentProps) {
                 <AlertTriangle className="w-6 h-6 text-gray-400" />
               </div>
               <p className="text-sm text-gray-500 mb-2">Organization Required</p>
-              <p className="text-xs text-gray-400">You haven't joined any organization, so usage tracking is not available.</p>
+                <p className="text-xs text-gray-400">You haven&apos;t joined any organization, so usage tracking is not available.</p>
             </div>
           )}
         </div>

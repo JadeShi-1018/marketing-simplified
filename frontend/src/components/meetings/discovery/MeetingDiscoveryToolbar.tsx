@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Filter, Loader2, Search, X } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 
 import {
   MeetingFiltersPanel,
@@ -75,7 +80,7 @@ function MeetingToolbarSearch({
   return (
     <div
       className={cn(
-        'relative w-full max-w-md',
+        'relative w-full sm:max-w-md',
         disabled && 'pointer-events-none opacity-60',
       )}
     >
@@ -84,18 +89,19 @@ function MeetingToolbarSearch({
         aria-hidden
       />
       <input
-        type="search"
+        type="text"
+        inputMode="search"
         autoComplete="off"
         placeholder="Search meetings…"
         value={local}
         onChange={(e) => setLocal(e.target.value)}
         disabled={disabled}
-        className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-16 text-sm text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+        className="h-9 w-full rounded-md border border-slate-200 bg-white pl-9 pr-16 text-sm text-slate-700 placeholder:text-slate-400 focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100"
         aria-label="Search meetings"
       />
       <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
         {isLoading ? (
-          <Loader2 className="h-4 w-4 animate-spin text-blue-600" aria-hidden />
+          <Loader2 className="h-4 w-4 animate-spin text-[#3CCED7]" aria-hidden />
         ) : null}
         {local ? (
           <button
@@ -128,74 +134,32 @@ export function MeetingDiscoveryToolbar({
 }: MeetingDiscoveryToolbarProps) {
   const [filterOpen, setFilterOpen] = useState(false);
   const justAppliedRef = useRef(false);
-  const filterTriggerRef = useRef<HTMLButtonElement>(null);
-  const filterPanelRef = useRef<HTMLDivElement>(null);
 
-  const closePanel = () => {
+  const handleFilterOpenChange = (open: boolean) => {
+    if (open) {
+      justAppliedRef.current = false;
+      setFilterOpen(true);
+      return;
+    }
+    if (!justAppliedRef.current) {
+      onPopoverCancel();
+    }
+    justAppliedRef.current = false;
     setFilterOpen(false);
   };
 
   const handleApplyAndClose = () => {
     justAppliedRef.current = true;
-    closePanel();
+    setFilterOpen(false);
   };
 
   const handleCancel = () => {
     onPopoverCancel();
-    closePanel();
+    setFilterOpen(false);
   };
 
-  useEffect(() => {
-    if (filterOpen) {
-      justAppliedRef.current = false;
-    }
-  }, [filterOpen]);
-
-  useEffect(() => {
-    if (!filterOpen) return;
-
-    const onDocMouseDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (
-        filterPanelRef.current?.contains(t) ||
-        filterTriggerRef.current?.contains(t)
-      ) {
-        return;
-      }
-      // Radix dropdowns / popovers render in a portal (outside this panel).
-      if (
-        t.closest('[data-radix-popper-content-wrapper]') ||
-        t.closest('[data-radix-portal]')
-      ) {
-        return;
-      }
-      if (!justAppliedRef.current) {
-        onPopoverCancel();
-      }
-      justAppliedRef.current = false;
-      setFilterOpen(false);
-    };
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        if (!justAppliedRef.current) {
-          onPopoverCancel();
-        }
-        justAppliedRef.current = false;
-        setFilterOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', onDocMouseDown);
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', onDocMouseDown);
-      document.removeEventListener('keydown', onKeyDown);
-    };
-  }, [filterOpen, onPopoverCancel]);
-
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex w-full flex-wrap items-center gap-3">
       <MeetingToolbarSearch
         value={qValue}
         onDebouncedChange={onQDebouncedChange}
@@ -209,38 +173,47 @@ export function MeetingDiscoveryToolbar({
         disabled={panelProps.disabled}
       />
 
-      <div className="relative inline-block">
-        <button
-          ref={filterTriggerRef}
-          type="button"
-          data-testid="meetings-filter-trigger"
-          disabled={panelProps.disabled}
-          onClick={() => {
-            setFilterOpen((v) => !v);
-          }}
-          className={cn(
-            'inline-flex h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50',
-          )}
-          aria-expanded={filterOpen}
-          aria-haspopup="true"
-          aria-label="Filter meetings"
-        >
-          <Filter className="h-4 w-4 text-slate-500" aria-hidden />
-          <span>Filter</span>
-          {filterBadgeCount > 0 ? (
-            <span className="min-w-[1.25rem] rounded-full bg-blue-600 px-1.5 py-0.5 text-center text-xs font-semibold text-white">
-              {filterBadgeCount}
-            </span>
-          ) : null}
-        </button>
-
-        {filterOpen ? (
-          <div
-            ref={filterPanelRef}
-            role="region"
-            aria-label="Meeting filters"
-            className="absolute left-0 top-full z-50 mt-2 w-[min(100vw-2rem,720px)] max-h-[min(85vh,680px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+      <Popover open={filterOpen} onOpenChange={handleFilterOpenChange}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            data-testid="meetings-filter-trigger"
+            disabled={panelProps.disabled}
+            className={cn(
+              'inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50 sm:w-auto',
+            )}
+            aria-expanded={filterOpen}
+            aria-haspopup="true"
+            aria-label="Filter meetings"
           >
+            <Filter className="h-4 w-4 text-slate-500" aria-hidden />
+            <span>Filter</span>
+            {filterBadgeCount > 0 ? (
+              <span className="min-w-[1.25rem] rounded-full bg-[#3CCED7] px-1.5 py-0.5 text-center text-xs font-semibold text-white">
+                {filterBadgeCount}
+              </span>
+            ) : null}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          collisionPadding={16}
+          className={cn(
+            'max-h-[min(85vh,680px)] w-[min(100vw-2rem,720px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl sm:p-5',
+          )}
+          onInteractOutside={(e) => {
+            const el = e.target as HTMLElement;
+            if (
+              el.closest('[data-radix-popper-content-wrapper]') ||
+              el.closest('[data-radix-portal]')
+            ) {
+              e.preventDefault();
+            }
+          }}
+        >
+          <div role="region" aria-label="Meeting filters">
             <div className="mb-4 flex flex-row items-start justify-between gap-4 border-b border-slate-100 pb-4">
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold text-slate-900">
@@ -251,7 +224,7 @@ export function MeetingDiscoveryToolbar({
                 <button
                   type="button"
                   onClick={onClearAll}
-                  className="shrink-0 text-sm font-medium text-blue-600 hover:text-blue-800"
+                  className="shrink-0 text-sm font-medium text-[#3CCED7] hover:text-[#1a9ba3]"
                 >
                   Clear
                 </button>
@@ -266,8 +239,8 @@ export function MeetingDiscoveryToolbar({
               onClosePanel={handleCancel}
             />
           </div>
-        ) : null}
-      </div>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

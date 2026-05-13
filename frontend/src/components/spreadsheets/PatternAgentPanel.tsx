@@ -6,6 +6,7 @@ import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } 
 import { CSS } from '@dnd-kit/utilities';
 import { ChevronDown, ChevronLeft, ChevronRight, GripVertical, Trash2, PencilLine, Trash, X } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
+import { Skeleton } from '@/components/ui/skeleton';
 import { columnIndexToLabel, parseA1 } from '@/lib/spreadsheets/a1';
 import {
   PatternJobStatus,
@@ -19,6 +20,7 @@ import {
 const DEFAULT_GROUP_NAME = 'Grouped Operation';
 
 interface PatternAgentPanelProps {
+  loading?: boolean;
   items: TimelineItem[];
   patterns: WorkflowPatternSummary[];
   selectedPatternId: string | null;
@@ -184,7 +186,7 @@ const formatTime = (iso: string) => {
           <button
             type="button"
             onClick={onDoubleClick}
-            className="text-gray-400 hover:text-blue-500"
+            className="text-gray-400 hover:text-[#3CCED7]"
             aria-label="Edit step"
           >
             <PencilLine className="h-4 w-4" />
@@ -280,7 +282,7 @@ const GroupCard = ({
     <div
       ref={setNodeRef}
       style={style}
-      className={`rounded-lg border border-blue-200 bg-blue-50/50 transition ${
+      className={`rounded-lg border border-[#3CCED7]/30 bg-[#3CCED7]/10/50 transition ${
         isDragging ? 'shadow-lg' : 'hover:shadow-md'
       }`}
     >
@@ -342,7 +344,7 @@ const GroupCard = ({
         </button>
       </div>
       {!group.collapsed && (
-        <div className="border-t border-blue-100 pl-6 pr-2 pb-2 space-y-2">
+        <div className="border-t border-[#3CCED7]/20 pl-6 pr-2 pb-2 space-y-2">
           {group.items.map((step) => (
             <div
               key={step.id}
@@ -365,7 +367,7 @@ const GroupCard = ({
                     <button
                       type="button"
                       onClick={() => onStepMoveOut(step)}
-                      className="text-gray-400 hover:text-blue-600"
+                      className="text-gray-400 hover:text-[#3CCED7]"
                       aria-label="Move out of group"
                     >
                       <X className="h-3 w-3" />
@@ -383,7 +385,7 @@ const GroupCard = ({
                     <button
                       type="button"
                       onClick={() => onStepDoubleClick(step)}
-                      className="text-gray-400 hover:text-blue-500"
+                      className="text-gray-400 hover:text-[#3CCED7]"
                       aria-label="Edit"
                     >
                       <PencilLine className="h-3 w-3" />
@@ -401,6 +403,7 @@ const GroupCard = ({
 };
 
 export default function PatternAgentPanel({
+  loading = false,
   items,
   patterns,
   selectedPatternId,
@@ -524,6 +527,43 @@ export default function PatternAgentPanel({
     onCollapseChange?.(newCollapsed);
   };
 
+  const timelineLoadingState = (
+    <div className="space-y-3">
+      {Array.from({ length: 2 }, (_, index) => (
+        <div
+          key={`pattern-loading-card-${index}`}
+          className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
+        >
+          <div className="flex items-start gap-2">
+            <Skeleton className="mt-1 h-4 w-4" />
+            <div className="flex-1 space-y-2">
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-3 w-24" />
+              <div className="flex items-center justify-between pt-1">
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 w-16" />
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const patternsLoadingState = (
+    <div className="space-y-3">
+      {Array.from({ length: 2 }, (_, index) => (
+        <div
+          key={`saved-pattern-loading-card-${index}`}
+          className="rounded border border-gray-200 bg-white px-3 py-2"
+        >
+          <Skeleton className="h-4 w-36" />
+          <Skeleton className="mt-2 h-3 w-24" />
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div
       className={`flex h-full flex-col border-l border-gray-200 bg-white transition-all duration-300 ease-in-out ${collapsed ? 'w-14' : 'w-80'}`}
@@ -541,7 +581,7 @@ export default function PatternAgentPanel({
                 type="button"
                 onClick={() => setActiveTab('timeline')}
                 className={`rounded px-2 py-1 ${
-                  activeTab === 'timeline' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  activeTab === 'timeline' ? 'bg-[#3CCED7] text-white' : 'bg-gray-100 text-gray-600'
                 }`}
               >
                 Timeline
@@ -550,7 +590,7 @@ export default function PatternAgentPanel({
                 type="button"
                 onClick={() => setActiveTab('patterns')}
                 className={`rounded px-2 py-1 ${
-                  activeTab === 'patterns' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  activeTab === 'patterns' ? 'bg-[#3CCED7] text-white' : 'bg-gray-100 text-gray-600'
                 }`}
               >
                 Patterns
@@ -573,7 +613,9 @@ export default function PatternAgentPanel({
 
       {!collapsed && (activeTab === 'timeline' ? (
         <div className="flex-1 overflow-y-auto p-4">
-          {items.length === 0 ? (
+          {loading ? (
+            timelineLoadingState
+          ) : items.length === 0 ? (
             <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-xs text-gray-500">
               No formula steps yet. Commit a formula in the grid to record it.
             </div>
@@ -593,7 +635,7 @@ export default function PatternAgentPanel({
                   <button
                     type="button"
                     onClick={handleMergeSelected}
-                    className="rounded border border-blue-200 bg-blue-50 px-2 py-1 font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50"
+                    className="rounded border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-2 py-1 font-semibold text-[#1a9ba3] hover:bg-[#3CCED7]/15 disabled:opacity-50"
                     disabled={selectedIds.length < 2}
                     title="Merge selected into one group"
                   >
@@ -672,7 +714,9 @@ export default function PatternAgentPanel({
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-4">
-          {patterns.length === 0 ? (
+          {loading ? (
+            patternsLoadingState
+          ) : patterns.length === 0 ? (
             <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-6 text-center text-xs text-gray-500">
               No saved patterns yet.
             </div>
@@ -684,7 +728,7 @@ export default function PatternAgentPanel({
                     key={pattern.id}
                     className={`flex w-full items-start justify-between rounded border px-3 py-2 text-left text-xs ${
                       selectedPatternId === pattern.id
-                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        ? 'border-[#3CCED7] bg-[#3CCED7]/10 text-[#1a9ba3]'
                         : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
                     }`}
                   >
@@ -712,7 +756,7 @@ export default function PatternAgentPanel({
                       onClick={onApplyPattern}
                       disabled={isApplying || disableApplyPattern}
                       title={disableApplyPattern ? 'Preparing sheet...' : undefined}
-                      className="rounded bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                      className="rounded bg-[#3CCED7] px-3 py-1 text-xs font-semibold text-white hover:bg-[#2AB5BD] disabled:opacity-60"
                     >
                       {isApplying ? 'Applying...' : 'Apply'}
                     </button>
@@ -742,7 +786,7 @@ export default function PatternAgentPanel({
                       </div>
                       <div className="mt-2 h-1.5 w-full overflow-hidden rounded bg-gray-200">
                         <div
-                          className="h-full bg-blue-600 transition-all"
+                          className="h-full bg-[#3CCED7] transition-all"
                           style={{ width: `${applyJobProgress}%` }}
                         />
                       </div>
@@ -850,7 +894,7 @@ export default function PatternAgentPanel({
               setExportError(null);
               setExportModalOpen(true);
             }}
-            className="w-full rounded bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+            className="w-full rounded bg-[#3CCED7] px-3 py-2 text-xs font-semibold text-white hover:bg-[#2AB5BD] disabled:opacity-60"
           >
             Export Pattern
           </button>
@@ -897,7 +941,7 @@ export default function PatternAgentPanel({
                 <button
                   type="button"
                   onClick={handleSaveEdit}
-                  className="rounded bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700"
+                  className="rounded bg-[#3CCED7] px-3 py-1 text-xs font-semibold text-white hover:bg-[#2AB5BD]"
                 >
                   Save
                 </button>
@@ -984,7 +1028,7 @@ export default function PatternAgentPanel({
                       setExportModalOpen(false);
                     }
                   }}
-                  className="rounded bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  className="rounded bg-[#3CCED7] px-3 py-1 text-xs font-semibold text-white hover:bg-[#2AB5BD] disabled:opacity-60"
                   disabled={exporting}
                 >
                   {exporting ? 'Saving...' : 'Save'}

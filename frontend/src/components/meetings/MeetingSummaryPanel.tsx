@@ -16,10 +16,14 @@ import { Button } from '@/components/ui/button';
 import { MeetingDateTimePicker } from '@/components/meetings/MeetingDateTimePicker';
 import { MeetingSummaryKnowledgeNav } from '@/components/meetings/MeetingSummaryKnowledgeNav';
 import { MeetingSummaryRelatedArtifacts } from '@/components/meetings/MeetingSummaryRelatedArtifacts';
+import { ZoomPostMeetingSection } from '@/components/meetings/ZoomPostMeetingSection';
+import { MeetingActionItemsSection } from '@/components/meetings/MeetingActionItemsSection';
 import { ProjectMemberPicker } from '@/components/meetings/ProjectMemberPicker';
 import { formatProjectMemberLabel } from '@/components/meetings/projectMemberLabel';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
+
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
+import { zoomApi } from '@/lib/api/zoomApi';
 import {
   meetingDateToInput,
   meetingTimeToInput,
@@ -34,9 +38,10 @@ import {
   type UnifiedMeetingTemplateOption,
 } from '@/lib/meetings/unifiedMeetingTemplates';
 import { replaceAgendaAndLayoutFromNested } from '@/lib/meetings/replaceMeetingAgendaFromTemplate';
+import { MeetingLifecyclePanel } from '@/components/meetings/MeetingLifecyclePanel';
 import { hasVisibleText, sanitizeDocumentPreviewHtml } from '@/lib/meetings/documentPreview';
-import type { Meeting, MeetingDocument, MeetingPartialUpdateRequest, ParticipantLink } from '@/types/meeting';
 
+import type { Meeting, MeetingDocument, MeetingPartialUpdateRequest, ParticipantLink, MeetingStatus } from '@/types/meeting';
 function PanelSection({
   title,
   description,
@@ -96,6 +101,10 @@ export function MeetingSummaryPanel({
   const [loadingPeople, setLoadingPeople] = useState(false);
   const [removingPid, setRemovingPid] = useState<number | null>(null);
 
+  const [zoomConnected, setZoomConnected] = useState(false);
+  const [zoomStatusLoading, setZoomStatusLoading] = useState(true);
+  const [creatingZoomMeeting, setCreatingZoomMeeting] = useState(false);
+
   const loadMeeting = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -143,6 +152,14 @@ export function MeetingSummaryPanel({
   }, [loadMeeting]);
 
   useEffect(() => {
+    zoomApi
+      .getStatus()
+      .then((s) => setZoomConnected(s.connected))
+      .catch(() => setZoomConnected(false))
+      .finally(() => setZoomStatusLoading(false));
+  }, []);
+
+  useEffect(() => {
     void fetchUnifiedMeetingTemplateOptions()
       .then(setUnifiedTemplateOptions)
       .catch((err) => {
@@ -177,13 +194,15 @@ export function MeetingSummaryPanel({
     }
     setSavingMeta(true);
     try {
-      const typeChanged = meetingTypeDraft.trim() !== meeting.meeting_type.trim();
-      const selectedOpt = unifiedTemplateOptions.find((o) => o.value === meetingTypeDraft.trim());
+      const prevType = (meeting.meeting_type ?? '').trim();
+      const nextType = meetingTypeDraft.trim();
+      const typeChanged = nextType !== prevType;
+      const selectedOpt = unifiedTemplateOptions.find((o) => o.value === nextType);
 
       const patchPayload: MeetingPartialUpdateRequest = {
         title: titleDraft.trim(),
         objective: objectiveDraft.trim(),
-        meeting_type: meetingTypeDraft.trim(),
+        meeting_type: nextType,
         scheduled_date: schedDateDraft.trim() || null,
         scheduled_time: schedTimeDraft.trim() ? normalizeTimeForApi(schedTimeDraft) : null,
         external_reference: extRefDraft.trim() || null,
@@ -253,6 +272,44 @@ export function MeetingSummaryPanel({
     window.open(href, '_blank', 'noopener,noreferrer');
   };
 
+  const createZoomMeeting = async () => {
+    if (!meeting || creatingZoomMeeting) return;
+    setCreatingZoomMeeting(true);
+    try {
+      let startTime: string;
+      if (schedDateDraft && schedTimeDraft) {
+        startTime = new Date(`${schedDateDraft}T${schedTimeDraft}`).toISOString();
+      } else {
+        const soon = new Date();
+        soon.setHours(soon.getHours() + 1, 0, 0, 0);
+        startTime = soon.toISOString();
+      }
+      const zoomMeeting = await zoomApi.createMeeting(
+        titleDraft.trim() || meeting.title,
+        startTime,
+        60,
+      );
+      await zoomApi.linkMeetingData(projectId, meetingId, {
+        zoom_meeting_id: zoomMeeting.meeting_id,
+        zoom_uuid: zoomMeeting.uuid,
+      });
+      setExtRefDraft(zoomMeeting.join_url);
+      const updated = await MeetingsAPI.patchMeeting(projectId, meetingId, {
+        external_reference: zoomMeeting.join_url,
+      });
+      setMeeting(updated);
+      onMeetingUpdated?.(updated);
+      toast.success('Zoom meeting created and saved.');
+    } catch (e: unknown) {
+      const msg =
+        (e as { response?: { data?: { error?: string } } })?.response?.data?.error ||
+        'Failed to create Zoom meeting.';
+      toast.error(msg);
+    } finally {
+      setCreatingZoomMeeting(false);
+    }
+  };
+
   const participantLabel = (userId: number) => {
     const row = projectMembers.find((m) => m.user.id === userId);
     return row ? formatProjectMemberLabel(row) : `User #${userId}`;
@@ -291,7 +348,7 @@ export function MeetingSummaryPanel({
           <p className="text-xs font-semibold text-slate-500">Meeting details</p>
           {loading ? (
             <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
-              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+              <Loader2 className="h-4 w-4 animate-spin text-[#3CCED7]" />
               Loading…
             </div>
           ) : error ? (
@@ -321,7 +378,7 @@ export function MeetingSummaryPanel({
                 <div>
                   <label className="text-xs font-medium text-slate-600">Title</label>
                   <input
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100"
                     value={titleDraft}
                     onChange={(e) => setTitleDraft(e.target.value)}
                   />
@@ -329,7 +386,7 @@ export function MeetingSummaryPanel({
                 <div>
                   <label className="text-xs font-medium text-slate-600">Meeting type</label>
                   <select
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100"
                     value={meetingTypeDraft}
                     onChange={(e) => setMeetingTypeDraft(e.target.value)}
                     aria-label="Meeting type or template"
@@ -360,7 +417,7 @@ export function MeetingSummaryPanel({
                 <div>
                   <label className="text-xs font-medium text-slate-600">Objective</label>
                   <textarea
-                    className="mt-1 min-h-[88px] w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className="mt-1 min-h-[88px] w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100"
                     value={objectiveDraft}
                     onChange={(e) => setObjectiveDraft(e.target.value)}
                     rows={4}
@@ -406,7 +463,7 @@ export function MeetingSummaryPanel({
                   <label className="text-xs font-medium text-slate-600">Conference / link</label>
                   <input
                     type="text"
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className="mt-1 w-full rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-900 shadow-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100"
                     value={extRefDraft}
                     onChange={(e) => setExtRefDraft(e.target.value)}
                     placeholder="e.g. Zoom or Meet URL"
@@ -415,7 +472,7 @@ export function MeetingSummaryPanel({
                     <Button
                       type="button"
                       size="sm"
-                      className="bg-blue-600 hover:bg-blue-700"
+                      className="bg-[#3CCED7] hover:bg-[#2AB5BD]"
                       disabled={!extRefDraft.trim()}
                       onClick={openRef}
                     >
@@ -436,6 +493,56 @@ export function MeetingSummaryPanel({
                 </div>
               </div>
             </PanelSection>
+
+            <PanelSection
+              title="Zoom"
+              description="Create a Zoom room, then paste the join link into Conference / link in Schedule above if it is not filled automatically."
+            >
+              <div className="space-y-2">
+                <Button
+                  type="button"
+                  className="w-full border-[#2D8CFF] bg-[#2D8CFF] text-white hover:bg-[#1a7ae0] disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+                  disabled={!zoomConnected || creatingZoomMeeting || zoomStatusLoading}
+                  onClick={() => void createZoomMeeting()}
+                >
+                  {creatingZoomMeeting ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <svg className="mr-2 h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M24 12c0 6.627-5.373 12-12 12S0 18.627 0 12 5.373 0 12 0s12 5.373 12 12zm-6.462-3.692l-3.693 2.308V8H6.923A.923.923 0 006 8.923v6.154c0 .51.413.923.923.923H14v-2.616l3.538 2.212c.336.21.462.097.462-.233V8.54c0-.33-.126-.443-.462-.232z" />
+                    </svg>
+                  )}
+                  {creatingZoomMeeting ? 'Creating meeting…' : 'Create Zoom Meeting'}
+                </Button>
+                {!zoomStatusLoading && !zoomConnected && (
+                  <Link
+                    href="/integrations?open_zoom=1"
+                    className="flex items-center justify-center gap-1 text-xs text-slate-500 transition-colors hover:text-[#3CCED7]"
+                  >
+                    <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+                    Zoom not connected · Connect in Integrations
+                  </Link>
+                )}
+              </div>
+            </PanelSection>
+
+            <PanelSection
+              title="Zoom post-meeting"
+              description="Status, recordings, and summary from Zoom after the meeting ends (when linked)."
+            >
+              <ZoomPostMeetingSection zoomPostMeeting={meeting?.zoom_post_meeting} />
+            </PanelSection>
+
+            <section>
+  <MeetingLifecyclePanel
+    projectId={projectId}
+    meetingId={meetingId}
+    onStatusChanged={(newStatus) => {
+      if (meeting) setMeeting({ ...meeting, status: newStatus as MeetingStatus });
+      onMeetingUpdated?.({ ...meeting!, status: newStatus as MeetingStatus });
+    }}
+  />
+</section>
 
             <PanelSection title="Participants" description="Who is in this meeting.">
               {loadingPeople ? (
@@ -478,6 +585,18 @@ export function MeetingSummaryPanel({
             </PanelSection>
 
             <PanelSection
+              title="Action items"
+              description="Capture follow-ups from this meeting and convert them into project tasks in one step. Lineage is stored on the task."
+            >
+              <MeetingActionItemsSection
+                projectId={projectId}
+                meetingId={meetingId}
+                projectMembers={projectMembers}
+                onChanged={() => void loadMeeting()}
+              />
+            </PanelSection>
+
+            <PanelSection
               title="Contextual knowledge"
               description="Meeting → tasks and decisions (origin links). Use this to reconstruct reasoning and execution chains."
             >
@@ -500,7 +619,7 @@ export function MeetingSummaryPanel({
               <div className="flex flex-col gap-3">
                 <Button
                   type="button"
-                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  className="w-full bg-[#3CCED7] hover:bg-[#2AB5BD]"
                   disabled={savingMeta}
                   onClick={() => void saveMeta()}
                 >
@@ -514,7 +633,7 @@ export function MeetingSummaryPanel({
 
                 <Link
                   href={`/projects/${projectId}/meetings/${meetingId}`}
-                  className="inline-flex w-full items-center justify-center rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm font-medium text-blue-800 transition hover:bg-blue-100"
+                  className="inline-flex w-full items-center justify-center rounded-lg border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-3 py-2.5 text-sm font-medium text-[#1a9ba3] transition hover:bg-[#3CCED7]/15"
                 >
                   Open full meeting workspace
                   <span className="ml-1" aria-hidden>

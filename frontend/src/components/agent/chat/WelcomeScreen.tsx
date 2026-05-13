@@ -10,9 +10,11 @@ interface WelcomeScreenProps {
   onSend: (message: string) => void
   onFileUpload: (file: File) => void
   disabled?: boolean
+  /** When the parent renders its own composer, hide the built-in ChatInput. */
+  showComposer?: boolean
 }
 
-export function WelcomeScreen({ onSend, onFileUpload, disabled }: WelcomeScreenProps) {
+export function WelcomeScreen({ onSend, onFileUpload, disabled, showComposer = true }: WelcomeScreenProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleUploadClick = () => {
@@ -27,48 +29,53 @@ export function WelcomeScreen({ onSend, onFileUpload, disabled }: WelcomeScreenP
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center px-4">
-      <div className="w-full max-w-2xl space-y-8">
-        {/* Title */}
-        <div className="text-center space-y-2">
-          <h1 className="text-2xl font-semibold text-foreground">
-            What do you want to analyze today?
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Upload a CSV or Excel file to start, or type a question below.
-          </p>
-        </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-4">
+        <div className="w-full max-w-2xl space-y-8">
+          {/* Title */}
+          <div className="text-center space-y-2">
+            <h1 className="text-2xl font-semibold text-foreground">
+              What do you want to analyze today?
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Upload a CSV or Excel file to start, or type a question below.
+            </p>
+          </div>
 
-        {/* Primary upload CTA */}
-        <div className="flex flex-col items-center gap-2">
-          <button
-            onClick={handleUploadClick}
+          {/* Primary upload CTA */}
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={handleUploadClick}
+              disabled={disabled}
+              className="flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+            >
+              <Upload className="h-4 w-4" />
+              Upload &amp; Analyze
+            </button>
+            <span className="text-xs text-muted-foreground">
+              Supported: CSV, XLSX, XLS (max 10 MB)
+            </span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPTED_TYPES}
+              className="hidden"
+              onChange={handleFileChange}
+            />
+          </div>
+        </div>
+      </div>
+
+      {showComposer ? (
+        <div className="shrink-0">
+          <ChatInput
+            onSend={onSend}
+            onFileUpload={onFileUpload}
             disabled={disabled}
-            className="flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
-          >
-            <Upload className="h-4 w-4" />
-            Upload &amp; Analyze
-          </button>
-          <span className="text-xs text-muted-foreground">
-            Supported: CSV, XLSX, XLS (max 10 MB)
-          </span>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={ACCEPTED_TYPES}
-            className="hidden"
-            onChange={handleFileChange}
+            placeholder="Or type your question..."
           />
         </div>
-
-        {/* Input */}
-        <ChatInput
-          onSend={onSend}
-          onFileUpload={onFileUpload}
-          disabled={disabled}
-          placeholder="Or type your question..."
-        />
-      </div>
+      ) : null}
     </div>
   )
 }

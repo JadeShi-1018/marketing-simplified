@@ -260,8 +260,8 @@ const SignalBuilderModal = ({
                     onClick={() => onMetricChange(option)}
                     className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                       metric === option
-                        ? 'border-blue-600 bg-blue-600 text-white'
-                        : 'border-blue-200 bg-white text-blue-700 hover:border-blue-300'
+                        ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
+                        : 'border-[#3CCED7]/30 bg-white text-[#1a9ba3] hover:border-blue-300'
                     }`}
                   >
                     {metricLabels[option]}
@@ -287,8 +287,8 @@ const SignalBuilderModal = ({
                       onClick={() => onMovementGroupChange(group.key as SignalBuilderModalProps['movementGroup'])}
                       className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                         movementGroup === group.key
-                          ? 'border-blue-600 bg-blue-600 text-white'
-                          : 'border-blue-200 bg-white text-blue-700 hover:border-blue-300'
+                          ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
+                          : 'border-[#3CCED7]/30 bg-white text-[#1a9ba3] hover:border-blue-300'
                       }`}
                     >
                       {group.label}
@@ -298,6 +298,9 @@ const SignalBuilderModal = ({
                 {(movementGroup === 'INCREASE' || movementGroup === 'DECREASE') ? (
                   <>
                     <div className="h-px w-full bg-blue-200" />
+                    {!movementDetail && (
+                      <p className="text-[11px] text-amber-600 font-medium">Select intensity to continue →</p>
+                    )}
                     <div className="flex flex-wrap items-center gap-2">
                       {['SLIGHT', 'MODERATE', 'SHARP'].map((detail) => (
                         <button
@@ -306,8 +309,8 @@ const SignalBuilderModal = ({
                           onClick={() => onMovementDetailChange(detail as SignalBuilderModalProps['movementDetail'])}
                           className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                             movementDetail === detail
-                              ? 'border-blue-600 bg-blue-600 text-white'
-                              : 'border-blue-200 bg-white text-blue-700 hover:border-blue-300'
+                              ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
+                              : 'border-[#3CCED7]/30 bg-white text-[#1a9ba3] hover:border-blue-300'
                           }`}
                         >
                           {detail.charAt(0) + detail.slice(1).toLowerCase()}
@@ -318,6 +321,9 @@ const SignalBuilderModal = ({
                 ) : null}
                 {movementGroup === 'UNEXPECTED' ? (
                   <div className="h-px w-full bg-blue-200" />
+                ) : null}
+                {movementGroup === 'UNEXPECTED' && !movementDetail ? (
+                  <p className="text-[11px] text-amber-600 font-medium">Select type to continue →</p>
                 ) : null}
                 {movementGroup === 'UNEXPECTED' ? (
                   <div className="flex flex-wrap items-center gap-2">
@@ -331,8 +337,8 @@ const SignalBuilderModal = ({
                         onClick={() => onMovementDetailChange(detail.key as SignalBuilderModalProps['movementDetail'])}
                         className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                           movementDetail === detail.key
-                            ? 'border-blue-600 bg-blue-600 text-white'
-                            : 'border-blue-200 bg-white text-blue-700 hover:border-blue-300'
+                            ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
+                            : 'border-[#3CCED7]/30 bg-white text-[#1a9ba3] hover:border-blue-300'
                         }`}
                       >
                         {detail.label}
@@ -353,8 +359,8 @@ const SignalBuilderModal = ({
                       onClick={() => onPeriodChange(option)}
                       className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                         period === option
-                          ? 'border-blue-600 bg-blue-600 text-white'
-                          : 'border-blue-200 bg-white text-blue-700 hover:border-blue-300'
+                          ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
+                          : 'border-[#3CCED7]/30 bg-white text-[#1a9ba3] hover:border-blue-300'
                       }`}
                     >
                       {periodLabels[option]}
@@ -466,7 +472,7 @@ const SignalBuilderModal = ({
               <button
                 type="button"
                 onClick={onClearOverride}
-                className="mt-2 text-xs font-semibold text-blue-600"
+                className="mt-2 text-xs font-semibold text-[#3CCED7]"
               >
                 Reset to auto text
               </button>

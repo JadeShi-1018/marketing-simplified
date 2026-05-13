@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Select,
   SelectContent,
@@ -19,6 +20,7 @@ interface SpreadsheetHeaderProps {
   selectedSheet: string
   onSheetChange: (value: string) => void
   onDelete: (fileId: string) => void
+  loading?: boolean
 }
 
 export function SpreadsheetHeader({
@@ -26,6 +28,7 @@ export function SpreadsheetHeader({
   selectedSheet,
   onSheetChange,
   onDelete,
+  loading = false,
 }: SpreadsheetHeaderProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
 
@@ -34,24 +37,32 @@ export function SpreadsheetHeader({
   return (
     <div className="flex items-center justify-between gap-4 pb-4 border-b border-border">
       <div className="flex items-center gap-3">
-        <Select value={selectedSheet} onValueChange={onSheetChange}>
-          <SelectTrigger className="w-[280px] bg-card border-input text-foreground">
-            <SelectValue placeholder="Select spreadsheet" />
-          </SelectTrigger>
-          <SelectContent className="bg-card border-input">
-            {reports.length === 0 ? (
-              <SelectItem value="__none" disabled>No CSV files found</SelectItem>
-            ) : (
-              reports.map((r) => (
-                <SelectItem key={r.filename} value={r.filename}>
-                  {r.original_filename} ({r.row_count} rows)
-                </SelectItem>
-              ))
-            )}
-          </SelectContent>
-        </Select>
+        {loading ? (
+          <div className="flex h-10 w-[280px] items-center rounded-md border border-input bg-card px-3">
+            <Skeleton className="h-4 w-36" />
+          </div>
+        ) : (
+          <Select value={selectedSheet} onValueChange={onSheetChange}>
+            <SelectTrigger className="w-[280px] bg-card border-input text-foreground">
+              <SelectValue placeholder="Select spreadsheet" />
+            </SelectTrigger>
+            <SelectContent className="bg-card border-input">
+              {reports.length === 0 ? (
+                <SelectItem value="__none" disabled>No CSV files found</SelectItem>
+              ) : (
+                reports.map((r) => (
+                  <SelectItem key={r.filename} value={r.filename}>
+                    {r.original_filename} ({r.row_count} rows)
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+        )}
 
-        {selectedReport && (
+        {loading ? (
+          <Skeleton className="h-9 w-9 rounded-md" />
+        ) : selectedReport ? (
           <Button
             variant="outline"
             size="sm"
@@ -60,7 +71,7 @@ export function SpreadsheetHeader({
           >
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
-        )}
+        ) : null}
 
       </div>
 

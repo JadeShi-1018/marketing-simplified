@@ -19,6 +19,7 @@ import {
   ProjectMemberData,
   ProjectRoleOption,
 } from "@/lib/api/projectApi";
+import Modal from "@/components/ui/Modal";
 
 type ProjectMembersModalProps = {
   isOpen: boolean;
@@ -58,7 +59,7 @@ const getRoleBadgeClasses = (role?: string) => {
     case "Budget Controller":
       return "bg-rose-100 text-rose-800";
     case "Data Analyst":
-      return "bg-blue-100 text-blue-800";
+      return "bg-[#3CCED7]/15 text-[#1a9ba3]";
     case "Senior Media Buyer":
       return "bg-indigo-100 text-indigo-800";
     case "Specialist Media Buyer":
@@ -100,6 +101,9 @@ export default function ProjectMembersModal({
   const [removingId, setRemovingId] = useState<number | null>(null);
   const [updatingId, setUpdatingId] = useState<number | null>(null);
   const [roleEdits, setRoleEdits] = useState<Record<number, string>>({});
+  const [transferOwnerMember, setTransferOwnerMember] =
+    useState<ProjectMemberData | null>(null);
+  const [transferOwnerPhrase, setTransferOwnerPhrase] = useState("");
   const [activeView, setActiveView] = useState<
     "members" | "approvals" | "acceptances" | "invites"
   >("members");
@@ -401,16 +405,56 @@ export default function ProjectMembersModal({
     }
   };
 
-  const handleTransferOwner = async (member: ProjectMemberData) => {
-    if (!projectId) return;
+  const handleMemberRoleSelectChange = async (
+    member: ProjectMemberData,
+    nextRole: string
+  ) => {
+    if (nextRole === member.role) return;
+    setRoleEdits((prev) => ({ ...prev, [member.id]: nextRole }));
+    const ok = await handleRoleChange(member, nextRole);
+    if (!ok) {
+      setRoleEdits((prev) => ({ ...prev, [member.id]: member.role }));
+    }
+  };
+
+  const openTransferOwnerModal = (member: ProjectMemberData) => {
     if (member.role === "owner") return;
-    const label = formatMemberLabel(member);
-    if (!window.confirm(`Transfer ownership to ${label}?`)) {
+    const email = member.user?.email?.trim();
+    if (!email) {
+      toast.error("This member has no email on file. Ownership cannot be transferred.");
       return;
     }
+    setTransferOwnerMember(member);
+    setTransferOwnerPhrase("");
+  };
+
+  const closeTransferOwnerModal = () => {
+    setTransferOwnerMember(null);
+    setTransferOwnerPhrase("");
+  };
+
+  const transferOwnerExpectedPhrase = useMemo(() => {
+    if (!transferOwnerMember?.user?.email) return "";
+    return `Transfer to ${transferOwnerMember.user.email.trim()}`;
+  }, [transferOwnerMember]);
+
+  const transferOwnerPhraseMatches = useMemo(() => {
+    const typed = transferOwnerPhrase.trim();
+    const expected = transferOwnerExpectedPhrase.trim();
+    return typed.length > 0 && typed === expected;
+  }, [transferOwnerPhrase, transferOwnerExpectedPhrase]);
+
+  const confirmTransferOwner = async () => {
+    if (!projectId || !transferOwnerMember) return;
+    if (!transferOwnerPhraseMatches) {
+      toast.error("Phrase does not match. Please type the confirmation exactly.");
+      return;
+    }
+    const member = transferOwnerMember;
     const didUpdate = await handleRoleChange(member, "owner");
     if (didUpdate) {
-      await loadMembers();
+      closeTransferOwnerModal();
+      onMembersUpdated?.();
     }
   };
 
@@ -487,7 +531,7 @@ export default function ProjectMembersModal({
     <div className={`w-full overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-[0_20px_60px_-40px_rgba(15,23,42,0.6)] ${variant === "panel" ? "max-w-none" : "max-w-2xl"}`}>
       <div className="flex items-center justify-between border-b border-gray-100 bg-gradient-to-r from-white via-slate-50 to-blue-50 px-6 py-4">
           <div className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-500 text-white shadow-sm">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-indigo-500 text-white shadow-sm">
               <Users className="h-4 w-4" />
             </div>
             <div>
@@ -579,7 +623,7 @@ export default function ProjectMembersModal({
               <span className="inline-flex items-center gap-1.5">
                 <Mail className="h-3.5 w-3.5" />
                 Your invites
-                <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-800">
+                <span className="rounded-full bg-[#3CCED7]/15 px-1.5 text-[10px] font-semibold text-[#1a9ba3]">
                   {myInvites.length}
                 </span>
               </span>
@@ -603,7 +647,7 @@ export default function ProjectMembersModal({
                       Project roles control project access and can align with RBAC roles.
                     </p>
                   </div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-3 py-1.5 text-xs font-semibold text-[#1a9ba3]">
                     <ShieldCheck className="h-4 w-4" />
                     Privileged controls
                   </div>
@@ -616,7 +660,7 @@ export default function ProjectMembersModal({
                       value={inviteEmail}
                       onChange={(event) => setInviteEmail(event.target.value)}
                       placeholder="name@company.com"
-                      className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full rounded-xl border border-gray-200 bg-white py-2.5 pl-9 pr-3 text-sm shadow-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100"
                     />
                   </div>
                   <div className="flex flex-col">
@@ -624,7 +668,7 @@ export default function ProjectMembersModal({
                       value={inviteRole}
                       onChange={(event) => setInviteRole(event.target.value)}
                       disabled={rolesLoading || roleOptions.length === 0}
-                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm shadow-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100"
                     >
                       {rolesLoading ? (
                         <option value="" disabled>
@@ -645,7 +689,7 @@ export default function ProjectMembersModal({
                   <button
                     type="submit"
                     disabled={inviting}
-                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70"
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#3CCED7] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#2AB5BD] disabled:cursor-not-allowed disabled:opacity-70"
                   >
                     {inviting && <Loader2 className="h-4 w-4 animate-spin" />}
                     Invite
@@ -667,7 +711,7 @@ export default function ProjectMembersModal({
                   type="button"
                   onClick={loadMembers}
                   disabled={loading}
-                  className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                  className="text-xs font-medium text-[#3CCED7] hover:text-[#1a9ba3]"
                 >
                   Refresh
                 </button>
@@ -700,7 +744,7 @@ export default function ProjectMembersModal({
                       key={member.id}
                       className={`flex items-center justify-between rounded-2xl border px-4 py-3 shadow-sm ${
                         isCurrentUser
-                          ? "border-blue-200 bg-blue-50"
+                          ? "border-[#3CCED7]/30 bg-[#3CCED7]/10"
                           : "border-gray-200 bg-white"
                       }`}
                     >
@@ -718,13 +762,13 @@ export default function ProjectMembersModal({
                             <select
                               value={roleEdits[member.id] ?? member.role}
                               onChange={(event) =>
-                                setRoleEdits((prev) => ({
-                                  ...prev,
-                                  [member.id]: event.target.value,
-                                }))
+                                void handleMemberRoleSelectChange(
+                                  member,
+                                  event.target.value
+                                )
                               }
                               disabled={updatingId === member.id}
-                              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
+                              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-70"
                             >
                               {roleOptions.map((role) => (
                                 <option key={role.value} value={role.value}>
@@ -735,34 +779,16 @@ export default function ProjectMembersModal({
                             {isOwner && (
                               <button
                                 type="button"
-                                onClick={() => handleTransferOwner(member)}
+                                onClick={() => openTransferOwnerModal(member)}
                                 disabled={updatingId === member.id}
                                 className="inline-flex items-center gap-1 rounded-full border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-700 transition hover:border-emerald-300 hover:text-emerald-800 disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 Transfer owner
                               </button>
                             )}
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleRoleChange(
-                                  member,
-                                  roleEdits[member.id] ?? member.role
-                                )
-                              }
-                              disabled={
-                                updatingId === member.id ||
-                                (roleEdits[member.id] ?? member.role) ===
-                                  member.role
-                              }
-                              className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold text-slate-700 transition hover:border-blue-200 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {updatingId === member.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                "Change role"
-                              )}
-                            </button>
+                            {updatingId === member.id && (
+                              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-slate-500" aria-hidden />
+                            )}
                           </>
                         ) : (
                           <span
@@ -812,7 +838,7 @@ export default function ProjectMembersModal({
                     type="button"
                     onClick={loadPendingApprovals}
                     disabled={approvalsLoading}
-                    className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                    className="text-xs font-medium text-[#3CCED7] hover:text-[#1a9ba3]"
                   >
                     Refresh
                   </button>
@@ -891,7 +917,7 @@ export default function ProjectMembersModal({
                     type="button"
                     onClick={loadPendingInvites}
                     disabled={invitesLoading}
-                    className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                    className="text-xs font-medium text-[#3CCED7] hover:text-[#1a9ba3]"
                   >
                     Refresh
                   </button>
@@ -955,7 +981,7 @@ export default function ProjectMembersModal({
                     type="button"
                     onClick={loadMyInvites}
                     disabled={myInvitesLoading}
-                    className="text-xs font-medium text-blue-600 hover:text-blue-700"
+                    className="text-xs font-medium text-[#3CCED7] hover:text-[#1a9ba3]"
                   >
                     Refresh
                   </button>
@@ -1022,13 +1048,91 @@ export default function ProjectMembersModal({
     </div>
   );
 
+  const transferOwnerLabel = transferOwnerMember
+    ? formatMemberLabel(transferOwnerMember)
+    : "";
+
+  const transferModal = (
+    <Modal isOpen={!!transferOwnerMember} onClose={closeTransferOwnerModal}>
+      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-6 shadow-xl">
+        <h3 className="text-lg font-semibold text-gray-900">
+          Transfer project ownership
+        </h3>
+        <p className="mt-2 text-sm text-gray-600">
+          <span className="font-medium text-red-600">
+            You will no longer be the project owner.
+          </span>{" "}
+          To confirm, type the phrase below exactly, then click Confirm transfer.
+        </p>
+        {transferOwnerMember && (
+          <>
+            <p className="mt-3 text-xs text-gray-500">
+              Transferring to{" "}
+              <span className="font-medium text-gray-800">
+                {transferOwnerLabel}
+              </span>
+            </p>
+            <p className="mt-3 text-xs font-medium text-gray-700">
+              Type this phrase:
+            </p>
+            <code className="mt-1 block rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+              {transferOwnerExpectedPhrase || "—"}
+            </code>
+            <label htmlFor="transfer-owner-phrase" className="mt-4 block text-xs font-medium text-gray-700">
+              Confirmation
+            </label>
+            <input
+              id="transfer-owner-phrase"
+              type="text"
+              value={transferOwnerPhrase}
+              onChange={(e) => setTransferOwnerPhrase(e.target.value)}
+              autoComplete="off"
+              placeholder={transferOwnerExpectedPhrase}
+              className="mt-1 w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+            />
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeTransferOwnerModal}
+                disabled={updatingId === transferOwnerMember.id}
+                className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmTransferOwner()}
+                disabled={
+                  !transferOwnerPhraseMatches ||
+                  updatingId === transferOwnerMember.id
+                }
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {updatingId === transferOwnerMember.id && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+                Confirm transfer
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+
   if (variant === "panel") {
-    return content;
+    return (
+      <>
+        {content}
+        {transferModal}
+      </>
+    );
   }
 
   return (
-    <div className="w-full">
-      {content}
-    </div>
+    <>
+      <div className="w-full">{content}</div>
+      {transferModal}
+    </>
   );
 }

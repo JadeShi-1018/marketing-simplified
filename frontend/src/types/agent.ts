@@ -8,6 +8,7 @@ export interface AgentSession {
   created_by: number;
   title?: string | null;
   status?: string;
+  approval_required?: boolean;
   created_at: string;
   updated_at: string;
   message_count?: number;
@@ -21,10 +22,12 @@ export interface AgentSessionDetail extends AgentSession {
 
 export interface UpdateSessionRequest {
   title?: string;
+  approval_required?: boolean;
 }
 
 export interface CreateSessionRequest {
   project_id?: number;
+  approval_required?: boolean;
 }
 
 // ==================== Message Types ====================
@@ -45,11 +48,15 @@ export interface AgentMessageData {
   anomalies?: AnomalyItem[];
   decision_id?: number;
   task_ids?: number[];
+  created_tasks?: Array<{ index: number; task_id: number; summary: string }>;
   board_id?: string;
   event_type?: string;
   status?: string;
   suggested_decision?: SuggestedDecision;
   recommended_tasks?: RecommendedTask[];
+  approval_id?: string;
+  kind?: string;
+  draft?: Record<string, unknown>;
   file_id?: string;
   workflow_run_id?: string;
   session_id?: string;
@@ -68,6 +75,7 @@ export type SSEEventType =
   | 'text'
   | 'analysis'
   | 'confirmation_request'
+  | 'approval_request'
   | 'follow_up_prompt'
   | 'decision_draft'
   | 'task_created'
@@ -76,6 +84,7 @@ export type SSEEventType =
   | 'calendar_invite'
   | 'calendar_updated'
   | 'step_progress'
+  | 'column_mapping'
   | 'done'
   | 'error';
 
@@ -87,7 +96,16 @@ export interface SSEEvent {
 
 // ==================== Chat Request ====================
 
-export type AgentAction = 'analyze' | 'confirm_decision' | 'create_tasks' | 'generate_miro' | 'distribute_message' | 'start_follow_up' | 'cancel_follow_up';
+export type AgentAction =
+  | 'analyze'
+  | 'confirm_decision'
+  | 'create_tasks'
+  | 'generate_miro'
+  | 'distribute_message'
+  | 'start_follow_up'
+  | 'cancel_follow_up'
+  | 'confirm_columns'
+  | 'resolve_external_approval';
 
 export interface CalendarContextPayload {
   type: 'calendar' | 'event';
@@ -110,6 +128,12 @@ export interface AgentChatRequest {
   action?: AgentAction;
   calendar_context?: CalendarContextPayload;
   workflow_id?: string;
+  // User-approved column mapping for confirm_columns action.
+  // Format: {original_header: canonical_name or "unknown"}
+  column_mapping?: Record<string, string>;
+  approval_id?: string;
+  approval_decision?: 'approve' | 'reject';
+  approval_draft?: Record<string, unknown>;
 }
 
 // ==================== Analysis Types ====================
@@ -139,6 +163,19 @@ export interface AgentSpreadsheet {
 }
 
 // ==================== UI State Types ====================
+
+// ==================== Column Detection Types ====================
+
+export interface ColumnDetectionData {
+  schema_key: string | null
+  schema_name: string
+  source: 'rule' | 'llm' | 'none'
+  confidence: number
+  mappings: Record<string, string>
+  categories: Record<string, string>
+  unrecognized: string[]
+  column_confidences: Record<string, number>
+}
 
 // ==================== Imported CSV File ====================
 
@@ -177,6 +214,7 @@ export interface DecisionOption {
 export interface RecommendedTask {
   type: string;
   summary: string;
+  description?: string;
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
 }
 
@@ -197,7 +235,9 @@ export type WorkflowStepType =
   | 'create_decision'
   | 'create_tasks'
   | 'custom_api'
-  | 'await_confirmation';
+  | 'await_confirmation'
+  | 'detect_columns'
+  | 'normalize_data';
 
 export interface AgentWorkflowStep {
   id: string;

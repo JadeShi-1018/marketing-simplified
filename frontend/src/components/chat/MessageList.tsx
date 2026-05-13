@@ -3,7 +3,91 @@
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
 import type { MessageListProps } from '@/types/chat';
+import { Skeleton } from '@/components/ui/skeleton';
 import MessageItem from './MessageItem';
+
+const LOADING_GROUPS = [
+  {
+    align: 'left',
+    lines: [
+      ['w-28', 'w-24', 'w-20', 'w-32'],
+      ['w-32', 'w-28', 'w-24'],
+    ],
+  },
+  {
+    align: 'right',
+    lines: [
+      ['w-20', 'w-36', 'w-24', 'w-16', 'w-28'],
+      ['w-24', 'w-32', 'w-20'],
+    ],
+    media: true,
+  },
+  {
+    align: 'left',
+    lines: [
+      ['w-24', 'w-20', 'w-28', 'w-16', 'w-24'],
+      ['w-36', 'w-24', 'w-20', 'w-28'],
+    ],
+  },
+  {
+    align: 'right',
+    lines: [
+      ['w-16', 'w-24', 'w-20', 'w-32'],
+      ['w-28', 'w-20', 'w-24'],
+    ],
+  },
+];
+
+function LoadingBrickRow({
+  widths,
+  align = 'left',
+}: {
+  widths: string[];
+  align?: 'left' | 'right';
+}) {
+  return (
+    <div className={`flex flex-wrap gap-2 ${align === 'right' ? 'justify-end' : ''}`}>
+      {widths.map((width, index) => (
+        <Skeleton
+          key={`${width}-${index}`}
+          className={`h-7 rounded-xl ${width}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MessageListLoadingSkeleton({
+  compact = false,
+}: {
+  compact?: boolean;
+}) {
+  const groups = compact ? LOADING_GROUPS.slice(0, 1) : LOADING_GROUPS;
+
+  return (
+    <div className={compact ? 'space-y-3 pb-3' : 'flex-1 overflow-y-auto p-4 space-y-6'}>
+      {groups.map((group, groupIndex) => (
+        <div
+          key={`message-loading-group-${groupIndex}`}
+          className="space-y-3"
+        >
+          {group.lines.map((line, lineIndex) => (
+            <LoadingBrickRow
+              key={`message-loading-line-${groupIndex}-${lineIndex}`}
+              widths={line}
+              align={group.align === 'left' || group.align === 'right' ? group.align : undefined}
+            />
+          ))}
+          {group.media ? (
+            <div className={`pt-1 ${group.align === 'right' ? 'flex justify-end' : ''}`}>
+              <Skeleton className="h-40 w-40 rounded-2xl" />
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function MessageList({
   messages,
@@ -11,6 +95,8 @@ export default function MessageList({
   onLoadMore,
   hasMore,
   isLoading,
+  isLoadingMoreMessages = false,
+  showSwitchLoadingSkeleton = false,
   roleByUserId,
   isGroupChat = false,
   isSelectMode = false,
@@ -19,10 +105,32 @@ export default function MessageList({
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [highlightMessageId, setHighlightMessageId] = useState<number | null>(null);
   const previousMessageCountRef = useRef(messages.length);
   const lastMessageIdRef = useRef<number | null>(null); // Track LAST message ID (newest) instead of first
   const isLoadingMoreRef = useRef(false); // Track if we're loading more (older) messages
   const scrollPositionBeforeLoadRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+
+  useEffect(() => {
+    // Listen for cross-component "jump to message" events.
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<{ messageId?: number }>;
+      const messageId = ce.detail?.messageId;
+      if (!messageId || !Number.isFinite(messageId)) return;
+      setHighlightMessageId(messageId);
+    };
+    window.addEventListener('mj:chat:jumpToMessage', handler as EventListener);
+    return () => window.removeEventListener('mj:chat:jumpToMessage', handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!highlightMessageId) return;
+    const el = document.getElementById(`message-${highlightMessageId}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = window.setTimeout(() => setHighlightMessageId(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [highlightMessageId, messages]);
 
   // Auto-scroll to bottom when chat changes or on initial load
   useEffect(() => {
@@ -140,13 +248,24 @@ export default function MessageList({
     return format(date, 'MMMM d, yyyy');
   };
 
+  const shouldShowFullSwitchSkeleton = showSwitchLoadingSkeleton && !isLoadingMoreMessages;
+
   return (
     <div className="h-full flex flex-col">
+      {shouldShowFullSwitchSkeleton ? (
+        <MessageListLoadingSkeleton />
+      ) : (
+        <>
       {/* Loading indicator at top */}
-      {isLoading && hasMore && (
-        <div className="flex justify-center py-3">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+      {isLoadingMoreMessages && hasMore && messages.length > 0 && (
+        <div className="px-4 pt-3">
+          <MessageListLoadingSkeleton compact />
         </div>
+      )}
+
+      {/* Initial loading state */}
+      {messages.length === 0 && isLoading && !showSwitchLoadingSkeleton && (
+        <MessageListLoadingSkeleton />
       )}
 
       {/* Empty state */}
@@ -161,7 +280,7 @@ export default function MessageList({
         <div 
           ref={scrollRef}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto p-4 space-y-4"
+          className="flex-1 space-y-4 overflow-y-auto p-3 sm:p-4"
         >
           {messageGroups.map((group) => (
             <div key={group.date}>
@@ -189,6 +308,7 @@ export default function MessageList({
                       isSelectMode={isSelectMode}
                       isSelected={selectedMessageIds.includes(message.id)}
                       onToggleSelect={onToggleSelectMessage}
+                      isHighlighted={highlightMessageId === message.id}
                     />
                   );
                 })}
@@ -196,6 +316,8 @@ export default function MessageList({
             </div>
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   );

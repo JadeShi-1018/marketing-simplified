@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useMemo } from "react";
 import { format } from "date-fns";
 import {
   AlignLeft,
@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { CalendarAPI } from "@/lib/api/calendarApi";
+import { CalendarAPI, extractUserDescription } from "@/lib/api/calendarApi";
 import type { CalendarDTO, EventDTO } from "@/lib/api/calendarApi";
 import type { CalendarDialogMode, EventPanelPosition } from "@/components/calendar/types";
 
@@ -23,6 +23,7 @@ type EventPanelDialogProps = {
   end: Date | null;
   event: EventDTO | null;
   calendars: CalendarDTO[];
+  primaryCalendar?: CalendarDTO | null;
   preferredCalendarId?: string | null;
   onSave: (payload: { action: () => Promise<void> }) => Promise<void>;
   onDelete?: (event: EventDTO) => Promise<void>;
@@ -39,24 +40,42 @@ export function EventPanelDialog({
   end,
   event,
   calendars,
+  primaryCalendar = null,
   preferredCalendarId,
   onSave,
   onDelete,
   onAskAgent,
   position,
 }: EventPanelDialogProps) {
+  const mergedCalendars = useMemo(() => {
+    if (!primaryCalendar) {
+      return calendars;
+    }
+    if (calendars.some((c) => c.id === primaryCalendar.id)) {
+      return calendars;
+    }
+    return [primaryCalendar, ...calendars];
+  }, [calendars, primaryCalendar]);
+
   const resolveDefaultCalendarId = useCallback(
     (eventCalendarId?: string | null) => {
-      const availableIds = new Set(calendars.map((cal) => cal.id));
+      const availableIds = new Set(mergedCalendars.map((cal) => cal.id));
       if (eventCalendarId && availableIds.has(eventCalendarId)) {
         return eventCalendarId;
+      }
+      if (
+        mode === "create" &&
+        primaryCalendar?.id &&
+        availableIds.has(primaryCalendar.id)
+      ) {
+        return primaryCalendar.id;
       }
       if (preferredCalendarId && availableIds.has(preferredCalendarId)) {
         return preferredCalendarId;
       }
-      return calendars[0]?.id || "";
+      return mergedCalendars[0]?.id || "";
     },
-    [calendars, preferredCalendarId],
+    [mergedCalendars, mode, preferredCalendarId, primaryCalendar],
   );
 
   const [title, setTitle] = React.useState(event?.title ?? "");
@@ -90,13 +109,13 @@ export function EventPanelDialog({
     }
 
     setCalendarId((currentCalendarId) => {
-      if (currentCalendarId && calendars.some((cal) => cal.id === currentCalendarId)) {
+      if (currentCalendarId && mergedCalendars.some((cal) => cal.id === currentCalendarId)) {
         return currentCalendarId;
       }
       return defaultCalendarId;
     });
   }, [
-    calendars,
+    mergedCalendars,
     end,
     event,
     formSeedKey,
@@ -119,10 +138,10 @@ export function EventPanelDialog({
 
   if (mode === "view" && event) {
     const calendarName =
-      calendars.find((c) => c.id === event.calendar_id)?.name || "Calendar";
+      mergedCalendars.find((c) => c.id === event.calendar_id)?.name || "Calendar";
     const color =
       event.color ||
-      calendars.find((c) => c.id === event.calendar_id)?.color ||
+      mergedCalendars.find((c) => c.id === event.calendar_id)?.color ||
       "#1E88E5";
 
     return (
@@ -132,7 +151,7 @@ export function EventPanelDialog({
           role="dialog"
           aria-label="View event"
           data-testid="calendar-event-dialog"
-          className="fixed z-50 w-[360px] rounded-3xl border bg-[#f0f4f9] shadow-xl animate-in slide-in-from-bottom-8 fade-in duration-300"
+          className="fixed z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[360px] overflow-y-auto rounded-2xl border bg-white shadow-xl animate-in slide-in-from-bottom-8 fade-in duration-300 sm:rounded-3xl"
           style={{ top: position.top, left: position.left }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -189,12 +208,15 @@ export function EventPanelDialog({
                 </div>
               </div>
             </div>
-            {event.description && (
-              <div className="mb-2 flex items-start gap-3 text-gray-700">
-                <AlignLeft className="mt-0.5 h-4 w-4 text-gray-500" />
-                <p className="whitespace-pre-line text-sm">{event.description}</p>
-              </div>
-            )}
+            {(() => {
+              const userDescription = extractUserDescription(event.description || "");
+              return userDescription && (
+                <div className="mb-2 flex items-start gap-3 text-gray-700">
+                  <AlignLeft className="mt-0.5 h-4 w-4 text-gray-500" />
+                  <p className="whitespace-pre-line text-sm">{userDescription}</p>
+                </div>
+              );
+            })()}
             <div className="flex items-start gap-3 text-gray-700">
               <CalendarIcon className="mt-0.5 h-4 w-4 text-gray-500" />
               <span className="text-sm">{calendarName}</span>
@@ -287,26 +309,26 @@ export function EventPanelDialog({
         role="dialog"
         aria-label={mode === "edit" ? "Edit event" : "Create event"}
         data-testid="calendar-event-dialog"
-        className="fixed z-50 w-[420px] rounded-3xl border bg-[#f0f4f9] shadow-xl animate-in slide-in-from-bottom-8 fade-in duration-300"
+        className="fixed z-50 max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-[420px] overflow-y-auto rounded-2xl border bg-white shadow-xl animate-in slide-in-from-bottom-8 fade-in duration-300 sm:rounded-3xl"
         style={{ top: position.top, left: position.left }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-col">
-          <div className="px-6 pt-4 pb-2">
+          <div className="px-4 pt-4 pb-2 sm:px-6">
             <input
               autoFocus
-              className="w-full border-b border-gray-200 bg-inherit pb-1 text-xl font-semibold text-gray-900 outline-none focus:border-blue-500"
+              className="w-full border-b border-gray-200 bg-inherit pb-1 text-xl font-semibold text-gray-900 outline-none focus:border-[#3CCED7]"
               placeholder="Add title"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
             />
           </div>
 
-          <div className="px-6 pb-4">
-            <div className="mb-3 flex gap-2 text-sm">
+          <div className="px-4 pb-4 sm:px-6">
+            <div className="mb-3 flex flex-wrap gap-2 text-sm">
               <button
                 type="button"
-                className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700"
+                className="rounded-full bg-[#3CCED7]/10 px-3 py-1 text-xs font-medium text-[#3CCED7]"
               >
                 Event
               </button>
@@ -339,7 +361,7 @@ export function EventPanelDialog({
                   <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                     <input
                       type="datetime-local"
-                      className="w-full rounded-md border border-gray-300 bg-[#dde3ea] px-2 py-1 text-sm text-gray-900 outline-none focus:border-blue-500"
+                      className="w-full rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
                       value={formatForInput(localStart)}
                       onChange={(e) => {
                         const next = new Date(e.target.value);
@@ -350,7 +372,7 @@ export function EventPanelDialog({
                     />
                     <input
                       type="datetime-local"
-                      className="w-full rounded-md border border-gray-300 bg-[#dde3ea] px-2 py-1 text-sm text-gray-900 outline-none focus:border-blue-500"
+                      className="w-full rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
                       value={formatForInput(localEnd)}
                       onChange={(e) => {
                         const next = new Date(e.target.value);
@@ -367,7 +389,7 @@ export function EventPanelDialog({
               <div className="flex items-start gap-4">
                 <AlignLeft className="mt-1 h-4 w-4 text-gray-500" />
                 <textarea
-                  className="min-h-[72px] w-full resize-none rounded-md border border-gray-300 bg-[#dde3ea] px-2 py-1 text-sm text-gray-900 outline-none focus:border-blue-500"
+                  className="min-h-[72px] w-full resize-none rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
                   placeholder="Add description"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
@@ -380,11 +402,11 @@ export function EventPanelDialog({
                   <div className="flex-1">
                     <p className="text-xs text-gray-500">Calendar</p>
                     <select
-                      className="mt-1 w-full rounded-md border border-gray-300 bg-[#dde3ea] px-2 py-1 text-sm text-gray-900 outline-none focus:border-blue-500"
+                      className="mt-1 w-full rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
                       value={calendarId}
                       onChange={(e) => setCalendarId(e.target.value)}
                     >
-                      {calendars.map((cal) => (
+                      {mergedCalendars.map((cal) => (
                         <option key={cal.id} value={cal.id}>
                           {cal.name}
                         </option>
@@ -401,11 +423,12 @@ export function EventPanelDialog({
                         className="inline-block h-2.5 w-2.5 rounded-full"
                         style={{
                           backgroundColor:
-                            calendars.find((c) => c.id === event.calendar_id)?.color || "#1E88E5",
+                            mergedCalendars.find((c) => c.id === event.calendar_id)?.color ||
+                            "#1E88E5",
                         }}
                       />
                       <span>
-                        {calendars.find((c) => c.id === event.calendar_id)?.name}
+                        {mergedCalendars.find((c) => c.id === event.calendar_id)?.name}
                       </span>
                     </div>
                   </div>
@@ -421,15 +444,15 @@ export function EventPanelDialog({
             </div>
           </div>
 
-          <div className="flex items-center justify-between border-t bg-inherit px-6 py-3">
+          <div className="flex flex-col gap-3 border-t bg-inherit px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <button
               type="button"
-              className="text-sm font-medium text-blue-600 hover:text-blue-700"
+              className="self-start text-sm font-medium text-[#3CCED7] hover:opacity-80"
               onClick={() => {}}
             >
               More options
             </button>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {mode === "edit" && event && !event.is_recurring && (
                 <button
                   type="button"
@@ -448,7 +471,7 @@ export function EventPanelDialog({
               </button>
               <button
                 type="button"
-                className="rounded-full bg-blue-600 px-5 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+                className="rounded-md bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-5 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-95"
                 onClick={handleSubmit}
               >
                 Save

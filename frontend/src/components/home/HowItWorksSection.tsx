@@ -1,293 +1,257 @@
-import React from 'react';
-import { ArrowRight } from 'lucide-react';
+"use client"
+
+import { useState, useRef } from "react"
+import { motion, useInView } from "framer-motion"
+import {
+  Layers,
+  BellDot,
+  ArrowRight,
+  CheckCircle,
+  Play,
+  type LucideIcon,
+} from "lucide-react"
+
+type Step = {
+  id: number
+  title: string
+  description: string
+  details: string[]
+  icon?: LucideIcon
+  iconSrc?: string
+  gradient: string
+}
+
+const steps: Step[] = [
+  {
+    id: 1,
+    title: "Plan & Assign",
+    description: "Turn campaign plans into clear owners, deadlines, and approvals before work begins.",
+    details: [
+      "Map every brief to the right owner",
+      "Assign creative, media, and approval tasks",
+      "Keep review paths visible from day one",
+      "Align launch dates, milestones, and handoffs",
+    ],
+    iconSrc: "/icons/assign.svg",
+    gradient: "from-brand-teal to-brand-lime",
+  },
+  {
+    id: 2,
+    title: "Execute & Collab",
+    description: "Keep creative, spend, and channel work aligned while campaigns move toward launch.",
+    details: [
+      "Keep campaign assets easy to find",
+      "Track budget movement as plans change",
+      "Coordinate paid channels in one workspace",
+      "Resolve feedback where the work happens",
+    ],
+    icon: Layers,
+    gradient: "from-amber-500 to-orange-500",
+  },
+  {
+    id: 3,
+    title: "Automate & Notify",
+    description: "Let routine follow-ups, alerts, and handoffs happen before bottlenecks slow the team down.",
+    details: [
+      "Send the right reminder at the right time",
+      "Route approvals to the next decision maker",
+      "Flag campaign changes that need attention",
+      "Keep status updates moving without chase-ups",
+    ],
+    icon: BellDot,
+    gradient: "from-rose-500 to-pink-500",
+  },
+  {
+    id: 4,
+    title: "Analyze & Optimize",
+    description: "Read performance signals faster and decide where to scale, pause, or adjust next.",
+    details: [
+      "Compare performance across active channels",
+      "Spot unusual spend or conversion shifts",
+      "Prioritize actions with clear recommendations",
+      "Share concise reports with stakeholders",
+    ],
+    iconSrc: "/icons/analyze.svg",
+    gradient: "from-emerald-500 to-teal-500",
+  },
+]
+
+function StepIcon({
+  icon: Icon,
+  iconSrc,
+  className,
+}: {
+  icon?: LucideIcon
+  iconSrc?: string
+  className: string
+}) {
+  if (iconSrc) {
+    return (
+      <span
+        aria-hidden="true"
+        className={`${className} block bg-current`}
+        style={{
+          WebkitMask: `url("${iconSrc}") center / contain no-repeat`,
+          mask: `url("${iconSrc}") center / contain no-repeat`,
+        }}
+      />
+    )
+  }
+
+  if (!Icon) return null
+  return <Icon className={className} />
+}
 
 type HowItWorksSectionProps = {
-  onGetStartedClick: () => void;
-};
+  onGetStartedClick: () => void
+}
 
 export default function HowItWorksSection({ onGetStartedClick }: HowItWorksSectionProps) {
+  const [activeStep, setActiveStep] = useState(1)
+  const ref = useRef(null)
+  const isInView = useInView(ref, { once: true, margin: "-100px" })
+
   return (
-    <>
-      {/* How it works Section -Desktop */}
-      <section id="how-it-works" className="hidden md:block py-20 px-6 bg-white">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center mb-16">
-            <h2 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-              How it works?
-            </h2>
-            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              From setup to optimization,<br />
-              Marketing Simplified keeps your campaigns moving effortlessly.
-            </p>
-          </div>
+    <section ref={ref} className="py-20 px-6">
+      <div className="max-w-7xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={isInView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.6 }}
+          className="text-center mb-16"
+        >
+          <h2 className="text-4xl lg:text-5xl font-bold text-slate-900 mb-4">
+            How it{" "}
+            <span className="bg-gradient-to-r from-brand-teal to-brand-lime bg-clip-text text-transparent">
+              works
+            </span>
+            ?
+          </h2>
+          <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+            Bring campaign planning, execution, automation, and performance decisions into one focused workspace.
+          </p>
+        </motion.div>
 
-          <div className="flex flex-col lg:flex-row items-center justify-center gap-8 mb-12">
-            {/* Step 1 */}
-            <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-xs hover:shadow-xl transition flex flex-col">
-              <div className="flex items-center justify-center mb-4 h-32">
-                <img src="/step1.png" alt="Plan & Assign" className="w-24 h-24 object-contain" />
-              </div>
-              <div className="text-center flex-shrink-0">
-                <p className="text-sm text-gray-600 mb-1">Step 1</p>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Plan & Assign</h3>
-                <p className="text-gray-600">
-                  Define roles, permissions, and tasks in one place.
-                </p>
-              </div>
-            </div>
+        <div className="grid lg:grid-cols-2 gap-12 items-center lg:mb-12 mb-6">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            animate={isInView ? { opacity: 1, x: 0 } : {}}
+            transition={{ duration: 0.6, delay: 0.2 }}
+            className="space-y-4"
+          >
+            {steps.map((step, index) => {
+              const isActive = activeStep === step.id
 
-            {/* Arrow 1 */}
-            <div className="hidden lg:block">
-              <img src="/blueArrow.png" alt="Arrow" className="w-16 h-16 object-contain" />
-            </div>
+              return (
+                <motion.div
+                  key={step.id}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={isInView ? { opacity: 1, x: 0 } : {}}
+                  transition={{ duration: 0.4, delay: 0.1 * index }}
+                  onClick={() => setActiveStep(step.id)}
+                  className={`relative flex items-start gap-4 p-5 rounded-2xl cursor-pointer transition-all duration-300 ${
+                    isActive
+                      ? "glass-card ring-1 ring-brand-teal/25 shadow-lg shadow-brand-teal/10"
+                      : "bg-gray-50 hover:bg-gray-100 border border-transparent"
+                  }`}
+                >
+                  <div
+                    className={`relative flex-shrink-0 w-12 h-12 rounded-xl bg-gradient-to-br ${step.gradient} flex items-center justify-center shadow-lg`}
+                  >
+                    <StepIcon icon={step.icon} iconSrc={step.iconSrc} className="w-6 h-6 text-white" />
+                    <span className="absolute -top-2 -right-2 w-6 h-6 bg-white rounded-full flex items-center justify-center text-xs font-bold text-gray-900 shadow border border-gray-200">
+                      {step.id}
+                    </span>
+                  </div>
 
-            {/* Step 2 */}
-            <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-xs hover:shadow-xl transition flex flex-col">
-              <div className="flex items-center justify-center mb-4 h-32">
-                <img src="/step2.png" alt="Execute & Collab" className="w-24 h-24 object-contain" />
-              </div>
-              <div className="text-center flex-shrink-0">
-                <p className="text-sm text-gray-600 mb-1">Step 2</p>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Execute & Collab</h3>
-                <p className="text-gray-600">
-                  Manage assets, budgets, and channels seamlessly.
-                </p>
-              </div>
-            </div>
+                  <div className="flex-1">
+                    <h3 className={`font-bold text-lg mb-1 ${isActive ? "text-brand-teal" : "text-gray-900"}`}>
+                      {step.title}
+                    </h3>
+                    <p className="text-gray-500 text-sm">{step.description}</p>
+                  </div>
 
-            {/* Arrow 2 */}
-            <div className="hidden lg:block">
-              <img src="/yellowArrow.png" alt="Arrow" className="w-16 h-16 object-contain" />
-            </div>
+                  {isActive && (
+                    <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className="absolute right-4 top-1/2 -translate-y-1/2">
+                      <Play className="w-4 h-4 text-brand-teal fill-brand-teal" />
+                    </motion.div>
+                  )}
 
-            {/* Step 3 */}
-            <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-xs hover:shadow-xl transition flex flex-col">
-              <div className="flex items-center justify-center mb-4 h-32">
-                <img src="/step3.png" alt="Automate & Notify" className="w-[72px] h-[72px] object-contain" />
-              </div>
-              <div className="text-center flex-shrink-0">
-                <p className="text-sm text-gray-600 mb-1">Step 3</p>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Automate & Notify</h3>
-                <p className="text-gray-600">
-                  Trigger smart workflows and stay informed in real time.
-                </p>
-              </div>
-            </div>
+                  {index < steps.length - 1 && (
+                    <div className="absolute left-9 top-[72px] w-0.5 h-4 bg-gray-200" />
+                  )}
+                </motion.div>
+              )
+            })}
+          </motion.div>
 
-            {/* Arrow 3 */}
-            <div className="hidden lg:block">
-              <img src="/redArrow.png" alt="Arrow" className="w-16 h-16 object-contain" />
-            </div>
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={isInView ? { opacity: 1, x: 0 } : {}}
+            transition={{ duration: 0.6, delay: 0.3 }}
+          >
+            {steps.map((step) => {
+              if (step.id !== activeStep) return null
 
-            {/* Step 4 */}
-            <div className="bg-white rounded-xl shadow-lg p-6 w-full max-w-xs hover:shadow-xl transition flex flex-col">
-              <div className="flex items-center justify-center mb-4 h-32">
-                <img src="/step4.png" alt="Analyze & Optimize" className="w-[72px] h-[72px] object-contain" />
-              </div>
-              <div className="text-center flex-shrink-0">
-                <p className="text-sm text-gray-600 mb-1">Step 4</p>
-                <h3 className="text-xl font-bold text-gray-900 mb-2">Analyze & Optimize</h3>
-                <p className="text-gray-600">
-                  Turn data into insights for your next campaign.
-                </p>
-              </div>
-            </div>
-          </div>
+              return (
+                <motion.div
+                  key={step.id}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.3 }}
+                  className="glass-card rounded-3xl overflow-hidden shadow-xl"
+                >
+                  <div className={`bg-gradient-to-r ${step.gradient} p-6`}>
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 bg-white/20 backdrop-blur rounded-2xl flex items-center justify-center">
+                        <StepIcon icon={step.icon} iconSrc={step.iconSrc} className="w-8 h-8 text-white" />
+                      </div>
+                      <div>
+                        <span className="text-white/80 text-sm font-medium">Step {step.id}</span>
+                        <h3 className="text-2xl font-bold text-white">{step.title}</h3>
+                      </div>
+                    </div>
+                  </div>
 
-          <div className="text-center">
-            <button
-              onClick={onGetStartedClick}
-              className="px-8 py-4 bg-blue-800 text-white rounded-full hover:bg-blue-900 transition font-medium text-lg inline-flex items-center gap-2 shadow-lg"
-            >
-              Start Your Journey Today
-              <ArrowRight className="w-5 h-5" />
-            </button>
-          </div>
+                  <div className="p-6">
+                    <p className="text-gray-600 mb-6">{step.description}</p>
+
+                    <div className="space-y-3">
+                      {step.details.map((detail, detailIndex) => (
+                        <motion.div
+                          key={detailIndex}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: 0.1 * detailIndex }}
+                          className="flex items-center gap-3"
+                        >
+                          <CheckCircle className="w-5 h-5 text-brand-lime flex-shrink-0" />
+                          <span className="text-gray-700">{detail}</span>
+                        </motion.div>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )
+            })}
+          </motion.div>
         </div>
-      </section>
 
-      {/* How it works and Testimonials Section - Mobile */}
-      <section className="block md:hidden py-10 px-6 bg-white">
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-blue-50 rounded-2xl p-8 mb-6">
-            {/* How it works Section */}
-            <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4 leading-tight">
-                How it works?
-              </h2>
-              <p className="text-base text-gray-700 mb-6 leading-relaxed">
-                From setup to optimization,<br />
-                Marketing Simplified keeps your campaigns moving effortlessly.
-              </p>
-            </div>
-
-            <div className="overflow-x-auto scrollbar-hide snap-x snap-mandatory scroll-smooth mb-2 pb-4 -mx-14 px-10">
-              <div className="flex items-center gap-4 min-w-max">
-                {/* Step 1 */}
-                <div className="bg-white rounded-xl shadow-lg p-6 pt-0 w-60 hover:shadow-xl transition flex flex-col flex-shrink-0">
-                  <div className="flex items-center justify-center h-32">
-                    <img src="/step1.png" alt="Plan & Assign" className="w-24 h-24 object-contain" />
-                  </div>
-                  <div className="text-center flex-shrink-0">
-                    <p className="text-sm text-gray-600 mb-1">Step 1</p>
-                    <h3 className="text-md font-bold text-gray-900 mb-2">Plan & Assign</h3>
-                    <p className="text-sm text-gray-600">
-                      Define roles, permissions, and tasks in one place.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 2 */}
-                <div className="bg-white rounded-xl shadow-lg p-6 pt-0 w-60 hover:shadow-xl transition flex flex-col flex-shrink-0">
-                  <div className="flex items-center justify-center h-32">
-                    <img src="/step2.png" alt="Execute & Collab" className="w-24 h-24 object-contain" />
-                  </div>
-                  <div className="text-center flex-shrink-0">
-                    <p className="text-sm text-gray-600 mb-1">Step 2</p>
-                    <h3 className="text-md font-bold text-gray-900 mb-2">Execute & Collab</h3>
-                    <p className="text-sm text-gray-600">
-                      Manage assets, budgets, and channels seamlessly.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 3 */}
-                <div className="bg-white rounded-xl shadow-lg p-6 pt-0 w-60 hover:shadow-xl transition flex flex-col flex-shrink-0">
-                  <div className="flex items-center justify-center h-32">
-                    <img src="/step3.png" alt="Automate & Notify" className="w-[72px] h-[72px] object-contain" />
-                  </div>
-                  <div className="text-center flex-shrink-0">
-                    <p className="text-sm text-gray-600 mb-1">Step 3</p>
-                    <h3 className="text-md font-bold text-gray-900 mb-2">Automate & Notify</h3>
-                    <p className="text-sm text-gray-600">
-                      Trigger smart workflows and stay informed in real time.
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 4 */}
-                <div className="bg-white rounded-xl shadow-lg p-6 pt-0 w-60 hover:shadow-xl transition flex flex-col flex-shrink-0">
-                  <div className="flex items-center justify-center h-32">
-                    <img src="/step4.png" alt="Analyze & Optimize" className="w-[72px] h-[72px] object-contain" />
-                  </div>
-                  <div className="text-center flex-shrink-0">
-                    <p className="text-sm text-gray-600 mb-1">Step 4</p>
-                    <h3 className="text-md font-bold text-gray-900 mb-2">Analyze & Optimize</h3>
-                    <p className="text-sm text-gray-600">
-                      Turn data into insights for your next campaign.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="text-center">
-              <button
-                onClick={onGetStartedClick}
-                className="flex items-center px-6 py-3 bg-blue-800 text-white rounded-full hover:bg-blue-900 transition text-center font-medium text-sm gap-4 shadow-lg"
-              >
-                Get Started
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Testimonials Section */}
-            <div className="text-center pt-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4 leading-tight">
-                What teams love about<br />
-                Marketing Simplified?
-              </h2>
-              <p className="text-base text-gray-700 mb-6 leading-relaxed">
-                From setup to reporting, Marketing Simplified helps teams stay aligned, efficient, and confident in every campaign.
-              </p>
-            </div>
-
-            <div className="overflow-x-auto scrollbar-hide snap-x snap-mandatory scroll-smooth mb-2 pb-4 -mx-14 px-10">
-              <div className="flex gap-4 min-w-max">
-                {/* Testimonial 1 */}
-                <div className="bg-white rounded-xl shadow-lg p-6 min-w-[280px] flex-shrink-0 snap-center flex flex-col">
-                  <p className="text-gray-700 mb-4 italic flex-grow relative text-center text-sm">
-                    <img src="/opening quote.png" alt="Opening quote" className="absolute top-0 -left-4 w-3 h-3" />
-                    <img src="/closing quote.png" alt="Closing quote" className="absolute bottom-0 -right-4 w-3 h-3" />
-                    Finally, one place to manage<br />
-                    budgets, assets, and approvals.<br />
-                    We cut our setup time by half.
-                  </p>
-                  <div className="flex items-center gap-3 mt-auto">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full overflow-hidden flex-shrink-0">
-                      <img
-                        src="https://i.pravatar.cc/150?img=68"
-                        alt="Jack Wilson"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div>
-                      <div className="font-bold text-gray-900 text-sm">Jack Wilson</div>
-                      <div className="text-xs text-gray-600">Senior Media Buyer</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Testimonial 2 */}
-                <div className="bg-white rounded-xl shadow-lg p-6 min-w-[280px] flex-shrink-0 snap-center flex flex-col">
-                  <p className="text-gray-700 mb-4 italic flex-grow relative text-center text-sm">
-                    <img src="/opening quote.png" alt="Opening quote" className="absolute top-0 -left-4 w-3 h-3" />
-                    <img src="/closing quote.png" alt="Closing quote" className="absolute bottom-0 -right-4 w-3 h-3" />
-                    I love how the review and<br />
-                    approval flow feels natural.<br />
-                    No more endless Slack threads.
-                  </p>
-                  <div className="flex items-center gap-3 mt-auto">
-                    <div className="w-10 h-10 bg-green-100 rounded-full overflow-hidden flex-shrink-0">
-                      <img
-                        src="https://i.pravatar.cc/150?img=47"
-                        alt="Eve Turner"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div>
-                      <div className="font-bold text-gray-900 text-sm">Eve Turner</div>
-                      <div className="text-xs text-gray-600">Designer</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Testimonial 3 */}
-                <div className="bg-white rounded-xl shadow-lg p-6 min-w-[280px] flex-shrink-0 snap-center flex flex-col">
-                  <p className="text-gray-700 mb-4 italic flex-grow relative text-center text-sm">
-                    <img src="/opening quote.png" alt="Opening quote" className="absolute top-0 -left-4 w-3 h-3" />
-                    <img src="/closing quote.png" alt="Closing quote" className="absolute bottom-0 -right-4 w-3 h-3" />
-                    The reporting dashboard gives<br />
-                    instant clarity. We spot<br />
-                    underperforming channels in<br />
-                    minutes.
-                  </p>
-                  <div className="flex items-center gap-3 mt-auto">
-                    <div className="w-10 h-10 bg-orange-100 rounded-full overflow-hidden flex-shrink-0">
-                      <img
-                        src="https://i.pravatar.cc/150?img=59"
-                        alt="Grace Lee"
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                    <div>
-                      <div className="font-bold text-gray-900 text-sm">Grace Lee</div>
-                      <div className="text-xs text-gray-600">Data Analyst</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="text-center">
-              <button className="flex items-center px-6 py-3 bg-blue-800 text-white rounded-full hover:bg-blue-900 transition text-center font-medium text-sm gap-4 shadow-lg">
-                See All Reviews
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </>
-  );
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={isInView ? { opacity: 1, y: 0 } : {}}
+          transition={{ duration: 0.6, delay: 0.5 }}
+          className="text-center"
+        >
+          <button
+            onClick={onGetStartedClick}
+            className="inline-flex w-full max-w-[min(100%,22rem)] items-center justify-center gap-2 rounded-full bg-brand-gradient px-6 py-3.5 text-base font-medium text-white transition-all hover:saturate-150 glow-brand sm:w-auto sm:max-w-full sm:px-8 sm:py-4 sm:text-lg"
+          >
+            <span className="truncate">Start Your Journey Today</span>
+            <ArrowRight className="h-5 w-5 flex-shrink-0" />
+          </button>
+        </motion.div>
+      </div>
+    </section>
+  )
 }

@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
-import { Undo2, Redo2, Bold, Italic, Strikethrough, Palette, ChevronLeft, ChevronRight, ChevronDown, Snowflake, Check, Table2 } from 'lucide-react';
+import { Undo2, Redo2, Bold, Italic, Strikethrough, Palette, ChevronLeft, ChevronRight, ChevronDown, Snowflake, Check, Table2, Upload, Download, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { SpreadsheetAPI } from '@/lib/api/spreadsheetApi';
+import { googleDocsApi } from '@/lib/api/googleDocsApi';
 import toast from 'react-hot-toast';
 import Modal from '@/components/ui/Modal';
 import {
@@ -18,10 +19,12 @@ import {
 } from '@/components/spreadsheets/spreadsheetImportExport';
 import { adjustFormulaReferences, colLabelToIndex } from '@/lib/spreadsheet/formulaFill';
 import { ApplyHighlightParams } from '@/types/patterns';
+import BrandSelect from '@/components/ui/BrandSelect';
 
 interface SpreadsheetGridProps {
   spreadsheetId: number;
   sheetId: number;
+  loading?: boolean;
   spreadsheetName?: string;
   sheetName?: string;
   /** Number of rows to freeze (0 = none, 1 = freeze first row). Sheet-level property. */
@@ -240,15 +243,17 @@ const DEBOUNCE_MS = 500; // Debounce delay for batch writes
 const RESIZE_DEBOUNCE_MS = 500; // Debounce delay for resize API calls
 const MAX_ROWS = 100000; // Hard cap for grid size
 const MAX_COLUMNS = 702; // ZZZ (26 * 27) - hard cap for grid size
-// Tile configuration for range loading. Viewports are quantized into these tiles
-// so that small scroll differences map to stable range keys, enabling effective
-// caching and in-flight request deduplication.
+// Fixed tile size for range loading: the visible viewport is covered by one or more
+// tiles; each tile is cached and fetched independently so scrolling only requests
+// newly entered tiles (not a shifting bounding box over the same region).
 const TILE_ROWS = 50;
 const TILE_COLUMNS = 20;
+/** Max parallel range/tile read requests to avoid swarming the network / browser connection pool */
+const RANGE_TILE_READ_CONCURRENCY = 3;
 const ADD_ROWS_TRIGGER_DISTANCE = 100; // Show "Add rows" UI when within this many pixels of bottom
 const PREFETCH_ROWS_PER_CHUNK = 100; // Rows per request during post-import hydration
 const PREFETCH_CONCURRENCY = 2; // Max concurrent readCellRange requests during hydration
-const IMPORT_BATCH_CONCURRENCY = 4; // Max concurrent batch uploads during import (higher can hurt DB)
+const IMPORT_BATCH_CONCURRENCY = 6; // Max concurrent batch uploads during import. After A2 chunks no longer create rows/cols (auto_expand=false), so Row/Column lock contention is gone. 6 is safe since each chunk writes disjoint cells.
 const DEFAULT_NUMBER_FORMAT: NumberFormat = { type: 'GENERAL' };
 
 const DEFAULT_CELL_FORMAT: CellFormat = {
@@ -420,53 +425,65 @@ type NormalizedRange = {
   endColumn: number;
 };
 
-const normalizeRangeToTile = (
+const makeRangeKey = (range: NormalizedRange): string =>
+  `${range.startRow}-${range.endRow}-${range.startColumn}-${range.endColumn}`;
+
+/**
+ * Split a row/column range into non-overlapping fixed tiles (TILE_ROWS × TILE_COLUMNS).
+ * Used so scroll hits per-tile cache: moving the viewport fetches only newly entered tiles.
+ */
+const enumerateTilesInRange = (
   startRow: number,
   endRow: number,
   startColumn: number,
   endColumn: number,
   rowLimit: number,
   colLimit: number
-): NormalizedRange => {
-  // Clamp to current sheet dimensions to keep keys bounded.
-  const effectiveMaxRow = Math.max(0, Math.min(rowLimit - 1, MAX_ROWS - 1));
-  const effectiveMaxCol = Math.max(0, Math.min(colLimit - 1, MAX_COLUMNS - 1));
+): NormalizedRange[] => {
+  const maxRow = Math.max(0, Math.min(rowLimit - 1, MAX_ROWS - 1));
+  const maxCol = Math.max(0, Math.min(colLimit - 1, MAX_COLUMNS - 1));
+  const sr = Math.max(0, Math.min(startRow, maxRow));
+  const er = Math.max(sr, Math.min(endRow, maxRow));
+  const sc = Math.max(0, Math.min(startColumn, maxCol));
+  const ec = Math.max(sc, Math.min(endColumn, maxCol));
+  if (sr > er || sc > ec) return [];
 
-  const safeStartRow = Math.max(0, Math.min(startRow, effectiveMaxRow));
-  const safeEndRow = Math.max(safeStartRow, Math.min(endRow, effectiveMaxRow));
-  const safeStartColumn = Math.max(0, Math.min(startColumn, effectiveMaxCol));
-  const safeEndColumn = Math.max(safeStartColumn, Math.min(endColumn, effectiveMaxCol));
-
-  const tileStartRow = Math.floor(safeStartRow / TILE_ROWS) * TILE_ROWS;
-  const tileEndRow = Math.min(
-    effectiveMaxRow,
-    Math.ceil((safeEndRow + 1) / TILE_ROWS) * TILE_ROWS - 1
-  );
-
-  const tileStartColumn = Math.floor(safeStartColumn / TILE_COLUMNS) * TILE_COLUMNS;
-  const tileEndColumn = Math.min(
-    effectiveMaxCol,
-    Math.ceil((safeEndColumn + 1) / TILE_COLUMNS) * TILE_COLUMNS - 1
-  );
-
-  return {
-    startRow: tileStartRow,
-    endRow: tileEndRow,
-    startColumn: tileStartColumn,
-    endColumn: tileEndColumn,
-  };
+  const firstRowTile = Math.floor(sr / TILE_ROWS);
+  const lastRowTile = Math.floor(er / TILE_ROWS);
+  const firstColTile = Math.floor(sc / TILE_COLUMNS);
+  const lastColTile = Math.floor(ec / TILE_COLUMNS);
+  const out: NormalizedRange[] = [];
+  for (let r = firstRowTile; r <= lastRowTile; r += 1) {
+    for (let c = firstColTile; c <= lastColTile; c += 1) {
+      const startR = r * TILE_ROWS;
+      const endR = Math.min(maxRow, (r + 1) * TILE_ROWS - 1);
+      const startC = c * TILE_COLUMNS;
+      const endC = Math.min(maxCol, (c + 1) * TILE_COLUMNS - 1);
+      out.push({ startRow: startR, endRow: endR, startColumn: startC, endColumn: endC });
+    }
+  }
+  return out;
 };
 
-const makeRangeKey = (range: NormalizedRange): string =>
-  `${range.startRow}-${range.endRow}-${range.startColumn}-${range.endColumn}`;
+async function runTileReadTasks(tasks: Array<() => Promise<void>>): Promise<void> {
+  if (tasks.length === 0) return;
+  const n = Math.min(RANGE_TILE_READ_CONCURRENCY, tasks.length);
+  let index = 0;
+  const worker = async () => {
+    while (index < tasks.length) {
+      const i = index;
+      index += 1;
+      await tasks[i]();
+    }
+  };
+  await Promise.all(Array.from({ length: n }, () => worker()));
+}
 
 // Cache cells per sheetId to maintain isolation
 const cellCache = new Map<number, Map<CellKey, CellData>>();
-const loadedRangesCache = new Map<number, Set<string>>(); // Set of normalized range keys
+const loadedRangesCache = new Map<number, Set<string>>(); // Set of per-tile range keys (makeRangeKey)
 // Track in-flight range requests per sheet so multiple callers share the same promise (keyed by tile)
 const inFlightRangeRequests = new Map<number, Map<string, Promise<void>>>();
-// Track in-flight requests keyed by the exact viewport payload for hard dedup of identical calls
-const inFlightExactRequests = new Map<string, Promise<void>>();
 // Cache dimensions per sheetId
 const dimensionsCache = new Map<number, { rowCount: number; colCount: number }>();
 
@@ -496,6 +513,7 @@ const parseTSV = (text: string): string[][] => {
 const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(({
   spreadsheetId,
   sheetId,
+  loading = false,
   spreadsheetName,
   sheetName,
   onFormulaCommit,
@@ -511,6 +529,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   onFreezeHeaderChange,
   onOpenPivotBuilder,
 }: SpreadsheetGridProps, ref) => {
+  const isGridLoading = loading || sheetId <= 0;
   const [rowCount, setRowCount] = useState(DEFAULT_ROWS);
   const [colCount, setColCount] = useState(DEFAULT_COLUMNS);
   const [colWidths, setColWidths] = useState<Record<number, number>>({});
@@ -610,11 +629,16 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     endCol: Math.min(10, DEFAULT_COLUMNS - 1),
   });
   const [isImporting, setIsImporting] = useState(false);
+  /** Tracks first-viewport loading so visible cells can render inline placeholders without blocking the sheet shell. */
+  const [cellCanvasLoading, setCellCanvasLoading] = useState(true);
   const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
   const [xlsxImport, setXlsxImport] = useState<XLSXParseResult | null>(null);
   const [selectedXlsxSheet, setSelectedXlsxSheet] = useState<string>('');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportMenuAnchor, setExportMenuAnchor] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [sheetsImportModalOpen, setSheetsImportModalOpen] = useState(false);
+  const [sheetsImportUrl, setSheetsImportUrl] = useState('');
+  const [sheetsImportLoading, setSheetsImportLoading] = useState(false);
   const [headerMenu, setHeaderMenu] = useState<{
     type: 'row' | 'col';
     index: number;
@@ -733,6 +757,37 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         cachedCells.set(key, cellData);
         cellCache.set(sheetId, cachedCells);
 
+        return next;
+      });
+    },
+    [sheetId]
+  );
+
+  /**
+   * Batched variant of applyCellValueLocal. Used by large imports where calling
+   * the per-cell helper N times would clone the cells Map N times (O(n^2)).
+   * Applies all entries with a single setCells + single cellCache write.
+   */
+  const applyCellValuesLocalBatch = useCallback(
+    (entries: Array<{ row: number; col: number; value: string }>) => {
+      if (!entries.length) return;
+      setCells((prev) => {
+        const next = new Map(prev);
+        const cachedCells = cellCache.get(sheetId) || new Map();
+        for (const entry of entries) {
+          const key = getCellKey(entry.row, entry.col);
+          const cellData: CellData = {
+            rawInput: entry.value,
+            computedType: null,
+            computedNumber: null,
+            computedString: null,
+            errorCode: null,
+            isLoaded: true,
+          };
+          next.set(key, cellData);
+          cachedCells.set(key, cellData);
+        }
+        cellCache.set(sheetId, cachedCells);
         return next;
       });
     },
@@ -909,34 +964,99 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
    * @param persistToBackend Whether to persist to backend (default: true)
    * @returns true if resize succeeded, false if clamped to max
    */
-  const resizeGrid = useCallback(
-    async (targetRows: number, targetCols: number, persistToBackend: boolean = true): Promise<boolean> => {
+  /**
+   * Synchronously update the local grid dimensions (rowCount / colCount) and the
+   * module-level dimensionsCache. Returns the effective (clamped) dimensions and
+   * whether clamping occurred, so callers can decide what to persist.
+   *
+   * No backend call is made here. Callers that also want to persist should pair this
+   * with `persistResizeToBackend`, or use the composite `resizeGrid` wrapper below.
+   */
+  const updateGridDimensionsLocal = useCallback(
+    (
+      targetRows: number,
+      targetCols: number,
+    ): { clampedRows: number; clampedCols: number; wasClamped: boolean } => {
       const clampedRows = Math.min(MAX_ROWS, Math.max(0, targetRows));
       const clampedCols = Math.min(MAX_COLUMNS, Math.max(0, targetCols));
-      const wasClamped = clampedRows < targetRows || clampedCols < targetCols;
+      const wasClamped = clampedRows !== targetRows || clampedCols !== targetCols;
 
       setRowCount(clampedRows);
       setColCount(clampedCols);
       dimensionsCache.set(sheetId, { rowCount: clampedRows, colCount: clampedCols });
 
-      if (persistToBackend) {
-        // Debounced resize API call
+      return { clampedRows, clampedCols, wasClamped };
+    },
+    [sheetId]
+  );
+
+  /**
+   * Persist the given sheet dimensions to the backend.
+   * - `immediate=false` (default): debounce the POST so rapid edits coalesce.
+   * - `immediate=true`: skip debounce, await the POST, return true on success and
+   *   false if the call errored. Used by the import path.
+   */
+  const persistResizeToBackend = useCallback(
+    async (clampedRows: number, clampedCols: number, immediate: boolean = false): Promise<boolean> => {
+      if (immediate) {
         if (resizeDebounceTimerRef.current) {
           clearTimeout(resizeDebounceTimerRef.current);
+          resizeDebounceTimerRef.current = null;
         }
-        resizeDebounceTimerRef.current = setTimeout(async () => {
-          try {
-            await SpreadsheetAPI.resizeSheet(spreadsheetId, sheetId, clampedRows, clampedCols);
-          } catch (error: any) {
-            console.error('Failed to persist sheet dimensions:', error);
-            // Non-blocking error - dimensions are still updated locally
-          }
-        }, RESIZE_DEBOUNCE_MS);
+        try {
+          await SpreadsheetAPI.resizeSheet(spreadsheetId, sheetId, clampedRows, clampedCols);
+          return true;
+        } catch (error: any) {
+          console.error('Failed to persist sheet dimensions:', error);
+          return false;
+        }
       }
 
+      if (resizeDebounceTimerRef.current) {
+        clearTimeout(resizeDebounceTimerRef.current);
+      }
+      resizeDebounceTimerRef.current = setTimeout(async () => {
+        try {
+          await SpreadsheetAPI.resizeSheet(spreadsheetId, sheetId, clampedRows, clampedCols);
+        } catch (error: any) {
+          console.error('Failed to persist sheet dimensions:', error);
+          // Non-blocking error - dimensions are still updated locally
+        }
+      }, RESIZE_DEBOUNCE_MS);
+      return true;
+    },
+    [sheetId, spreadsheetId]
+  );
+
+  /**
+   * Composite helper that keeps the original single-call API: update local state
+   * first, then kick off the backend persist. Used by existing (non-import) call
+   * sites so they do not need to change.
+   *
+   * Returns false only when:
+   *   - the requested dimensions were clamped by MAX_ROWS / MAX_COLUMNS, OR
+   *   - `immediate=true` and the backend call failed.
+   */
+  const resizeGrid = useCallback(
+    async (
+      targetRows: number,
+      targetCols: number,
+      persistToBackend: boolean = true,
+      immediate: boolean = false
+    ): Promise<boolean> => {
+      const { clampedRows, clampedCols, wasClamped } = updateGridDimensionsLocal(targetRows, targetCols);
+
+      if (!persistToBackend) {
+        return !wasClamped;
+      }
+
+      const persisted = await persistResizeToBackend(clampedRows, clampedCols, immediate);
+      if (immediate && !persisted) {
+        return false;
+      }
       return !wasClamped;
     },
-    [rowCount, colCount, sheetId, spreadsheetId]
+    [updateGridDimensionsLocal, persistResizeToBackend]
   );
 
   /**
@@ -1039,44 +1159,14 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     };
   }, [rowCount, colCount, getRowIndexAtOffset, getColumnIndexAtOffset, totalRowHeight, safeDefaultRange]);
 
-  // Check if a (possibly non-tile-aligned) range is already fully loaded by
-  // normalizing it to a tile-aligned key and consulting the cache.
-  const isRangeLoaded = useCallback(
-    (startRow: number, endRow: number, startColumn: number, endColumn: number): boolean => {
-      const normalized = normalizeRangeToTile(
-        startRow,
-        endRow,
-        startColumn,
-        endColumn,
-        Math.max(1, rowCount),
-        Math.max(1, colCount)
-      );
-      const rangeKey = makeRangeKey(normalized);
-      const loadedRanges = loadedRangesCache.get(sheetId);
-      return loadedRanges?.has(rangeKey) || false;
-    },
-    [sheetId, rowCount, colCount]
-  );
-
-  // Mark a range as loaded by recording its normalized tile-aligned key.
-  const markRangeLoaded = useCallback(
-    (startRow: number, endRow: number, startColumn: number, endColumn: number) => {
-      const normalized = normalizeRangeToTile(
-        startRow,
-        endRow,
-        startColumn,
-        endColumn,
-        Math.max(1, rowCount),
-        Math.max(1, colCount)
-      );
-      const rangeKey = makeRangeKey(normalized);
-      const loadedRanges = loadedRangesCache.get(sheetId);
-      if (loadedRanges) {
-        loadedRanges.add(rangeKey);
-      }
-    },
-    [sheetId, rowCount, colCount]
-  );
+  // Mark one fixed tile (aligned bounds) as loaded.
+  const markTileLoaded = useCallback((tile: NormalizedRange) => {
+    const rangeKey = makeRangeKey(tile);
+    const loadedRanges = loadedRangesCache.get(sheetId);
+    if (loadedRanges) {
+      loadedRanges.add(rangeKey);
+    }
+  }, [sheetId]);
 
   // Load cells from backend for a range
   const loadCellRange = useCallback(
@@ -1085,145 +1175,154 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       endRow: number,
       startColumn: number,
       endColumn: number,
-      force: boolean = false
+      force: boolean = false,
+      loadOptions?: { includeSheetDimensions?: boolean }
     ) => {
-      const viewportKey = `${sheetId}:${startRow}-${endRow}-${startColumn}-${endColumn}`;
-      const normalized = normalizeRangeToTile(
-        startRow,
-        endRow,
-        startColumn,
-        endColumn,
-        Math.max(1, rowCount),
-        Math.max(1, colCount)
-      );
-      const rangeKey = makeRangeKey(normalized);
+      const wantSheetDimensions = loadOptions?.includeSheetDimensions !== false;
 
-    let inFlightForSheet = inFlightRangeRequests.get(sheetId);
+      let inFlightForSheet = inFlightRangeRequests.get(sheetId);
       if (!inFlightForSheet) {
         inFlightForSheet = new Map<string, Promise<void>>();
         inFlightRangeRequests.set(sheetId, inFlightForSheet);
       }
 
       const loadedRanges = loadedRangesCache.get(sheetId);
-      const cacheHit = !force && !!loadedRanges && loadedRanges.has(rangeKey);
+      const rLimit = Math.max(1, rowCount);
+      const cLimit = Math.max(1, colCount);
+      const tiles = enumerateTilesInRange(startRow, endRow, startColumn, endColumn, rLimit, cLimit);
+      if (tiles.length === 0) return;
 
-      // First-tier dedup: exact payload (even when force=true we can still share the same in-flight call).
-      const existingExact = inFlightExactRequests.get(viewportKey);
-      const inFlightExactHit = !!existingExact;
+      if (force) {
+        for (const t of tiles) {
+          const k = makeRangeKey(t);
+          loadedRanges?.delete(k);
+        }
+      }
 
-      // Second-tier dedup: tile-based (normalized) in-flight sharing.
-      const existingTile = inFlightForSheet.get(rangeKey);
-      const inFlightTileHit = !!existingTile;
+      const toAwait: Promise<void>[] = [];
+      const newTileTasks: Array<() => Promise<void>> = [];
+      let willSendSheetDimensions = wantSheetDimensions;
 
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.debug('[SpreadsheetGrid][RangeLoad]', {
           sheetId,
           viewport: { startRow, endRow, startColumn, endColumn },
-          normalized,
-          viewportKey,
-          rangeKey,
-          cacheHit,
-          inFlightExactHit,
-          inFlightTileHit,
+          tileCount: tiles.length,
           force,
+          wantSheetDimensions,
         });
       }
 
-      if (!force && cacheHit) {
-        return; // Already loaded tile
-      }
+      for (const tile of tiles) {
+        const rangeKey = makeRangeKey(tile);
+        const cacheHit = !force && !!loadedRanges && loadedRanges.has(rangeKey);
+        if (cacheHit) {
+          continue;
+        }
 
-      // Reuse any existing in-flight request for this exact payload.
-      if (existingExact) {
-        return existingExact;
-      }
+        const inFlight = inFlightForSheet.get(rangeKey);
+        if (inFlight) {
+          toAwait.push(inFlight);
+          continue;
+        }
 
-      // Or reuse tile-level in-flight (same normalized tile).
-      if (existingTile) {
-        return existingTile;
-      }
+        const includeThisDimension = willSendSheetDimensions;
+        if (includeThisDimension) {
+          willSendSheetDimensions = false;
+        }
 
-      const requestPromise = (async () => {
-        try {
-          const response = await SpreadsheetAPI.readCellRange(
-            spreadsheetId,
-            sheetId,
-            normalized.startRow,
-            normalized.endRow,
-            normalized.startColumn,
-            normalized.endColumn
-          );
-          
-          // Sync grid dimensions from full sheet size (sheet_row_count/sheet_column_count). Enforce minimum DEFAULT_ROWS×DEFAULT_COLUMNS so new/empty sheets are 1000×26 and scrollable.
-          const res = response as typeof response & { sheet_row_count?: number | null; sheet_column_count?: number | null };
-          const sheetRows = res.sheet_row_count != null ? res.sheet_row_count : null;
-          const sheetCols = res.sheet_column_count != null ? res.sheet_column_count : null;
-          if (sheetRows != null && sheetCols != null) {
-            const backendRowCount = Math.min(MAX_ROWS, Math.max(DEFAULT_ROWS, sheetRows));
-            const backendColCount = Math.min(MAX_COLUMNS, Math.max(DEFAULT_COLUMNS, sheetCols));
-            if (backendRowCount !== rowCount || backendColCount !== colCount) {
-              setRowCount(backendRowCount);
-              setColCount(backendColCount);
-              dimensionsCache.set(sheetId, { rowCount: backendRowCount, colCount: backendColCount });
-            }
-            // If backend has fewer columns/rows than we need (e.g. new sheet), persist resize so insert works
-            if (backendRowCount > sheetRows || backendColCount > sheetCols) {
-              void resizeGrid(backendRowCount, backendColCount, true);
-            }
-          }
+        // Register a placeholder immediately so concurrent loadCellRange calls dedupe
+        // on the same tile, while the HTTP request only starts when a worker runs
+        // (RANGE_TILE_READ_CONCURRENCY limits in-flight reads).
+        let completeTileRead!: () => void;
+        const p = new Promise<void>((resolve) => {
+          completeTileRead = resolve;
+        });
+        inFlightForSheet.set(rangeKey, p);
 
-          // Update cells from response
-          setCells((prev) => {
-            const next = new Map(prev);
-            const cachedCells = cellCache.get(sheetId) || new Map();
+        newTileTasks.push(async () => {
+          try {
+            const response = await SpreadsheetAPI.readCellRange(
+              spreadsheetId,
+              sheetId,
+              tile.startRow,
+              tile.endRow,
+              tile.startColumn,
+              tile.endColumn,
+              { includeSheetDimensions: includeThisDimension }
+            );
 
-            response.cells.forEach((cell) => {
-              const key = getCellKey(cell.row_position, cell.column_position);
-              const fallbackRawInput =
-                cell.raw_input ??
-                cell.formula_value ??
-                cell.string_value ??
-                (cell.number_value != null ? String(cell.number_value) : '') ??
-                (cell.boolean_value != null ? (cell.boolean_value ? 'TRUE' : 'FALSE') : '');
-              const cellData: CellData = {
-                rawInput: fallbackRawInput,
-                computedType: cell.computed_type ?? null,
-                computedNumber: cell.computed_number ?? null,
-                computedString: cell.computed_string ?? null,
-                errorCode: cell.error_code ?? null,
-                isLoaded: true,
+            if (includeThisDimension) {
+              const res = response as typeof response & {
+                sheet_row_count?: number | null;
+                sheet_column_count?: number | null;
               };
-              next.set(key, cellData);
-              cachedCells.set(key, cellData);
+              const sheetRows = res.sheet_row_count != null ? res.sheet_row_count : null;
+              const sheetCols = res.sheet_column_count != null ? res.sheet_column_count : null;
+              if (sheetRows != null && sheetCols != null) {
+                const backendRowCount = Math.min(MAX_ROWS, Math.max(DEFAULT_ROWS, sheetRows));
+                const backendColCount = Math.min(MAX_COLUMNS, Math.max(DEFAULT_COLUMNS, sheetCols));
+                if (backendRowCount !== rowCount || backendColCount !== colCount) {
+                  setRowCount(backendRowCount);
+                  setColCount(backendColCount);
+                  dimensionsCache.set(sheetId, { rowCount: backendRowCount, colCount: backendColCount });
+                }
+                if (backendRowCount > sheetRows || backendColCount > sheetCols) {
+                  void resizeGrid(backendRowCount, backendColCount, true);
+                }
+              }
+            }
+
+            setCells((prev) => {
+              const next = new Map(prev);
+              const cachedCells = cellCache.get(sheetId) || new Map();
+
+              response.cells.forEach((cell) => {
+                const key = getCellKey(cell.row_position, cell.column_position);
+                const fallbackRawInput =
+                  cell.raw_input ??
+                  cell.formula_value ??
+                  cell.string_value ??
+                  (cell.number_value != null ? String(cell.number_value) : '') ??
+                  (cell.boolean_value != null ? (cell.boolean_value ? 'TRUE' : 'FALSE') : '');
+                const cellData: CellData = {
+                  rawInput: fallbackRawInput,
+                  computedType: cell.computed_type ?? null,
+                  computedNumber: cell.computed_number ?? null,
+                  computedString: cell.computed_string ?? null,
+                  errorCode: cell.error_code ?? null,
+                  isLoaded: true,
+                };
+                next.set(key, cellData);
+                cachedCells.set(key, cellData);
+              });
+
+              cellCache.set(sheetId, cachedCells);
+              return next;
             });
 
-            cellCache.set(sheetId, cachedCells);
-            return next;
-          });
-
-          // Mark the full tile as loaded so subsequent viewports within this tile hit cache.
-          markRangeLoaded(normalized.startRow, normalized.endRow, normalized.startColumn, normalized.endColumn);
-        } catch (error: any) {
-          console.error('Failed to load cell range:', error);
-          // Don't show toast for background loading errors
-        } finally {
-          // Clean up in-flight tracking regardless of success/failure
-          inFlightExactRequests.delete(viewportKey);
-          const currentForSheet = inFlightRangeRequests.get(sheetId);
-          if (currentForSheet) {
-            currentForSheet.delete(rangeKey);
+            markTileLoaded(tile);
+          } catch (error: any) {
+            console.error('Failed to load cell range:', error);
+          } finally {
+            const currentForSheet = inFlightRangeRequests.get(sheetId);
+            if (currentForSheet) {
+              currentForSheet.delete(rangeKey);
+            }
+            completeTileRead();
           }
-        }
-      })();
+        });
+      }
 
-      // Track in-flight for both exact payload and normalized tile so callers can reuse the same promise.
-      inFlightExactRequests.set(viewportKey, requestPromise);
-      inFlightForSheet.set(rangeKey, requestPromise);
-
-      return requestPromise;
+      if (newTileTasks.length > 0) {
+        await runTileReadTasks(newTileTasks);
+      }
+      if (toAwait.length > 0) {
+        await Promise.all(toAwait);
+      }
     },
-    [spreadsheetId, sheetId, isRangeLoaded, markRangeLoaded, resizeGrid, rowCount, colCount]
+    [spreadsheetId, sheetId, markTileLoaded, resizeGrid, rowCount, colCount]
   );
 
   const applyCellsFromResponse = useCallback(
@@ -1272,24 +1371,23 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     [sheetId]
   );
 
-  const resetSheetCaches = useCallback(() => {
-    cellCache.set(sheetId, new Map());
+  const resetSheetCaches = useCallback((options?: { preserveCells?: boolean }) => {
+    if (!options?.preserveCells) {
+      cellCache.set(sheetId, new Map());
+    }
     loadedRangesCache.set(sheetId, new Set());
     const inFlightForSheet = inFlightRangeRequests.get(sheetId);
     if (inFlightForSheet) {
       inFlightForSheet.clear();
       inFlightRangeRequests.delete(sheetId);
     }
-    // Clear any exact in-flight requests for this sheet
-    for (const key of Array.from(inFlightExactRequests.keys())) {
-      if (key.startsWith(`${sheetId}:`)) {
-        inFlightExactRequests.delete(key);
-      }
+    if (!options?.preserveCells) {
+      setCells(new Map());
     }
-    setCells(new Map());
   }, [sheetId]);
 
   useEffect(() => {
+    if (isGridLoading) return;
     let cancelled = false;
     const loadHighlights = async () => {
       try {
@@ -1318,9 +1416,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     return () => {
       cancelled = true;
     };
-  }, [spreadsheetId, sheetId]);
+  }, [isGridLoading, spreadsheetId, sheetId]);
 
   useEffect(() => {
+    if (isGridLoading) return;
     let cancelled = false;
     const loadCellFormats = async () => {
       try {
@@ -1356,10 +1455,12 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     return () => {
       cancelled = true;
     };
-  }, [spreadsheetId, sheetId]);
+  }, [isGridLoading, spreadsheetId, sheetId]);
 
   const refreshSheet = useCallback(() => {
-    resetSheetCaches();
+    if (isGridLoading) return;
+    setCellCanvasLoading(true);
+    resetSheetCaches({ preserveCells: true });
     const range = computeVisibleRange();
     setVisibleRange({
       startRow: range.startRow,
@@ -1367,7 +1468,19 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       startCol: range.startColumn,
       endCol: range.endColumn,
     });
-    loadCellRange(range.startRow, range.endRow, range.startColumn, range.endColumn, true);
+    const maybePromise = loadCellRange(
+      range.startRow,
+      range.endRow,
+      range.startColumn,
+      range.endColumn,
+      true
+    );
+    const finishLoading = () => setCellCanvasLoading(false);
+    if (maybePromise && typeof (maybePromise as Promise<void>).then === 'function') {
+      void (maybePromise as Promise<void>).finally(finishLoading);
+    } else {
+      finishLoading();
+    }
 
     // Also reload highlights and cell formats from the backend so that
     // decoration changes made by background jobs (e.g. pattern apply)
@@ -1422,7 +1535,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       .catch((error) => {
         console.error('Failed to load cell formats on refresh:', error);
       });
-  }, [resetSheetCaches, computeVisibleRange, loadCellRange]);
+  }, [isGridLoading, resetSheetCaches, computeVisibleRange, loadCellRange]);
 
   const handleAddRows = useCallback(async () => {
     const rowsToAdd = parseInt(addRowsInputValue, 10);
@@ -1958,6 +2071,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
   // Load initial visible range on mount and when sheetId changes
   useEffect(() => {
+    setCellCanvasLoading(true);
+    if (isGridLoading) return;
+    let cancelled = false;
+
     // Reset scroll position to top when switching sheets (only on sheetId change)
     if (gridRef.current) {
       gridRef.current.scrollTop = 0;
@@ -1966,7 +2083,14 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     
     // Small delay to ensure DOM is ready and table height is calculated
     const timer = setTimeout(() => {
-      if (!gridRef.current) return;
+      if (cancelled) return;
+      const finishLoading = () => {
+        if (!cancelled) setCellCanvasLoading(false);
+      };
+      if (!gridRef.current) {
+        finishLoading();
+        return;
+      }
       // Ensure scroll position is still at top (prevent any auto-scroll)
       if (gridRef.current.scrollTop !== 0) {
         gridRef.current.scrollTop = 0;
@@ -1978,16 +2102,25 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         startCol: range.startColumn,
         endCol: range.endColumn,
       });
-      loadCellRange(range.startRow, range.endRow, range.startColumn, range.endColumn);
+      const maybePromise = loadCellRange(range.startRow, range.endRow, range.startColumn, range.endColumn);
+      if (maybePromise && typeof (maybePromise as Promise<void>).then === 'function') {
+        void (maybePromise as Promise<void>).finally(finishLoading);
+      } else {
+        finishLoading();
+      }
     }, 100);
 
-    return () => clearTimeout(timer);
-  }, [sheetId, computeVisibleRange, loadCellRange]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isGridLoading, sheetId, spreadsheetId, computeVisibleRange, loadCellRange]);
 
   // Handle scroll to load more cells (no auto-expand). We schedule work in
   // requestAnimationFrame so we compute the viewport and trigger range loads
   // at most once per frame even if the browser fires many scroll events.
   const handleScroll = useCallback(() => {
+    if (isGridLoading) return;
     if (!gridRef.current) return;
 
     if (scrollRafIdRef.current != null) {
@@ -1998,7 +2131,9 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       scrollRafIdRef.current = null;
 
       const range = computeVisibleRange();
-      loadCellRange(range.startRow, range.endRow, range.startColumn, range.endColumn);
+      loadCellRange(range.startRow, range.endRow, range.startColumn, range.endColumn, false, {
+        includeSheetDimensions: false,
+      });
       setVisibleRange({
         startRow: range.startRow,
         endRow: range.endRow,
@@ -2024,7 +2159,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         }
       }
     });
-  }, [computeVisibleRange, loadCellRange, rowCount]);
+  }, [isGridLoading, computeVisibleRange, loadCellRange, rowCount]);
 
   // Recompute visible range if dimensions change (e.g., after expansion)
   // But preserve scroll position - don't reset it
@@ -4043,7 +4178,9 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       setHydrationStatus('hydrating');
       try {
         // 1) Fetch sheet meta (rowCount, colCount) via a small range read; backend returns sheet_row_count / sheet_column_count
-        await loadCellRange(0, Math.min(0, usedMaxRow), 0, Math.min(0, usedMaxCol), true);
+        await loadCellRange(0, Math.min(0, usedMaxRow), 0, Math.min(0, usedMaxCol), true, {
+          includeSheetDimensions: true,
+        });
 
         // 2) Prefetch all cells in used range in deterministic chunks (e.g. 100 rows per request), concurrency 2
         const chunkTasks: Array<() => Promise<void>> = [];
@@ -4057,7 +4194,9 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           const er = endRow;
           const sc = 0;
           const ec = usedMaxCol;
-          chunkTasks.push(() => loadCellRange(sr, er, sc, ec, true));
+          chunkTasks.push(() =>
+            loadCellRange(sr, er, sc, ec, true, { includeSheetDimensions: false })
+          );
         }
         await runWithConcurrency(chunkTasks, PREFETCH_CONCURRENCY);
       } catch (err) {
@@ -4084,7 +4223,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       const { operations, maxRow, maxCol } = buildCellOperations(matrix, startRow, startCol);
       const normalizedOperations = operations.map((op) => {
         const normalized = normalizeCommittedValue(op.raw_input || '');
-        if (normalized.valueType !== 'number') {
+        // Only annotate as number when the value is a finite JS number.
+        // Infinity / NaN would be serialized as null by JSON.stringify, which
+        // makes the backend reject the chunk with 400 (number_value required).
+        if (normalized.valueType !== 'number' || !Number.isFinite(normalized.numberValue ?? NaN)) {
           return op;
         }
         return {
@@ -4114,20 +4256,64 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         return;
       }
 
-      // Auto-resize grid once to fit import (if needed)
-      const needsRowResize = requiredRows > rowCount;
-      const needsColResize = requiredCols > colCount;
-      if (needsRowResize || needsColResize) {
-        const newRowCount = Math.max(rowCount, requiredRows);
-        const newColCount = Math.max(colCount, requiredCols);
-        const success = await resizeGrid(newRowCount, newColCount, true);
-        if (!success) {
-          toast.error('Failed to resize grid for import');
-          return;
-        }
+      // Step 1: update the grid's local dimensions synchronously so optimistic apply
+      // below can render into the newly expanded area without waiting on the network.
+      const targetRowCount = Math.max(rowCount, requiredRows);
+      const targetColCount = Math.max(colCount, requiredCols);
+      const { clampedRows, clampedCols, wasClamped } = updateGridDimensionsLocal(
+        targetRowCount,
+        targetColCount,
+      );
+      if (wasClamped) {
+        toast.error('Failed to resize grid for import');
+        return;
       }
 
-      const chunks = chunkOperations<CellOperation>(normalizedOperations, 1000);
+      // Step 2: record the reverse history entry (prev -> next) so the user can undo,
+      // AND so we have the prevValue list available if we need to roll back the
+      // optimistic apply when the backend resize call fails.
+      //
+      // For large imports (>5 000 ops) skip the per-cell getCellRawInput scan: it would
+      // call getCellRawInput ~30 000 times on the main thread and build a 30 000-element
+      // array just to enable undo. Undo is not a realistic action after a bulk import and
+      // the memory overhead outweighs the benefit.
+      const HISTORY_OP_THRESHOLD = 5000;
+      const changes: CellChange[] = [];
+      if (operations.length <= HISTORY_OP_THRESHOLD) {
+        operations.forEach((op) => {
+          const prevValue = getCellRawInput(op.row, op.column);
+          const nextValue = op.raw_input || '';
+          if (prevValue === nextValue) return;
+          changes.push({
+            row: op.row,
+            col: op.column,
+            prevValue,
+            nextValue,
+          });
+        });
+      }
+
+      if (changes.length) {
+        pushHistoryEntry({ changes });
+      }
+
+      // Step 3: optimistic UI apply. One batched setCells, so the user sees the
+      // imported data IMMEDIATELY (before the backend resize network call).
+      applyCellValuesLocalBatch(
+        operations.map((op) => ({ row: op.row, col: op.column, value: op.raw_input || '' }))
+      );
+
+      // Step 4: start the backend resize (don't await yet). Chunks need the server-side
+      // SheetRow / SheetColumn rows to exist before they can be safely written with
+      // auto_expand=false, so we must await this before the first chunk fires - but
+      // NOT before the optimistic display.
+      const resizePromise = persistResizeToBackend(clampedRows, clampedCols, /* immediate */ true);
+
+      // Step 5: also prepare chunks locally while the network call is in flight; this
+      // work is free (pure in-memory) and lets chunks fire as soon as resize lands.
+      // chunk size 2000: row_id__in + column_id__in avoids the old Q() OR recursion limit,
+      // so larger chunks are safe. 2000 halves round-trips vs the previous 1000.
+      const chunks = chunkOperations<CellOperation>(normalizedOperations, 2000);
       setImportProgress({ current: 0, total: chunks.length });
 
       const importId =
@@ -4138,57 +4324,129 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       importAbortControllerRef.current = abortController;
       const signal = abortController.signal;
 
-      const changes: CellChange[] = [];
-      operations.forEach((op) => {
-        const prevValue = getCellRawInput(op.row, op.column);
-        const nextValue = op.raw_input || '';
-        if (prevValue === nextValue) return;
-        changes.push({
-          row: op.row,
-          col: op.column,
-          prevValue,
-          nextValue,
-        });
-      });
+      // Step 6: now actually wait for the backend to finish building rows/columns.
+      const resizePersisted = await resizePromise;
+      if (!resizePersisted) {
+        // Roll back the optimistic apply so the user does not see "fake" data that
+        // was never written to the backend.
+        // - For smaller imports we have precise pre-import values in `changes`.
+        // - For larger imports `changes` may be intentionally empty, so fall back to
+        //   clearing the optimistically populated cells touched by this import.
+        const rollbackUpdates =
+          changes.length > 0
+            ? changes.map((c) => ({ row: c.row, col: c.col, value: c.prevValue }))
+            : Array.from(
+                operations.reduce((acc, op) => {
+                  acc.set(`${op.row}:${op.column}`, { row: op.row, col: op.column, value: '' });
+                  return acc;
+                }, new Map<string, { row: number; col: number; value: string }>()),
+              ).map(([, cell]) => cell);
 
-      if (changes.length) {
-        pushHistoryEntry({ changes });
+        if (rollbackUpdates.length > 0) {
+          applyCellValuesLocalBatch(rollbackUpdates);
+        }
+        importAbortControllerRef.current = null;
+        toast.error('Failed to resize grid for import');
+        return;
       }
 
-      // Optimistically apply to UI (sparse)
-      operations.forEach((op) => {
-        applyCellValueLocal(op.row, op.column, op.raw_input || '');
-      });
-
-      let lastError: any = null;
+      // Error reporting strategy:
+      // - `firstError` owns the single reported failure. Concurrent in-flight requests
+      //   that are later aborted should stay silent so the user sees one toast / one log.
+      // - On the first failure of a chunk, retry that chunk serially once before giving up
+      //   (covers transient network blips and DB lock contention). Only on a second failure
+      //   do we abort siblings and surface the error.
+      let firstError: any = null;
       let lastChunkIndex = -1;
+
+      const isCancelError = (err: any): boolean => {
+        const name = err?.name;
+        const code = err?.code;
+        return (
+          name === 'CanceledError' ||
+          name === 'AbortError' ||
+          name === 'Cancel' ||
+          code === 'ERR_CANCELED'
+        );
+      };
 
       try {
         const chunkTasks = chunks.map((chunk, i) => async () => {
-          if (signal.aborted) throw new DOMException('Import cancelled', 'AbortError');
-          try {
-            await SpreadsheetAPI.batchUpdateCells(spreadsheetId, sheetId, chunk, true, {
+          if (signal.aborted) return;
+          // auto_expand=false: rows/cols were already created by the immediate
+          // resize above, so the server can skip existence checks and bulk_create.
+          const runOnce = () =>
+            SpreadsheetAPI.batchUpdateCells(spreadsheetId, sheetId, chunk, false, {
               importId,
               chunkIndex: i,
               importMode: true,
               signal,
             });
+
+          let succeeded = false;
+          try {
+            await runOnce();
+            succeeded = true;
+          } catch (err: any) {
+            if (signal.aborted && isCancelError(err)) return;
+            if (firstError) return;
+            try {
+              await new Promise((resolve) => setTimeout(resolve, 500));
+              if (signal.aborted) return;
+              await runOnce();
+              succeeded = true;
+            } catch (retryErr: any) {
+              if (signal.aborted && isCancelError(retryErr)) return;
+              if (!firstError) {
+                firstError = retryErr;
+                lastChunkIndex = i;
+                importAbortControllerRef.current?.abort();
+              }
+              return;
+            }
+          }
+          if (succeeded) {
             setImportProgress((prev) =>
               prev ? { current: prev.current + 1, total: prev.total } : prev
             );
-            return;
-          } catch (err: any) {
-            lastChunkIndex = i;
-            lastError = err;
-            importAbortControllerRef.current?.abort();
-            throw err;
           }
         });
         await runWithConcurrency(chunkTasks, IMPORT_BATCH_CONCURRENCY);
+        if (firstError) throw firstError;
 
-        // All chunks complete: finalize (recalc formulas), then hydrate
+        // All chunks complete: finalize (recalc formulas) on the server.
         await SpreadsheetAPI.finalizeImport(spreadsheetId, sheetId, importId);
-        await runPostImportHydration(maxRow, maxCol);
+
+        // Hydration strategy:
+        // - Pure data imports (no '=' prefixed ops): the optimistic local apply already
+        //   holds every raw_input we just pushed. A full re-fetch would be ~100 range
+        //   requests returning identical data. Skip it.
+        // - Imports containing formulas: the server may have computed values we don't
+        //   have locally. Fetch ONCE over the bounding box of formula ops rather than
+        //   slicing the whole region into many 100-row requests.
+        const formulaOps = operations.filter((op) => (op.raw_input || '').startsWith('='));
+        if (formulaOps.length === 0) {
+          setHydrationStatus('ready');
+        } else {
+          let fMinRow = Infinity;
+          let fMaxRow = -Infinity;
+          let fMinCol = Infinity;
+          let fMaxCol = -Infinity;
+          for (const op of formulaOps) {
+            if (op.row < fMinRow) fMinRow = op.row;
+            if (op.row > fMaxRow) fMaxRow = op.row;
+            if (op.column < fMinCol) fMinCol = op.column;
+            if (op.column > fMaxCol) fMaxCol = op.column;
+          }
+          setHydrationStatus('hydrating');
+          try {
+            await loadCellRange(fMinRow, fMaxRow, fMinCol, fMaxCol, true);
+          } catch (err) {
+            console.error('[Hydration] Formula bbox fetch failed:', err);
+          } finally {
+            setHydrationStatus('ready');
+          }
+        }
         importAbortControllerRef.current = null;
       } catch (error: any) {
         importAbortControllerRef.current = null;
@@ -4248,7 +4506,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       }
     },
     [
-      applyCellValueLocal,
+      applyCellValuesLocalBatch,
       getCellRawInput,
       pushHistoryEntry,
       spreadsheetId,
@@ -4257,10 +4515,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       parseImportError,
       reconcileImport,
       loadCellRange,
-      runPostImportHydration,
       runWithConcurrency,
       visibleRange,
-      resizeGrid,
+      updateGridDimensionsLocal,
+      persistResizeToBackend,
       rowCount,
       colCount,
     ]
@@ -4370,6 +4628,59 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     setXlsxImport(null);
     setSelectedXlsxSheet('');
   }, []);
+
+  const handleImportGoogleSheets = useCallback(async () => {
+    const url = sheetsImportUrl.trim();
+    if (!url) return;
+    setSheetsImportLoading(true);
+    try {
+      const { matrix } = await googleDocsApi.importFromGoogleSheets(url);
+      setSheetsImportModalOpen(false);
+      setSheetsImportUrl('');
+      setIsImporting(true);
+      setImportProgress({ current: 0, total: 0 });
+      await runImportMatrix(matrix);
+      toast.success('Google Sheets import complete');
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || 'Google Sheets import failed. Please try again.';
+      toast.error(msg);
+    } finally {
+      setSheetsImportLoading(false);
+      setIsImporting(false);
+      setImportProgress(null);
+    }
+  }, [sheetsImportUrl, runImportMatrix]);
+
+  const handleExportGoogleSheets = useCallback(async () => {
+    const matrix = buildUsedRangeMatrix();
+    const title = getExportFileBaseName();
+    const toastId = toast.loading('Exporting to Google Sheets...');
+    try {
+      const result = await googleDocsApi.exportToGoogleSheets(title, matrix);
+      toast.dismiss(toastId);
+      toast.success(
+        (t) => (
+          <span>
+            Exported!{' '}
+            <a
+              href={result.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline text-[#3CCED7]"
+              onClick={() => toast.dismiss(t.id)}
+            >
+              Open in Google Sheets
+            </a>
+          </span>
+        ),
+        { duration: 8000 }
+      );
+    } catch (err: any) {
+      toast.dismiss(toastId);
+      const msg = err?.response?.data?.error || 'Google Sheets export failed. Please try again.';
+      toast.error(msg);
+    }
+  }, [buildUsedRangeMatrix, getExportFileBaseName]);
 
   useEffect(() => {
     if (!exportMenuOpen) return;
@@ -4992,8 +5303,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   const isFrozenRow = (row: number): boolean =>
     frozenRowCount > 0 && row < frozenRowCount;
 
+  const showGridSpinner = isGridLoading || cellCanvasLoading;
+
   return (
-    <div className="relative h-full w-full flex flex-col">
+    <div className={`relative h-full w-full flex flex-col${isGridLoading ? ' pointer-events-none' : ''}`}>
       {/* Save status indicator */}
       {saveError && (
         <div className="absolute top-2 right-2 z-30 bg-red-50 border border-red-200 text-red-700 px-3 py-1 rounded text-xs">
@@ -5001,7 +5314,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         </div>
       )}
       {isSaving && pendingOps.size > 0 && (
-        <div className="absolute top-2 right-2 z-30 bg-blue-50 border border-blue-200 text-blue-700 px-3 py-1 rounded text-xs">
+        <div className="absolute top-2 right-2 z-30 bg-[#3CCED7]/10 border border-[#3CCED7]/30 text-[#1a9ba3] px-3 py-1 rounded text-xs">
           Saving...
         </div>
       )}
@@ -5014,8 +5327,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       ) : null}
 
       {/* Unified toolbar: undo/redo, freeze, import/export, highlight & formatting */}
-      <div className="flex items-center justify-between gap-3 px-2 py-1.5 border-b border-gray-200 bg-white">
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between gap-3 overflow-x-auto px-2 py-1.5 border-b border-gray-200 bg-white">
+        <div className="flex shrink-0 items-center gap-1.5">
         <input
           ref={fileInputRef}
           type="file"
@@ -5025,10 +5338,30 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         />
         <button
           type="button"
+          onClick={() => setSheetsImportModalOpen(true)}
+          disabled={isImporting}
+          title="Import from Google Sheets"
+          className="inline-flex h-8 items-center gap-1 rounded-md px-3 text-xs font-medium text-[#0E8A96] transition hover:bg-[#3CCED7]/10 disabled:opacity-60"
+        >
+          <FileSpreadsheet className="h-3.5 w-3.5" strokeWidth={2.3} aria-hidden="true" />
+          Sheets Import
+        </button>
+        <button
+          type="button"
+          onClick={handleImportClick}
+          disabled={isImporting}
+            className="inline-flex h-8 items-center gap-1 rounded-md px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60"
+        >
+          <Download className="h-3.5 w-3.5" strokeWidth={2.3} aria-hidden="true" />
+          Import
+        </button>
+        <span className="mx-1 inline-block h-5 w-px bg-gray-200" aria-hidden="true" />
+        <button
+          type="button"
           onClick={handleUnifiedUndo}
           disabled={!canUndo || isReverting}
           title="Undo (Ctrl+Z)"
-            className="flex h-7 w-7 items-center justify-center rounded border border-gray-200 text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
         >
             <Undo2 className="h-3.5 w-3.5" strokeWidth={2.3} />
         </button>
@@ -5037,7 +5370,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           onClick={handleUnifiedRedo}
           disabled={!canRedo || isReverting}
           title="Redo (Ctrl+Shift+Z)"
-            className="flex h-7 w-7 items-center justify-center rounded border border-gray-200 text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40"
         >
             <Redo2 className="h-3.5 w-3.5" strokeWidth={2.3} />
         </button>
@@ -5045,10 +5378,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           type="button"
           onClick={handleFreezeHeader}
           title={frozenRowCount > 0 ? 'Unfreeze header (Ctrl+Shift+F)' : 'Freeze header (Ctrl+Shift+F)'}
-            className={`flex h-7 w-7 items-center justify-center rounded border transition-colors text-xs ${
+            className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition text-xs ${
             frozenRowCount > 0
-              ? 'border-blue-300 bg-blue-50 text-blue-700'
-              : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+              ? 'bg-[#3CCED7]/10 text-[#0E8A96] ring-1 ring-[#3CCED7]/30'
+              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
           }`}
           data-testid="freeze-header-button"
         >
@@ -5056,14 +5389,6 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               <Snowflake className="h-3 w-3" strokeWidth={2.3} />
             <span>H</span>
           </span>
-        </button>
-        <button
-          type="button"
-          onClick={handleImportClick}
-          disabled={isImporting}
-            className="rounded border border-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-        >
-          Import
         </button>
         <div className="relative" ref={exportMenuRef}>
           <button
@@ -5083,31 +5408,33 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               setExportMenuOpen((prev) => !prev);
             }}
             disabled={isImporting}
-              className="rounded border border-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60"
+              className="inline-flex h-8 items-center gap-1 rounded-md px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60"
             aria-haspopup="menu"
             aria-expanded={exportMenuOpen}
             data-export-menu-trigger
           >
+            <Upload className="h-3.5 w-3.5" strokeWidth={2.3} aria-hidden="true" />
             Export
           </button>
           {exportMenuOpen && exportMenuAnchor &&
             createPortal(
               <div
-                className="fixed z-[1000] w-40 rounded-md border border-gray-200 bg-white shadow-lg"
+                className="fixed z-[1000] w-40 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-gray-100"
                 style={{
                   top: exportMenuAnchor.top,
-                  left: exportMenuAnchor.left - 160,
+                  left: exportMenuAnchor.left - exportMenuAnchor.width,
                 }}
                 role="menu"
                 data-export-menu
               >
+                <div className="h-[3px] w-full bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" />
                 <button
                   type="button"
                   onClick={() => {
                     handleExportCSV();
                     setExportMenuOpen(false);
                   }}
-                  className="w-full px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition hover:bg-gray-50"
                   role="menuitem"
                 >
                   Export as CSV
@@ -5118,10 +5445,21 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     handleExportXLSX();
                     setExportMenuOpen(false);
                   }}
-                  className="w-full px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-gray-700 transition hover:bg-gray-50"
                   role="menuitem"
                 >
                   Export as XLSX
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExportGoogleSheets();
+                    setExportMenuOpen(false);
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-[#0E8A96] transition hover:bg-[#3CCED7]/10"
+                  role="menuitem"
+                >
+                  Export to Google Sheets
                 </button>
               </div>,
               document.body
@@ -5140,7 +5478,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           }}
           title="Pivot Table"
           disabled={!onOpenPivotBuilder}
-          className="flex h-7 items-center gap-1 rounded border px-2 text-[11px] font-semibold transition-colors border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex h-8 items-center gap-1 rounded-md px-3 text-xs font-medium text-gray-700 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed"
           data-testid="pivot-table-button"
         >
           <Table2 className="h-3.5 w-3.5" strokeWidth={2.3} />
@@ -5149,7 +5487,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         </div>
 
         {/* Highlight & Text formatting controls */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           <div className="relative" ref={highlightMenuRef}>
             <button
               type="button"
@@ -5159,7 +5497,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                 setHighlightMenuOpen((prev) => !prev);
               }}
               disabled={!hasSelection}
-              className="flex h-7 w-7 items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60"
               aria-haspopup="menu"
               aria-expanded={highlightMenuOpen}
               data-highlight-menu-trigger
@@ -5173,10 +5511,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
             </button>
               {highlightMenuOpen && (
                 <div
-                  className="absolute left-0 mt-2 w-44 rounded-md border border-gray-200 bg-white shadow-lg z-30"
+                  className="absolute left-0 mt-2 w-44 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-gray-100 z-30"
                   role="menu"
                   data-highlight-menu
                 >
+                  <div className="h-[3px] w-full bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" />
                   {HIGHLIGHT_COLORS.map((color) => (
                     <button
                       key={color.id}
@@ -5186,7 +5525,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                         applyHighlightToSelection(color.value, color.value);
                         setHighlightMenuOpen(false);
                       }}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium text-gray-700 transition hover:bg-gray-50"
                       role="menuitem"
                       data-testid={`highlight-color-${color.id}`}
                     >
@@ -5200,7 +5539,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                       applyHighlightToSelection(null, CLEAR_HIGHLIGHT);
                       setHighlightMenuOpen(false);
                     }}
-                    className="w-full px-3 py-2 text-left text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                    className="w-full px-3 py-2 text-left text-xs font-medium text-gray-500 transition hover:bg-gray-50"
                     role="menuitem"
                     data-testid="highlight-clear"
                   >
@@ -5215,10 +5554,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               onClick={() => applyFormatToSelection({ bold: !formatStateForSelection?.bold })}
               disabled={!hasSelection}
               title="Bold"
-              className={`flex h-7 w-7 items-center justify-center rounded border transition-colors disabled:opacity-60 ${
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition disabled:opacity-60 ${
                 formatStateForSelection?.bold
-                  ? 'border-blue-300 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  ? 'bg-[#3CCED7]/10 text-[#0E8A96] ring-1 ring-[#3CCED7]/30'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
               }`}
               data-testid="format-bold"
             >
@@ -5229,10 +5568,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               onClick={() => applyFormatToSelection({ italic: !formatStateForSelection?.italic })}
               disabled={!hasSelection}
               title="Italic"
-              className={`flex h-7 w-7 items-center justify-center rounded border transition-colors disabled:opacity-60 ${
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition disabled:opacity-60 ${
                 formatStateForSelection?.italic
-                  ? 'border-blue-300 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  ? 'bg-[#3CCED7]/10 text-[#0E8A96] ring-1 ring-[#3CCED7]/30'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
               }`}
               data-testid="format-italic"
             >
@@ -5243,10 +5582,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               onClick={() => applyFormatToSelection({ strikethrough: !formatStateForSelection?.strikethrough })}
               disabled={!hasSelection}
               title="Strikethrough"
-              className={`flex h-7 w-7 items-center justify-center rounded border transition-colors disabled:opacity-60 ${
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition disabled:opacity-60 ${
                 formatStateForSelection?.strikethrough
-                  ? 'border-blue-300 bg-blue-50 text-blue-700'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  ? 'bg-[#3CCED7]/10 text-[#0E8A96] ring-1 ring-[#3CCED7]/30'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
               }`}
               data-testid="format-strikethrough"
             >
@@ -5262,18 +5601,19 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                 disabled={!hasSelection}
                 title="Text color"
                 data-text-color-trigger
-                className="flex h-7 w-7 items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-60"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60"
                 data-testid="format-text-color"
               >
                 <Palette className="h-4 w-4" strokeWidth={2.5} style={selectedTextColor ? { color: selectedTextColor } : undefined} />
               </button>
               {textColorMenuOpen && (
                 <div
-                  className="absolute left-0 mt-2 w-36 rounded-md border border-gray-200 bg-white shadow-lg z-30 p-2"
+                  className="absolute left-0 mt-2 w-44 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-gray-100 z-30"
                   role="menu"
                   data-text-color-menu
                 >
-                  <div className="grid grid-cols-4 gap-1">
+                  <div className="h-[3px] w-full bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" />
+                  <div className="grid grid-cols-4 gap-1.5 p-2">
                     {TEXT_COLORS.map((c) => (
                       <button
                         key={c.id}
@@ -5283,62 +5623,63 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                           applyFormatToSelection({ textColor: c.value });
                           setTextColorMenuOpen(false);
                         }}
-                        className="h-6 w-6 rounded border border-gray-200 hover:ring-2 hover:ring-blue-300"
+                        className="h-6 w-6 rounded-md border border-gray-200 transition hover:scale-110 hover:ring-2 hover:ring-[#3CCED7]"
                         style={{ backgroundColor: c.value }}
                         title={c.label}
                       />
                     ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedTextColor(null);
-                      applyFormatToSelection({ textColor: null });
-                      setTextColorMenuOpen(false);
-                    }}
-                    className="mt-2 w-full rounded border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-                  >
-                    Clear color
-                  </button>
+                  <div className="border-t border-gray-100 px-2 py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTextColor(null);
+                        applyFormatToSelection({ textColor: null });
+                        setTextColorMenuOpen(false);
+                      }}
+                      className="w-full rounded-md px-2 py-1 text-left text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+                    >
+                      Clear color
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
-            <select
+            <BrandSelect
               value={selectedFontFamily ?? ''}
-              onChange={(e) => {
-                const v = e.target.value || null;
-                setSelectedFontFamily(v);
-                applyFormatToSelection({ fontFamily: v });
+              onValueChange={(v) => {
+                const next = v || null;
+                setSelectedFontFamily(next);
+                applyFormatToSelection({ fontFamily: next });
               }}
               disabled={!hasSelection}
-              className="rounded border border-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 max-w-[120px]"
-              data-testid="format-font-family"
-              title="Font family"
-            >
-              {FONT_FAMILIES.map((f) => (
-                <option key={f.id} value={f.value}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value={selectedFontSize ?? CELL_FONT_SIZE}
-              onChange={(e) => {
-                const v = parseInt(e.target.value, 10) || CELL_FONT_SIZE;
-                setSelectedFontSize(v);
-                applyFormatToSelection({ fontSize: v });
+              ariaLabel="Font family"
+              testId="format-font-family"
+              widthClass="min-w-[7rem] max-w-[8rem]"
+              renderValue={(val) => {
+                const match = FONT_FAMILIES.find((f) => f.value === val);
+                return match?.label ?? 'Default';
+              }}
+              options={FONT_FAMILIES.map((f) => ({
+                value: f.value,
+                label: f.label,
+                style: f.value ? { fontFamily: f.value } : undefined,
+              }))}
+            />
+            <BrandSelect
+              value={String(selectedFontSize ?? CELL_FONT_SIZE)}
+              onValueChange={(v) => {
+                const n = parseInt(v, 10) || CELL_FONT_SIZE;
+                setSelectedFontSize(n);
+                applyFormatToSelection({ fontSize: n });
               }}
               disabled={!hasSelection}
-              className="rounded border border-gray-200 px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-60 w-14"
-              data-testid="format-font-size"
-              title="Font size"
-            >
-              {FONT_SIZES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+              ariaLabel="Font size"
+              testId="format-font-size"
+              widthClass="w-16"
+              renderValue={(val) => val}
+              options={FONT_SIZES.map((s) => ({ value: String(s), label: String(s) }))}
+            />
           </div>
           <div className="flex items-center gap-1 border-l border-gray-200 pl-2">
             <div className="relative">
@@ -5351,10 +5692,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                 disabled={!hasSelection}
                 title="Currency"
                 data-format-currency-trigger
-                className={`flex h-8 w-8 items-center justify-center rounded border transition-colors disabled:opacity-60 text-base font-medium ${
+                className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition disabled:opacity-60 text-base font-medium ${
                   selectedNumberFormat?.type === 'CURRENCY'
-                    ? 'border-blue-300 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                    ? 'bg-[#3CCED7]/10 text-[#0E8A96] ring-1 ring-[#3CCED7]/30'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
                 }`}
                 data-testid="format-currency"
               >
@@ -5362,43 +5703,46 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               </button>
               {currencyMenuOpen && (
                 <div
-                  className="absolute left-0 mt-1 w-32 rounded-md border border-gray-200 bg-white shadow-lg z-30 py-1"
+                  className="absolute left-0 mt-1 w-32 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-gray-100 z-30"
                   role="menu"
                   data-currency-menu
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = selectedNumberFormat ? { ...selectedNumberFormat, type: 'GENERAL' as const, currencyCode: null } : null;
-                      setSelectedNumberFormat(next);
-                      applyFormatToSelection({ numberFormat: next });
-                      setCurrencyMenuOpen(false);
-                    }}
-                    className="w-full px-3 py-1.5 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
-                    role="menuitem"
-                  >
-                    General
-                  </button>
-                  {CURRENCIES.map((c) => (
+                  <div className="h-[3px] w-full bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" />
+                  <div className="py-1">
                     <button
-                      key={c.code}
                       type="button"
                       onClick={() => {
-                        const next: NumberFormat = {
-                          type: 'CURRENCY',
-                          currencyCode: c.code,
-                          decimalPlaces: selectedNumberFormat?.decimalPlaces ?? 2,
-                        };
+                        const next = selectedNumberFormat ? { ...selectedNumberFormat, type: 'GENERAL' as const, currencyCode: null } : null;
                         setSelectedNumberFormat(next);
                         applyFormatToSelection({ numberFormat: next });
                         setCurrencyMenuOpen(false);
                       }}
-                      className="w-full px-3 py-1.5 text-left text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      className="w-full px-3 py-1.5 text-left text-xs font-medium text-gray-700 transition hover:bg-gray-50"
                       role="menuitem"
                     >
-                      {c.label}
+                      General
                     </button>
-                  ))}
+                    {CURRENCIES.map((c) => (
+                      <button
+                        key={c.code}
+                        type="button"
+                        onClick={() => {
+                          const next: NumberFormat = {
+                            type: 'CURRENCY',
+                            currencyCode: c.code,
+                            decimalPlaces: selectedNumberFormat?.decimalPlaces ?? 2,
+                          };
+                          setSelectedNumberFormat(next);
+                          applyFormatToSelection({ numberFormat: next });
+                          setCurrencyMenuOpen(false);
+                        }}
+                        className="w-full px-3 py-1.5 text-left text-xs font-medium text-gray-700 transition hover:bg-gray-50"
+                        role="menuitem"
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
@@ -5414,10 +5758,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               }}
               disabled={!hasSelection}
               title="Percent"
-              className={`flex h-8 w-8 items-center justify-center rounded border transition-colors disabled:opacity-60 ${
+              className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition disabled:opacity-60 ${
                 selectedNumberFormat?.type === 'PERCENT'
-                  ? 'border-blue-300 bg-blue-50 text-blue-700 font-semibold'
-                  : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                  ? 'bg-[#3CCED7]/10 text-[#0E8A96] ring-1 ring-[#3CCED7]/30 font-semibold'
+                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
               }`}
               data-testid="format-percent"
             >
@@ -5435,7 +5779,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               }}
               disabled={!hasSelection}
               title="Decrease decimals"
-              className="flex h-8 w-8 flex-col items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-60 pt-0.5"
+              className="inline-flex h-8 w-8 flex-col items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 pt-0.5"
               data-testid="format-decimal-decrease"
             >
               <span className="text-xs font-medium leading-tight">.0</span>
@@ -5453,7 +5797,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               }}
               disabled={!hasSelection}
               title="Increase decimals"
-              className="flex h-8 w-8 flex-col items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-60 pt-0.5"
+              className="inline-flex h-8 w-8 flex-col items-center justify-center rounded-md text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60 pt-0.5"
               data-testid="format-decimal-increase"
             >
               <span className="text-xs font-medium leading-tight">.00</span>
@@ -5570,14 +5914,14 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
             <div className="px-3 py-2 border-b border-gray-100">
               <div className="mb-1 flex items-center justify-between text-[11px] font-semibold text-gray-600">
                 <span>Filter</span>
-                {hasColumnFilter(sortMenu.colIndex) ? <Check className="h-3 w-3 text-blue-600" /> : null}
+                {hasColumnFilter(sortMenu.colIndex) ? <Check className="h-3 w-3 text-[#3CCED7]" /> : null}
               </div>
               <input
                 type="text"
                 value={getActiveFilterExpression(sortMenu.colIndex)}
                 onChange={(e) => handleColumnFilterChange(sortMenu.colIndex, e.target.value)}
                 placeholder="e.g. >= 7, = abc"
-                className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-900 focus:border-blue-400 focus:outline-none"
+                className="w-full rounded border border-gray-200 px-2 py-1 text-xs text-gray-900 focus:border-[#3CCED7] focus:outline-none"
                 aria-label={`Filter column ${columnIndexToLabel(sortMenu.colIndex)}`}
               />
             </div>
@@ -5589,7 +5933,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               role="menuitem"
             >
               <span>Sort A → Z</span>
-              {getActiveSortDirection(sortMenu.colIndex) === 'asc' ? <Check className="h-3.5 w-3.5 text-blue-600" /> : null}
+              {getActiveSortDirection(sortMenu.colIndex) === 'asc' ? <Check className="h-3.5 w-3.5 text-[#3CCED7]" /> : null}
             </button>
             <button
               type="button"
@@ -5599,13 +5943,13 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               role="menuitem"
             >
               <span>Sort Z → A</span>
-              {getActiveSortDirection(sortMenu.colIndex) === 'desc' ? <Check className="h-3.5 w-3.5 text-blue-600" /> : null}
+              {getActiveSortDirection(sortMenu.colIndex) === 'desc' ? <Check className="h-3.5 w-3.5 text-[#3CCED7]" /> : null}
             </button>
           </div>,
           document.body
         )}
 
-      <div className="flex items-center gap-2 px-2 py-2 border-b border-gray-200 bg-white">
+      <div className="flex min-w-0 items-center gap-2 px-2 py-2 border-b border-gray-200 bg-white">
         <span className="text-xs font-semibold text-gray-500">fx</span>
         <input
           type="text"
@@ -5623,10 +5967,53 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
             e.stopPropagation();
             handleFormulaBarKeyDown(e);
           }}
-          className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-900 focus:border-blue-400 focus:outline-none"
+          className="w-full rounded border border-gray-200 px-2 py-1 text-sm text-gray-900 focus:border-[#3CCED7] focus:outline-none"
           disabled={!activeCell}
         />
       </div>
+
+      {sheetsImportModalOpen && (
+        <Modal isOpen={true} onClose={() => { setSheetsImportModalOpen(false); setSheetsImportUrl(''); }}>
+          <div className="w-[min(420px,calc(100vw-2rem))]">
+            <div className="rounded-2xl bg-white shadow-2xl ring-1 ring-gray-100">
+              <div className="px-6 pt-6 pb-4 border-b border-gray-100">
+                <h2 className="text-lg font-semibold text-gray-900">Import from Google Sheets</h2>
+                <p className="mt-1 text-sm text-gray-500">Paste the Google Sheets URL or spreadsheet ID</p>
+              </div>
+              <div className="px-6 py-5 flex flex-col gap-4">
+                <input
+                  type="text"
+                  value={sheetsImportUrl}
+                  onChange={(e) => setSheetsImportUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/..."
+                  className="w-full rounded border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-[#3CCED7] focus:outline-none"
+                  disabled={sheetsImportLoading}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleImportGoogleSheets(); }}
+                  autoFocus
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setSheetsImportModalOpen(false); setSheetsImportUrl(''); }}
+                    disabled={sheetsImportLoading}
+                    className="rounded px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleImportGoogleSheets}
+                    disabled={sheetsImportLoading || !sheetsImportUrl.trim()}
+                    className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-60"
+                  >
+                    {sheetsImportLoading ? 'Importing...' : 'Import'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {xlsxImport && (
         <Modal isOpen={true} onClose={handleCancelXlsxImport}>
@@ -5642,7 +6029,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                 <select
                   value={selectedXlsxSheet}
                   onChange={(e) => setSelectedXlsxSheet(e.target.value)}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
                   disabled={isImporting}
                 >
                   {xlsxImport.sheetNames.map((name) => (
@@ -5662,7 +6049,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                   <button
                     type="button"
                     onClick={handleConfirmXlsxImport}
-                    className="rounded bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                    className="rounded bg-[#3CCED7] px-3 py-1 text-xs font-semibold text-white hover:bg-[#2AB5BD] disabled:opacity-60"
                     disabled={isImporting || !selectedXlsxSheet}
                   >
                     Import
@@ -5683,12 +6070,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           overflowY: 'auto',
           position: 'relative',
         }}
-        onScroll={handleScroll}
-        onKeyDown={handleKeyDown}
-        onCopy={handleCopy}
-        onPaste={handlePaste}
-        tabIndex={0}
+        onScroll={isGridLoading ? undefined : handleScroll}
+        onKeyDown={isGridLoading ? undefined : handleKeyDown}
+        onCopy={isGridLoading ? undefined : handleCopy}
+        onPaste={isGridLoading ? undefined : handlePaste}
+        tabIndex={isGridLoading ? -1 : 0}
+        aria-busy={cellCanvasLoading || isGridLoading}
       >
+        {showGridSpinner ? (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white/95 shadow-sm backdrop-blur-sm">
+              <Loader2 className="h-4 w-4 animate-spin text-[#0E8A96]" />
+            </div>
+          </div>
+        ) : null}
         {/* Column headers in separate table to avoid thead/tbody gap with sticky. */}
         <div className="sticky top-0 z-10 shrink-0 bg-gray-200">
           <table
@@ -5736,7 +6131,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                 <th
                   key={colIndex}
                   className={`border border-gray-300 text-xs font-semibold text-gray-600 text-center relative overflow-visible ${
-                    isColumnHeaderSelected(colIndex) ? 'bg-blue-100' : 'bg-gray-200'
+                    isColumnHeaderSelected(colIndex) ? 'bg-[#3CCED7]/15' : 'bg-gray-200'
                   }`}
                   style={{ width: `${colWidth}px`, minWidth: `${colWidth}px`, ...headerCellStyle }}
                   onClick={() => handleColumnHeaderClick(colIndex)}
@@ -5760,7 +6155,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     >
                       <ChevronDown className="h-3 w-3" />
                       {hasColumnFilter(colIndex) ? (
-                        <Check className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-white text-blue-600" />
+                        <Check className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-white text-[#3CCED7]" />
                       ) : null}
                     </button>
                   </div>
@@ -5844,7 +6239,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                   {/* Row Number */}
                   <td
                     className={`border border-gray-300 text-xs font-semibold text-gray-600 text-center sticky left-0 z-10 relative overflow-visible ${
-                      isRowHeaderSelected(row) ? 'bg-blue-100' : 'bg-gray-100'
+                      isRowHeaderSelected(row) ? 'bg-[#3CCED7]/15' : 'bg-gray-100'
                     }`}
                     style={{ ...rowBaseStyle, ...frozenStickyStyle }}
                     data-testid={`row-header-${row}`}
@@ -5905,25 +6300,25 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     // Determine cell styling based on selection state
                     let cellClassName = 'border border-gray-300 p-0 relative align-top';
                     if (isEditing) {
-                      cellClassName += ' ring-2 ring-blue-600 ring-inset';
+                      cellClassName += ' ring-2 ring-[#3CCED7] ring-inset';
                     } else if (isActive && isInSelection) {
                       // Active cell within selection: thicker border
-                      cellClassName += ' ring-2 ring-blue-500 ring-inset';
+                      cellClassName += ' ring-2 ring-[#3CCED7] ring-inset';
                       if (!hasHighlight) {
-                        cellClassName += ' bg-blue-50';
+                        cellClassName += ' bg-[#3CCED7]/10';
                       }
                     } else if (isActive) {
                       // Active cell without selection
-                      cellClassName += ' ring-2 ring-blue-500 ring-inset';
+                      cellClassName += ' ring-2 ring-[#3CCED7] ring-inset';
                     } else if (isInSelection) {
                       // Cell in selection range (but not active)
                       if (!hasHighlight) {
-                        cellClassName += ' bg-blue-100';
+                        cellClassName += ' bg-[#3CCED7]/15';
                       }
                     }
                     if (isCellInFillPreview(row, col)) {
                       if (!hasHighlight) {
-                        cellClassName += ' bg-blue-50';
+                        cellClassName += ' bg-[#3CCED7]/10';
                       }
                     }
                     if (isHighlighted) {
@@ -5992,7 +6387,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                         )}
                         {showFillHandle && (
                           <div
-                            className="absolute bottom-0 right-0 h-2 w-2 bg-blue-600 border border-white cursor-crosshair"
+                            className="absolute bottom-0 right-0 h-2 w-2 bg-[#3CCED7] border border-white cursor-crosshair"
                             onPointerDown={(e) => handleFillHandlePointerDown(e, row, col)}
                           />
                         )}
@@ -6048,7 +6443,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                   {/* Row Number */}
                   <td
                     className={`border border-gray-300 text-xs font-semibold text-gray-600 text-center sticky left-0 z-10 relative overflow-visible ${
-                      isRowHeaderSelected(row) ? 'bg-blue-100' : 'bg-gray-100'
+                      isRowHeaderSelected(row) ? 'bg-[#3CCED7]/15' : 'bg-gray-100'
                     }`}
                     style={{ ...rowBaseStyle, ...frozenStickyStyle }}
                     data-testid={`row-header-${row}`}
@@ -6109,25 +6504,25 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     // Determine cell styling based on selection state
                     let cellClassName = 'border border-gray-300 p-0 relative align-top';
                     if (isEditing) {
-                      cellClassName += ' ring-2 ring-blue-600 ring-inset';
+                      cellClassName += ' ring-2 ring-[#3CCED7] ring-inset';
                     } else if (isActive && isInSelection) {
                       // Active cell within selection: thicker border
-                      cellClassName += ' ring-2 ring-blue-500 ring-inset';
+                      cellClassName += ' ring-2 ring-[#3CCED7] ring-inset';
                       if (!hasHighlight) {
-                        cellClassName += ' bg-blue-50';
+                        cellClassName += ' bg-[#3CCED7]/10';
                       }
                     } else if (isActive) {
                       // Active cell without selection
-                      cellClassName += ' ring-2 ring-blue-500 ring-inset';
+                      cellClassName += ' ring-2 ring-[#3CCED7] ring-inset';
                     } else if (isInSelection) {
                       // Cell in selection range (but not active)
                       if (!hasHighlight) {
-                        cellClassName += ' bg-blue-100';
+                        cellClassName += ' bg-[#3CCED7]/15';
                       }
                     }
                     if (isCellInFillPreview(row, col)) {
                       if (!hasHighlight) {
-                        cellClassName += ' bg-blue-50';
+                        cellClassName += ' bg-[#3CCED7]/10';
                       }
                     }
                     if (isHighlighted) {
@@ -6196,7 +6591,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                         )}
                         {showFillHandle && (
                           <div
-                            className="absolute bottom-0 right-0 h-2 w-2 bg-blue-600 border border-white cursor-crosshair"
+                            className="absolute bottom-0 right-0 h-2 w-2 bg-[#3CCED7] border border-white cursor-crosshair"
                             onPointerDown={(e) => handleFillHandlePointerDown(e, row, col)}
                           />
                         )}
@@ -6247,13 +6642,13 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     setShowAddRowsUI(false);
                   }
                 }}
-                className="w-24 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 focus:border-blue-400 focus:outline-none"
+                className="w-24 rounded border border-gray-300 px-2 py-1 text-sm text-gray-900 focus:border-[#3CCED7] focus:outline-none"
                 autoFocus
               />
               <button
                 type="button"
                 onClick={handleAddRows}
-                className="rounded bg-blue-600 px-3 py-1 text-sm font-semibold text-white hover:bg-blue-700"
+                className="rounded bg-[#3CCED7] px-3 py-1 text-sm font-semibold text-white hover:bg-[#2AB5BD]"
               >
                 Add
               </button>

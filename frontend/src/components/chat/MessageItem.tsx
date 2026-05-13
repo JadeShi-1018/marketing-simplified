@@ -24,6 +24,7 @@ export default function MessageItem({
   isSelectMode = false,
   isSelected = false,
   onToggleSelect,
+  isHighlighted = false,
 }: MessageItemProps) {
   const formatTime = (dateString: string) => {
     try {
@@ -66,7 +67,7 @@ export default function MessageItem({
   };
 
   const selectionClass = isSelectMode
-    ? `cursor-pointer border ${isSelected ? 'border-blue-400 ring-2 ring-blue-100' : 'border-transparent'} rounded-lg p-1`
+    ? `cursor-pointer border ${isSelected ? 'border-[#3CCED7] ring-2 ring-blue-100' : 'border-transparent'} rounded-lg p-1`
     : '';
   const forwardedContainerClass = isForwarded ? 'relative pt-4' : '';
   const ownMessageContentClass = `${forwardedContainerClass} flex flex-col items-end`;
@@ -77,18 +78,30 @@ export default function MessageItem({
   if (isOwnMessage) {
     // Own messages (right-aligned)
     return (
-      <div className={`${isSelectMode ? 'relative pl-8' : ''}`}>
+      <div
+        id={`message-${message.id}`}
+        className={[
+          isSelectMode ? 'relative pl-8' : '',
+          isHighlighted ? 'scroll-mt-24' : '',
+        ].join(' ')}
+      >
         {isSelectMode && (
           <input
             type="checkbox"
             checked={isSelected}
             onChange={handleToggleSelect}
-            className="absolute left-0 top-2 w-4 h-4 text-blue-600 border-gray-300 rounded"
+            className="absolute left-0 top-2 w-4 h-4 text-[#3CCED7] border-gray-300 rounded"
           />
         )}
         <div className="flex justify-end">
-          <div className="max-w-[75%]">
-            <div className={selectionClass} onClick={handleToggleSelect}>
+          <div className="w-full max-w-[88%] min-w-0 sm:max-w-[75%]">
+            <div
+              className={[
+                selectionClass,
+                isHighlighted ? 'ring-2 ring-amber-200 bg-amber-50/40 rounded-lg' : '',
+              ].join(' ')}
+              onClick={handleToggleSelect}
+            >
               <div className={ownMessageContentClass}>
                 {isForwarded && (
                   <div className={`${forwardedHeaderBaseClass} right-1`}>
@@ -98,7 +111,7 @@ export default function MessageItem({
                 )}
                 {/* Message bubble with content */}
                 {hasContent && (
-                  <div className="inline-block w-fit max-w-full bg-blue-600 text-white rounded-lg px-4 py-2 break-words">
+                  <div className="inline-block w-fit max-w-full break-words rounded-lg bg-[#A6E661] px-3 py-2 text-gray-900 [overflow-wrap:anywhere] sm:px-4">
                     <p className="text-sm whitespace-pre-wrap">{messageContent}</p>
                   </div>
                 )}
@@ -136,18 +149,30 @@ export default function MessageItem({
 
   // Other users' messages (left-aligned)
   return (
-    <div className={`${isSelectMode ? 'relative pl-8' : ''}`}>
+    <div
+      id={`message-${message.id}`}
+      className={[
+        isSelectMode ? 'relative pl-8' : '',
+        isHighlighted ? 'scroll-mt-24' : '',
+      ].join(' ')}
+    >
       {isSelectMode && (
         <input
           type="checkbox"
           checked={isSelected}
           onChange={handleToggleSelect}
-          className="absolute left-0 top-2 w-4 h-4 text-blue-600 border-gray-300 rounded"
+          className="absolute left-0 top-2 w-4 h-4 text-[#3CCED7] border-gray-300 rounded"
         />
       )}
       <div className="flex justify-start">
-        <div className="max-w-[75%]">
-          <div className={selectionClass} onClick={handleToggleSelect}>
+        <div className="w-full max-w-[88%] min-w-0 sm:max-w-[75%]">
+          <div
+            className={[
+              selectionClass,
+              isHighlighted ? 'ring-2 ring-amber-200 bg-amber-50/40 rounded-lg' : '',
+            ].join(' ')}
+            onClick={handleToggleSelect}
+          >
             <div className={forwardedContainerClass}>
               {isForwarded && (
                 <div className={`${forwardedHeaderBaseClass} left-1`}>
@@ -177,7 +202,7 @@ export default function MessageItem({
               
               {/* Message bubble with content */}
               {hasContent && (
-                <div className={`inline-block w-fit max-w-full rounded-lg px-4 py-2 break-words ${
+                <div className={`inline-block w-fit max-w-full break-words rounded-lg px-3 py-2 [overflow-wrap:anywhere] sm:px-4 ${
                   isAgentBot(message.sender)
                     ? 'bg-violet-50 text-gray-900 border border-violet-100'
                     : 'bg-gray-100 text-gray-900'

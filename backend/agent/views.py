@@ -134,11 +134,16 @@ class ChatView(EnglishResponseMixin, APIView):
         action = serializer.validated_data.get('action')
         calendar_context = serializer.validated_data.get('calendar_context')
         workflow_id = serializer.validated_data.get('workflow_id')
+        column_mapping = serializer.validated_data.get('column_mapping')
+        approval_id = serializer.validated_data.get('approval_id')
+        approval_decision = serializer.validated_data.get('approval_decision')
+        approval_draft = serializer.validated_data.get('approval_draft')
 
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
             'confirm_decision', 'create_tasks', 'generate_miro',
-            'distribute_message',
+            'distribute_message', 'confirm_columns',
+            'resolve_external_approval',
         }
 
         # Auto-generate title from first real user message
@@ -168,7 +173,6 @@ class ChatView(EnglishResponseMixin, APIView):
             assistant_content_parts = []
             assistant_metadata = {}
             last_message_type = 'text'
-            standalone_message_types = {'miro_status', 'miro_suggestion'}
 
             def _flush_message():
                 """Save accumulated content as an assistant message and reset state."""
@@ -195,6 +199,10 @@ class ChatView(EnglishResponseMixin, APIView):
                     file_id=file_id,
                     calendar_context=calendar_context,
                     workflow_id=workflow_id,
+                    column_mapping=column_mapping,
+                    approval_id=approval_id,
+                    approval_decision=approval_decision,
+                    approval_draft=approval_draft,
                 ):
                     chunk_type = chunk.get('type', 'text')
                     content = chunk.get('content', '')
@@ -214,6 +222,28 @@ class ChatView(EnglishResponseMixin, APIView):
                                 message_type='calendar_invite',
                                 metadata={},
                             )
+                        continue
+
+                    if chunk_type == 'approval_request':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        AgentMessage.objects.create(
+                            session=session,
+                            role='assistant',
+                            content=content or 'Approval required.',
+                            message_type='approval_request',
+                            metadata=data or {},
+                        )
+                        continue
+
+                    # Miro status is persisted separately (_create_agent_status_message in the
+                    # orchestrator). Do not merge its text into the prior assistant bubble or
+                    # the final flush — that would duplicate the same line in chat history.
+                    if chunk_type == 'miro_status':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
                         continue
 
                     # Skip internal signalling events from content accumulation
@@ -443,24 +473,33 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
             }
             yield f"data: {json.dumps(file_event)}\n\n"
 
-            # Run analysis
+            # Route through the workflow engine (column detection + analysis).
             assistant_content_parts = []
             assistant_metadata = {"file_id": result['id']}
             last_message_type = 'text'
 
-            for chunk in orchestrator.analyze_file(result['id']):
-                chunk_type = chunk.get('type', 'text')
-                content = chunk.get('content', '')
-                data = chunk.get('data')
+            try:
+                for chunk in orchestrator.handle_message("", file_id=result['id']):
+                    chunk_type = chunk.get('type', 'text')
+                    content = chunk.get('content', '')
+                    data = chunk.get('data')
 
-                assistant_content_parts.append(content)
-                last_message_type = chunk_type
-                if data:
-                    assistant_metadata.update(data)
+                    if chunk_type == 'done':
+                        # Intercept done event to attach session_id for the frontend.
+                        break
 
-                yield f"data: {json.dumps(chunk, default=str)}\n\n"
+                    if content:
+                        assistant_content_parts.append(content)
+                    last_message_type = chunk_type
+                    if data:
+                        assistant_metadata.update(data)
 
-            # Save assistant message
+                    yield f"data: {json.dumps(chunk, default=str)}\n\n"
+            except Exception:
+                logger.exception("FileUploadAnalyzeView workflow error")
+                yield f"data: {json.dumps({'type': 'error', 'content': 'An internal error occurred. Please try again.'})}\n\n"
+
+            # Save accumulated assistant message
             if assistant_content_parts:
                 AgentMessage.objects.create(
                     session=session,
@@ -470,7 +509,7 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                     metadata=assistant_metadata,
                 )
 
-            # Done event with session_id
+            # Done event with session_id so the frontend can persist the session.
             done_event = {
                 "type": "done",
                 "data": {"session_id": str(session.id)},
@@ -557,23 +596,20 @@ class DecisionPromoteView(EnglishResponseMixin, APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, decision_id):
-        project = _get_user_project(request)
-        if not project:
-            return Response(
-                {"detail": "No active project."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
         try:
             decision = Decision.objects.get(
                 id=decision_id,
-                project=project,
-                is_pre_draft=True,
                 is_deleted=False,
             )
         except Decision.DoesNotExist:
             return Response(
-                {"detail": "Pre-draft decision not found."},
+                {"detail": "Decision not found."},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+        if not ProjectMember.objects.filter(project=decision.project, user=request.user).exists():
+            return Response(
+                {"detail": "Permission denied."},
+                status=status.HTTP_403_FORBIDDEN,
             )
         decision.is_pre_draft = False
         decision.save(update_fields=['is_pre_draft', 'updated_at'])
@@ -811,10 +847,7 @@ class AgentConfigStatusView(EnglishResponseMixin, APIView):
 
     # Mapping of response key -> (settings attr, env var fallback)
     KEY_MAP = {
-        'dify_api': ('DIFY_API_KEY', 'DIFY_API_KEY'),
-        'dify_chat': ('DIFY_CHAT_API_KEY', 'DIFY_CHAT_API_KEY'),
-        'dify_calendar': ('DIFY_CALENDAR_API_KEY', 'DIFY_CALENDAR_API_KEY'),
-        'dify_miro': ('DIFY_MIRO_API_KEY', 'DIFY_MIRO_API_KEY'),
+        'gemini': ('GEMINI_API_KEY', 'GEMINI_API_KEY'),
         'anthropic': ('ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'),
     }
 

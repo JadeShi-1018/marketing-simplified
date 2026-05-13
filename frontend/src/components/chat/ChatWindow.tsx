@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckSquare, Forward, X } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useMessageData } from '@/hooks/useMessageData';
 import { useForwardMessages } from '@/hooks/useForwardMessages';
@@ -18,17 +19,20 @@ interface ChatWindowProps {
 }
 
 export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowProps) {
+  const searchParams = useSearchParams();
   // Use selector for stable reference
   const user = useAuthStore(state => state.user);
   const chatsByProject = useChatStore(state => state.chatsByProject);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<number[]>([]);
   const [isForwardDialogOpen, setIsForwardDialogOpen] = useState(false);
+  const [showSwitchLoadingSkeleton, setShowSwitchLoadingSkeleton] = useState(false);
   const { forward, isForwarding } = useForwardMessages();
 
   const {
     messages,
     isLoadingMessages,
+    isLoadingMoreMessages,
     isSending,
     hasMore,
     send,
@@ -40,6 +44,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
   // Track last message count to detect new messages
   const lastMessageCountRef = useRef<number>(0);
   const markAsReadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const jumpInFlightRef = useRef(false);
+  const previousChatIdRef = useRef<number | null>(null);
 
   const chatProjectId = useMemo(() => {
     const rawProjectId = (chat as any).project_id ?? (chat as any).project;
@@ -57,6 +63,60 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
     setSelectedMessageIds([]);
     setIsForwardDialogOpen(false);
   }, [chat.id]);
+
+  useEffect(() => {
+    const previousChatId = previousChatIdRef.current;
+    if (previousChatId !== null && previousChatId !== chat.id) {
+      setShowSwitchLoadingSkeleton(true);
+    }
+    previousChatIdRef.current = chat.id;
+  }, [chat.id]);
+
+  useEffect(() => {
+    if (!isLoadingMessages) {
+      setShowSwitchLoadingSkeleton(false);
+    }
+  }, [isLoadingMessages]);
+
+  useEffect(() => {
+    // If URL includes a messageId, try to load history until it exists, then scroll + highlight it.
+    const raw = searchParams.get('messageId');
+    const targetMessageId = raw ? Number(raw) : NaN;
+    if (!Number.isFinite(targetMessageId) || targetMessageId <= 0) return;
+    if (jumpInFlightRef.current) return;
+
+    jumpInFlightRef.current = true;
+    const maxPages = 12; // safety cap: 12 * 50 = 600 messages
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // Give initial fetch a moment to populate, then iteratively load older pages if needed.
+        for (let i = 0; i < maxPages && !cancelled; i++) {
+          const exists = useChatStore.getState().messages?.[chat.id]?.some((m) => m.id === targetMessageId);
+          if (exists) break;
+          if (!hasMore) break;
+          // eslint-disable-next-line no-await-in-loop
+          await loadMoreMessages();
+        }
+
+        if (cancelled) return;
+        const exists = useChatStore.getState().messages?.[chat.id]?.some((m) => m.id === targetMessageId);
+        if (!exists) return;
+
+        window.dispatchEvent(
+          new CustomEvent('mj:chat:jumpToMessage', { detail: { messageId: targetMessageId } })
+        );
+      } finally {
+        jumpInFlightRef.current = false;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      jumpInFlightRef.current = false;
+    };
+  }, [chat.id, searchParams, hasMore, loadMoreMessages]);
   
   // Mark messages as read when viewing - both on open AND when new messages arrive
   useEffect(() => {
@@ -169,18 +229,19 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
     : (otherParticipant?.user?.username || 'Chat');
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Chat Header */}
-      <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3 flex-shrink-0 bg-white">
+      <div className="flex flex-shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
         <button
           onClick={onBack}
-          className="hover:bg-gray-100 rounded p-1 transition-colors"
+          className="rounded p-1 transition-colors hover:bg-gray-100"
           aria-label="Back to chat list"
+          title="Back to chat list"
         >
-          <ArrowLeft className="w-5 h-5 text-gray-600" />
+          <ArrowLeft className="h-5 w-5 text-gray-600" />
         </button>
         
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 min-w-0">
             <h3 className="font-semibold text-gray-900 truncate">
               {chatName}
@@ -196,28 +257,36 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
           {!isSelectMode ? (
             <button
               onClick={toggleSelectMode}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:px-2.5"
+              aria-label="Select messages"
+              title="Select messages"
             >
               <CheckSquare className="w-3.5 h-3.5" />
-              Select
+              <span className="hidden min-[380px]:inline">Select</span>
             </button>
           ) : (
             <>
-              <span className="text-xs text-gray-600">{selectedMessageIds.length} selected</span>
+              <span className="hidden text-xs text-gray-600 min-[380px]:inline">
+                {selectedMessageIds.length} selected
+              </span>
               <button
                 onClick={handleOpenForwardDialog}
                 disabled={selectedMessageIds.length === 0 || isForwarding}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-1 rounded-md bg-[#3CCED7] px-2 py-1.5 text-xs font-medium text-white hover:bg-[#2AB5BD] disabled:cursor-not-allowed disabled:opacity-50 sm:px-2.5"
+                aria-label="Forward selected messages"
+                title="Forward selected messages"
               >
                 <Forward className="w-3.5 h-3.5" />
-                Forward
+                <span className="hidden min-[380px]:inline">Forward</span>
               </button>
               <button
                 onClick={toggleSelectMode}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:px-2.5"
+                aria-label="Cancel message selection"
+                title="Cancel message selection"
               >
                 <X className="w-3.5 h-3.5" />
-                Cancel
+                <span className="hidden min-[380px]:inline">Cancel</span>
               </button>
             </>
           )}
@@ -232,6 +301,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
           onLoadMore={loadMoreMessages}
           hasMore={hasMore}
           isLoading={isLoadingMessages}
+          isLoadingMoreMessages={isLoadingMoreMessages}
+          showSwitchLoadingSkeleton={showSwitchLoadingSkeleton}
           roleByUserId={roleByUserId}
           isGroupChat={chat.type === 'group'}
           isSelectMode={isSelectMode}

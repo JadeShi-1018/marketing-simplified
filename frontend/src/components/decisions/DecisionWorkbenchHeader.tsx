@@ -19,6 +19,8 @@ interface DecisionWorkbenchHeaderProps {
   mode?: 'edit' | 'readOnly';
   onBack?: () => void;
   onTitleSave?: (nextTitle: string) => void;
+  titleError?: string;
+  focusMode?: boolean;
 }
 
 const formatTime = (value?: string | null) => {
@@ -33,7 +35,7 @@ const statusColor = (status: string) => {
     case 'DRAFT':
       return 'bg-amber-100 text-amber-800';
     case 'AWAITING_APPROVAL':
-      return 'bg-blue-100 text-blue-800';
+      return 'bg-[#3CCED7]/15 text-[#1a9ba3]';
     case 'COMMITTED':
       return 'bg-emerald-100 text-emerald-800';
     case 'REVIEWED':
@@ -61,6 +63,8 @@ const DecisionWorkbenchHeader = ({
   mode = 'edit',
   onBack,
   onTitleSave,
+  titleError,
+  focusMode = false,
 }: DecisionWorkbenchHeaderProps) => {
   const [isEditing, setIsEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
@@ -106,7 +110,14 @@ const DecisionWorkbenchHeader = ({
               <ArrowLeft className="h-4 w-4" />
             </button>
           ) : null}
-          <div className="flex flex-col">
+          <div
+            id="decision-field-title"
+            className={`flex flex-col rounded-md ${
+              focusMode && titleError
+                ? 'bg-white p-2 ring-2 ring-red-500 shadow-[0_0_24px_rgba(239,68,68,0.45)]'
+                : ''
+            }`}
+          >
             <span className="text-xs uppercase tracking-wide text-gray-400">
               {projectLabel}
             </span>
@@ -132,7 +143,7 @@ const DecisionWorkbenchHeader = ({
                     }
                   }}
                   autoFocus
-                  className="w-full max-w-xl rounded border border-gray-300 px-3 py-1 text-lg font-semibold text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none"
+                  className="w-full max-w-xl rounded border border-gray-300 px-3 py-1 text-lg font-semibold text-gray-900 shadow-sm focus:border-[#3CCED7] focus:outline-none"
                   placeholder="Decision title"
                 />
               ) : (
@@ -152,6 +163,9 @@ const DecisionWorkbenchHeader = ({
                 </button>
               )}
             </div>
+            {titleError ? (
+              <span className="mt-1 text-xs font-medium text-red-500">{titleError}</span>
+            ) : null}
           </div>
           <div className="flex items-center gap-2 text-sm text-gray-500">
             {!dirty && !saving ? (
@@ -187,7 +201,7 @@ const DecisionWorkbenchHeader = ({
               disabled={!dirty || saving}
               className={`rounded-md px-4 py-2 text-sm font-semibold transition ${
                 dirty && !saving
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  ? 'bg-[#3CCED7] text-white hover:bg-[#2AB5BD]'
                   : 'cursor-not-allowed bg-gray-200 text-gray-500'
               }`}
             >

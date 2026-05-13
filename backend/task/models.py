@@ -65,6 +65,11 @@ class Task(models.Model):
       help_text="The project that the task belongs to"
     )
     due_date = models.DateField(null=True, blank=True, help_text="The due date of the task") # TODO: Modify according to escalation requirements
+    planned_start_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="The planned start date of the task",
+    )
     type = models.CharField(
       max_length=50,
       choices=[
@@ -159,6 +164,33 @@ class Task(models.Model):
         blank=True,
         help_text="Draft form state captured from task create panel",
     )
+
+    # Lineage: optional one-to-one link when this task was converted from a meeting action item.
+    origin_action_item = models.OneToOneField(
+        "meetings.MeetingActionItem",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="derived_task",
+        help_text="Immutable lineage: meeting action item this task was converted from.",
+    )
+
+    linear_issue_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Linear issue UUID when this task was imported from Linear.",
+    )
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "linear_issue_id"],
+                condition=models.Q(linear_issue_id__isnull=False),
+                name="task_unique_linear_issue_per_project",
+            ),
+        ]
 
     def __str__(self):
         return f"Task #{self.id} - {self.summary} ({self.status})"

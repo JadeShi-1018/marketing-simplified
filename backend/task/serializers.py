@@ -2,7 +2,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from rest_framework import serializers
 
-from meetings.knowledge_links import serialize_origin_meeting
+from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
 from meetings.services import validate_meeting_for_origin_link
 from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskHierarchy, TaskRelation
@@ -60,14 +60,15 @@ class TaskSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
+    origin_action_item = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
         fields = [
-            'id', 'summary', 'description', 'status', 'type',
+            'id', 'summary', 'description', 'status', 'type', 'priority',
             'owner', 'owner_id', 'project', 'project_id',
             'current_approver', 'current_approver_id',
-            'content_type', 'object_id', 'start_date', 'due_date',
+            'content_type', 'object_id', 'start_date', 'due_date', 'planned_start_date',
             'is_subtask', 'parent_relationship', 'order_in_project',
             'anomaly_status', 'approval_chain_progress',
             # Revision tracking fields for SMP-501
@@ -76,6 +77,8 @@ class TaskSerializer(serializers.ModelSerializer):
             'create_as_draft', 'draft_payload',
             'origin_meeting',
             'origin_meeting_id',
+            'origin_action_item',
+            'linear_issue_id',
         ]
         read_only_fields = [
             'id', 'status', 'owner', 'content_type', 'object_id',
@@ -83,6 +86,8 @@ class TaskSerializer(serializers.ModelSerializer):
             'approval_chain_progress', 'can_lock', 'approvals_summary',
             'revision_round', 'revision_label', # SMP-501
             'origin_meeting',
+            'origin_action_item',
+            'linear_issue_id',
         ]
 
     def get_content_type(self, obj):
@@ -105,6 +110,19 @@ class TaskSerializer(serializers.ModelSerializer):
         if meeting is None:
             return None
         return serialize_origin_meeting(meeting)
+
+    def get_origin_action_item(self, obj):
+        if getattr(obj, "origin_action_item_id", None) is None:
+            return None
+        from meetings.models import MeetingActionItem
+
+        try:
+            ai = MeetingActionItem.objects.select_related("meeting").get(
+                pk=obj.origin_action_item_id,
+            )
+        except MeetingActionItem.DoesNotExist:
+            return None
+        return serialize_origin_action_item(ai)
 
     def get_approval_chain_progress(self, obj):
         """
@@ -471,7 +489,12 @@ class TaskListSerializer(TaskSerializer):
         fields = [
             f
             for f in TaskSerializer.Meta.fields
-            if f not in ('draft_payload', 'origin_meeting', 'origin_meeting_id')
+            if f not in (
+                'draft_payload',
+                'origin_meeting',
+                'origin_meeting_id',
+                'origin_action_item',
+            )
         ]
     
     def validate_type(self, value):
@@ -664,3 +687,56 @@ class TaskRelationAddSerializer(serializers.Serializer):
         choices=['causes', 'blocks', 'clones', 'relates_to'],
         required=True
     )
+
+
+class TaskBulkActionSerializer(serializers.Serializer):
+    """Validate payload for bulk task updates from list view."""
+
+    task_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )
+    status = serializers.ChoiceField(
+        choices=Task.Status.choices,
+        required=False,
+    )
+    due_date = serializers.DateField(required=False, allow_null=True)
+    owner_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    current_approver_id = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    priority = serializers.ChoiceField(
+        choices=Task.Priority.choices,
+        required=False,
+    )
+    start_date = serializers.DateField(required=False, allow_null=True)
+    planned_start_date = serializers.DateField(required=False, allow_null=True)
+
+    def validate_task_ids(self, value):
+        seen = set()
+        deduped = []
+        for task_id in value:
+            if task_id in seen:
+                continue
+            seen.add(task_id)
+            deduped.append(task_id)
+        return deduped
+
+    def validate(self, attrs):
+        updatable_fields = {
+            "status",
+            "due_date",
+            "owner_id",
+            "current_approver_id",
+            "priority",
+            "start_date",
+            "planned_start_date",
+        }
+        provided_fields = [field for field in updatable_fields if field in attrs]
+        if not provided_fields:
+            raise serializers.ValidationError(
+                {
+                    "non_field_errors": [
+                        "At least one bulk update field must be provided."
+                    ]
+                }
+            )
+        return attrs

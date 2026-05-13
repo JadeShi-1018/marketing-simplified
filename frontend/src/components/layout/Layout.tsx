@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import Header from './Header';
 import Sidebar from './Sidebar';
 import ChatWidget from '@/components/chat/ChatWidget';
+import AgentSidePanel from '@/components/agent/AgentSidePanel';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { usePermissionEditControl } from '@/hooks/usePermissionEditControl';
@@ -29,7 +30,6 @@ interface LayoutProps {
   };
   showPermissionRole?: boolean; // New prop to show permission-based role
   onUserAction?: (action: 'profile' | 'settings' | 'logout') => void;
-  onSearch?: (query: string) => void;
   onNotificationClick?: (id: string) => void;
 }
 
@@ -44,7 +44,6 @@ const Layout: React.FC<LayoutProps> = ({
   unsavedChangesGuard,
   user: propUser,
   onUserAction,
-  onSearch,
   onNotificationClick,
 }) => {
   const usePageScroll = mainScrollMode === 'page';
@@ -124,13 +123,6 @@ const Layout: React.FC<LayoutProps> = ({
     onUserAction?.(action);
   };
 
-  // handle searching
-  const handleSearch = (query: string) => {
-    console.log('Search query:', query);
-    // TODO: search in real projects
-    onSearch?.(query);
-  };
-
   // handle notification click action
   const handleNotificationClick = (id: string) => {
     console.log('Notification clicked:', id);
@@ -147,7 +139,6 @@ const Layout: React.FC<LayoutProps> = ({
             <Header
               user={user}
               onUserMenuClick={handleUserAction}
-              onSearchChange={handleSearch}
               onNotificationClick={handleNotificationClick}
             />
           )}
@@ -167,18 +158,19 @@ const Layout: React.FC<LayoutProps> = ({
 
             {/* main content */}
             <main className={`
-
-              flex-1 overflow-hidden bg-white
-              ${usePageScroll ? 'overflow-visible' : 'overflow-hidden'}
+              flex-1 bg-white
+              ${usePageScroll ? 'overflow-y-auto' : 'overflow-hidden'}
               bg-gray-50
               ${isMobile && !isSidebarCollapsed ? 'hidden' : 'block'}
               transition-all duration-300 ease-in-out
             `}>
               {children}
             </main>
+
+            <AgentSidePanel />
           </div>
 
-          {/* sidebar collapse */}
+          {/* sidebar overlay on mobile */}
           {isMobile && !isSidebarCollapsed && (
             <div
               className="fixed inset-0 bg-black bg-opacity-50 z-40 md:hidden"

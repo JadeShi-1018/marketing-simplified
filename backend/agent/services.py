@@ -17,9 +17,14 @@ from .models import (
 )
 from . import data_service
 from . import file_parser
-from .dify_workflows import json_input, run_dify_workflow, serialize_agent_messages
+from .agent_utils import json_input, serialize_agent_messages
 
 logger = logging.getLogger(__name__)
+
+# Legacy SSE + persisted assistant row — distinct from the board-ready message Celery sends later.
+MIRO_LEGACY_BG_QUEUED_MESSAGE = (
+    "Queued Miro board generation — we'll notify you here when the board is ready."
+)
 
 
 def _create_agent_status_message(session, content, *, event_type, message_type='text', **metadata):
@@ -127,76 +132,159 @@ def _call_llm(client, spreadsheet_data):
     return json.loads(text)
 
 
-def _get_dify_config():
-    """Return Dify API config if configured, else None."""
-    api_url = getattr(settings, 'DIFY_API_URL', os.environ.get('DIFY_API_URL'))
-    api_key = getattr(settings, 'DIFY_API_KEY', os.environ.get('DIFY_API_KEY'))
-    if api_url and api_key:
-        return {'url': api_url, 'key': api_key}
-    return None
+_ANALYSIS_SYSTEM_PROMPT = """\
+You are a data analysis expert. Analyze the provided spreadsheet data and identify performance anomalies.
+
+{criteria_block}
+
+You MUST return ONLY valid JSON (no markdown, no explanation, no code fences) with this exact structure:
+
+{
+  "anomalies": [
+    {
+      "metric": "one of: ROAS, CPA, CTR, CONVERSION_RATE, REVENUE, PURCHASES, CLICKS, IMPRESSIONS, CPC, CPM, AD_SPEND, AOV",
+      "movement": "one of: SHARP_DECREASE, MODERATE_DECREASE, SLIGHT_DECREASE, SHARP_INCREASE, MODERATE_INCREASE, SLIGHT_INCREASE, VOLATILE, UNEXPECTED_SPIKE, UNEXPECTED_DROP, NO_SIGNIFICANT_CHANGE",
+      "scope_type": "one of: CAMPAIGN, AD_SET, AD, CHANNEL, AUDIENCE, REGION",
+      "scope_value": "name of the affected item",
+      "delta_value": -35.0,
+      "delta_unit": "one of: PERCENT, CURRENCY, ABSOLUTE",
+      "period": "one of: LAST_7_DAYS, LAST_3_DAYS, LAST_24_HOURS, LAST_14_DAYS, LAST_30_DAYS",
+      "description": "Human-readable description of the anomaly"
+    }
+  ],
+  "suggested_decision": {
+    "title": "Short title for the decision",
+    "context_summary": "Background context explaining why this decision is needed",
+    "reasoning": "Detailed reasoning for the recommended action",
+    "risk_level": "one of: LOW, MEDIUM, HIGH",
+    "confidence": 4,
+    "options": [
+      {"text": "Option description", "order": 0}
+    ]
+  },
+  "recommended_tasks": [
+    {
+      "type": "one of: optimization, alert, asset, execution, budget, report, scaling, communication, retrospective, experiment, platform_policy_update",
+      "summary": "Short task title (max 255 chars)",
+      "description": "2-4 sentence actionable description: why this task was created, what specifically needs to be done, and what success looks like",
+      "priority": "one of: HIGH, MEDIUM, LOW"
+    }
+  ]
+}
+
+Rules:
+- Suggest at least 2 options and at most 4 for the decision
+- Suggest 1-5 tasks based on the anomalies found
+- If no anomalies found, return empty anomalies array with a simple "no issues" decision
+- confidence must be an integer from 1 to 5
+- Return ONLY the JSON object, nothing else\
+"""
+
+_CRITERIA_WITH_BLOCK = """\
+Use the following dataset-specific criteria to guide your analysis. These criteria were automatically \
+generated from the column names and define what valid data looks like and what counts as anomalous:
+
+{criteria_text}
+
+Apply these rules strictly when detecting anomalies and setting thresholds.\
+"""
+
+_NO_CRITERIA_BLOCK = """\
+No predefined criteria were provided. Infer appropriate analysis rules from the column names and data \
+values. Look for outliers, zero values where positives are expected, ratios that are mathematically \
+impossible, and any metric that deviates significantly from the rest of the dataset.\
+"""
 
 
-def _call_dify(spreadsheet_data, user_id=None):
-    """Call Dify workflow API to analyze spreadsheet data.
-
-    Dify workflows accept inputs and return structured outputs.
-    Expected workflow: Input (spreadsheet_data JSON) → LLM analysis → structured output.
-    """
-    config = _get_dify_config()
-    if not config:
-        raise RuntimeError("Dify not configured (DIFY_API_URL / DIFY_API_KEY missing)")
-
+def _build_criteria_text(success_criteria) -> tuple[str, list]:
+    """Parse success_criteria and return (criteria_text, key_columns)."""
+    if not success_criteria:
+        return '', []
     try:
-        outputs = run_dify_workflow(
-            api_url=config['url'],
-            api_key=config['key'],
-            inputs={
-                'spreadsheet_data': json_input(spreadsheet_data),
-            },
-            user_id=user_id,
-        )
-    except requests.HTTPError as e:
-        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
-        logger.error(f"Dify API error: HTTP {status_code}")
-        raise RuntimeError(f"Dify API returned {status_code}") from e
-
-    # The workflow should return our expected JSON structure.
-    # It may be in a 'result' or 'text' key, or directly as structured data.
-    if isinstance(outputs, dict):
-        # If the output has our expected keys directly
-        if 'anomalies' in outputs:
-            return outputs
-        # If wrapped in a 'result' or 'text' key
-        for key in ('result', 'text', 'output', 'analysis'):
-            val = outputs.get(key)
-            if val:
-                if isinstance(val, str):
-                    try:
-                        return json.loads(val)
-                    except json.JSONDecodeError:
-                        pass
-                elif isinstance(val, dict) and 'anomalies' in val:
-                    return val
-
-    # Fallback: try to parse the entire output as our structure
-    logger.warning(f"Unexpected Dify output format, falling back. Keys: {list(outputs.keys()) if isinstance(outputs, dict) else type(outputs)}")
-    raise RuntimeError("Dify returned unexpected output format")
+        if isinstance(success_criteria, str):
+            criteria = json.loads(success_criteria)
+        else:
+            criteria = success_criteria
+        key_cols = criteria.get('key_columns', [])
+        lines = [f"Dataset type: {criteria.get('schema_type', 'unknown')}"]
+        for c in criteria.get('criteria', []):
+            if c.get('anomaly_rule'):
+                lines.append(f"- {c['column']}: {c['anomaly_rule']}")
+        if criteria.get('analysis_goals'):
+            lines.append('Analysis goals:')
+            for g in criteria['analysis_goals']:
+                lines.append(f'  * {g}')
+        return '\n'.join(lines), key_cols
+    except (json.JSONDecodeError, TypeError):
+        return '', []
 
 
-def _run_analysis(spreadsheet_data, user_id=None):
-    """Run analysis using the best available provider: Dify > Claude.
+def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
+    """Mirror the Dify code-node preprocessing: return (column_summary, cleaned_data, criteria_text)."""
+    criteria_text, key_cols = _build_criteria_text(success_criteria)
+
+    all_rows = []
+    columns_info = []
+    for sheet in spreadsheet_data.get('sheets', []):
+        columns = sheet.get('columns', [])
+        columns_info.extend(columns)
+        key_cols_to_use = key_cols if key_cols else columns
+        for row in sheet.get('rows', []):
+            clean_row = {k: v for k, v in row.items() if k in key_cols_to_use}
+            if clean_row:
+                all_rows.append(clean_row)
+
+    limited = all_rows[:50]
+    column_summary = (
+        f"Spreadsheet: {spreadsheet_data.get('name', 'Unknown')}, "
+        f"Total rows: {len(all_rows)}, Showing: {len(limited)}, "
+        f"Columns: {list(set(columns_info))}"
+    )
+    return column_summary, json.dumps(limited, default=str), criteria_text
+
+
+def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None):
+    """Call Gemini to analyze spreadsheet data."""
+    from .gemini_client import call_gemini_json
+
+    column_summary, cleaned_data, criteria_text = _preprocess_spreadsheet(
+        spreadsheet_data, success_criteria
+    )
+
+    criteria_block = (
+        _CRITERIA_WITH_BLOCK.replace("{criteria_text}", criteria_text)
+        if criteria_text
+        else _NO_CRITERIA_BLOCK
+    )
+    system_prompt = _ANALYSIS_SYSTEM_PROMPT.replace("{criteria_block}", criteria_block)
+    user_prompt = (
+        f"Data summary: {column_summary}\n\n"
+        f"Analyze the following data and identify anomalies:\n\n{cleaned_data}"
+    )
+
+    logger.info("Calling Gemini for spreadsheet analysis user_id=%s", user_id)
+    return call_gemini_json(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        temperature=0.3,
+        timeout=300,
+    )
+
+
+def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None):
+    """Run analysis using Gemini, with Claude as fallback.
 
     Raises RuntimeError if no provider is configured or all providers fail.
     """
-    # 1. Try Dify first if configured
-    dify_config = _get_dify_config()
-    if dify_config:
+    # 1. Try Gemini (primary)
+    from .gemini_client import _get_api_key as _gemini_key
+    if _gemini_key():
         try:
-            return _call_dify(spreadsheet_data, user_id)
+            return _call_gemini_analysis(spreadsheet_data, user_id, success_criteria=success_criteria)
         except Exception as e:
-            logger.error(f"Dify call failed, falling back to Claude: {e}")
+            logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
 
-    # 2. Try Claude API
+    # 2. Try Claude API (fallback)
     client = _get_llm_client()
     if client:
         try:
@@ -206,13 +294,13 @@ def _run_analysis(spreadsheet_data, user_id=None):
 
     # 3. No LLM available
     raise RuntimeError(
-        "No analysis provider available. Configure DIFY_API_URL/DIFY_API_KEY "
+        "No analysis provider available. Configure GEMINI_API_KEY "
         "or ANTHROPIC_API_KEY to enable analysis."
     )
 
 
 def _serialize_project_members(project, excluded_users=None):
-    """Return a minimal project member list for Dify follow-up disambiguation."""
+    """Return a minimal project member list for LLM follow-up disambiguation."""
     from core.models import ProjectMember
 
     excluded_user_ids = {
@@ -248,8 +336,8 @@ def _coerce_json(value):
         return value
 
 
-def _normalize_dify_chat_output(output):
-    """Normalize Dify follow-up output to {status, text, forwards}."""
+def _normalize_llm_chat_output(output):
+    """Normalize LLM follow-up output to {status, text, forwards}."""
     parsed = _coerce_json(output)
     if isinstance(parsed, dict):
         status = parsed.get('status') or 'completed'
@@ -301,137 +389,140 @@ def _normalize_dify_chat_output(output):
     return None
 
 
-def _call_dify_chat(
+_FOLLOWUP_SYSTEM_PROMPT = """\
+You are the MediaJira post-analysis follow-up assistant.
+
+Your job is limited to one follow-up after an analysis has already been completed.
+
+You must:
+1. Read the analysis result and the chat history.
+2. Produce a clear user-facing reply in plain business language.
+3. Optionally prepare structured forwards when the user explicitly asks to forward or notify project members.
+
+You must not:
+- create decisions
+- create tasks
+- invent project members
+- guess ambiguous recipients
+
+Important input rules:
+- The chat history is a serialized transcript with role-based labels such as [user]: and [assistant]:.
+- Do not expect usernames inside the transcript.
+- current_username is the exact username of the current user when available.
+- Treat the final [user]: turn as the latest follow-up request.
+- If the final user request says "me", "myself", or "myself in chat", resolve the recipient to current_username.
+- If forwarding is requested, identify recipients only from project_members.
+
+Output rules:
+- Return valid JSON only.
+- Do not wrap the JSON in markdown fences.
+- The JSON schema must be:
+  {
+    "status": "completed" | "needs_clarification",
+    "text": "string",
+    "forwards": [
+      {
+        "username": "exact project username only",
+        "content": "string"
+      }
+    ]
+  }
+- "text" is always required.
+- "forwards" must always be present and be an array.
+- Use "completed" when the request has been fully handled.
+- Use "needs_clarification" when forwarding was requested but the recipient is missing, ambiguous, or not uniquely identifiable from project_members.
+- Only use exact usernames that exist in project_members.
+- Only ask for clarification on "me" or "myself" if current_username is missing, empty, or not found in project_members.
+- Never use first name or last name alone as a recipient identifier.
+- If the user only wants explanation or summarization, return forwards as [].\
+"""
+
+
+def _call_gemini_chat(
     chat_messages,
     user_id=None,
     analysis_result=None,
     project_members=None,
     current_username='',
 ):
-    """Call Dify chat workflow API with conversation context."""
-    api_url = getattr(settings, 'DIFY_API_URL', '') or os.environ.get('DIFY_API_URL', '')
-    api_key = getattr(settings, 'DIFY_CHAT_API_KEY', '') or os.environ.get('DIFY_CHAT_API_KEY', '')
-    if not api_url or not api_key:
-        raise RuntimeError("Dify chat not configured (DIFY_API_URL / DIFY_CHAT_API_KEY missing)")
+    """Call Gemini for post-analysis follow-up. Replaces _call_dify_chat."""
+    from .gemini_client import call_gemini_json
+
+    user_prompt = (
+        f"Chat history:\n  {chat_messages}\n\n"
+        f"Analysis result JSON:\n  {json_input(analysis_result) if analysis_result else '{}'}\n\n"
+        f"Project members JSON:\n  {json_input(project_members or [])}\n\n"
+        f"Current username:\n  {current_username or ''}\n\n"
+        f"Return valid JSON only."
+    )
 
     try:
-        outputs = run_dify_workflow(
-            api_url=api_url,
-            api_key=api_key,
-            inputs={
-                'chat_messages': chat_messages,
-                'analysis_result': json_input(analysis_result) if analysis_result else '',
-                'project_members': json_input(project_members or []),
-                'current_username': current_username or '',
-            },
-            user_id=user_id,
+        parsed = call_gemini_json(
+            system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            temperature=0.5,
+            timeout=120,
         )
-    except requests.HTTPError as e:
-        status_code = getattr(getattr(e, 'response', None), 'status_code', None)
-        logger.error(f"Dify chat API error: HTTP {status_code}")
-        raise RuntimeError(f"Dify chat API returned {status_code}") from e
+    except Exception as e:
+        logger.error("Gemini chat call failed: %s", e)
+        raise RuntimeError(f"Gemini chat failed: {e}") from e
 
-    if isinstance(outputs, dict):
-        candidates = [outputs]
-        for key in ('result', 'text', 'output', 'answer'):
-            val = outputs.get(key)
-            if val:
-                candidates.append(val)
-        for candidate in candidates:
-            normalized = _normalize_dify_chat_output(candidate)
-            if normalized:
-                return normalized
-    else:
-        normalized = _normalize_dify_chat_output(outputs)
-        if normalized:
-            return normalized
+    normalized = _normalize_llm_chat_output(parsed)
+    if normalized:
+        return normalized
 
-    # Extract text reply and forwards
-    reply = ''
-    forwards = []
-
-    if isinstance(outputs, dict):
-        for key in ('result', 'text', 'output', 'answer'):
-            val = outputs.get(key)
-            if val and isinstance(val, str):
-                # Try to parse as JSON — Dify may wrap {text, forwards} in a string
-                try:
-                    parsed = json.loads(val)
-                    if isinstance(parsed, dict) and 'text' in parsed:
-                        reply = parsed['text']
-                        ft = parsed.get('forwards', [])
-                        if isinstance(ft, str):
-                            try:
-                                ft = json.loads(ft)
-                            except (json.JSONDecodeError, TypeError):
-                                ft = []
-                        if isinstance(ft, list):
-                            forwards = ft
-                        break
-                except (json.JSONDecodeError, TypeError):
-                    pass
-                # Not JSON or no 'text' key — use as plain reply
-                reply = val
-                break
-    elif isinstance(outputs, str):
-        try:
-            parsed = json.loads(outputs)
-            if isinstance(parsed, dict) and 'text' in parsed:
-                reply = parsed['text']
-                ft = parsed.get('forwards', [])
-                if isinstance(ft, str):
-                    try:
-                        ft = json.loads(ft)
-                    except (json.JSONDecodeError, TypeError):
-                        ft = []
-                if isinstance(ft, list):
-                    forwards = ft
-        except (json.JSONDecodeError, TypeError):
-            reply = outputs
-
-    if not reply:
-        logger.warning(f"Unexpected Dify chat output format: {type(outputs)}")
-        raise RuntimeError("Dify chat returned unexpected output format")
-
-    # Fallback: if forwards not extracted above, check outputs directly
-    if not forwards and isinstance(outputs, dict):
-        ft = outputs.get('forwards', [])
-        if isinstance(ft, str):
-            try:
-                ft = json.loads(ft)
-            except (json.JSONDecodeError, TypeError):
-                ft = []
-        if isinstance(ft, list):
-            forwards = ft
-
-    return {"reply": reply, "forwards": forwards}
+    raise RuntimeError("Gemini chat returned unexpected output format")
 
 
 def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
-    """Generate and persist a Miro board from an existing workflow run."""
-    from .miro_board_service import create_board_from_snapshot
+    """Generate Miro snapshot (Gemini), then persist (optionally via approval gate)."""
     from .miro_generation import (
         build_miro_generation_context_from_run,
-        call_dify_miro_generator,
+        call_gemini_miro_generator,
     )
+    from .approval_gate import KIND_MIRO_BOARD, request_external_commit
+    from .miro_board_service import create_board_from_snapshot
 
     context = build_miro_generation_context_from_run(
         session=orchestrator.session,
         workflow_run=workflow_run,
     )
-    snapshot = call_dify_miro_generator(context, user_id=orchestrator.user.id)
-    board, persisted_snapshot = create_board_from_snapshot(
-        project=orchestrator.project,
-        session=orchestrator.session,
-        workflow_run=workflow_run,
-        snapshot=snapshot,
+    snapshot = call_gemini_miro_generator(
+        context,
+        user_id=str(orchestrator.user.id),
     )
 
-    workflow_run.miro_snapshot = persisted_snapshot
-    workflow_run.miro_board = board
-    workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
+    # If approval isn't required for the session, persist immediately without gating.
+    if not bool(getattr(orchestrator.session, 'approval_required', False)):
+        board, persisted_snapshot = create_board_from_snapshot(
+            project=orchestrator.project,
+            session=orchestrator.session,
+            workflow_run=workflow_run,
+            snapshot=snapshot,
+        )
+        workflow_run.miro_snapshot = persisted_snapshot
+        workflow_run.miro_board = board
+        workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
+        return persisted_snapshot, board
 
-    return persisted_snapshot, board
+    gate = request_external_commit(
+        orchestrator=orchestrator,
+        workflow_run=workflow_run,
+        step_execution=None,
+        kind=KIND_MIRO_BOARD,
+        draft={'snapshot': snapshot},
+        commit_context={
+            'workflow_run_id': str(workflow_run.id),
+            'merge_output': {},
+        },
+    )
+    if gate.paused:
+        workflow_run.miro_snapshot = snapshot
+        workflow_run.save(update_fields=['miro_snapshot', 'updated_at'])
+        return snapshot, None
+
+    workflow_run.refresh_from_db()
+    return workflow_run.miro_snapshot, workflow_run.miro_board
 
 
 def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
@@ -444,6 +535,8 @@ def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
         orchestrator.session.id,
     )
     generate_miro_board_for_workflow_run_task.delay(str(workflow_run.id))
+
+
 def _get_or_create_bot_private_chat(bot, target_user, project):
     """Find or create a private chat with exactly 2 participants: bot and target.
 
@@ -564,12 +657,104 @@ class AgentOrchestrator:
         self.project = project
         self.session = session
 
+    def resolve_external_approval_stream(
+        self,
+        approval_id,
+        decision,
+        draft=None,
+        destination=None,
+    ):
+        """Complete or reject a pending external commit; resume workflow when applicable."""
+        from django.utils import timezone as tz
+
+        from .approval_gate import resolve_pending
+        from .models import AgentPendingExternalApproval
+        from miro.models import Board
+
+        try:
+            result = resolve_pending(
+                orchestrator=self,
+                pending_id=str(approval_id),
+                decision=decision,
+                draft=draft or {},
+                destination=destination,
+            )
+        except ValueError as e:
+            yield {'type': 'error', 'content': str(e)}
+            return
+
+        for ev in result.sse_events:
+            yield ev
+
+        try:
+            pending = AgentPendingExternalApproval.objects.get(
+                id=approval_id, session=self.session, is_deleted=False,
+            )
+        except AgentPendingExternalApproval.DoesNotExist:
+            return
+
+        wr = pending.workflow_run
+        ex = pending.step_execution
+
+        if decision == 'reject':
+            if wr:
+                wr.status = 'failed'
+                wr.error_message = 'External action rejected by user.'
+                wr.save(update_fields=['status', 'error_message', 'updated_at'])
+            if ex:
+                ex.status = 'failed'
+                ex.error_message = 'Rejected by user'
+                ex.completed_at = tz.now()
+                ex.save(update_fields=['status', 'error_message', 'completed_at', 'updated_at'])
+            return
+
+        if ex and wr and wr.workflow_definition_id:
+            ex.status = 'completed'
+            ex.output_data = result.output_data
+            ex.completed_at = tz.now()
+            ex.save(update_fields=['status', 'output_data', 'completed_at', 'updated_at'])
+
+            wf_patch = result.workflow_run_patch or {}
+            uf = ['status', 'current_step_order', 'updated_at', 'error_message']
+            wr.error_message = None
+            if 'created_tasks' in wf_patch:
+                wr.created_tasks = wf_patch['created_tasks']
+                uf.append('created_tasks')
+            if wf_patch.get('miro_board_id'):
+                wr.miro_board = Board.objects.get(id=wf_patch['miro_board_id'])
+                uf.append('miro_board')
+            if wf_patch.get('miro_snapshot') is not None:
+                wr.miro_snapshot = wf_patch['miro_snapshot']
+                uf.append('miro_snapshot')
+
+            wr.status = 'analyzing'
+            wr.current_step_order = ex.step_order + 1
+            wr.save(update_fields=uf)
+
+            yield from self._execute_steps(wr, result.output_data or {})
+
     def handle_message(self, message, spreadsheet_id=None, csv_filename=None,
-                       action=None, file_id=None, calendar_context=None, workflow_id=None):
+                       action=None, file_id=None, calendar_context=None,
+                       workflow_id=None, column_mapping=None,
+                       approval_id=None, approval_decision=None,
+                       approval_draft=None):
         """Main entry point. Routes calendar context first, then workflow engine or legacy logic.
 
         Yields SSE chunks as dicts.
         """
+        if action == 'resolve_external_approval':
+            if not approval_id or not approval_decision:
+                yield {'type': 'error', 'content': 'approval_id and approval_decision are required.'}
+                return
+            yield from self.resolve_external_approval_stream(
+                approval_id,
+                approval_decision,
+                draft=approval_draft,
+                destination=None,
+            )
+            yield {'type': 'done'}
+            return
+
         # --- Calendar context takes priority over all other routing ---
         if calendar_context:
             yield from self.answer_calendar_question(message, calendar_context)
@@ -591,6 +776,22 @@ class AgentOrchestrator:
                 yield {"type": "done"}
                 return
 
+        # Resume after user confirms / edits the detected column mapping.
+        if action == 'confirm_columns':
+            latest_run = self.session.workflow_runs.filter(
+                is_deleted=False
+            ).order_by('-created_at').first()
+
+            if latest_run and latest_run.workflow_definition:
+                # Inject the user-approved mapping so NormalizeDataExecutor
+                # can pick it up from input_data.
+                extra = {'column_mapping': column_mapping} if column_mapping else {}
+                yield from self._resume_workflow(latest_run, extra_input=extra)
+            else:
+                yield {"type": "error", "content": "No paused workflow to confirm."}
+            yield {"type": "done"}
+            return
+
         if action == 'generate_miro':
             latest_run = self.session.workflow_runs.filter(
                 is_deleted=False
@@ -600,10 +801,11 @@ class AgentOrchestrator:
             return
 
         if action == 'distribute_message':
-            yield {
-                "type": "text",
-                "content": "Message distribution is being configured. This feature will be available soon.",
-            }
+            latest_run = self.session.workflow_runs.filter(
+                analysis_result__isnull=False,
+                is_deleted=False,
+            ).order_by('-created_at').first()
+            yield from self._distribute_message(latest_run)
             yield {"type": "done"}
             return
 
@@ -820,36 +1022,50 @@ class AgentOrchestrator:
         }
         calendar_data_str = json.dumps(calendar_payload, ensure_ascii=False)
 
-        # Call Dify Calendar Assistant workflow
-        dify_api_key = getattr(settings, 'DIFY_CALENDAR_API_KEY', '') or os.environ.get('DIFY_CALENDAR_API_KEY', '')
-        dify_api_url = getattr(settings, 'DIFY_API_URL', '') or os.environ.get('DIFY_API_URL', 'https://api.dify.ai')
-
-        if not dify_api_key:
-            yield {"type": "error", "content": "Calendar AI is not configured. Please set DIFY_CALENDAR_API_KEY."}
+        # Call Gemini Calendar Assistant
+        from .gemini_client import call_gemini, _get_api_key as _gemini_key
+        if not _gemini_key():
+            yield {"type": "error", "content": "Calendar AI is not configured. Please set GEMINI_API_KEY."}
             return
 
+        _calendar_system_prompt = (
+            "You are a helpful calendar assistant. You answer questions about the user's upcoming events "
+            "and help them create new calendar events when asked.\n\n"
+            "You will receive calendar_data (JSON with current_time_local, user_timezone, and events list) "
+            "and the user's question.\n\n"
+            "Return ONLY valid JSON (no markdown, no explanation) with this structure:\n"
+            "{\n"
+            '  "answer": "your plain-language response to the user",\n'
+            '  "create_events": [\n'
+            "    {\n"
+            '      "title": "event title",\n'
+            '      "start_datetime": "YYYY-MM-DDTHH:MM:SS",\n'
+            '      "end_datetime": "YYYY-MM-DDTHH:MM:SS",\n'
+            '      "location": "optional location",\n'
+            '      "description": "optional description"\n'
+            "    }\n"
+            "  ]\n"
+            "}\n\n"
+            "Rules:\n"
+            "- Always include 'answer'.\n"
+            "- Only include 'create_events' entries when the user explicitly asks to create or schedule an event.\n"
+            "- If no events to create, return create_events as [].\n"
+            "- Datetimes must be in the user's timezone as shown in calendar_data."
+        )
+
         try:
-            resp = requests.post(
-                f"{dify_api_url}/v1/workflows/run",
-                headers={
-                    "Authorization": f"Bearer {dify_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "inputs": {
-                        "calendar_data": calendar_data_str,
-                        "user_question": message,
-                    },
-                    "response_mode": "blocking",
-                    "user": str(self.user.id),
-                },
+            raw_answer = call_gemini(
+                system_prompt=_calendar_system_prompt,
+                user_prompt=(
+                    f"Calendar data:\n{calendar_data_str}\n\n"
+                    f"User question: {message}\n\n"
+                    f"Return JSON only."
+                ),
+                temperature=0.3,
                 timeout=90,
             )
-            resp.raise_for_status()
-            result = resp.json()
-            raw_answer = result.get("data", {}).get("outputs", {}).get("answer", "")
         except Exception as e:
-            logger.error(f"Dify calendar workflow error: {e}")
+            logger.error(f"Gemini calendar workflow error: {e}")
             yield {"type": "error", "content": "Failed to get AI response. Please try again."}
             return
 
@@ -882,31 +1098,55 @@ class AgentOrchestrator:
             events_to_create = []
             had_creation_intent = False
 
-        # Create all suggested events
         org_id = getattr(self.user, 'organization_id', None)
         created_count = 0
         failed_count = 0
+        calendar_refresh_emitted = False
         if events_to_create and org_id:
-            for event_spec in events_to_create:
-                if not isinstance(event_spec, dict):
-                    continue
-                event_id_created = self._create_calendar_event(org_id, event_spec, user_tz=user_tz)
-                if event_id_created:
-                    created_count += 1
-                else:
-                    failed_count += 1
+            from .approval_gate import KIND_CALENDAR_EVENT, request_external_commit
 
-            if created_count:
-                answer_text += f"\n\n✅ {created_count} calendar event{'s' if created_count != 1 else ''} created successfully."
-            if failed_count:
-                answer_text += f"\n⚠️ {failed_count} event{'s' if failed_count != 1 else ''} could not be created automatically."
+            draft_events = [e for e in events_to_create if isinstance(e, dict)]
+            gate = request_external_commit(
+                orchestrator=self,
+                workflow_run=None,
+                step_execution=None,
+                kind=KIND_CALENDAR_EVENT,
+                draft={'events': draft_events},
+                commit_context={
+                    'organization_id': str(org_id),
+                    'user_timezone': user_tz_name,
+                },
+            )
+            for ev in gate.sse_events:
+                yield ev
+                if ev.get('type') == 'calendar_updated':
+                    calendar_refresh_emitted = True
+            if gate.paused:
+                answer_text += (
+                    '\n\n⏸ Event creation is waiting for your approval '
+                    'in the approval panel.'
+                )
+            else:
+                wf = gate.workflow_run_patch or {}
+                created_ids = wf.get('created_event_ids') or []
+                created_count = len(created_ids)
+                failed_count = max(0, len(draft_events) - created_count)
+                if created_count:
+                    answer_text += (
+                        f"\n\n✅ {created_count} calendar event"
+                        f"{'s' if created_count != 1 else ''} created successfully."
+                    )
+                if failed_count:
+                    answer_text += (
+                        f"\n\n⚠️ {failed_count} event"
+                        f"{'s' if failed_count != 1 else ''} could not be created automatically."
+                    )
 
         yield {
             "type": "text",
             "content": answer_text,
         }
-        if created_count:
-            # Notify the calendar page to refresh
+        if created_count and not calendar_refresh_emitted:
             yield {"type": "calendar_updated"}
         elif not had_creation_intent:
             # Only invite when the user asked a general calendar question,
@@ -1121,6 +1361,65 @@ class AgentOrchestrator:
             "data": {"workflow_run_id": str(workflow_run.id)},
         }
 
+    def _distribute_message(self, workflow_run):
+        """Send analysis summary + tasks to all project members via bot private chat."""
+        if not workflow_run or not workflow_run.analysis_result:
+            yield {"type": "error", "content": "No analysis found to distribute."}
+            return
+
+        project = self.session.project
+        sender = self.session.user
+
+        # Build summary message
+        analysis = workflow_run.analysis_result
+        anomalies = analysis.get("anomalies", [])
+        suggested = analysis.get("suggested_decision", {})
+        tasks = analysis.get("recommended_tasks", [])
+
+        lines = [f"📊 Analysis Summary — {project.name}"]
+        lines.append("")
+
+        if anomalies:
+            lines.append("⚠️ Anomalies detected:")
+            for a in anomalies[:5]:
+                lines.append(f"  • {a.get('description', str(a))}")
+
+        if suggested:
+            lines.append("")
+            lines.append(f"🎯 Suggested Decision: {suggested.get('title', '')}")
+
+        if tasks:
+            lines.append("")
+            lines.append("✅ Recommended Tasks:")
+            for t in tasks[:5]:
+                priority = t.get("priority", "")
+                title = t.get("title") or t.get("summary", "")
+                lines.append(f"  • [{priority}] {title}" if priority else f"  • {title}")
+
+        content = "\n".join(lines)
+
+        # Get all active project members except the sender
+        members = _serialize_project_members(project, excluded_users=[sender])
+        if not members:
+            yield {"type": "text", "content": "No other project members to notify."}
+            return
+
+        forwards = [{"username": m["username"], "content": content} for m in members]
+        from .approval_gate import KIND_DISTRIBUTE_BULK, request_external_commit
+
+        gate = request_external_commit(
+            orchestrator=self,
+            workflow_run=workflow_run,
+            step_execution=None,
+            kind=KIND_DISTRIBUTE_BULK,
+            draft={'forwards': forwards, 'body': content},
+            commit_context={},
+        )
+        for ev in gate.sse_events:
+            yield ev
+        if gate.paused:
+            return
+
     def create_decision_draft(self, analysis_result, workflow_run=None):
         """Create a Decision draft with Signals and Options from analysis."""
         yield {"type": "text", "content": "Creating decision pre-draft..."}
@@ -1217,41 +1516,31 @@ class AgentOrchestrator:
             yield {"type": "error", "content": "No recommended tasks found in analysis."}
             return
 
-        # If a decision exists, link tasks to it; otherwise leave unlinked
         decision = workflow_run.decision
-        if decision:
-            decision_ct = ContentType.objects.get_for_model(Decision)
-            link_kwargs = {
-                "content_type": decision_ct,
-                "object_id": str(decision.id),
-            }
-            desc_suffix = f" (Decision: {decision.title})"
-        else:
-            link_kwargs = {}
-            desc_suffix = ""
+        from .approval_gate import KIND_TASK, request_external_commit
 
-        task_ids = []
-        for task_data in recommended_tasks:
-            summary = task_data.get("summary", "AI Agent Generated Task")[:255]
-            task = Task.objects.create(
-                summary=summary,
-                description=f"Auto-generated from AI analysis{desc_suffix}",
-                type=task_data.get("type", "optimization"),
-                priority=task_data.get("priority", "MEDIUM"),
-                project=self.project,
-                owner=self.user,
-                **link_kwargs,
-            )
-            task_ids.append(task.id)
+        draft = {'recommended_tasks': recommended_tasks}
+        commit_context = {
+            'input_data': {'analysis_result': analysis},
+            'analysis_result': analysis,
+            'decision_id': decision.id if decision else None,
+        }
+        gate = request_external_commit(
+            orchestrator=self,
+            workflow_run=workflow_run,
+            step_execution=None,
+            kind=KIND_TASK,
+            draft=draft,
+            commit_context=commit_context,
+        )
+        for ev in gate.sse_events:
+            yield ev
+        if gate.paused:
+            return
 
+        task_ids = (gate.workflow_run_patch or {}).get('created_tasks') or []
         workflow_run.created_tasks = task_ids
         workflow_run.save(update_fields=['created_tasks'])
-
-        yield {
-            "type": "task_created",
-            "content": f"Created {len(task_ids)} tasks.",
-            "data": {"task_ids": task_ids, "decision_id": decision.id if decision else None},
-        }
 
         workflow_run.status = 'completed'
         workflow_run.save(update_fields=['status'])
@@ -1285,7 +1574,12 @@ class AgentOrchestrator:
         ).first()
 
     def _prepare_input_data(self, file_id=None, spreadsheet_id=None, csv_filename=None):
-        """Build spreadsheet_data dict by reusing existing file/csv/spreadsheet parsing."""
+        """Build the initial input_data dict for the workflow engine.
+
+        file_id is included in the returned dict so NormalizeDataExecutor can
+        persist confirmed column mappings and row data to ImportedDataField /
+        ImportedDataRecord without needing a separate DB lookup.
+        """
         import os as _os
 
         if file_id:
@@ -1296,6 +1590,7 @@ class AgentOrchestrator:
             filepath = _os.path.join(csv_dir, _os.path.basename(record.filename))
             return {
                 'spreadsheet_data': file_parser.parse_file_to_json(filepath, record.filename),
+                'file_id': str(file_id),
             }
 
         if spreadsheet_id:
@@ -1319,6 +1614,7 @@ class AgentOrchestrator:
                     'name': record.original_filename,
                     'sheets': [{'name': 'Sheet1', 'columns': columns, 'rows': rows}],
                 },
+                'file_id': str(record.id),
             }
 
         return {}
@@ -1379,9 +1675,19 @@ class AgentOrchestrator:
             }
 
             executor = get_executor(step, workflow_run, self)
+            executor.step_execution = execution
             result = executor.execute(current_data)
 
             if result.success:
+                if getattr(result, 'pause_external_approval', False):
+                    execution.status = 'awaiting'
+                    execution.save(update_fields=['status', 'updated_at'])
+                    workflow_run.status = 'awaiting_external_approval'
+                    workflow_run.save(update_fields=['status', 'updated_at'])
+                    for event in result.sse_events:
+                        yield event
+                    return
+
                 execution.status = 'completed'
                 execution.output_data = result.output_data
                 execution.completed_at = tz.now()
@@ -1414,13 +1720,63 @@ class AgentOrchestrator:
         workflow_run.status = 'completed'
         workflow_run.save()
 
-    def _resume_workflow(self, workflow_run):
-        """Resume a paused workflow from the last completed step's output."""
+    def _legacy_start_miro_background_if_needed(self, workflow_run):
+        """Enqueue Celery job and persist started row at most once per workflow run."""
+        from django.db import transaction
+
+        from .models import AgentMessage, AgentWorkflowRun
+
+        wr_pk = workflow_run.pk
+        with transaction.atomic():
+            # IMPORTANT: do not join the nullable `miro_board` FK while taking a row lock.
+            # Postgres rejects `FOR UPDATE` on the nullable side of an outer join.
+            locked = AgentWorkflowRun.objects.select_for_update().get(pk=wr_pk)
+
+            if getattr(locked, 'miro_board_id', None):
+                # Fetch title without a locking join.
+                title = ''
+                try:
+                    from miro.models import Board
+                    board = Board.objects.filter(id=locked.miro_board_id).only('title').first()
+                    title = (getattr(board, 'title', None) or '') if board else ''
+                except Exception:
+                    title = ''
+                return 'already_exists', locked, title
+
+            dup = AgentMessage.objects.filter(
+                session=self.session,
+                role='assistant',
+                metadata__contains={
+                    'event_type': 'miro_generation_started',
+                    'workflow_run_id': str(locked.id),
+                },
+            ).exists()
+
+            if dup:
+                return 'already_started', locked, None
+
+            _enqueue_miro_generation_for_workflow_run(self, locked)
+            _create_agent_status_message(
+                self.session,
+                MIRO_LEGACY_BG_QUEUED_MESSAGE,
+                event_type='miro_generation_started',
+                workflow_run_id=str(locked.id),
+            )
+            return 'started', locked, None
+
+    def _resume_workflow(self, workflow_run, extra_input=None):
+        """Resume a paused workflow from the last completed step's output.
+
+        extra_input is merged into the input data before execution, allowing
+        callers to inject user-provided values (e.g. confirmed column_mapping).
+        """
         last_execution = workflow_run.step_executions.filter(
             status='completed'
         ).order_by('-step_order').first()
 
         input_data = last_execution.output_data if last_execution else {}
+        if extra_input:
+            input_data = {**input_data, **extra_input}
         yield from self._execute_steps(workflow_run, input_data)
 
     def _legacy_confirm(self, action, workflow_run):
@@ -1441,33 +1797,35 @@ class AgentOrchestrator:
             if not workflow_run or not workflow_run.analysis_result:
                 yield {"type": "error", "content": "No analysis found to generate a Miro board from."}
                 return
-            if getattr(workflow_run, "miro_board_id", None):
+            try:
+                outcome, locked_run, board_title = self._legacy_start_miro_background_if_needed(
+                    workflow_run
+                )
+            except Exception as e:
+                logger.exception(
+                    "Failed to enqueue legacy Miro generation for workflow_run=%s",
+                    getattr(workflow_run, 'id', workflow_run),
+                )
+                yield {"type": "error", "content": f"Failed to start Miro generation: {e}"}
+                return
+
+            if outcome == 'already_exists':
                 logger.info(
                     "Generate Miro requested but board already exists for workflow_run=%s board=%s",
-                    workflow_run.id,
-                    workflow_run.miro_board_id,
+                    locked_run.id,
+                    locked_run.miro_board_id,
                 )
                 yield {
                     "type": "text",
-                    "content": f"Miro board already exists: {workflow_run.miro_board.title}",
+                    "content": f"Miro board already exists: {board_title}",
                 }
                 return
-            try:
-                _enqueue_miro_generation_for_workflow_run(self, workflow_run)
-                _create_agent_status_message(
-                    self.session,
-                    "Miro board generation started in background.",
-                    event_type="miro_generation_started",
-                    workflow_run_id=str(workflow_run.id),
-                )
-                yield {
-                    "type": "miro_status",
-                    "content": "Miro board generation started in background.",
-                    "data": {"workflow_run_id": str(workflow_run.id), "status": "running"},
-                }
-            except Exception as e:
-                logger.exception("Failed to enqueue legacy Miro generation for workflow_run=%s", workflow_run.id)
-                yield {"type": "error", "content": f"Failed to start Miro generation: {e}"}
+
+            yield {
+                "type": "miro_status",
+                "content": MIRO_LEGACY_BG_QUEUED_MESSAGE,
+                "data": {"workflow_run_id": str(locked_run.id), "status": "running"},
+            }
 
     def _legacy_handle(self, message, spreadsheet_id=None, csv_filename=None,
                        action=None, file_id=None):
@@ -1530,7 +1888,7 @@ class AgentOrchestrator:
                         self.user.id,
                         len(project_members),
                     )
-                    result = _call_dify_chat(
+                    result = _call_gemini_chat(
                         full_input,
                         user_id=self.user.id,
                         analysis_result=latest_run.analysis_result,
@@ -1555,13 +1913,18 @@ class AgentOrchestrator:
                     yield {"type": "text", "content": reply}
 
                     if forwards:
-                        fwd_results = _forward_to_users(forwards, self.user, self.project)
-                        sent = [r["username"] for r in fwd_results if r["status"] == "sent"]
-                        failed = [r["username"] for r in fwd_results if r["status"] != "sent"]
-                        if sent:
-                            yield {"type": "text", "content": f"Message forwarded to: {', '.join(sent)}"}
-                        if failed:
-                            yield {"type": "text", "content": f"Could not forward to: {', '.join(failed)}"}
+                        from .approval_gate import KIND_FORWARD_MESSAGE, request_external_commit
+
+                        gate = request_external_commit(
+                            orchestrator=self,
+                            workflow_run=latest_run,
+                            step_execution=None,
+                            kind=KIND_FORWARD_MESSAGE,
+                            draft={'forwards': forwards},
+                            commit_context={},
+                        )
+                        for ev in gate.sse_events:
+                            yield ev
                 except Exception as e:
                     logger.error(f"Dify chat call failed: {e}")
                     yield {"type": "error", "content": str(e)}

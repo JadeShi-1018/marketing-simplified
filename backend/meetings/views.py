@@ -1,21 +1,20 @@
 import json
 import logging
-import traceback
-
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.db import DatabaseError, IntegrityError, transaction
-from django.http import Http404
+from django.db import IntegrityError, transaction
+from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
 
 from core.models import Project, ProjectMember
+from meetings.lifecycle import execute_transition, get_available_transitions
 from meetings.models import (
     Meeting,
     AgendaItem,
@@ -23,6 +22,7 @@ from meetings.models import (
     ArtifactLink,
     MeetingTemplate,
     MeetingDocument,
+    MeetingActionItem,
 )
 from meetings.serializers import (
     MeetingSerializer,
@@ -31,8 +31,12 @@ from meetings.serializers import (
     AgendaItemSerializer,
     ParticipantLinkSerializer,
     ArtifactLinkSerializer,
-    MeetingTemplateSerializer,
+    MeetingLifecycleSerializer,
+    TransitionRequestSerializer,
     MeetingDocumentSerializer,
+    MeetingActionItemSerializer,
+    ActionItemConvertSerializer,
+    BulkActionItemConvertSerializer,
 )
 from meetings.services import (
     reorder_agenda_items,
@@ -79,67 +83,6 @@ def _ensure_meeting_document_access(user, meeting: Meeting) -> None:
 class MeetingViewSet(viewsets.ModelViewSet):
     serializer_class = MeetingSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = PageNumberPagination
-
-    def list(self, request, *args, **kwargs):
-        try:
-            return super().list(request, *args, **kwargs)
-        except (Http404, NotFound, PermissionDenied):
-            raise
-        except DatabaseError:
-            logger.exception("Meeting list failed (database)")
-            return Response(
-                {
-                    "detail": "Could not load meetings. If this persists, ensure database migrations are applied for the meetings app.",
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-    def retrieve(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-        except (Http404, NotFound, PermissionDenied):
-            raise
-        except DatabaseError:
-            logger.exception("Meeting retrieve failed (database)")
-            return Response(
-                {
-                    "detail": "Could not load meeting. If this persists, ensure database migrations are applied for the meetings app.",
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
-        instance = self._normalize_meeting_layout(instance)
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
-
-    def _normalize_meeting_layout(self, meeting: Meeting) -> Meeting:
-        lc = meeting.layout_config
-
-        def persist(next_lc):
-            meeting.layout_config = next_lc
-            try:
-                meeting.save(update_fields=["layout_config"])
-            except DatabaseError:
-                logger.exception("Could not persist default layout_config for meeting %s", meeting.pk)
-
-        if lc is None:
-            persist(list(DEFAULT_MEETING_LAYOUT))
-            return meeting
-
-        if isinstance(lc, list):
-            if len(lc) == 0:
-                persist(list(DEFAULT_MEETING_LAYOUT))
-            return meeting
-
-        if isinstance(lc, dict):
-            blocks = lc.get("blocks")
-            if not isinstance(blocks, list) or len(blocks) == 0:
-                persist({**lc, "blocks": list(DEFAULT_MEETING_LAYOUT)})
-            return meeting
-
-        persist(list(DEFAULT_MEETING_LAYOUT))
-        return meeting
 
     def get_project(self) -> Project:
         project_id = self.kwargs.get("project_id")
@@ -204,20 +147,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         project = self.get_project()
-        # If the client doesn't provide a layout_config, initialize it to the default
-        # workspace module order so the editor always has a predictable starting state.
-        lc = serializer.validated_data.get("layout_config")
-        if lc is None:
-            serializer.validated_data["layout_config"] = list(DEFAULT_MEETING_LAYOUT)
-        elif isinstance(lc, list) and len(lc) == 0:
-            serializer.validated_data["layout_config"] = list(DEFAULT_MEETING_LAYOUT)
-        elif isinstance(lc, dict):
-            blocks = lc.get("blocks")
-            if not isinstance(blocks, list) or len(blocks) == 0:
-                serializer.validated_data["layout_config"] = {
-                    **lc,
-                    "blocks": list(DEFAULT_MEETING_LAYOUT),
-                }
         raw_ids = serializer.validated_data.pop("participant_user_ids", None)
         if raw_ids is None:
             participant_user_ids: list[int] = []
@@ -225,7 +154,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
             participant_user_ids = list(dict.fromkeys(int(x) for x in raw_ids))
 
         # Strict mode used to require the client to send ids; create flow no longer asks
-        # for participants on the form — default to the creator so the meeting always has
+        # for participants on the form �?default to the creator so the meeting always has
         # at least one participant when the setting is enabled.
         if getattr(settings, "MEETINGS_REQUIRE_PARTICIPANTS_AT_CREATE", False):
             if len(participant_user_ids) < 1:
@@ -308,7 +237,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
             if isinstance(db_layout_config, str):
                 try:
                     db_layout_config = json.loads(db_layout_config)
-                except:
+                except Exception:
                     pass
             before = {
                 "title": row[0],
@@ -354,7 +283,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
             nested_sections = layout_config.get("nestedSections", [])
             if not isinstance(nested_sections, list):
                 return {}
-            # Map item id -> (section_title, item_text)
             items = {}
             for section in nested_sections:
                 if not isinstance(section, dict):
@@ -428,7 +356,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
         old_item_ids = set(old_items.keys())
         new_item_ids = set(new_items.keys())
 
-        # Find added, removed, and modified items
         added_ids = new_item_ids - old_item_ids
         removed_ids = old_item_ids - new_item_ids
         common_ids = old_item_ids & new_item_ids
@@ -441,7 +368,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
             old_section = old_items[item_id]["section"]
             new_section = new_items[item_id]["section"]
 
-            # Check for text changes (strip whitespace to avoid false positives)
             if old_text.strip() != new_text.strip():
                 modified_items.append({
                     "id": item_id,
@@ -449,7 +375,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     "new_text": new_text.strip(),
                 })
 
-            # Check for section/group name changes
             if old_section.strip() != new_section.strip():
                 section_changes.append({
                     "id": item_id,
@@ -471,7 +396,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     "new_section": new_t,
                 })
 
-        # Handle section name changes.
         # NOTE: item *text* changes (modified_items) are intentionally NOT notified here —
         # they are already handled by AgendaItemViewSet.perform_update via
         # upsert_agenda_item_notification, which creates a MEETING_UPDATED notification
@@ -489,7 +413,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
         # notify_agenda_event. Emitting a second notification from the layout PATCH would
         # produce duplicates for the same logical event.
 
-        # If no changes detected at all, skip notification
         if not changes:
             return
 
@@ -510,6 +433,72 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 action_url=f"/projects/{project.id}/meetings/{meeting.id}",
                 metadata={"project_id": project.id, **changes},
             )
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Deleting a meeting is blocked when it has converted action items, because
+        tasks keep immutable lineage via Task.origin_action_item (PROTECT).
+        Return a clear API error instead of a 500.
+        """
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {
+                    "detail": "This meeting cannot be deleted because it has action items that were converted into tasks. Delete or unlink those tasks first."
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+    @action(detail=True, methods=["get"], url_path="tasks")
+    def meeting_tasks(self, request, project_id=None, pk=None):
+        """Tasks anchored to this meeting via ``MeetingTaskOrigin`` (paginated)."""
+        meeting = self.get_object()
+        _ensure_project_membership(request.user, meeting.project)
+        from meetings.models import MeetingTaskOrigin
+        from task.models import Task
+        from task.serializers import TaskListSerializer
+
+        task_ids = MeetingTaskOrigin.objects.filter(meeting=meeting).values_list(
+            "task_id", flat=True
+        )
+        qs = (
+            Task.objects.filter(id__in=task_ids, project_id=meeting.project_id)
+            .select_related("owner", "project")
+            .order_by("-id")
+        )
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            ser = TaskListSerializer(page, many=True, context={"request": request})
+            return self.get_paginated_response(ser.data)
+        ser = TaskListSerializer(qs, many=True, context={"request": request})
+        return Response(ser.data)
+
+    @action(detail=True, methods=["get"], url_path="lifecycle")
+    def lifecycle(self, request, project_id=None, pk=None):
+        """Return current lifecycle state and available transitions."""
+        meeting = self.get_object()
+        data = {
+            "status": meeting.status,
+            "available_transitions": get_available_transitions(meeting),
+        }
+        serializer = MeetingLifecycleSerializer(data)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="lifecycle/transition")
+    def transition(self, request, project_id=None, pk=None):
+        """Execute a lifecycle transition."""
+        meeting = self.get_object()
+        serializer = TransitionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        updated = execute_transition(meeting, serializer.validated_data["to_state"])
+        return Response(
+            {
+                "status": updated.status,
+                "available_transitions": get_available_transitions(updated),
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class AgendaItemViewSet(viewsets.ModelViewSet):
@@ -794,52 +783,85 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
             )
 
 
-class MeetingTemplateViewSet(viewsets.ModelViewSet):
+class MeetingActionItemViewSet(viewsets.ModelViewSet):
     """
-    Reusable workspace templates for the Meeting editor.
+    Meeting follow-up action items and conversion to executable tasks (SMP-489).
     """
 
-    queryset = MeetingTemplate.objects.all()
-    serializer_class = MeetingTemplateSerializer
+    serializer_class = MeetingActionItemSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = None
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
-    def create(self, request, *args, **kwargs):
-        try:
-            return super().create(request, *args, **kwargs)
-        except APIException:
-            raise
-        except Exception as e:
-            logger.error(traceback.format_exc())
-            body = {"error": str(e)}
-            if settings.DEBUG:
-                body["traceback"] = traceback.format_exc()
-            return Response(body, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    def get_meeting(self) -> Meeting:
+        project_id = self.kwargs.get("project_id")
+        meeting_id = self.kwargs.get("meeting_id")
+        meeting = get_object_or_404(
+            Meeting.objects.select_related("project"),
+            id=meeting_id,
+            project_id=project_id,
+        )
+        _ensure_project_membership(self.request.user, meeting.project)
+        return meeting
+
+    def get_queryset(self):
+        meeting = self.get_meeting()
+        return meeting.action_items.all().order_by("order_index", "id")
 
     def perform_create(self, serializer):
-        # id is generated by the model; keep name + layout_config from request.
-        serializer.save()
+        meeting = self.get_meeting()
+        serializer.save(meeting=meeting)
 
-    def partial_update(self, request, *args, **kwargs):
-        """
-        Upsert style PATCH support.
+    @action(detail=True, methods=["post"], url_path="convert-to-task")
+    def convert_to_task(self, request, project_id=None, meeting_id=None, pk=None):
+        from meetings.action_item_tasks import convert_meeting_action_item_to_task
+        from task.serializers import TaskSerializer
 
-        The frontend previously saved built-in templates keyed by `meetingType` (string),
-        so this view allows updating/creating by pk if it doesn't exist yet.
-        """
-        template_id = kwargs.get("pk")
-        if not template_id:
-            return super().partial_update(request, *args, **kwargs)
-
-        template, _ = MeetingTemplate.objects.get_or_create(
-            id=str(template_id),
-            defaults={"name": str(template_id)},
+        meeting = self.get_meeting()
+        action_item = get_object_or_404(
+            MeetingActionItem,
+            pk=pk,
+            meeting_id=meeting.id,
+        )
+        sz = ActionItemConvertSerializer(data=request.data)
+        sz.is_valid(raise_exception=True)
+        vd = sz.validated_data
+        task = convert_meeting_action_item_to_task(
+            user=request.user,
+            meeting=meeting,
+            action_item=action_item,
+            owner_id=vd.get("owner_id"),
+            due_date=vd.get("due_date"),
+            priority=vd.get("priority"),
+            task_type=vd.get("type", "execution"),
+            current_approver_id=vd.get("current_approver_id"),
+            create_as_draft=vd.get("create_as_draft", False),
+        )
+        return Response(
+            TaskSerializer(task, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
         )
 
-        serializer = self.get_serializer(template, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
+    @action(detail=False, methods=["post"], url_path="bulk-convert-to-task")
+    def bulk_convert_to_task(self, request, project_id=None, meeting_id=None):
+        from meetings.action_item_tasks import bulk_convert_meeting_action_items
+        from task.serializers import TaskSerializer
+
+        meeting = self.get_meeting()
+        sz = BulkActionItemConvertSerializer(data=request.data)
+        sz.is_valid(raise_exception=True)
+        items = [dict(x) for x in sz.validated_data["items"]]
+        tasks = bulk_convert_meeting_action_items(
+            user=request.user,
+            meeting=meeting,
+            items=items,
+        )
+        data = TaskSerializer(tasks, many=True, context={"request": request}).data
+        return Response({"tasks": data}, status=status.HTTP_201_CREATED)
+
+    # Backwards-compat / typo-tolerance: some clients hit ".../bulk-convert-to-tasks/" (plural).
+    @action(detail=False, methods=["post"], url_path="bulk-convert-to-tasks")
+    def bulk_convert_to_tasks(self, request, project_id=None, meeting_id=None):
+        return self.bulk_convert_to_task(request, project_id=project_id, meeting_id=meeting_id)
 
 
 class MeetingDocumentAPIView(APIView):

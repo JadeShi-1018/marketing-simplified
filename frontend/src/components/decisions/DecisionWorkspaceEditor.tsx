@@ -11,6 +11,7 @@ interface DecisionWorkspaceEditorProps {
   errors: Record<string, string | undefined>;
   onChange: (field: string, value: any) => void;
   onOptionsChange: (nextOptions: DecisionOptionDraft[]) => void;
+  focusMode?: boolean;
 }
 
 const riskOptions: DecisionRiskLevel[] = ['LOW', 'MEDIUM', 'HIGH'];
@@ -26,6 +27,7 @@ const DecisionWorkspaceEditor = ({
   errors,
   onChange,
   onOptionsChange,
+  focusMode = false,
 }: DecisionWorkspaceEditorProps) => {
   const handleOptionTextChange = (index: number, value: string) => {
     const next = options.map((option, idx) =>
@@ -64,7 +66,16 @@ const DecisionWorkspaceEditor = ({
 
   return (
     <div className="flex h-full flex-col gap-6 overflow-y-auto px-6 py-6">
-      <section className="space-y-2">
+      <section
+        id="decision-field-contextSummary"
+        className={`space-y-2 transition-all ${
+          focusMode && errors.contextSummary
+            ? 'rounded-lg bg-white p-3 ring-2 ring-red-500 shadow-[0_0_24px_rgba(239,68,68,0.45)]'
+            : focusMode
+            ? 'opacity-30'
+            : ''
+        }`}
+      >
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-900">Context Summary</h3>
           {errors.contextSummary ? (
@@ -77,11 +88,20 @@ const DecisionWorkspaceEditor = ({
           value={contextSummary}
           onChange={(event) => onChange('contextSummary', event.target.value)}
           placeholder="Summarize the decision context and constraints."
-          className="min-h-[120px] w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none"
+          className="min-h-[120px] w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-[#3CCED7] focus:outline-none"
         />
       </section>
 
-      <section className="space-y-3">
+      <section
+        id="decision-field-options"
+        className={`space-y-3 transition-all ${
+          focusMode && (errors.options || errors.selectedOption)
+            ? 'rounded-lg bg-white p-3 ring-2 ring-red-500 shadow-[0_0_24px_rgba(239,68,68,0.45)]'
+            : focusMode
+            ? 'opacity-30'
+            : ''
+        }`}
+      >
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-900">Options</h3>
           {errors.options || errors.selectedOption ? (
@@ -100,7 +120,7 @@ const DecisionWorkspaceEditor = ({
                 type="radio"
                 checked={option.isSelected}
                 onChange={() => handleSelectOption(index)}
-                className="mt-1 h-4 w-4 text-blue-600"
+                className="mt-1 h-4 w-4 text-[#3CCED7]"
               />
               <input
                 type="text"
@@ -133,7 +153,16 @@ const DecisionWorkspaceEditor = ({
         </button>
       </section>
 
-      <section className="space-y-2">
+      <section
+        id="decision-field-reasoning"
+        className={`space-y-2 transition-all ${
+          focusMode && errors.reasoning
+            ? 'rounded-lg bg-white p-3 ring-2 ring-red-500 shadow-[0_0_24px_rgba(239,68,68,0.45)]'
+            : focusMode
+            ? 'opacity-30'
+            : ''
+        }`}
+      >
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-900">Reasoning</h3>
           {errors.reasoning ? (
@@ -144,11 +173,20 @@ const DecisionWorkspaceEditor = ({
           value={reasoning}
           onChange={(event) => onChange('reasoning', event.target.value)}
           placeholder="Explain why the selected option is the right call."
-          className="min-h-[140px] w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none"
+          className="min-h-[140px] w-full rounded-lg border border-gray-200 bg-white px-4 py-3 text-sm text-gray-900 shadow-sm focus:border-[#3CCED7] focus:outline-none"
         />
       </section>
 
-      <section className="grid gap-4 rounded-lg border border-gray-200 bg-white p-4">
+      <section
+        id="decision-field-riskConfidence"
+        className={`grid gap-4 rounded-lg border border-gray-200 bg-white p-4 transition-all ${
+          focusMode && (errors.riskLevel || errors.confidenceScore)
+            ? 'ring-2 ring-red-500 shadow-[0_0_24px_rgba(239,68,68,0.45)]'
+            : focusMode
+            ? 'opacity-30'
+            : ''
+        }`}
+      >
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="grid gap-3">
             <div className="flex items-center justify-between">

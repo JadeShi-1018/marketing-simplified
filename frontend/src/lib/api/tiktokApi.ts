@@ -83,6 +83,10 @@ export const uploadTiktokImage = async (
   return res.data;
 };
 
+export const deleteTiktokMaterial = async (id: number): Promise<void> => {
+  await api.delete(`/api/tiktok/material/delete/${id}/`);
+};
+
 // Ad Draft interfaces and API functions
 export interface AdDraftAssets {
   primaryCreative?: TiktokMaterialItem | null;

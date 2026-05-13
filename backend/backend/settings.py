@@ -35,6 +35,7 @@ ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,0.0.0.0').s
     'lipographic-damon-unshrinkable.ngrok-free.dev',
     'volar-probankruptcy-orval.ngrok-free.dev',
     'christeen-gawkiest-carmelia.ngrok-free.dev',
+    'upload-rinsing-tracing.ngrok-free.dev',
 ]
 
 
@@ -83,12 +84,19 @@ INSTALLED_APPS = [
     'calendars.apps.CalendarConfig',
     'miro.apps.MiroConfig',
     'ad_variations.apps.AdVariationsConfig',
+    'ad_copy_variation',
     'policy.apps.PolicyConfig',
     'campaign.apps.CampaignConfig',
     'slack_integration.apps.SlackIntegrationConfig',
     'agent.apps.AgentConfig',
     'meetings.apps.MeetingsConfig',
     'notifications.apps.NotificationsConfig',
+    'zoom_integration.apps.ZoomIntegrationConfig',
+    'linear_integration.apps.LinearIntegrationConfig',
+    'google_docs_integration.apps.GoogleDocsIntegrationConfig',
+    'google_calendar_integration.apps.GoogleCalendarIntegrationConfig',
+    'facebook_integration.apps.FacebookIntegrationConfig',
+    'meta_ads.apps.MetaAdsConfig',
 ]
 
 MIDDLEWARE = [
@@ -98,6 +106,10 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    # Compress JSON/text responses (big win for bulk endpoints like spreadsheet
+    # readCellRange and batch responses). axios sends Accept-Encoding: gzip by
+    # default so no frontend change needed. Must be placed before CommonMiddleware.
+    'django.middleware.gzip.GZipMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -247,14 +259,17 @@ AGENT_CSV_DIR = config(
     default=os.path.join(BASE_DIR, 'agent_data')
 )
 
-# Dify LLM Platform integration (optional)
-# Base config
+# Gemini API (replaces Dify for all LLM workflow calls)
+GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+
+# Dify LLM Platform integration (kept for reference / backward compat)
 DIFY_API_URL = config('DIFY_API_URL', default='')
 DIFY_API_KEY = config('DIFY_API_KEY', default='')
-# Per-workflow keys
 DIFY_CHAT_API_KEY = config('DIFY_CHAT_API_KEY', default='')
 DIFY_MIRO_API_KEY = config('DIFY_MIRO_API_KEY', default='')
 DIFY_CALENDAR_API_KEY = config('DIFY_CALENDAR_API_KEY', default='')
+DIFY_COLUMN_DETECTION_API_KEY = config('DIFY_COLUMN_DETECTION_API_KEY', default='')
+DIFY_CRITERIA_API_KEY = config('DIFY_CRITERIA_API_KEY', default='')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -271,6 +286,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://lipographic-damon-unshrinkable.ngrok-free.dev",
     "http://volar-probankruptcy-orval.ngrok-free.dev",
     "http://christeen-gawkiest-carmelia.ngrok-free.dev",
+    "https://upload-rinsing-tracing.ngrok-free.dev",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -284,6 +300,7 @@ CSRF_TRUSTED_ORIGINS = [
     "http://christeen-gawkiest-carmelia.ngrok-free.dev",
     "http://lipographic-damon-unshrinkable.ngrok-free.dev",
     "http://volar-probankruptcy-orval.ngrok-free.dev",
+    "https://upload-rinsing-tracing.ngrok-free.dev",
 ]
 
 # Session Configuration for OAuth
@@ -360,7 +377,7 @@ broker_connection_retry_on_startup = True
 CELERY_BEAT_SCHEDULE = {
     'reset-daily-usage': {
         'task': 'stripe_meta.tasks.reset_daily_usage',
-        'schedule': 0.0,  # Run at midnight (00:00) every day
+        'schedule': crontab(hour=0, minute=0),  # Run at midnight (00:00) every day
         'options': {'timezone': 'UTC'}
     },
     'cleanup-expired-tiktok-previews': {
@@ -368,7 +385,26 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=2, minute=0),  # Run daily at 02:00 UTC (low traffic period)
         'options': {'timezone': 'UTC'}
     },
+    'google-calendar-import-every-15-min': {
+        'task': 'google_calendar_integration.tasks.sync_all_google_calendar_imports',
+        'schedule': timedelta(minutes=15),
+        'options': {'timezone': 'UTC'},
+    },
+    'meta-ads-hourly-sync': {
+        'task': 'meta_ads.tasks.sync_all_meta_connections',
+        'schedule': crontab(minute=7),  # offset from other :00 hourly tasks
+        'options': {'timezone': 'UTC'},
+    },
+    'meta-ads-daily-fan-out': {
+        'task': 'meta_ads.tasks.sync_all_active_ad_accounts',
+        'schedule': crontab(hour=6, minute=0),  # daily at 06:00 UTC
+        'options': {'timezone': 'UTC'},
+    },
 }
+
+# Shared secret for the platform-native cron endpoint that triggers the
+# daily Meta ads fan-out. Empty string disables the endpoint (always 401).
+INTERNAL_CRON_SECRET = config('INTERNAL_CRON_SECRET', default='')
 
 # Redis Configuration
 REDIS_HOST = config('REDIS_HOST', default='localhost')
@@ -515,6 +551,15 @@ def _get_google_env(primary_key, fallback_key):
 GOOGLE_OAUTH_CLIENT_ID = _get_google_env('GOOGLE_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_ID')
 GOOGLE_OAUTH_CLIENT_SECRET = _get_google_env('GOOGLE_CLIENT_SECRET', 'GOOGLE_OAUTH_CLIENT_SECRET')
 GOOGLE_OAUTH_REDIRECT_URI = _get_google_env('GOOGLE_OAUTH_REDIRECT_URI', 'GOOGLE_REDIRECT_URI')
+GOOGLE_CALENDAR_OAUTH_REDIRECT_URI = config(
+    'GOOGLE_CALENDAR_OAUTH_REDIRECT_URI',
+    default='http://localhost:8000/api/google-calendar/callback/',
+).strip()
+
+# Notion OAuth Configuration
+NOTION_OAUTH_CLIENT_ID = config('NOTION_CLIENT_ID', default='').strip()
+NOTION_OAUTH_CLIENT_SECRET = config('NOTION_CLIENT_SECRET', default='').strip()
+NOTION_OAUTH_REDIRECT_URI = config('NOTION_OAUTH_REDIRECT_URI', default='').strip()
 
 # Logging Configuration
 import logging
@@ -618,9 +663,27 @@ SLACK_CLIENT_SECRET = config('SLACK_CLIENT_SECRET', default='')
 SLACK_SIGNING_SECRET = config('SLACK_SIGNING_SECRET', default='')
 SLACK_REDIRECT_URI = config('SLACK_REDIRECT_URI', default='http://localhost/slack/callback')
 
+# Facebook / Meta Integration (Marketing API + Facebook Login for Business)
+FB_APP_ID = config('FB_APP_ID', default='')
+FB_APP_SECRET = config('FB_APP_SECRET', default='')
+FB_CONFIG_ID = config('FB_CONFIG_ID', default='')
+FB_API_VERSION = config('FB_API_VERSION', default='v22.0')
+FB_REDIRECT_URI = config('FB_REDIRECT_URI', default='http://localhost/api/facebook_integration/callback/')
+
 # Meetings (SMP-484): when True, creating a meeting requires at least one participant_user_ids entry
 MEETINGS_REQUIRE_PARTICIPANTS_AT_CREATE = config(
     'MEETINGS_REQUIRE_PARTICIPANTS_AT_CREATE',
     default=False,
     cast=bool,
 )
+
+ZOOM_CLIENT_ID     = os.environ.get("ZOOM_CLIENT_ID", "")
+ZOOM_CLIENT_SECRET = os.environ.get("ZOOM_CLIENT_SECRET", "")
+ZOOM_REDIRECT_URI  = os.environ.get("ZOOM_REDIRECT_URI", "")
+# Webhook only: Secret Token from Zoom Marketplace app → Feature → Webhooks (not OAuth client secret).
+ZOOM_WEBHOOK_SECRET_TOKEN = os.environ.get("ZOOM_WEBHOOK_SECRET_TOKEN", "")
+
+# Linear OAuth
+LINEAR_CLIENT_ID = (os.environ.get("LINEAR_CLIENT_ID") or "").strip()
+LINEAR_CLIENT_SECRET = (os.environ.get("LINEAR_CLIENT_SECRET") or "").strip()
+LINEAR_REDIRECT_URI = (os.environ.get("LINEAR_REDIRECT_URI") or "").strip()

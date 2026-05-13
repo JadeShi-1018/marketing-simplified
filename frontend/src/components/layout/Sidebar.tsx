@@ -2,6 +2,7 @@
 import { useState, useEffect, useMemo } from "react";
 import type { FC, ComponentType } from "react";
 import { useChatStore } from "@/lib/chatStore";
+import { useAgentSidePanelStore } from "@/lib/agentSidePanelStore";
 // TODO: In actual projects, uncomment the imports below
 // import Link from 'next/link';
 // For Next.js 13+ App Router, also import:
@@ -18,20 +19,13 @@ import {
   ChevronRight,
   Users,
   BarChart3,
-  FileText,
   FileSpreadsheet,
   CheckSquare,
   Calendar,
   Bell,
   ListTodo,
   UserRoundCog,
-  Facebook,
-  Video,
   Notebook,
-  Target,
-  Mail,
-  LayoutDashboard,
-  Square,
   Bot,
   Presentation,
 } from "lucide-react";
@@ -68,8 +62,8 @@ const getNavigationItems = (
 ): NavigationItem[] => {
   const baseItems: NavigationItem[] = [
     {
-      name: "Spreadsheet",
-      href: "/spreadsheet",
+      name: "Spreadsheets",
+      href: "/spreadsheets",
       icon: FileSpreadsheet,
       description: "Choose a project and open its spreadsheets",
     },
@@ -94,12 +88,6 @@ const getNavigationItems = (
         : "Meeting preparation and project meetings",
     },
     {
-      name: "Ad Variations",
-      href: "/variations",
-      icon: Target,
-      description: "Manage ad variations and creative testing",
-    },
-    {
       name: t ? t("sidebar.tasks") : "Tasks",
       href: "/tasks",
       icon: ListTodo,
@@ -114,51 +102,10 @@ const getNavigationItems = (
       description: "Decision workbench and history",
     },
     {
-      name: "Email Draft",
-      href: "#",
-      icon: Mail,
-      description: "Email drafts and campaigns",
-      children: [
-        {
-          name: "Mailchimp",
-          href: "/mailchimp",
-          icon: Mail,
-        },
-        {
-          name: "Klaviyo",
-          href: "/klaviyo",
-          icon: Mail,
-        },
-      ],
-    },
-    {
       name: t ? t('sidebar.notion') : 'Notion',
       href: '/notion',
       icon: Notebook,
       description: t ? t('sidebar.notion_editor') : 'Draft documents with Notion-like editor',
-    },
-    {
-      name: "Ads Draft",
-      href: "#",
-      icon: Target,
-      description: "Ad creative management",
-      children: [
-        {
-          name: t ? t('sidebar.facebook_meta') : 'Facebook Meta',
-          href: '/facebook_meta',
-          icon: Facebook,
-        },
-        {
-          name: t ? t("sidebar.tiktok") : "TikTok",
-          href: "/tiktok",
-          icon: Video,
-        },
-        {
-          name: t ? t("sidebar.google_ads") : "Google Ads",
-          href: "/google_ads",
-          icon: Target,
-        },
-      ],
     },
     // {
     //   name: t ? t("sidebar.reports") : "Reports",
@@ -221,10 +168,10 @@ const getNavigationItems = (
   }
 
   baseItems.push({
-    name: t ? t("sidebar.settings") : "Settings",
-    href: "/settings",
+    name: "Integrations",
+    href: "/integrations",
     icon: Settings,
-    description: t ? t("sidebar.user_preferences") : "User preferences",
+    description: "Manage connected integrations",
   });
 
   return baseItems;
@@ -241,6 +188,7 @@ const Sidebar: FC<SidebarProps> = ({
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [expandedItems, setExpandedItems] = useState<string[]>([]);
   const { t } = useLanguage();
+  const { toggle: toggleAgentPanel, isOpen: isAgentPanelOpen } = useAgentSidePanelStore();
 
   // Get current pathname using Next.js 13+ App Router hook
   const pathname = usePathname();
@@ -403,7 +351,7 @@ const Sidebar: FC<SidebarProps> = ({
                       w-full flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
                       ${
                         isItemActive || hasActiveChildItem
-                          ? "bg-blue-100 text-blue-700 border-r-2 border-blue-500"
+                          ? "bg-[#3CCED7]/15 text-[#1a9ba3] border-r-2 border-[#3CCED7]"
                           : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                       }
                       ${collapsed ? "justify-center" : "justify-between"}
@@ -440,7 +388,7 @@ const Sidebar: FC<SidebarProps> = ({
                       flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-lg transition-all duration-200
                       ${
                         isItemActive
-                          ? "bg-blue-100 text-blue-700 border-r-2 border-blue-500"
+                          ? "bg-[#3CCED7]/15 text-[#1a9ba3] border-r-2 border-[#3CCED7]"
                           : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                       }
                       ${collapsed ? "justify-center" : ""}
@@ -492,7 +440,7 @@ const Sidebar: FC<SidebarProps> = ({
                           flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-all duration-200
                           ${
                             isChildActive
-                              ? "bg-blue-50 text-blue-700 font-medium"
+                              ? "bg-[#3CCED7]/10 text-[#1a9ba3] font-medium"
                               : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                           }
                         `}
@@ -517,15 +465,14 @@ const Sidebar: FC<SidebarProps> = ({
         }`}
       >
         <div className="px-2 pb-2 pt-2">
-          <a
-            href="/agent"
-            onClick={(e) => handleLinkClick(e, "/agent")}
+          <button
+            onClick={toggleAgentPanel}
             className={`
-            flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-200
+            w-full flex items-center gap-3 px-3 py-2.5 text-sm font-medium rounded-lg transition-all duration-200
             ${
-              isActive("/agent")
-                ? "bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-md"
-                : "bg-gradient-to-r from-blue-50 to-purple-50 text-blue-700 hover:from-blue-100 hover:to-purple-100 hover:shadow-sm"
+              isAgentPanelOpen
+                ? "bg-gradient-to-r from-[#3CCED7] to-purple-600 text-white shadow-md"
+                : "bg-gradient-to-r from-blue-50 to-purple-50 text-[#1a9ba3] hover:from-blue-100 hover:to-purple-100 hover:shadow-sm"
             }
             ${collapsed ? "justify-center" : ""}
           `}
@@ -535,15 +482,15 @@ const Sidebar: FC<SidebarProps> = ({
               <>
                 <span>Agent</span>
                 <span className={`ml-auto text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
-                  isActive("/agent")
+                  isAgentPanelOpen
                     ? "bg-white/20 text-white"
-                    : "bg-blue-100 text-blue-600"
+                    : "bg-[#3CCED7]/15 text-[#3CCED7]"
                 }`}>
                   AI
                 </span>
               </>
             )}
-          </a>
+          </button>
         </div>
 
         {!collapsed && (
