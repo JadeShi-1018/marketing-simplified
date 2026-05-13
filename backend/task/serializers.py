@@ -22,9 +22,15 @@ User = get_user_model()
 
 class UserSummarySerializer(serializers.ModelSerializer):
     """Serializer for user summary information"""
+    name = serializers.SerializerMethodField()
+
+    def get_name(self, obj):
+        full_name = obj.get_full_name().strip()
+        return full_name or obj.username or obj.email
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email']
+        fields = ['id', 'username', 'email', 'name']
 
 
 class ProjectSummarySerializer(serializers.ModelSerializer):

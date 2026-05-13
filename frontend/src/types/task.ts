@@ -106,6 +106,12 @@ export interface UserSummary {
   id: number;
   username: string;
   email: string;
+  name?: string;
+}
+
+/** Returns the best available display name for any user-like object. */
+export function userDisplayName(u: { name?: string; username?: string; email?: string; id?: number }): string {
+  return u.name || u.username || u.email || (u.id != null ? `User #${u.id}` : 'Unknown');
 }
 
 export interface ProjectSummary {

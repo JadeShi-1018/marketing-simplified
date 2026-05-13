@@ -17,7 +17,7 @@ class AssetSerializer(serializers.ModelSerializer):
         u = obj.owner
         if not u:
             return None
-        return u.get_full_name() or u.email
+        return u.get_full_name().strip() or u.username or u.email
 
     class Meta:
         model = Asset

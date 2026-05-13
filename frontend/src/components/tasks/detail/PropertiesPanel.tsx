@@ -4,6 +4,7 @@ import { useState } from 'react';
 import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
+import { userDisplayName } from '@/types/task';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
 import StatusPill from './pills/StatusPill';
 import InlineSelect, { UserInitialsAvatar, type InlineSelectOption } from './InlineSelect';
@@ -32,7 +33,7 @@ function memberOption(
   m: ProjectMemberData,
   { includeRole }: { includeRole?: boolean } = {}
 ): InlineSelectOption {
-  const name = m.user.username || m.user.email || `User ${m.user.id}`;
+  const name = userDisplayName(m.user);
   return {
     value: String(m.user.id),
     label: name,

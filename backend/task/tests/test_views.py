@@ -1553,13 +1553,25 @@ class TaskAPITest(TestCase):
             project=self.project,
             current_approver=self.approver
         )
-        
+
+        # Budget tasks require an approved BudgetRequest before locking
+        from budget_approval.models import BudgetRequest, BudgetRequestStatus
+        br = BudgetRequest.objects.create(
+            task=task,
+            requested_by=self.user,
+            amount='100.00',
+            currency='AUD',
+            budget_pool=self.budget_pool,
+            ad_channel=self.ad_channel,
+        )
+        br.submit(); br.send_for_review(); br.approve(); br.save()
+
         url = reverse('task-lock', kwargs={'pk': task.id})
         response = self.client.post(url, {}, format='json')
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['task']['status'], 'LOCKED')
-        
+
         # Verify database was updated
         task = Task.objects.get(pk=task.pk)
         self.assertEqual(task.status, Task.Status.LOCKED)
@@ -2067,6 +2079,18 @@ class TaskAPITest(TestCase):
         )
         # No approval_chain assigned (legacy mode)
         self.assertIsNone(task.approval_chain)
+
+        # Budget tasks require an approved BudgetRequest before locking
+        from budget_approval.models import BudgetRequest
+        br = BudgetRequest.objects.create(
+            task=task,
+            requested_by=self.user,
+            amount='100.00',
+            currency='AUD',
+            budget_pool=self.budget_pool,
+            ad_channel=self.ad_channel,
+        )
+        br.submit(); br.send_for_review(); br.approve(); br.save()
 
         url = reverse('task-lock', kwargs={'pk': task.id})
         response = self.client.post(url, {}, format='json')

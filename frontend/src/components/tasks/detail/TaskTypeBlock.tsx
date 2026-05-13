@@ -280,6 +280,16 @@ export default function TaskTypeBlock({
     };
   }
 
+  // When the task has its own current_approver set, override current_approver_name in
+  // displayObj so the details section stays in sync with the properties panel after
+  // any inline list edit (which patches task.current_approver_id, not the linked object).
+  const taskApproverName = task.current_approver
+    ? (task.current_approver.name || task.current_approver.username || task.current_approver.email || null)
+    : null;
+  if (taskApproverName !== null) {
+    displayObj = { ...displayObj, current_approver_name: taskApproverName };
+  }
+
   const rawEntries = flattenEntries(displayObj, task.type ?? undefined);
   const entries = task.status === 'DRAFT'
     ? rawEntries.filter(([k]) => k !== 'submitted_at')

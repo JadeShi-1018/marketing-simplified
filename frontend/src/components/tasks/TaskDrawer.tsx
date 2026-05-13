@@ -25,9 +25,10 @@ interface TaskDrawerProps {
   onTaskUpdate?: () => void;
   taskIds?: number[];
   onNavigate?: (dir: 'next' | 'prev') => void;
+  externalRefreshKey?: number;
 }
 
-export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = [], onNavigate }: TaskDrawerProps) {
+export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = [], onNavigate, externalRefreshKey }: TaskDrawerProps) {
   const router = useRouter();
 
   const [task, setTask] = useState<TaskData | null>(null);
@@ -84,6 +85,11 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     }
     void load();
   }, [taskId, load]);
+
+  useEffect(() => {
+    if (externalRefreshKey && taskId !== null) void load();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [externalRefreshKey]);
 
   useEffect(() => {
     const pid = task?.project?.id ?? task?.project_id;

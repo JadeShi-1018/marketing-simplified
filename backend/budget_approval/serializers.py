@@ -37,8 +37,7 @@ class BudgetRequestSerializer(serializers.ModelSerializer):
         u = obj.requested_by
         if not u:
             return None
-        name = u.get_full_name() or u.email
-        return name
+        return u.get_full_name().strip() or u.username or u.email
 
     def get_is_escalated(self, obj):
         return obj.is_escalated
@@ -61,7 +60,7 @@ class BudgetRequestSerializer(serializers.ModelSerializer):
         u = obj.current_approver
         if not u:
             return None
-        return u.get_full_name() or u.email
+        return u.get_full_name().strip() or u.username or u.email
 
     def get_ad_channel_name(self, obj):
         return obj.ad_channel.name if obj.ad_channel else None

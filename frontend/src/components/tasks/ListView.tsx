@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Loader2, Plus, Save, Search, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
+import { userDisplayName } from '@/types/task';
 import {
   PRIORITY_META,
   PRIORITY_OPTIONS,
@@ -426,6 +427,7 @@ export default function ListView({
       mounted = false;
     };
   }, [projectId]);
+  const [drawerRefreshKey, setDrawerRefreshKey] = useState(0);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(() => {
     const param = searchParams?.get('drawerTaskId');
     const n = param ? Number(param) : NaN;
@@ -626,7 +628,7 @@ export default function ListView({
         key = `type-${task.type ?? 'none'}`;
         label = TASK_TYPES.find((t) => t.value === task.type)?.label ?? task.type ?? 'No type';
       } else if (groupBy === 'owner') {
-        const ownerName = task.owner?.username ?? task.owner?.email ?? null;
+        const ownerName = task.owner ? userDisplayName(task.owner) : null;
         key = `owner-${ownerName ?? 'unassigned'}`;
         label = ownerName ?? 'Unassigned';
       }
@@ -694,13 +696,8 @@ export default function ListView({
     }
     const unique = new Map<number, string>();
     tasks.forEach((task) => {
-      if (task.owner?.id) unique.set(task.owner.id, task.owner.username || task.owner.email || `User #${task.owner.id}`);
-      if (task.current_approver?.id) {
-        unique.set(
-          task.current_approver.id,
-          task.current_approver.username || task.current_approver.email || `User #${task.current_approver.id}`
-        );
-      }
+      if (task.owner?.id) unique.set(task.owner.id, userDisplayName(task.owner));
+      if (task.current_approver?.id) unique.set(task.current_approver.id, userDisplayName(task.current_approver));
     });
     return Array.from(unique.entries()).map(([id, label]) => ({ id, label }));
   }, [members, tasks]);
@@ -775,6 +772,7 @@ export default function ListView({
     try {
       await TaskAPI.updateTask(task.id, requestData as Partial<TaskData>);
       markRecentlyUpdated([task.id]);
+      if (task.id === drawerTaskId) setDrawerRefreshKey((k) => k + 1);
       return true;
     } catch (err) {
       updateTaskInStore(task.id, previous);
@@ -1578,7 +1576,7 @@ export default function ListView({
                           }}
                           className="inline-flex h-8 w-full items-center justify-start truncate rounded-md border border-transparent px-1 text-left text-xs text-gray-700 transition hover:border-[#2fc6d6]/70 hover:bg-[#2fc6d6]/5 hover:px-3"
                         >
-                          {task.owner?.username || task.owner?.email || '—'}
+                          {task.owner ? userDisplayName(task.owner) : '—'}
                         </button>
                         {openOwnerTaskId === task.id ? (
                           <div
@@ -1640,7 +1638,7 @@ export default function ListView({
                                   : 'text-gray-700 hover:border-[#2fc6d6]/70 hover:bg-[#2fc6d6]/5 hover:px-3'
                                 }`}
                             >
-                              {task.current_approver?.username || task.current_approver?.email || '—'}
+                              {task.current_approver ? userDisplayName(task.current_approver) : '—'}
                             </button>
                             {!isDisabled && openApproverTaskId === task.id ? (
                               <div
@@ -1786,7 +1784,7 @@ export default function ListView({
                         <div className="flex items-center gap-3 text-sm text-gray-700">
                           <span className="truncate font-medium">{sub.summary || `Task #${sub.id}`}</span>
                           <span className="flex-shrink-0 text-xs text-gray-400">{sub.type}</span>
-                          <span className="flex-shrink-0 text-xs text-gray-400">{sub.owner?.username || sub.owner?.email || 'Unassigned'}</span>
+                          <span className="flex-shrink-0 text-xs text-gray-400">{sub.owner ? userDisplayName(sub.owner) : 'Unassigned'}</span>
                         </div>
                       </td>
                     </tr>
@@ -1874,6 +1872,7 @@ export default function ListView({
         taskId={drawerTaskId}
         onClose={() => openDrawer(null)}
         onTaskUpdate={() => { onRefresh?.(); }}
+        externalRefreshKey={drawerRefreshKey}
         taskIds={paginatedVisible.map((t) => t.id).filter(Boolean) as number[]}
         onNavigate={(dir) => {
           if (!drawerTaskId) return;

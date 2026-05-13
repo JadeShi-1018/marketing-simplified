@@ -70,6 +70,11 @@ def record_task_field_changes(sender, instance, **kwargs):
         return
 
     user = get_current_user()
+    if user is not None:
+        from django.contrib.auth import get_user_model
+        _User = get_user_model()
+        if not _User.objects.filter(pk=user.pk).exists():
+            user = None
     records = []
     try:
         for field in TaskFieldHistory.TRACKED_FIELDS:
