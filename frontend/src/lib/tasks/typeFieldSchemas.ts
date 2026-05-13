@@ -97,23 +97,12 @@ const BUDGET_BASE_FIELDS: FieldDef[] = [
   },
 ];
 
-const BUDGET_APPROVER_FIELD: FieldDef = {
-  key: 'current_approver',
-  label: 'Approver',
-  kind: 'select',
-  required: true,
-  optionsLoader: 'project.members',
-  placeholder: 'Select an approver…',
-};
-
 const BUDGET: TypeSchema = {
   type: 'budget',
   label: 'Budget',
   contentType: 'budgetrequest',
-  // Create form: approver is handled by the common task-level Approver field, not duplicated here
   fields: BUDGET_BASE_FIELDS,
-  // Drawer edit form: includes approver (required, shows asterisk)
-  editFields: [...BUDGET_BASE_FIELDS, BUDGET_APPROVER_FIELD],
+  editFields: BUDGET_BASE_FIELDS,
 };
 
 const ASSET: TypeSchema = {
