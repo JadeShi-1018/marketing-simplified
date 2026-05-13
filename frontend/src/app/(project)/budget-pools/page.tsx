@@ -20,6 +20,7 @@ interface BudgetPool {
   used_amount: string;
   available_amount: string;
   currency: string;
+  created_at: string | null;
 }
 
 interface EditState {
@@ -27,7 +28,7 @@ interface EditState {
   total_amount: string;
 }
 
-type SortKey = 'name' | 'total' | 'used' | 'available' | 'pct';
+type SortKey = 'newest' | 'name' | 'total' | 'used' | 'available' | 'pct';
 type SortDir = 'asc' | 'desc';
 type GroupBy = 'none' | 'channel' | 'currency';
 
@@ -35,6 +36,7 @@ const INPUT = 'rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm 
 const SELECT = `${INPUT} pr-7 appearance-none cursor-pointer`;
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
+  { value: 'newest', label: 'Created' },
   { value: 'name', label: 'Name' },
   { value: 'total', label: 'Total' },
   { value: 'used', label: 'Used' },
@@ -178,8 +180,8 @@ export default function BudgetPoolsPage() {
 
   const [filterChannel, setFilterChannel] = useState('');
   const [filterCurrency, setFilterCurrency] = useState('');
-  const [sortKey, setSortKey] = useState<SortKey>('name');
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [sortKey, setSortKey] = useState<SortKey>('newest');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -248,6 +250,13 @@ export default function BudgetPoolsPage() {
 
     result = [...result].sort((a, b) => {
       let av = 0, bv = 0;
+      if (sortKey === 'newest') {
+        const at = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
+        const diff = bt - at;
+        if (diff !== 0) return sortDir === 'desc' ? diff : -diff;
+        return sortDir === 'desc' ? b.id - a.id : a.id - b.id;
+      }
       if (sortKey === 'name') {
         const an = (a.name || a.ad_channel_name || '').toLowerCase();
         const bn = (b.name || b.ad_channel_name || '').toLowerCase();
@@ -339,7 +348,7 @@ export default function BudgetPoolsPage() {
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => d === 'asc' ? 'desc' : 'asc');
-    else { setSortKey(key); setSortDir('asc'); }
+    else { setSortKey(key); setSortDir(key === 'newest' ? 'desc' : 'asc'); }
   };
 
   const hasFilters = filterChannel || filterCurrency;
@@ -424,7 +433,7 @@ export default function BudgetPoolsPage() {
               <div className="relative">
                 <select
                   value={sortKey}
-                  onChange={(e) => setSortKey(e.target.value as SortKey)}
+                  onChange={(e) => toggleSort(e.target.value as SortKey)}
                   className={SELECT}
                 >
                   {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>Sort: {o.label}</option>)}

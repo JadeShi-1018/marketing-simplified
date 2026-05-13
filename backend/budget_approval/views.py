@@ -137,7 +137,7 @@ class BudgetPoolViewSet(viewsets.ModelViewSet):
     permission_classes = [BudgetPoolPermission]
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset().order_by('-created_at', '-id')
         project_id = self.request.query_params.get('project_id')
         if project_id:
             qs = qs.filter(project_id=project_id)

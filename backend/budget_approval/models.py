@@ -55,6 +55,7 @@ class BudgetPool(models.Model):
         help_text="Amount of budget used from this pool"
     )
     currency = models.CharField(max_length=3, help_text="Currency code (e.g., AUD, USD)")
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     class Meta:
         # Removed unique_together constraint to allow multiple pools with same (project, ad_channel, currency)

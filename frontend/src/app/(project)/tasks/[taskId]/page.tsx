@@ -17,6 +17,7 @@ import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
 import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
 import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
+import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
 
@@ -31,6 +32,7 @@ export default function TaskV2DetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [activeTab, setActiveTab] = useState<'details' | 'history'>('details');
 
   const load = useCallback(async () => {
     if (!taskId) return;
@@ -115,8 +117,27 @@ export default function TaskV2DetailPage() {
               loading={loading}
             />
 
+            {/* Tab bar */}
+            <div className="mt-4 flex border-b border-gray-100">
+              {(['details', 'history'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`relative mr-4 py-2.5 text-xs font-medium transition-colors ${
+                    activeTab === tab
+                      ? 'text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-[#3CCED7]'
+                      : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+
             <div className="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_360px]">
               <div className="min-w-0 space-y-5">
+                {activeTab === 'details' && (<>
                 <TaskDescriptionBlock
                   task={taskShell}
                   readOnly={Boolean(readOnly)}
@@ -142,6 +163,14 @@ export default function TaskV2DetailPage() {
                   <TaskActivityBlock
                     taskId={task?.id ?? 0}
                     readOnly={Boolean(readOnly)}
+                    refreshKey={refreshKey}
+                    loading={loading}
+                  />
+                )}
+                </>)}
+                {activeTab === 'history' && (task?.id || loading) && (
+                  <TaskFieldHistoryBlock
+                    taskId={task?.id ?? 0}
                     refreshKey={refreshKey}
                     loading={loading}
                   />

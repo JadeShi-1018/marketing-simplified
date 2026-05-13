@@ -186,9 +186,9 @@ class BudgetPoolSerializer(serializers.ModelSerializer):
         model = BudgetPool
         fields = [
             'id', 'name', 'project', 'ad_channel', 'ad_channel_name', 'total_amount',
-            'used_amount', 'available_amount', 'currency'
+            'used_amount', 'available_amount', 'currency', 'created_at'
         ]
-        read_only_fields = ['id', 'available_amount', 'ad_channel_name']
+        read_only_fields = ['id', 'available_amount', 'ad_channel_name', 'created_at']
 
     def get_ad_channel_name(self, obj):
         return obj.ad_channel.name if obj.ad_channel else None

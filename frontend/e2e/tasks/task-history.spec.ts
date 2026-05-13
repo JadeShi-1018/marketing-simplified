@@ -4,6 +4,7 @@ import {
   navigateToNewTaskPage,
   submitNewTaskAndGetId,
   deleteTaskById,
+  waitForTasksPageReady,
 } from './tasks-helpers';
 
 test.describe('Task field history', () => {
@@ -226,6 +227,7 @@ test.describe('Task field history', () => {
 
     // Open the task drawer
     await page.goto(`/tasks?project_id=${projectId}`);
+    await waitForTasksPageReady(page);
     await page.getByTestId('tab-tasks').click();
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });
 
