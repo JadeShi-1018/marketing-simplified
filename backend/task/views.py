@@ -58,6 +58,11 @@ class TaskViewSet(viewsets.ModelViewSet):
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
 
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if request.user and request.user.is_authenticated:
+            set_current_user(request.user)
+
     def get_serializer_class(self):
         if getattr(self, "action", None) == "list":
             return TaskListSerializer
@@ -415,15 +420,27 @@ class TaskViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         """Update a task"""
-        set_current_user(self.request.user)
         serializer.save()
 
     @action(detail=True, methods=['get'], url_path='field-history')
     def field_history(self, request, pk=None):
         task = self.get_object()
         qs = TaskFieldHistory.objects.filter(task=task).select_related('changed_by').order_by('-changed_at')
-        serializer = TaskFieldHistorySerializer(qs, many=True)
-        return Response(serializer.data)
+        try:
+            page_size = max(1, min(int(request.query_params.get('page_size', 20)), 100))
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (ValueError, TypeError):
+            page_size, page = 20, 1
+        total = qs.count()
+        offset = (page - 1) * page_size
+        serializer = TaskFieldHistorySerializer(qs[offset:offset + page_size], many=True)
+        return Response({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'has_more': offset + page_size < total,
+            'results': serializer.data,
+        })
     
     def perform_destroy(self, instance):
         """
@@ -1279,6 +1296,7 @@ class TaskAttachmentListView(generics.ListCreateAPIView):
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to upload attachments to this task.')
 
+        set_current_user(self.request.user)
         serializer.save(task=task, uploaded_by=self.request.user)
 
 
@@ -1297,6 +1315,10 @@ class TaskAttachmentDetailView(generics.RetrieveDestroyAPIView):
             raise PermissionDenied('You do not have access to this task.')
 
         return TaskAttachment.objects.filter(task_id=task_id)
+
+    def perform_destroy(self, instance):
+        set_current_user(self.request.user)
+        instance.delete()
 
     def get_object(self):
         # Use get_queryset() to ensure permission checks are applied

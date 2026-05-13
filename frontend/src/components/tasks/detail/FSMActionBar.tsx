@@ -105,6 +105,10 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
         label: 'Submit',
         variant: 'primary',
         action: () => {
+          if (!task.current_approver) {
+            toast.error('Assign an approver before submitting.', { id: 'fsm-submit-no-approver' });
+            return;
+          }
           const schema = getTypeSchema(task.type);
           if (schema) {
             // Mirror TaskTypeBlock's displayObj: in DRAFT, draft_payload is the working copy

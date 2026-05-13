@@ -302,6 +302,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                     task={taskShell}
                     readOnly={Boolean(readOnly)}
                     loading={loading}
+                    onMutated={onMutated}
                   />
                   {(task?.id || loading) && (
                     <TaskAttachmentsBlock
@@ -309,6 +310,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                       readOnly={Boolean(readOnly)}
                       loading={loading}
                       onPreviewChange={setAttachmentPreviewOpen}
+                      onMutated={onMutated}
                     />
                   )}
                   <PropertiesPanel

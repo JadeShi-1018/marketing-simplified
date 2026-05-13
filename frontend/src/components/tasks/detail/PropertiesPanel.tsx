@@ -153,14 +153,20 @@ export default function PropertiesPanel({
       </div>
 
       <div className={ROW}>
-        <span className={LABEL}>Approver</span>
+        <span className={LABEL}>Approver <span className="text-rose-500">*</span></span>
         <InlineSelect
           ariaLabel="Approver"
           value={approverId}
-          onValueChange={(v) => patch({ current_approver_id: v === UNASSIGNED ? undefined : Number(v) })}
-          options={approverOpts}
+          onValueChange={(v) => {
+            if (v === UNASSIGNED) {
+              toast.error('Approver is required.');
+              return;
+            }
+            patch({ current_approver_id: Number(v) });
+          }}
+          options={approverOpts.filter((o) => o.value !== UNASSIGNED)}
           disabled={saving || readOnly}
-          placeholder="Unassigned"
+          placeholder="Select an approver…"
         />
       </div>
 

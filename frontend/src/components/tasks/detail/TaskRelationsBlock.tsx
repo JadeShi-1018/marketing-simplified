@@ -190,10 +190,12 @@ export default function TaskRelationsBlock({
   task,
   readOnly,
   loading = false,
+  onMutated,
 }: {
   task: TaskData;
   readOnly: boolean;
   loading?: boolean;
+  onMutated?: () => void;
 }) {
   const [rel, setRel] = useState<TaskRelationsResponse | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -255,6 +257,7 @@ export default function TaskRelationsBlock({
       await TaskAPI.deleteRelation(task.id, confirmRelationId);
       setConfirmRelationId(null);
       setLocalKey((k) => k + 1);
+      onMutated?.();
     } catch (e) {
       toast.error((e as any)?.response?.data?.detail || 'Remove failed');
     } finally {
@@ -475,7 +478,7 @@ export default function TaskRelationsBlock({
           open={modalOpen}
           onOpenChange={setModalOpen}
           sourceTaskId={task.id}
-          onAdded={() => setLocalKey((k) => k + 1)}
+          onAdded={() => { setLocalKey((k) => k + 1); onMutated?.(); }}
         />
       )}
 

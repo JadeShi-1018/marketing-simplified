@@ -44,11 +44,13 @@ export default function TaskAttachmentsBlock({
   readOnly,
   loading = false,
   onPreviewChange,
+  onMutated,
 }: {
   taskId: number;
   readOnly: boolean;
   loading?: boolean;
   onPreviewChange?: (open: boolean) => void;
+  onMutated?: () => void;
 }) {
   const [items, setItems] = useState<TaskAttachment[] | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -164,6 +166,7 @@ export default function TaskAttachmentsBlock({
       await TaskAPI.deleteAttachment(taskId, confirmAtt.id);
       setConfirmAtt(null);
       setLocalKey((k) => k + 1);
+      onMutated?.();
     } catch (e) {
       toast.error((e as any)?.response?.data?.detail || 'Delete failed');
     } finally {
@@ -338,7 +341,7 @@ export default function TaskAttachmentsBlock({
         open={modalOpen}
         onOpenChange={setModalOpen}
         taskId={taskId}
-        onAdded={() => setLocalKey((k) => k + 1)}
+        onAdded={() => { setLocalKey((k) => k + 1); onMutated?.(); }}
       />}
 
       {!loading && <ConfirmDialog

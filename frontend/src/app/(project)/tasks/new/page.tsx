@@ -144,7 +144,7 @@ export default function CreateTaskPage() {
       {
         key: 'approver',
         label: 'Approver',
-        required: type === 'budget',
+        required: type.length > 0,
         filled: approverId.length > 0,
         anchorId: COMMON_ANCHOR.approver,
       },
@@ -443,7 +443,7 @@ export default function CreateTaskPage() {
 
             <div id={COMMON_ANCHOR.approver} className="px-8 py-5">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
-                Approver{type === 'budget' && <span className="ml-0.5 text-rose-400">*</span>}
+                Approver{type.length > 0 && <span className="ml-0.5 text-rose-400">*</span>}
               </p>
               <select
                 value={approverId}
@@ -451,7 +451,7 @@ export default function CreateTaskPage() {
                 disabled={membersLoading}
                 className="w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 disabled:cursor-wait disabled:bg-gray-50 disabled:text-gray-400"
               >
-                <option value="">{membersLoading ? 'Loading approvers…' : 'Unassigned'}</option>
+                <option value="">{membersLoading ? 'Loading…' : type.length > 0 ? 'Select an approver…' : 'Unassigned'}</option>
                 {members.map((m) => (
                   <option key={m.user.id} value={m.user.id}>
                     {m.user.username || m.user.name || `User ${m.user.id}`}
