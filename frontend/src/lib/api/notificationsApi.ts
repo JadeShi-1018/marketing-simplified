@@ -31,4 +31,11 @@ export const notificationsApi = {
       "/api/notification-preferences/",
       { preferences: preferencesPatch }
     ),
+
+  /** Accept or reject an actionable notification (invite / assignment). */
+  respond: (notificationId: string, action: "accept" | "reject") =>
+    api.post<{ status: string; action: string }>(
+      `/api/notifications/${notificationId}/respond/`,
+      { action }
+    ),
 };

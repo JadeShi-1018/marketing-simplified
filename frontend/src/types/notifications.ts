@@ -19,6 +19,10 @@ export interface NotificationItem {
   action_url: string;
   metadata: Record<string, unknown>;
   created_at: string;
+  /** Whether the recipient has already accepted or declined this notification. */
+  responded: boolean;
+  /** The response value: "accept" | "reject" | "" */
+  response: string;
 }
 
 export interface NotificationTabCounts {

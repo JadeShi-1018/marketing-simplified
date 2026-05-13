@@ -127,7 +127,9 @@ function hasMeetingChangeData(metadata: Record<string, unknown>): boolean {
     metadata?.added_participants ||
     metadata?.removed_participants ||
     metadata?.added_artifacts ||
-    metadata?.removed_artifacts
+    metadata?.removed_artifacts ||
+    metadata?.change_type === 'artifact_linked' ||
+    metadata?.change_type === 'artifact_unlinked'
   );
 }
 
@@ -310,43 +312,62 @@ function ParticipantChanges({ metadata }: { metadata: Record<string, unknown> })
   );
 }
 
-// Render artifact changes
+// Render artifact changes — supports both new structured metadata and legacy string-array format
 function ArtifactChanges({ metadata }: { metadata: Record<string, unknown> }) {
+  const changeType = metadata?.change_type as string | undefined;
+  const artifactType = metadata?.artifact_type as string | undefined;
+  const artifactTitle = metadata?.artifact_title as string | undefined;
+
+  // New structured format from current backend
+  if (changeType === 'artifact_linked' || changeType === 'artifact_unlinked') {
+    const isLinked = changeType === 'artifact_linked';
+    const typeLabel = artifactType
+      ? artifactType.charAt(0).toUpperCase() + artifactType.slice(1)
+      : 'Artifact';
+    const title = artifactTitle || (artifactType ? `${typeLabel} #${metadata?.artifact_id}` : 'Unknown');
+
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+        <div className="flex items-center gap-2 mb-2">
+          <Paperclip className="w-4 h-4 text-gray-500" />
+          <span className="text-sm font-semibold text-gray-800">{typeLabel}</span>
+        </div>
+        <div className="pl-6">
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            {isLinked ? 'Linked:' : 'Removed:'}
+          </span>
+          <p className={`text-sm font-medium mt-0.5 ${isLinked ? 'text-green-600' : 'text-gray-400 line-through'}`}>
+            {title}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Legacy format: added_artifacts / removed_artifacts string arrays
   const added = metadata?.added_artifacts as string[] | undefined;
   const removed = metadata?.removed_artifacts as string[] | undefined;
-
   if ((!added || added.length === 0) && (!removed || removed.length === 0)) {
     return null;
   }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
-      {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <Paperclip className="w-4 h-4 text-gray-500" />
         <span className="text-sm font-semibold text-gray-800">Artifacts</span>
       </div>
-
-      {/* Changes */}
       <div className="space-y-1.5 pl-6">
         {removed && removed.length > 0 && (
           <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-              Removed:
-            </span>
-            <p className="text-sm text-gray-400 line-through mt-0.5">
-              {removed.join(", ")}
-            </p>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Removed:</span>
+            <p className="text-sm text-gray-400 line-through mt-0.5">{removed.join(', ')}</p>
           </div>
         )}
         {added && added.length > 0 && (
           <div>
-            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-              Added:
-            </span>
-            <p className="text-sm text-green-600 font-medium mt-0.5">
-              {added.join(", ")}
-            </p>
+            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Added:</span>
+            <p className="text-sm text-green-600 font-medium mt-0.5">{added.join(', ')}</p>
           </div>
         )}
       </div>

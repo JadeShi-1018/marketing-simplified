@@ -18,8 +18,14 @@ class NotificationSerializer(serializers.ModelSerializer):
             "action_url",
             "metadata",
             "created_at",
+            "responded",
+            "response",
         ]
         read_only_fields = fields
+
+
+class NotificationRespondSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(choices=["accept", "reject"])
 
 
 class NotificationMarkReadSerializer(serializers.Serializer):

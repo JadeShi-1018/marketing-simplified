@@ -146,6 +146,14 @@ class Notification(models.Model):
     action_url = models.CharField(max_length=1024, blank=True, default="")
     metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # Tracks whether the recipient has explicitly accepted or declined an actionable notification.
+    responded = models.BooleanField(default=False, db_index=True)
+    response = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        choices=[("accept", "Accepted"), ("reject", "Rejected")],
+    )
 
     class Meta:
         ordering = ("-created_at",)

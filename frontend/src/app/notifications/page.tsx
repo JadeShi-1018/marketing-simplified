@@ -4,7 +4,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, Trash2 } from "lucide-react";
-import Layout from "@/components/layout/Layout";
+import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useNotificationDrawer } from "@/components/notifications/NotificationDrawerProvider";
 import { notificationsApi } from "@/lib/api/notificationsApi";
@@ -190,7 +190,7 @@ function NotificationsContent() {
   };
 
   return (
-    <Layout>
+    <DashboardLayout hideRightPanel>
       <div className="w-full px-6 lg:px-10 py-8">
         <button
           type="button"
@@ -292,7 +292,7 @@ function NotificationsContent() {
           </Link>
         </p>
       </div>
-    </Layout>
+    </DashboardLayout>
   );
 }
 
@@ -301,11 +301,11 @@ export default function NotificationsPage() {
     <ProtectedRoute>
       <Suspense
         fallback={
-          <Layout>
+          <DashboardLayout hideRightPanel>
             <div className="w-full px-6 lg:px-10 py-16 text-gray-500 text-sm">
               Loading...
             </div>
-          </Layout>
+          </DashboardLayout>
         }
       >
         <NotificationsContent />

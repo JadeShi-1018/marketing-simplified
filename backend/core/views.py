@@ -538,6 +538,32 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
                 auto_approve=False
             )
 
+            # Immediately notify the invited user (if they already have an account)
+            # so they see it in the notification panel without waiting for email acceptance.
+            if invited_user and invited_user.id != user.id:
+                try:
+                    from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
+                    from notifications.services import create_notification  # noqa: PLC0415
+                    create_notification(
+                        recipient_id=invited_user.id,
+                        actor_id=user.id,
+                        category=NotificationCategory.COLLABORATION,
+                        event_type=NotificationEventType.PROJECT_INVITE,
+                        title=f"You've been invited to project: {project.name}",
+                        body=f"{user.get_full_name() or user.username} invited you to join \"{project.name}\".",
+                        related_object_type="project",
+                        related_object_id=str(project.id),
+                        action_url=f"/projects/{project.id}",
+                        metadata={
+                            "project_name": project.name,
+                            "invitation_id": invitation.pk,
+                        },
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to send PROJECT_INVITE notification for user %s", invited_user.id
+                    )
+
             invitation_serializer = ProjectInvitationSerializer(invitation, context={'request': request})
             message = 'Invitation created and pending owner approval.'
             return Response(

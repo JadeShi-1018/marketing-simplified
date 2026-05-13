@@ -3,6 +3,8 @@ import logging
 from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from django.http import HttpResponse, StreamingHttpResponse
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.parsers import JSONParser
 from rest_framework.permissions import IsAuthenticated
@@ -18,12 +20,14 @@ from .models import (
     DEADLINE_TAB_EVENT_TYPES,
     MENTION_TAB_EVENT_TYPES,
     Notification,
+    NotificationEventType,
     UserNotificationPreference,
     default_notification_preferences,
 )
 from .serializers import (
     NotificationClearSerializer,
     NotificationMarkReadSerializer,
+    NotificationRespondSerializer,
     NotificationSerializer,
     UserNotificationPreferencePatchSerializer,
 )
@@ -31,6 +35,7 @@ from .services import (
     apply_and_save_notification_preferences,
     clear_notifications,
     coalesce_preferences,
+    create_notification,
     filter_notifications_for_user,
     mark_notifications_read,
 )
@@ -166,6 +171,161 @@ class UserNotificationPreferenceView(APIView):
             )
         merged = coalesce_preferences(pref.preferences)
         return Response({"preferences": merged, "updated_at": pref.updated_at})
+
+
+class NotificationRespondView(APIView):
+    """
+    POST /api/notifications/{pk}/respond/
+    Body: {"action": "accept" | "reject"}
+
+    Lets the notification recipient accept or decline an actionable notification
+    (project invite, meeting participant addition, task assignment / approver change).
+    After responding the actor receives a follow-up notification.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        notification = get_object_or_404(Notification, pk=pk, recipient=request.user)
+
+        if notification.responded:
+            return Response(
+                {"detail": "You have already responded to this notification."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ser = NotificationRespondSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        action = ser.validated_data["action"]
+
+        # Dispatch side-effects
+        try:
+            _dispatch_response(notification, action, request.user)
+        except Exception:
+            logger.exception(
+                "Failed to execute respond action=%s for notification %s", action, pk
+            )
+            return Response(
+                {"detail": "Action failed. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        notification.responded = True
+        notification.response = action
+        notification.save(update_fields=["responded", "response"])
+
+        # Notify the original actor about the response
+        if notification.actor_id:
+            user = request.user
+            user_display = user.get_full_name() or user.username
+            action_label = "accepted" if action == "accept" else "declined"
+            _send_response_notification(notification, user, user_display, action_label)
+
+        return Response({"status": "ok", "action": action})
+
+
+def _send_response_notification(notification, responder, responder_display, action_label):
+    """Send a follow-up notification to the original actor."""
+    from notifications.models import NotificationCategory  # noqa: PLC0415
+
+    # Reuse the same category / event_type so the actor sees it in context
+    try:
+        create_notification(
+            recipient_id=notification.actor_id,
+            actor_id=responder.id,
+            category=notification.category,
+            event_type=notification.event_type,
+            title=f"{responder_display} {action_label} your invitation",
+            body=f"{responder_display} has {action_label} your request.",
+            related_object_type=notification.related_object_type,
+            related_object_id=notification.related_object_id,
+            action_url=notification.action_url,
+            metadata={
+                **notification.metadata,
+                "response": action_label,
+                "responder": responder_display,
+            },
+        )
+    except Exception:
+        logger.exception("Failed to send response notification to actor %s", notification.actor_id)
+
+
+def _dispatch_response(notification, action, user):
+    """Apply domain-level side effects for accept/reject."""
+    et = notification.event_type
+
+    if et == NotificationEventType.PROJECT_INVITE:
+        _handle_project_invite(notification, action, user)
+    elif et == NotificationEventType.MEETING_PARTICIPANT_ADDED:
+        _handle_meeting_participant(notification, action, user)
+    elif et in (NotificationEventType.TASK_ASSIGNED, NotificationEventType.TASK_OWNER_CHANGED):
+        _handle_task_assignment(notification, action, user)
+
+
+def _handle_project_invite(notification, action, user):
+    """Accept → activate/create ProjectMember; reject → no structural change."""
+    if action != "accept":
+        return
+    from django.utils import timezone as tz  # noqa: PLC0415
+    from core.models import ProjectMember, ProjectInvitation  # noqa: PLC0415
+
+    invitation_id = notification.metadata.get("invitation_id")
+    if not invitation_id:
+        logger.warning("PROJECT_INVITE notification %s has no invitation_id in metadata", notification.pk)
+        return
+
+    try:
+        inv = ProjectInvitation.objects.select_related("project").get(pk=invitation_id)
+    except ProjectInvitation.DoesNotExist:
+        logger.warning("ProjectInvitation %s not found", invitation_id)
+        return
+
+    ProjectMember.objects.update_or_create(
+        user=user,
+        project=inv.project,
+        defaults={"role": inv.role or "member", "is_active": True},
+    )
+    # Mark invitation as accepted
+    if not inv.accepted:
+        inv.accepted = True
+        inv.accepted_at = tz.now()
+        inv.save(update_fields=["accepted", "accepted_at"])
+
+
+def _handle_meeting_participant(notification, action, user):
+    """Reject → remove participant link so they are no longer in the meeting."""
+    if action != "reject":
+        return
+    from meetings.models import ParticipantLink  # noqa: PLC0415
+
+    participant_link_id = notification.metadata.get("participant_link_id")
+    if not participant_link_id:
+        logger.warning("MEETING_PARTICIPANT_ADDED notification %s has no participant_link_id", notification.pk)
+        return
+
+    ParticipantLink.objects.filter(pk=participant_link_id, user=user).delete()
+
+
+def _handle_task_assignment(notification, action, user):
+    """Reject → clear the owner or approver field on the task."""
+    if action != "reject":
+        return
+    from task.models import Task  # noqa: PLC0415
+
+    task_id = notification.related_object_id
+    change_type = notification.metadata.get("change_type", "")
+
+    try:
+        task = Task.objects.get(pk=task_id)
+    except (Task.DoesNotExist, ValueError):
+        logger.warning("Task %s not found for assignment response", task_id)
+        return
+
+    if change_type == "task_approver":
+        task.approver = None
+    else:
+        task.owner = None
+    task.save()
 
 
 async def stream_notifications(request):

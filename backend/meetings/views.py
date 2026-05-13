@@ -683,7 +683,11 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
                 action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
-                metadata={"project_id": meeting.project_id},
+                metadata={
+                    "project_id": meeting.project_id,
+                    "meeting_title": meeting.title,
+                    "participant_link_id": link.pk,
+                },
             )
 
     def perform_destroy(self, instance):
@@ -729,12 +733,36 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
         meeting = self.get_meeting()
         return meeting.artifact_links.all()
 
+    @staticmethod
+    def _resolve_artifact_title(artifact_type: str, artifact_id: int) -> str:
+        """Look up a human-readable title for the linked artifact."""
+        try:
+            if artifact_type == "decision":
+                from decision.models import Decision  # noqa: PLC0415
+                d = Decision.objects.only("title").get(pk=artifact_id)
+                return d.title or f"Decision #{artifact_id}"
+            if artifact_type == "task":
+                from task.models import Task  # noqa: PLC0415
+                t = Task.objects.only("summary").get(pk=artifact_id)
+                return t.summary or f"Task #{artifact_id}"
+            if artifact_type == "spreadsheet":
+                from spreadsheet.models import Spreadsheet  # noqa: PLC0415
+                s = Spreadsheet.objects.only("name").get(pk=artifact_id)
+                return s.name or f"Spreadsheet #{artifact_id}"
+        except Exception:
+            pass
+        return f"{artifact_type.capitalize()} #{artifact_id}"
+
     def perform_create(self, serializer):
         meeting = self.get_meeting()
         artifact = serializer.save(meeting=meeting)
 
-        # Notify participants about new artifact
-        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        artifact_type = artifact.artifact_type
+        artifact_id = artifact.artifact_id
+        artifact_title = self._resolve_artifact_title(artifact_type, artifact_id)
+        type_label = artifact_type.capitalize()
+
+        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
         for uid in participant_ids:
             if uid == self.request.user.id:
                 continue
@@ -743,26 +771,30 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
                 actor_id=self.request.user.id,
                 category=NotificationCategory.MEETINGS,
                 event_type=NotificationEventType.MEETING_UPDATED,
-                title=f"Artifact added to meeting: {meeting.title}",
-                body=f"A new {artifact.artifact_type} was linked to this meeting.",
+                title=f"{type_label} linked to meeting: {meeting.title}",
+                body=f"{type_label} \"{artifact_title}\" was linked to this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
                 action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
                 metadata={
                     "project_id": meeting.project_id,
-                    "added_artifacts": [f"{artifact.artifact_type} (ID: {artifact.artifact_id})"],
+                    "change_type": "artifact_linked",
+                    "artifact_type": artifact_type,
+                    "artifact_id": artifact_id,
+                    "artifact_title": artifact_title,
                 },
             )
 
     def perform_destroy(self, instance):
         meeting = instance.meeting
-        artifact_info = f"{instance.artifact_type} (ID: {instance.artifact_id})"
+        artifact_type = instance.artifact_type
+        artifact_id = instance.artifact_id
+        artifact_title = self._resolve_artifact_title(artifact_type, artifact_id)
+        type_label = artifact_type.capitalize()
 
-        # Delete the artifact link
         instance.delete()
 
-        # Notify participants about removed artifact
-        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
         for uid in participant_ids:
             if uid == self.request.user.id:
                 continue
@@ -771,14 +803,17 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
                 actor_id=self.request.user.id,
                 category=NotificationCategory.MEETINGS,
                 event_type=NotificationEventType.MEETING_UPDATED,
-                title=f"Artifact removed from meeting: {meeting.title}",
-                body=f"An artifact was unlinked from this meeting.",
+                title=f"{type_label} unlinked from meeting: {meeting.title}",
+                body=f"{type_label} \"{artifact_title}\" was removed from this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
                 action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
                 metadata={
                     "project_id": meeting.project_id,
-                    "removed_artifacts": [artifact_info],
+                    "change_type": "artifact_unlinked",
+                    "artifact_type": artifact_type,
+                    "artifact_id": artifact_id,
+                    "artifact_title": artifact_title,
                 },
             )
 
@@ -895,7 +930,7 @@ class MeetingDocumentAPIView(APIView):
             content=content,
             yjs_state=yjs_state,
             user_id=request.user.id,
-            notify_collaborators=True,
+            notify_collaborators=False,
         )
         serializer = MeetingDocumentSerializer(document)
         return Response(serializer.data, status=status.HTTP_200_OK)

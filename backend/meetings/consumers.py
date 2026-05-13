@@ -188,7 +188,7 @@ class MeetingDocumentConsumer(AsyncWebsocketConsumer):
             self.meeting_id,
             content,
             self.scope["user"].id,
-            notify_collaborators=True,
+            notify_collaborators=False,
         )
 
         await self.channel_layer.group_send(
