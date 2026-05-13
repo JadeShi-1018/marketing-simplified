@@ -38,11 +38,11 @@ test.describe('Task approver assignment', () => {
 
     // Select any available approver (first non-empty option)
     const approverSelect = page.locator('select').filter({
-      has: page.locator('option', { hasText: 'Unassigned' }),
+      has: page.locator('option', { hasText: /Select an approver|Unassigned/ }),
     });
     await expect(approverSelect).toBeVisible({ timeout: 10_000 });
     const options = await approverSelect.locator('option').allTextContents();
-    const realOptions = options.filter((o) => !o.includes('Unassigned') && !o.includes('Loading'));
+    const realOptions = options.filter((o) => !o.includes('Select an approver') && !o.includes('Unassigned') && !o.includes('Loading'));
     if (realOptions.length > 0) {
       await approverSelect.selectOption({ index: 1 });
     }

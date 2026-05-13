@@ -4,6 +4,7 @@ import {
   navigateToNewTaskPage,
   submitNewTaskAndGetId,
   deleteTaskById,
+  selectFirstAvailableApprover,
 } from './tasks-helpers';
 
 test.describe('Task creation flow', () => {
@@ -44,6 +45,7 @@ test.describe('Task creation flow', () => {
       await tagsInput.fill('e2e,test');
     }
 
+    await selectFirstAvailableApprover(page);
     createdTaskId = await submitNewTaskAndGetId(page);
 
     expect(createdTaskId).toBeTruthy();

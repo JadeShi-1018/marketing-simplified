@@ -332,22 +332,6 @@ class TaskSerializer(serializers.ModelSerializer):
             }]
         return None
 
-    def validate(self, data):
-        if not self.instance:
-            # Creation: approver required unless saving as draft
-            if not data.get('create_as_draft'):
-                if not data.get('current_approver_id'):
-                    raise serializers.ValidationError({
-                        'current_approver_id': 'Approver is required.'
-                    })
-        else:
-            # Update: if current_approver_id is explicitly being set to null, reject it
-            if 'current_approver_id' in data and data['current_approver_id'] is None:
-                raise serializers.ValidationError({
-                    'current_approver_id': 'Approver is required.'
-                })
-        return data
-
     def _resolve_project(self, user, project_id):
         """Return project from id or from user's active project."""
         if project_id is not None:
@@ -530,6 +514,19 @@ class TaskSerializer(serializers.ModelSerializer):
     
     def validate(self, attrs):
         """Validate the data"""
+        # Approver requirement
+        if not self.instance:
+            if not attrs.get('create_as_draft'):
+                if not attrs.get('current_approver_id'):
+                    raise serializers.ValidationError({
+                        'current_approver_id': 'Approver is required.'
+                    })
+        else:
+            if 'current_approver_id' in attrs and attrs['current_approver_id'] is None:
+                raise serializers.ValidationError({
+                    'current_approver_id': 'Approver is required.'
+                })
+
         if self.instance is not None and attrs.get('origin_meeting_id') is not None:
             try:
                 self.instance.meeting_origin

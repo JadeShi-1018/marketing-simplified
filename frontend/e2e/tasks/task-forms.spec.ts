@@ -5,6 +5,7 @@ import {
   submitNewTaskAndGetId,
   deleteTaskById,
   deleteAllE2ETasks,
+  selectFirstAvailableApprover,
 } from './tasks-helpers';
 
 const tomorrow = () => new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -44,6 +45,7 @@ test.describe('Task-type specific forms', () => {
     // required: audience_type
     await expect(page.locator('#task-field-report-audience_type')).toBeVisible({ timeout: 10_000 });
     await page.locator('#task-field-report-audience_type').selectOption('client');
+    await selectFirstAvailableApprover(page);
 
     createdTaskId = await submitNewTaskAndGetId(page);
     expect(createdTaskId).toBeTruthy();
@@ -56,6 +58,7 @@ test.describe('Task-type specific forms', () => {
     // required: scaling_target
     await expect(page.locator('#task-field-scaling-scaling_target')).toBeVisible({ timeout: 10_000 });
     await page.locator('#task-field-scaling-scaling_target').fill('Scale Meta campaigns by 20%');
+    await selectFirstAvailableApprover(page);
 
     createdTaskId = await submitNewTaskAndGetId(page);
     expect(createdTaskId).toBeTruthy();
@@ -69,6 +72,7 @@ test.describe('Task-type specific forms', () => {
     await expect(page.locator('#task-field-alert-alert_type')).toBeVisible({ timeout: 10_000 });
     await page.locator('#task-field-alert-alert_type').selectOption('performance_drop');
     await page.locator('#task-field-alert-severity').selectOption('medium');
+    await selectFirstAvailableApprover(page);
 
     createdTaskId = await submitNewTaskAndGetId(page);
     expect(createdTaskId).toBeTruthy();
@@ -89,6 +93,7 @@ test.describe('Task-type specific forms', () => {
       await dateInputs.nth(count - 2).fill(tomorrow());
       await dateInputs.nth(count - 1).fill(nextWeek());
     }
+    await selectFirstAvailableApprover(page);
 
     createdTaskId = await submitNewTaskAndGetId(page);
     expect(createdTaskId).toBeTruthy();
@@ -101,6 +106,7 @@ test.describe('Task-type specific forms', () => {
     // required: action_type
     await expect(page.locator('#task-field-optimization-action_type')).toBeVisible({ timeout: 10_000 });
     await page.locator('#task-field-optimization-action_type').selectOption('edit');
+    await selectFirstAvailableApprover(page);
 
     createdTaskId = await submitNewTaskAndGetId(page);
     expect(createdTaskId).toBeTruthy();
@@ -116,6 +122,7 @@ test.describe('Task-type specific forms', () => {
 
     // required: impacted_areas (tags field — plain text input)
     await page.locator('#task-field-communication-impacted_areas').fill('budget, creative');
+    await selectFirstAvailableApprover(page);
 
     createdTaskId = await submitNewTaskAndGetId(page);
     expect(createdTaskId).toBeTruthy();
@@ -125,7 +132,8 @@ test.describe('Task-type specific forms', () => {
     await page.getByRole('button', { name: 'Retrospective', exact: true }).click();
     await page.getByPlaceholder('Summary of this task').fill('E2E Retrospective Task');
 
-    // No required type-specific fields — form is ready after summary is filled
+    // Select approver (required for all task types); do this before the button check
+    await selectFirstAvailableApprover(page);
     await expect(page.getByRole('button', { name: 'Create task', exact: true })).not.toBeDisabled({ timeout: 5_000 });
 
     createdTaskId = await submitNewTaskAndGetId(page);
@@ -145,6 +153,7 @@ test.describe('Task-type specific forms', () => {
 
     await page.locator('#task-field-platform_policy_update-policy_description').fill('New targeting restrictions on paid social.');
     await page.locator('#task-field-platform_policy_update-immediate_actions_required').fill('Audit active campaigns for compliance.');
+    await selectFirstAvailableApprover(page);
 
     createdTaskId = await submitNewTaskAndGetId(page);
     expect(createdTaskId).toBeTruthy();

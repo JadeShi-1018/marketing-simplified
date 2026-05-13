@@ -172,6 +172,29 @@ export async function deleteAllE2ETasks(page: Page): Promise<void> {
 }
 
 /**
+ * Select the first real approver option in the approver dropdown on the new-task page.
+ * Must be called after a task type is selected (the select is only visible then).
+ * Waits for members to load before selecting. Skips silently if no members available.
+ */
+export async function selectFirstAvailableApprover(page: Page): Promise<void> {
+  const approverSelect = page.locator('select').filter({
+    has: page.locator('option', { hasText: /Select an approver|Unassigned/ }),
+  });
+  await expect(approverSelect).toBeVisible({ timeout: 10_000 });
+
+  // Wait until the first option's text changes from "Loading…" (members have loaded)
+  await expect(approverSelect.locator('option').first()).not.toHaveText(/Loading/i, { timeout: 10_000 });
+
+  const options = await approverSelect.locator('option').allTextContents();
+  const realOptions = options.filter(
+    (o) => !o.includes('Select an approver') && !o.includes('Unassigned') && !o.includes('Loading'),
+  );
+  if (realOptions.length > 0) {
+    await approverSelect.selectOption({ index: 1 });
+  }
+}
+
+/**
  * Delete a task by ID via the REST API using the auth token from localStorage.
  */
 export async function deleteTaskById(page: Page, taskId: number) {
