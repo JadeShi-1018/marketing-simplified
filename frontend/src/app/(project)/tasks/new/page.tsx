@@ -180,7 +180,7 @@ export default function CreateTaskPage() {
       toast.error('No active project. Pick a project first.');
       return;
     }
-    if (!allRequiredReady) {
+    if (!asDraft && !allRequiredReady) {
       toast.error('Fill all required fields first.');
       return;
     }
@@ -212,10 +212,20 @@ export default function CreateTaskPage() {
       }
 
       if (schema && createdTaskId) {
-        const missing = getUnfilledRequiredKeys(schema, typeFormState);
-        if (missing.length > 0) {
-          toast.error(`Missing required fields: ${missing.join(', ')}`);
-          return;
+        // For drafts, skip the linked object entirely if required fields aren't filled yet.
+        if (asDraft) {
+          const missing = getUnfilledRequiredKeys(schema, typeFormState);
+          if (missing.length > 0) {
+            toast.success('Saved as draft');
+            router.push('/tasks');
+            return;
+          }
+        } else {
+          const missing = getUnfilledRequiredKeys(schema, typeFormState);
+          if (missing.length > 0) {
+            toast.error(`Missing required fields: ${missing.join(', ')}`);
+            return;
+          }
         }
         const cfg = TASK_TYPE_CONFIG_STATIC[schema.type];
         if (cfg) {
@@ -236,7 +246,7 @@ export default function CreateTaskPage() {
                 await TaskAPI.linkTask(createdTaskId, cfg.contentType, String(subId));
               }
             } else {
-              if (type === 'budget') {
+              if (type === 'budget' && !asDraft) {
                 toast.error('Task created but budget request was not saved — make sure you selected a pool and assigned an approver.');
               }
             }
@@ -433,7 +443,7 @@ export default function CreateTaskPage() {
 
             <div id={COMMON_ANCHOR.approver} className="px-8 py-5">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
-                Approver
+                Approver{type === 'budget' && <span className="ml-0.5 text-rose-400">*</span>}
               </p>
               <select
                 value={approverId}
@@ -463,7 +473,7 @@ export default function CreateTaskPage() {
               <button
                 type="button"
                 onClick={() => submit(true)}
-                disabled={submitting !== null || !allRequiredReady}
+                disabled={submitting !== null}
                 className="rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
               >
                 {submitting === 'draft' ? 'Saving…' : 'Save as draft'}

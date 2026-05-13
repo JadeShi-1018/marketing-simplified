@@ -1,7 +1,91 @@
-from django.db.models.signals import post_save, post_delete
+import logging
+import threading
+from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
-from .models import TaskAttachment, TaskHierarchy
+from .models import Task, TaskAttachment, TaskFieldHistory, TaskHierarchy
 from .tasks import scan_task_attachment
+
+logger = logging.getLogger(__name__)
+
+_current_user = threading.local()
+
+
+def set_current_user(user):
+    _current_user.value = user
+
+
+def get_current_user():
+    return getattr(_current_user, 'value', None)
+
+
+def _owner_display(user_obj):
+    """Return a human-readable label for a user, or None."""
+    if user_obj is None:
+        return None
+    return user_obj.get_full_name() or user_obj.username or user_obj.email or str(user_obj.pk)
+
+
+def _field_value(old_instance, new_instance, field):
+    """
+    Return (old_str, new_str) for a tracked field.
+    Uses the DB-fetched old_instance and the pre-save new_instance.
+    FK fields are resolved to display strings here, not raw IDs.
+    """
+    if field == 'owner':
+        # Use select_related-fetched owner on old; on instance use owner_id to
+        # look up the new user without relying on the potentially stale FK cache.
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        old_val = _owner_display(old_instance.owner)
+
+        new_owner_id = new_instance.__dict__.get('owner_id')  # read raw attname, no descriptor
+        if new_owner_id is None:
+            new_val = None
+        elif old_instance.owner_id == new_owner_id:
+            new_val = old_val  # unchanged — skip DB query
+        else:
+            try:
+                new_val = _owner_display(User.objects.get(pk=new_owner_id))
+            except User.DoesNotExist:
+                new_val = str(new_owner_id)
+
+        return old_val, new_val
+
+    # Plain scalar field
+    old_raw = getattr(old_instance, field, None)
+    new_raw = new_instance.__dict__.get(field, getattr(new_instance, field, None))
+    old_val = str(old_raw) if old_raw is not None else None
+    new_val = str(new_raw) if new_raw is not None else None
+    return old_val, new_val
+
+
+@receiver(pre_save, sender=Task)
+def record_task_field_changes(sender, instance, **kwargs):
+    if not instance.pk:
+        return
+    try:
+        old = Task.objects.select_related('owner').get(pk=instance.pk)
+    except Task.DoesNotExist:
+        return
+
+    user = get_current_user()
+    records = []
+    try:
+        for field in TaskFieldHistory.TRACKED_FIELDS:
+            old_val, new_val = _field_value(old, instance, field)
+            if old_val != new_val:
+                records.append(TaskFieldHistory(
+                    task=instance,
+                    field_name=field,
+                    old_value=old_val,
+                    new_value=new_val,
+                    changed_by=user,
+                ))
+        if records:
+            TaskFieldHistory.objects.bulk_create(records)
+    except Exception:
+        logger.exception('TaskFieldHistory: failed to record field changes for task %s', instance.pk)
 
 
 @receiver(post_save, sender=TaskAttachment)

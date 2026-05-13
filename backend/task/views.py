@@ -13,8 +13,10 @@ from django.db.models import Count, Q
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
-from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskHierarchy, TaskRelation, ApprovalChain
-from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer
+from django.utils import timezone
+from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, ApprovalChain
+from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer, TaskFieldHistorySerializer
+from task.signals import set_current_user
 from task.services import bulk_update_tasks
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -413,7 +415,15 @@ class TaskViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         """Update a task"""
+        set_current_user(self.request.user)
         serializer.save()
+
+    @action(detail=True, methods=['get'], url_path='field-history')
+    def field_history(self, request, pk=None):
+        task = self.get_object()
+        qs = TaskFieldHistory.objects.filter(task=task).select_related('changed_by').order_by('-changed_at')
+        serializer = TaskFieldHistorySerializer(qs, many=True)
+        return Response(serializer.data)
     
     def perform_destroy(self, instance):
         """
@@ -588,27 +598,21 @@ class TaskViewSet(viewsets.ModelViewSet):
             task.save()
 
             # Sync budget request status when a budget task is approved or rejected
-            if task.type == 'budget' and task.linked_object is not None:
+            if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest, BudgetRequestStatus
-                    from budget_approval.services import BudgetRequestService
-                    br = task.linked_object
+                    br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
                         if is_approved:
-                            # Advance through all intermediate states to LOCKED in one go
-                            if br.status == BudgetRequestStatus.DRAFT:
-                                br.submit()
-                                br.save()
+                            # Advance up to APPROVED only — pool deduction happens at task LOCKED.
+                            # submitted_at is set at task submission time, so we skip DRAFT→SUBMITTED here.
                             if br.status == BudgetRequestStatus.SUBMITTED:
                                 br.send_for_review()
                                 br.save()
                             if br.status == BudgetRequestStatus.UNDER_REVIEW:
                                 br.approve()
                                 br.save()
-                            if br.status == BudgetRequestStatus.APPROVED:
-                                br.lock()
-                                br.save()
-                        elif not is_approved:
+                        else:
                             if br.status in (BudgetRequestStatus.SUBMITTED, BudgetRequestStatus.UNDER_REVIEW):
                                 br.reject()
                                 br.save()
@@ -659,7 +663,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest
-                    br = task.linked_object
+                    br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
                         br.cancel()
                         br.save()
@@ -833,6 +837,26 @@ class TaskViewSet(viewsets.ModelViewSet):
         try:
             task.submit()
             task.save()
+
+            # Sync BR submitted_at to match the task submission moment.
+            # Budget details can be saved while the task is still DRAFT; that
+            # may auto-submit the BudgetRequest earlier. When the user finally
+            # submits the task, the visible "Submitted at" should reflect this
+            # task transition, not the earlier detail-save time.
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest):
+                        if br.status == BudgetRequestStatus.DRAFT:
+                            br.submit()
+                            br.save()
+                        elif br.status == BudgetRequestStatus.SUBMITTED:
+                            br.submitted_at = timezone.now()
+                            br.save(update_fields=['submitted_at'])
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s submit: %s', task.id, e, exc_info=True)
+
             task_serializer = TaskSerializer(task, context={'request': request})
             return Response({'task': task_serializer.data}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -870,7 +894,8 @@ class TaskViewSet(viewsets.ModelViewSet):
                     if first_step:
                         task.approval_chain = chain
                         task.current_approval_step = 1
-                        task.current_approver = first_step.approver
+                        if not task.current_approver:
+                            task.current_approver = first_step.approver
 
             task.save()
 
@@ -914,17 +939,43 @@ class TaskViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+        # Budget tasks require an approved BudgetRequest before locking
+        if task.type == 'budget':
+            from budget_approval.models import BudgetRequest, BudgetRequestStatus
+            br = task.linked_object or task.budget_requests.first()
+            if not isinstance(br, BudgetRequest):
+                return Response(
+                    {'error': 'Budget details must be filled in before this task can be locked.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if br.status != BudgetRequestStatus.APPROVED:
+                return Response(
+                    {'error': f'Budget request must be in APPROVED status to lock this task (current: {br.status}).'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         try:
             # Lock the task
             task.lock()
             task.save()  # Save the state change
-            
+
+            # Sync budget request to LOCKED so the pool deduction happens here
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest) and br.status == BudgetRequestStatus.APPROVED:
+                        br.lock()
+                        br.save()
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s lock: %s', task.id, e, exc_info=True)
+
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
             return Response(
                 {'error': str(e)},
@@ -937,6 +988,21 @@ class TaskViewSet(viewsets.ModelViewSet):
         try:
             task.unlock()
             task.save()
+
+            # Reverse the pool deduction: reset the linked BudgetRequest from LOCKED → APPROVED
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from decimal import Decimal
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest) and br.status == BudgetRequestStatus.LOCKED:
+                        pool = br.budget_pool
+                        pool.used_amount = max(Decimal('0'), pool.used_amount - br.amount)
+                        pool.save()
+                        BudgetRequest.objects.filter(pk=br.pk).update(status=BudgetRequestStatus.APPROVED)
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s unlock: %s', task.id, e, exc_info=True)
+
             return Response(
                 {'task': TaskSerializer(task).data},
                 status=status.HTTP_200_OK

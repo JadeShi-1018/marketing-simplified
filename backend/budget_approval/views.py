@@ -34,8 +34,13 @@ class BudgetRequestViewSet(viewsets.ModelViewSet):
         # This follows the pattern for proper request context handling
         budget_request = serializer.save(requested_by=self.request.user)
 
-        # If budget request has budget_pool and current_approver, submit it
-        if budget_request.budget_pool and budget_request.current_approver:
+        linked_task = budget_request.task
+        task_is_still_draft = linked_task and linked_task.status == 'DRAFT'
+
+        # If budget details are being saved for a draft Task, keep the
+        # BudgetRequest in DRAFT too. The real submission moment is when the
+        # user submits the Task, and that is when submitted_at should be set.
+        if budget_request.budget_pool and budget_request.current_approver and not task_is_still_draft:
             try:
                 # Submit the budget request (DRAFT --> SUBMITTED)
                 BudgetRequestService.submit_budget_request(

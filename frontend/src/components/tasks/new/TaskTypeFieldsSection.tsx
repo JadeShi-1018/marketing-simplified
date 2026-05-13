@@ -41,9 +41,13 @@ export default function TaskTypeFieldsSection({ schema, values, onChange, contex
     };
   }, [schema, context]);
 
+  const visibleFields = schema.fields.filter(
+    (f) => !f.showWhen || f.showWhen(values as Record<string, unknown>),
+  );
+
   return (
     <div className="space-y-5">
-      {schema.fields.map((field) => (
+      {visibleFields.map((field) => (
         <FieldRow
           key={field.key}
           schemaType={schema.type}
@@ -116,7 +120,7 @@ function renderControl(
           onChange={(e) => onChange(e.target.value)}
           className={INPUT_BASE}
         >
-          <option value="" disabled>
+          <option value="">
             {field.placeholder ?? 'Select…'}
           </option>
           {options.map((opt) => (

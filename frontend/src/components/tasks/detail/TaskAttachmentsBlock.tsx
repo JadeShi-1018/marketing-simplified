@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, File, FileImage, FileText, FileVideo, Loader2, Play, Plus, Trash2, X, ZoomIn } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { TaskAPI } from '@/lib/api/taskApi';
@@ -43,10 +43,12 @@ export default function TaskAttachmentsBlock({
   taskId,
   readOnly,
   loading = false,
+  onPreviewChange,
 }: {
   taskId: number;
   readOnly: boolean;
   loading?: boolean;
+  onPreviewChange?: (open: boolean) => void;
 }) {
   const [items, setItems] = useState<TaskAttachment[] | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -56,6 +58,12 @@ export default function TaskAttachmentsBlock({
   const [excelData, setExcelData] = useState<{ sheets: { name: string; rows: string[][] }[]; activeIndex: number } | null>(null);
   const [excelLoading, setExcelLoading] = useState(false);
   const [visibleRows, setVisibleRows] = useState(100);
+
+  const onPreviewChangeRef = useRef(onPreviewChange);
+  onPreviewChangeRef.current = onPreviewChange;
+  useEffect(() => {
+    onPreviewChangeRef.current?.(preview !== null || excelData !== null);
+  }, [preview, excelData]);
 
   const closePreview = () => {
     if (preview?.type === 'pdf') URL.revokeObjectURL(preview.url);

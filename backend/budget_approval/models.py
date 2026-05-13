@@ -149,6 +149,8 @@ class BudgetRequest(models.Model):
         User,
         on_delete=models.PROTECT,
         related_name='pending_budget_requests',
+        null=True,
+        blank=True,
         help_text="Current approver assigned to this request"
     )
     ad_channel = models.ForeignKey(

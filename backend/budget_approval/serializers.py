@@ -19,7 +19,7 @@ class BudgetRequestSerializer(serializers.ModelSerializer):
     is_escalated = serializers.SerializerMethodField()
     budget_pool_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     budget_pool = serializers.SerializerMethodField()
-    current_approver = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
+    current_approver = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
     current_approver_name = serializers.SerializerMethodField()
     ad_channel = serializers.PrimaryKeyRelatedField(queryset=AdChannel.objects.all(), write_only=True)
     ad_channel_name = serializers.SerializerMethodField()
@@ -51,6 +51,7 @@ class BudgetRequestSerializer(serializers.ModelSerializer):
             'id': p.id,
             'name': p.name or None,
             'ad_channel': p.ad_channel.name if p.ad_channel else None,
+            'ad_channel_id': p.ad_channel.id if p.ad_channel else None,
             'currency': p.currency,
             'total_amount': str(p.total_amount),
             'available_amount': str(p.available_amount),

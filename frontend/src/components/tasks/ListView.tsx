@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Loader2, Plus, Save, Search, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
@@ -131,6 +131,7 @@ export default function ListView({
   onRefresh,
 }: ListViewProps) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const removeTask = useTaskStore((s) => s.removeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const sessionKey = `tasks-list-state-${projectId ?? 'all'}`;
@@ -425,7 +426,20 @@ export default function ListView({
       mounted = false;
     };
   }, [projectId]);
-  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null);
+  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(() => {
+    const param = searchParams?.get('drawerTaskId');
+    const n = param ? Number(param) : NaN;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  });
+  const openDrawer = useCallback((id: number | null) => {
+    setDrawerTaskId(id);
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    if (id != null) params.set('drawerTaskId', String(id));
+    else params.delete('drawerTaskId');
+    const qs = params.toString();
+    router.replace(qs ? `?${qs}` : '?', { scroll: false });
+  }, [router, searchParams]);
+
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [rowMenu, setRowMenu] = useState<TaskListRowContextMenuState>(null);
   const [menuMembers, setMenuMembers] = useState<ProjectMemberData[]>([]);
@@ -1367,7 +1381,7 @@ export default function ListView({
                         toggleSelection(task.id, !isSelected);
                         return;
                       }
-                      setDrawerTaskId(task.id);
+                      openDrawer(task.id);
                     }}
                     onContextMenu={(e) => openRowMenu(e, task)}
                   >
@@ -1449,7 +1463,7 @@ export default function ListView({
                             onClick={(e) => {
                               e.stopPropagation();
                               if (bulkMode) { task.id && toggleSelection(task.id, !isSelected); return; }
-                              if (task.id) setDrawerTaskId(task.id);
+                              if (task.id) openDrawer(task.id);
                             }}
                           >
                             <span
@@ -1766,7 +1780,7 @@ export default function ListView({
                     <tr
                       key={`sub-${sub.id}`}
                       className="cursor-pointer bg-gray-50/60 hover:bg-gray-100/60"
-                      onClick={() => sub.id && setDrawerTaskId(sub.id)}
+                      onClick={() => sub.id && openDrawer(sub.id)}
                     >
                       <td colSpan={colSpan} className="py-1.5 pl-14 pr-4">
                         <div className="flex items-center gap-3 text-sm text-gray-700">
@@ -1852,13 +1866,13 @@ export default function ListView({
             if (hiddenBySearch || hiddenByStatus || hiddenByPriority || hiddenByType) {
               toast('Task created but hidden by your active filters — clear them to see it.', { icon: '⚠️', duration: 5000 });
             }
-            if (task.id) setDrawerTaskId(task.id);
+            if (task.id) openDrawer(task.id);
           }}
         />
       )}
       <TaskDrawer
         taskId={drawerTaskId}
-        onClose={() => setDrawerTaskId(null)}
+        onClose={() => openDrawer(null)}
         onTaskUpdate={() => { onRefresh?.(); }}
         taskIds={paginatedVisible.map((t) => t.id).filter(Boolean) as number[]}
         onNavigate={(dir) => {
@@ -1867,7 +1881,7 @@ export default function ListView({
           const idx = ids.indexOf(drawerTaskId);
           if (idx === -1) return;
           const next = dir === 'next' ? ids[idx + 1] : ids[idx - 1];
-          if (next != null) setDrawerTaskId(next);
+          if (next != null) openDrawer(next);
         }}
       />
     </div>

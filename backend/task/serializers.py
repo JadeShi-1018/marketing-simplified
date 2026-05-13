@@ -5,7 +5,7 @@ from rest_framework import serializers
 from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
 from meetings.services import validate_meeting_for_origin_link
-from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskHierarchy, TaskRelation
+from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation
 from core.models import Project, ProjectMember
 from core.utils.project import get_user_active_project
 from django.contrib.auth import get_user_model
@@ -120,6 +120,7 @@ class TaskSerializer(serializers.ModelSerializer):
     # Maps task.type → (reverse_accessor_or_None, is_manager, ct_model_name)
     # reverse_accessor=None means no direct reverse FK exists on Task
     _REVERSE_ACCESSORS = {
+        'budget':                 ('budget_requests',        True,  'budgetrequest'),
         'experiment':             ('experiment',              False, 'experiment'),
         'platform_policy_update': ('platform_policy_update', False, 'platformpolicyupdate'),
         'alert':                  ('alert_task',             False, 'alerttask'),
@@ -804,3 +805,23 @@ class TaskBulkActionSerializer(serializers.Serializer):
                 }
             )
         return attrs
+
+
+class TaskFieldHistorySerializer(serializers.ModelSerializer):
+    changed_by_name = serializers.SerializerMethodField()
+    changed_by_avatar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskFieldHistory
+        fields = ['id', 'field_name', 'old_value', 'new_value', 'changed_by_name', 'changed_by_avatar', 'changed_at']
+
+    def get_changed_by_name(self, obj):
+        if obj.changed_by:
+            return obj.changed_by.get_full_name() or obj.changed_by.username
+        return None
+
+    def get_changed_by_avatar(self, obj):
+        if obj.changed_by and hasattr(obj.changed_by, 'profile'):
+            avatar = getattr(obj.changed_by.profile, 'avatar', None)
+            return avatar.url if avatar else None
+        return None

@@ -16,6 +16,7 @@ import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
 import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
 import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
+import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 
 interface TaskDrawerProps {
@@ -38,6 +39,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
   const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState<'details' | 'history'>('details');
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -52,10 +54,11 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     }
   }, [taskId]);
 
-  // Reset delete dialog when the task changes or drawer closes (fixes stale dialog on nav/backdrop)
+  // Reset delete dialog and tab when the task changes or drawer closes
   useEffect(() => {
     setDeleteConfirmOpen(false);
     setDeleteBusy(false);
+    setActiveTab('details');
   }, [taskId]);
 
   const load = useCallback(async () => {
@@ -230,6 +233,25 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           </div>
         </div>
 
+        {/* Tab bar */}
+        <div className="sticky top-[53px] z-10 flex border-b border-gray-100 bg-white px-4">
+          {(['details', 'history'] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              data-testid={`drawer-tab-${tab}`}
+              onClick={() => setActiveTab(tab)}
+              className={`relative mr-4 py-2.5 text-xs font-medium transition-colors ${
+                activeTab === tab
+                  ? 'text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-[#3CCED7]'
+                  : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            </button>
+          ))}
+        </div>
+
         {/* Drawer body */}
         <div className="px-4 py-4 space-y-4">
           {error && !loading && (
@@ -249,55 +271,65 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                 isDrawer
               />
 
-              <div className="space-y-4">
-                <TaskDescriptionBlock
-                  task={taskShell}
-                  readOnly={Boolean(readOnly)}
-                  onUpdated={onMutated}
-                  loading={loading}
-                />
-                <TaskTypeBlock
-                  task={taskShell}
-                  loading={loading}
-                  readOnly={Boolean(readOnly)}
-                  onUpdated={onMutated}
-                />
-                <TaskSubtasksBlock
-                  task={taskShell}
-                  readOnly={Boolean(readOnly)}
-                  refreshKey={refreshKey}
-                  loading={loading}
-                  onMutated={onMutated}
-                />
-                <TaskRelationsBlock
-                  task={taskShell}
-                  readOnly={Boolean(readOnly)}
-                  loading={loading}
-                />
-                {(task?.id || loading) && (
-                  <TaskAttachmentsBlock
-                    taskId={task?.id ?? 0}
+              {activeTab === 'details' && (
+                <div className="space-y-4">
+                  <TaskDescriptionBlock
+                    task={taskShell}
                     readOnly={Boolean(readOnly)}
+                    onUpdated={onMutated}
                     loading={loading}
-                    onPreviewChange={setAttachmentPreviewOpen}
                   />
-                )}
-                <PropertiesPanel
-                  task={taskShell}
-                  members={members}
-                  readOnly={Boolean(readOnly)}
-                  onUpdated={onMutated}
-                  loading={loading}
-                />
-                {(task?.id || loading) && (
-                  <TaskActivityBlock
-                    taskId={task?.id ?? 0}
+                  <TaskTypeBlock
+                    task={taskShell}
+                    loading={loading}
+                    readOnly={Boolean(readOnly)}
+                    onUpdated={onMutated}
+                  />
+                  <TaskSubtasksBlock
+                    task={taskShell}
                     readOnly={Boolean(readOnly)}
                     refreshKey={refreshKey}
                     loading={loading}
+                    onMutated={onMutated}
                   />
-                )}
-              </div>
+                  <TaskRelationsBlock
+                    task={taskShell}
+                    readOnly={Boolean(readOnly)}
+                    loading={loading}
+                  />
+                  {(task?.id || loading) && (
+                    <TaskAttachmentsBlock
+                      taskId={task?.id ?? 0}
+                      readOnly={Boolean(readOnly)}
+                      loading={loading}
+                      onPreviewChange={setAttachmentPreviewOpen}
+                    />
+                  )}
+                  <PropertiesPanel
+                    task={taskShell}
+                    members={members}
+                    readOnly={Boolean(readOnly)}
+                    onUpdated={onMutated}
+                    loading={loading}
+                  />
+                  {(task?.id || loading) && (
+                    <TaskActivityBlock
+                      taskId={task?.id ?? 0}
+                      readOnly={Boolean(readOnly)}
+                      refreshKey={refreshKey}
+                      loading={loading}
+                    />
+                  )}
+                </div>
+              )}
+
+              {activeTab === 'history' && task?.id && (
+                <TaskFieldHistoryBlock
+                  taskId={task.id}
+                  refreshKey={refreshKey}
+                  loading={loading}
+                />
+              )}
             </>
           )}
         </div>

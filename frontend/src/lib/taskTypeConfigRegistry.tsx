@@ -66,7 +66,13 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
     formComponent: NewBudgetRequestForm,
     requiredFields: [],
     getPayload: (formData, taskData, createdTask) => {
-      if (!taskData.current_approver_id) return null;
+      // Approver can come from the budget form (formData.current_approver) or the task itself
+      const approverId =
+        formData.current_approver ||
+        taskData.current_approver_id ||
+        (taskData as any).current_approver?.id ||
+        null;
+      if (!approverId) return null;
       const composite: string = formData.budget_pool_composite || "";
       const parts = composite.split(":");
       if (parts.length < 3) return null;
@@ -78,22 +84,39 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
         ad_channel: Number(adChannelId),
         budget_pool_id: Number(poolId),
         notes: formData.notes || "",
-        current_approver: taskData.current_approver_id,
+        current_approver: approverId,
       };
     },
     updateApi: (id, data) => BudgetAPI.patchBudgetRequest(id, data),
-    getUpdatePayload: (formData) => ({
-      amount: formData.amount,
-      notes: formData.notes || "",
-    }),
+    getUpdatePayload: (formData) => {
+      const payload: Record<string, unknown> = {
+        notes: formData.notes || "",
+        current_approver: formData.current_approver ? Number(formData.current_approver) : null,
+      };
+      const amt = Number(formData.amount);
+      if (formData.amount && !Number.isNaN(amt)) {
+        payload.amount = formData.amount;
+      }
+      return payload;
+    },
     initEditState: (linked) => {
       const pool = linked.budget_pool as any;
+      // If budget_pool_composite is explicitly present in the source (e.g. from draft_payload,
+      // even as '') it takes priority — the user may have cleared it. Only reconstruct from the
+      // pool object when the composite key is absent entirely (pure linked-object restore).
+      const hasComposite = 'budget_pool_composite' in (linked as any);
       return {
-        budget_pool_composite: pool?.id
-          ? `${pool.id}:${pool.ad_channel_id ?? ""}:${pool.currency ?? toEditStr(linked.currency)}`
-          : "",
+        budget_pool_composite: hasComposite
+          ? toEditStr(linked.budget_pool_composite)
+          : (pool?.id ? `${pool.id}:${pool.ad_channel_id ?? ""}:${pool.currency ?? toEditStr(linked.currency)}` : ''),
         amount: toEditStr(linked.amount),
         notes: toEditStr(linked.notes),
+        current_approver: (() => {
+          const a = (linked as any).current_approver;
+          // API returns current_approver as a plain integer (PrimaryKeyRelatedField)
+          // but guard against object shape too
+          return toEditStr(typeof a === 'object' && a !== null ? a.id : a);
+        })(),
       };
     },
   },
@@ -178,7 +201,7 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
     successMessage: "Scaling Plan created successfully",
     api: OptimizationScalingAPI.createScalingPlan,
     formComponent: ScalingPlanForm,
-    requiredFields: [],
+    requiredFields: ["scaling_target"],
     getPayload: (formData, _taskData, createdTask) => {
       if (!createdTask?.id) {
         throw new Error("Task ID is required to create scaling plan");
@@ -332,7 +355,7 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
     successMessage: "Client Communication task created successfully",
     api: ClientCommunicationAPI.create,
     formComponent: NewClientCommunicationForm,
-    requiredFields: [],
+    requiredFields: ["communication_type"],
     getPayload: (formData, _taskData, createdTask) => {
       if (!createdTask?.id) return null;
       if (!formData.communication_type) return null;
@@ -378,7 +401,7 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
     successMessage: "Experiment task created successfully",
     api: ExperimentAPI.createExperiment,
     formComponent: ExperimentForm,
-    requiredFields: [],
+    requiredFields: ["hypothesis"],
     getPayload: (formData, taskData, createdTask) => ({
       task: createdTask.id,
       name: taskData.summary || "Experiment task",
@@ -397,8 +420,10 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       success_metric: formData.success_metric || "",
       constraints: formData.constraints || "",
       status: formData.status || "draft",
-      experiment_outcome: formData.experiment_outcome || null,
-      outcome_notes: formData.outcome_notes || "",
+      // Outcome fields only sent when status is 'completed'
+      ...(formData.status === "completed"
+        ? { experiment_outcome: formData.experiment_outcome || null, outcome_notes: formData.outcome_notes || "" }
+        : { experiment_outcome: null, outcome_notes: "" }),
     }),
     initEditState: (linked) => ({
       hypothesis: toEditStr(linked.hypothesis),
@@ -471,7 +496,7 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
     successMessage: "Platform Policy Update created successfully",
     api: PolicyAPI.create,
     formComponent: NewPlatformPolicyUpdateForm,
-    requiredFields: [],
+    requiredFields: ["platform", "policy_change_type", "policy_description"],
     getPayload: (formData, _taskData, createdTask) => {
       if (!createdTask?.id) return null;
       if (!formData.platform) return null;

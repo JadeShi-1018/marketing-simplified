@@ -33,6 +33,11 @@ export interface FieldOption {
 export interface FieldDef {
   /** Payload key on the sub-model create endpoint. */
   key: string;
+  /**
+   * Key used in the linked object API response when it differs from `key`.
+   * Used by FSMActionBar to check if a required field is satisfied on an existing linked object.
+   */
+  linkedKey?: string;
   label: string;
   kind: FieldKind;
   required: boolean;
@@ -44,6 +49,8 @@ export interface FieldDef {
   /** Key into option-loader registry for dynamic options. */
   optionsLoader?: string;
   helpText?: string;
+  /** If provided, the field is only shown (and included in payloads) when this returns true. */
+  showWhen?: (formData: Record<string, unknown>) => boolean;
 }
 
 export interface TypeSchema {
@@ -62,36 +69,51 @@ export interface TypeSchema {
 // Individual schemas
 // ---------------------------------------------------------------------------
 
+const BUDGET_BASE_FIELDS: FieldDef[] = [
+  {
+    key: 'budget_pool_composite',
+    linkedKey: 'budget_pool',
+    label: 'Budget pool',
+    kind: 'select',
+    required: true,
+    optionsLoader: 'budget.pools',
+    placeholder: 'Select a budget pool…',
+    helpText: 'Selects the pool, ad channel, and currency automatically.',
+  },
+  {
+    key: 'amount',
+    label: 'Amount',
+    kind: 'number',
+    required: true,
+    placeholder: 'Requested amount',
+  },
+  {
+    key: 'notes',
+    label: 'Notes',
+    kind: 'textarea',
+    required: false,
+    rows: 2,
+    placeholder: 'Context for this budget request',
+  },
+];
+
+const BUDGET_APPROVER_FIELD: FieldDef = {
+  key: 'current_approver',
+  label: 'Approver',
+  kind: 'select',
+  required: true,
+  optionsLoader: 'project.members',
+  placeholder: 'Select an approver…',
+};
+
 const BUDGET: TypeSchema = {
   type: 'budget',
   label: 'Budget',
   contentType: 'budgetrequest',
-  fields: [
-    {
-      key: 'budget_pool_composite',
-      label: 'Budget pool',
-      kind: 'select',
-      required: true,
-      optionsLoader: 'budget.pools',
-      placeholder: 'Select a budget pool…',
-      helpText: 'Selects the pool, ad channel, and currency automatically.',
-    },
-    {
-      key: 'amount',
-      label: 'Amount',
-      kind: 'number',
-      required: true,
-      placeholder: 'Requested amount',
-    },
-    {
-      key: 'notes',
-      label: 'Notes',
-      kind: 'textarea',
-      required: false,
-      rows: 2,
-      placeholder: 'Context for this budget request',
-    },
-  ],
+  // Create form: approver is handled by the common task-level Approver field, not duplicated here
+  fields: BUDGET_BASE_FIELDS,
+  // Drawer edit form: includes approver (required, shows asterisk)
+  editFields: [...BUDGET_BASE_FIELDS, BUDGET_APPROVER_FIELD],
 };
 
 const ASSET: TypeSchema = {
@@ -861,6 +883,7 @@ const EXPERIMENT: TypeSchema = {
         { value: 'inconclusive', label: 'Inconclusive' },
       ],
       helpText: 'Can only be set when status is Completed.',
+      showWhen: (data) => data['status'] === 'completed',
     },
     {
       key: 'outcome_notes',
@@ -869,6 +892,7 @@ const EXPERIMENT: TypeSchema = {
       required: false,
       rows: 3,
       placeholder: 'Summarise learnings and conclusions from the experiment',
+      showWhen: (data) => data['status'] === 'completed',
     },
   ],
 };

@@ -33,6 +33,19 @@ const loadPolicyChoices = async (
   return policyChoicesCache[key];
 };
 
+const loadProjectMembers = async (ctx?: LoaderContext): Promise<FieldOption[]> => {
+  if (!ctx?.projectId) return [];
+  const res = await api.get(`/api/core/projects/${ctx.projectId}/members/`);
+  const data = res?.data ?? {};
+  const members: any[] = Array.isArray(data) ? data : (data.results ?? data.members ?? []);
+  return members.map((m: any) => {
+    const user = m.user ?? m;
+    const name = user.username || user.name || `User ${user.id}`;
+    const label = user.email ? `${name} · ${user.email}` : name;
+    return { value: String(user.id), label };
+  });
+};
+
 const loadBudgetPools = async (ctx?: LoaderContext): Promise<FieldOption[]> => {
   const params: Record<string, any> = { page_size: 200 };
   if (ctx?.projectId) params.project_id = ctx.projectId;
@@ -53,6 +66,7 @@ export const OPTION_LOADERS: Record<string, Loader> = {
   'policy.platforms': () => loadPolicyChoices('platforms'),
   'policy.change_types': () => loadPolicyChoices('change_types'),
   'budget.pools': (ctx) => loadBudgetPools(ctx),
+  'project.members': (ctx) => loadProjectMembers(ctx),
 };
 
 export async function loadFieldOptions(loaderKey: string, ctx?: LoaderContext): Promise<FieldOption[]> {

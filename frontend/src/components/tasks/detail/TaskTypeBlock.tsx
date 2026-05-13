@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Pencil, X, Check, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskData } from '@/types/task';
@@ -8,6 +8,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { getTypeSchema } from '@/lib/tasks/typeFieldSchemas';
 import { TASK_TYPE_CONFIG_STATIC } from '@/lib/taskTypeConfigRegistry';
 import TaskTypeFieldsSection from '@/components/tasks/new/TaskTypeFieldsSection';
+import { TaskAPI } from '@/lib/api/taskApi';
+import { loadFieldOptions } from '@/lib/tasks/typeFieldOptions';
 
 function prettyLabel(type?: string): string {
   if (!type) return 'Work type';
@@ -33,10 +35,10 @@ function prettyValue(v: unknown): string | null {
 
 const HIDDEN_KEYS = new Set(['id', 'task', 'task_id', 'created_at', 'updated_at']);
 
-// Keys that are raw IDs, computed duplicates, or internal fields not worth surfacing
+// Keys that are raw IDs, computed duplicates, or internal fields not worth surfacing (all types)
 const REDUNDANT_ID_KEYS = new Set([
   // budget
-  'current_approver', 'ad_channel', 'budget_pool_id', 'is_escalated', 'status',
+  'current_approver', 'ad_channel', 'budget_pool_id', 'budget_pool_composite', 'is_escalated', 'status',
   // asset
   'owner',
   // retrospective
@@ -49,7 +51,7 @@ const REDUNDANT_ID_KEYS = new Set([
   'mitigation_plan', 'mitigation_steps', 'mitigation_execution_notes',
   'mitigation_completed_at', 'mitigation_results',
   'post_mitigation_review', 'review_completed_at',
-  'lessons_learned', 'notes', 'related_references',
+  'lessons_learned', 'related_references',
   // report
   'audience_prompt_version', 'prompt_template', 'key_actions', 'is_complete',
   // experiment
@@ -58,6 +60,11 @@ const REDUNDANT_ID_KEYS = new Set([
   'affected_entity_ids', 'triggered_metrics', 'baseline_metrics', 'observed_metrics',
   'executed_at', 'monitored_at', 'rationale',
 ]);
+
+// Additional keys to hide per task type
+const TYPE_HIDDEN_KEYS: Record<string, Set<string>> = {
+  policy: new Set(['notes']),
+};
 
 // Human-readable labels for known keys
 const KEY_LABELS: Record<string, string> = {
@@ -109,6 +116,22 @@ function labelFor(key: string): string {
 
 const STATUS_KEYS = new Set(['execution_status']);
 
+const DATETIME_KEYS = new Set(['submitted_at']);
+
+function formatLocalDatetime(value: unknown): string | null {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return null;
+  }
+}
+
 const EXECUTION_STATUS_STYLES: Record<string, string> = {
   completed:  'bg-green-50 text-green-800',
   monitoring: 'bg-[#3CCED7]/10 text-[#1a9ba3]',
@@ -121,13 +144,17 @@ const EXECUTION_STATUS_STYLES: Record<string, string> = {
 type EntryKind = 'text' | 'array' | 'status';
 type TypedEntry = [string, string, EntryKind];
 
-function flattenEntries(obj: Record<string, unknown>): TypedEntry[] {
+function flattenEntries(obj: Record<string, unknown>, taskType?: string): TypedEntry[] {
+  const typeHidden = taskType ? (TYPE_HIDDEN_KEYS[taskType] ?? null) : null;
   const result: TypedEntry[] = [];
   for (const [k, v] of Object.entries(obj)) {
-    if (HIDDEN_KEYS.has(k) || REDUNDANT_ID_KEYS.has(k)) continue;
+    if (HIDDEN_KEYS.has(k) || REDUNDANT_ID_KEYS.has(k) || typeHidden?.has(k)) continue;
     if (Array.isArray(v)) {
       const items = v.filter((x) => x !== null && x !== undefined && x !== '') as string[];
       if (items.length > 0) result.push([k, items.join('\x00'), 'array']);
+    } else if (k === 'budget_pool' && typeof v === 'string') {
+      // Resolved label string injected from draft_payload pool lookup
+      if (v.trim()) result.push([k, v, 'text']);
     } else if (v !== null && v !== undefined && typeof v === 'object') {
       const rec = v as Record<string, unknown>;
       if (k === 'budget_pool') {
@@ -141,6 +168,9 @@ function flattenEntries(obj: Record<string, unknown>): TypedEntry[] {
     } else if (STATUS_KEYS.has(k)) {
       const display = prettyValue(v);
       if (display !== null) result.push([k, display, 'status']);
+    } else if (DATETIME_KEYS.has(k)) {
+      const display = formatLocalDatetime(v);
+      if (display !== null) result.push([k, display, 'text']);
     } else {
       const display = prettyValue(v);
       if (display !== null) result.push([k, display, 'text']);
@@ -169,14 +199,117 @@ export default function TaskTypeBlock({
   const schema = task.type ? getTypeSchema(task.type) : null;
   const linkedId = linked?.id as number | string | undefined;
 
-  // Only render if loading, or there's a linked object, or the task type has an editable schema
-  if (!loading && (!linked || typeof linked !== 'object') && !schema) return null;
+  const hasLinked = linked && typeof linked === 'object' && Object.keys(linked).length > 0;
+  const rawDraftPayload = task.draft_payload as Record<string, unknown> | null | undefined;
+  // In DRAFT mode, draft_payload is the working copy — prefer it over the linked object for display/edit.
+  // In other statuses, only use draft_payload when there's no linked object.
+  const draftPayload = task.status === 'DRAFT'
+    ? (rawDraftPayload ?? null)
+    : (!hasLinked ? rawDraftPayload : null);
 
-  const entries = flattenEntries(linked ?? {});
+  // When showing from draft_payload for a budget task, resolve the pool label from options
+  const draftComposite = draftPayload ? String(draftPayload.budget_pool_composite ?? '') : '';
+  const [draftBudgetPoolLabel, setDraftBudgetPoolLabel] = useState<string | null>(null);
+  // Derive currency and ad_channel_name from the composite/label so they show immediately
+  // without waiting for a linked BudgetRequest to exist.
+  const draftCurrency = draftComposite ? draftComposite.split(':')[2] || null : null;
+  const draftAdChannelName = draftBudgetPoolLabel
+    ? draftBudgetPoolLabel.split(' · ')[0].split(' – ')[0] || null
+    : null;
+  // Strip the channel name prefix from the pool label so Budget Pool doesn't duplicate
+  // what's already shown in the Ad Channel field.
+  // Format: "{channel}[ · {poolName}] – {currency} ..." → "{poolName} – {currency} ..."
+  const draftBudgetPoolDisplay = draftBudgetPoolLabel
+    ? (() => {
+        const dotIdx = draftBudgetPoolLabel.indexOf(' · ');
+        if (dotIdx >= 0) return draftBudgetPoolLabel.slice(dotIdx + 3);
+        const dashIdx = draftBudgetPoolLabel.indexOf(' – ');
+        return dashIdx >= 0 ? draftBudgetPoolLabel.slice(dashIdx + 3) : draftBudgetPoolLabel;
+      })()
+    : null;
+  useEffect(() => {
+    if (!draftComposite) { setDraftBudgetPoolLabel(null); return; }
+    let cancelled = false;
+    loadFieldOptions('budget.pools', { projectId: task.project_id })
+      .then((opts) => {
+        if (cancelled) return;
+        setDraftBudgetPoolLabel(opts.find((o) => o.value === draftComposite)?.label ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [draftComposite, task.project_id]);
+
+  // Only render if loading, or there's a linked object, draft_payload, or the task type has an editable schema
+  if (!loading && !hasLinked && !draftPayload && !schema) return null;
+
+  // Build display object.
+  // In DRAFT mode: prefer draft_payload (working copy) and fall back to linked object for any missing fields.
+  // In other statuses: use linked object; fall back to draft_payload only when no linked object exists.
+  let displayObj: Record<string, unknown>;
+  if (task.status === 'DRAFT' && rawDraftPayload) {
+    const base: Record<string, unknown> = { ...(hasLinked ? linked! : {}), ...rawDraftPayload };
+    // When a field is cleared in draft_payload, also remove its derived _name counterpart
+    // so the display doesn't show stale data from the linked object (e.g. current_approver_name).
+    for (const [k, v] of Object.entries(rawDraftPayload)) {
+      if (v === '' || v === null || v === undefined) {
+        delete base[`${k}_name`];
+      }
+    }
+    // If budget pool composite is cleared, remove pool and all derived fields
+    if (!rawDraftPayload.budget_pool_composite) {
+      delete base.budget_pool;
+      delete base.currency;
+      delete base.ad_channel_name;
+    }
+    if (draftBudgetPoolDisplay) {
+      base.budget_pool = draftBudgetPoolDisplay;
+      if (draftCurrency) base.currency = draftCurrency;
+      if (draftAdChannelName) base.ad_channel_name = draftAdChannelName;
+    }
+    displayObj = base;
+  } else if (hasLinked) {
+    displayObj = linked!;
+  } else {
+    displayObj = {
+      ...(draftPayload ?? {}),
+      ...(draftBudgetPoolDisplay ? {
+        budget_pool: draftBudgetPoolDisplay,
+        ...(draftCurrency ? { currency: draftCurrency } : {}),
+        ...(draftAdChannelName ? { ad_channel_name: draftAdChannelName } : {}),
+      } : {}),
+    };
+  }
+
+  const rawEntries = flattenEntries(displayObj, task.type ?? undefined);
+  const entries = task.status === 'DRAFT'
+    ? rawEntries.filter(([k]) => k !== 'submitted_at')
+    : rawEntries;
+
+  // Required fields missing from either the linked object or draft_payload
+  const missingRequiredFields = task.status === 'DRAFT' && schema
+    ? (schema.editFields ?? schema.fields).filter((f) => {
+        if (!f.required) return false;
+        const checkData = editing ? formState : (displayObj as Record<string, unknown>);
+        if (f.showWhen && !f.showWhen(checkData)) return false;
+        const checkKey = (!editing && hasLinked) ? (f.linkedKey ?? f.key) : f.key;
+        const val = checkData[checkKey];
+        return !val || !String(val).trim();
+      })
+    : [];
 
   const startEdit = () => {
     if (!config) return;
-    setFormState(config.initEditState(linked ?? {}));
+    // In DRAFT mode, draft_payload is the working copy — init from it if available,
+    // merging over the linked object so fields absent from draft_payload still populate.
+    let initSource: Record<string, unknown>;
+    if (task.status === 'DRAFT' && rawDraftPayload) {
+      initSource = { ...(hasLinked ? linked! : {}), ...rawDraftPayload };
+    } else if (hasLinked) {
+      initSource = linked!;
+    } else {
+      initSource = rawDraftPayload ?? {};
+    }
+    setFormState(config.initEditState(initSource));
     setEditing(true);
   };
 
@@ -197,14 +330,55 @@ export default function TaskTypeBlock({
     setSaving(true);
     try {
       if (linkedId) {
-        // Linked object already exists — update it
-        await config.updateApi(linkedId, config.getUpdatePayload(formState));
+        // Linked object already exists — try to update it.
+        // In DRAFT status, any failure (partial data, validation, etc.) silently falls back to draft_payload.
+        if (task.status === 'DRAFT' && task.id) {
+          // Always persist form state to draft_payload first (captures cleared fields).
+          await TaskAPI.updateTask(task.id, { draft_payload: formState });
+          // Then try to update the linked object with whatever is valid.
+          try {
+            await config.updateApi(linkedId, config.getUpdatePayload(formState));
+          } catch {
+            // Update failed (partial data) — draft_payload already saved above, just finish.
+          }
+        } else {
+          await config.updateApi(linkedId, config.getUpdatePayload(formState));
+        }
       } else {
         // No linked object yet — create it, passing the existing task as context
         const payload = config.getPayload(formState, task, task as any);
-        if (!payload) throw new Error('Missing required fields — please fill in all required values.');
+        if (!payload) {
+          if (task.id) {
+            // Payload can't be built yet (some required fields missing).
+            // Save form state to draft_payload so nothing is lost.
+            await TaskAPI.updateTask(task.id, { draft_payload: formState });
+            toast.success('Details saved.');
+            setEditing(false);
+            onUpdated?.();
+            return;
+          }
+          return;
+        }
         try {
-          await config.api(payload);
+          const createRes = await config.api(payload);
+          // Set the GFK on the task so lock/unlock/approval sync can find the linked object
+          const createdId = (createRes as any)?.data?.id;
+          if (task.id) {
+            if (createdId && config.contentType) {
+              try {
+                await TaskAPI.linkTask(task.id, config.contentType, String(createdId));
+              } catch {
+                // Non-fatal: serializer fallback via reverse FK will still work
+              }
+            }
+            // Linked object is now the source of truth — clear stale draft_payload so it
+            // doesn't shadow fields like current_approver_name in the display merge.
+            try {
+              await TaskAPI.updateTask(task.id, { draft_payload: null });
+            } catch {
+              // Non-fatal
+            }
+          }
         } catch (createErr: unknown) {
           const data = (createErr as any)?.response?.data;
           const isAlreadyExists = JSON.stringify(data ?? '').toLowerCase().includes('already exists');
@@ -233,7 +407,7 @@ export default function TaskTypeBlock({
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-gray-900">
           {prettyLabel(task.type)} details
         </h2>
-        {!loading && !readOnly && config && schema && (
+        {!loading && !readOnly && config && schema && task.status === 'DRAFT' && (
           editing ? (
             <div className="flex gap-2">
               <button
@@ -276,12 +450,19 @@ export default function TaskTypeBlock({
           ))}
         </dl>
       ) : editing && schema ? (
-        <TaskTypeFieldsSection
-          schema={{ ...schema, fields: schema.editFields ?? schema.fields }}
-          values={formState}
-          onChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
-          context={{ projectId: (task.project as any)?.id ?? task.project_id ?? null }}
-        />
+        <>
+          <TaskTypeFieldsSection
+            schema={{ ...schema, fields: schema.editFields ?? schema.fields }}
+            values={formState}
+            onChange={(key, value) => setFormState((prev) => ({ ...prev, [key]: value }))}
+            context={{ projectId: (task.project as any)?.id ?? task.project_id ?? null }}
+          />
+          {missingRequiredFields.length > 0 && (
+            <p className="mt-3 text-[11px] text-amber-600">
+              Required to submit: {missingRequiredFields.map((f) => f.label).join(', ')}
+            </p>
+          )}
+        </>
       ) : entries.length === 0 ? (
         <p className="text-sm text-gray-400">No details added yet. Click Edit to fill them in.</p>
       ) : (
@@ -315,6 +496,11 @@ export default function TaskTypeBlock({
             </div>
           ))}
         </dl>
+      )}
+      {!editing && missingRequiredFields.length > 0 && (
+        <p className="mt-3 text-[11px] text-amber-600">
+          Required to submit: {missingRequiredFields.map((f) => f.label).join(', ')}
+        </p>
       )}
     </section>
   );

@@ -37,20 +37,15 @@ async function apiDelete(page: any, path: string): Promise<void> {
   });
 }
 
-async function getFirstTaskType(page: any): Promise<string> {
-  const token = await getToken(page);
-  const origin = new URL(page.url()).origin;
-  const resp = await page.request.get(`${origin}/api/task-types/`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const body = await resp.json();
-  const list = body?.task_types;
-  return (Array.isArray(list) && list[0]?.value) || 'report';
-}
-
 async function createTask(page: any, projectId: number, summary: string): Promise<number> {
-  const type = await getFirstTaskType(page);
-  const body = await apiPost(page, '/api/tasks/', { summary, project_id: projectId, type });
+  // Always create as draft — without this the backend auto-submits (DRAFT → SUBMITTED)
+  // which can fail FSM validation or require an approver to be set.
+  const body = await apiPost(page, '/api/tasks/', {
+    summary,
+    project_id: projectId,
+    type: 'budget',
+    create_as_draft: true,
+  });
   return body.id;
 }
 

@@ -221,3 +221,13 @@ export interface TaskBulkActionResponse {
   detail: string;
   result: TaskBulkActionResult;
 }
+
+export interface TaskFieldHistoryEntry {
+  id: number;
+  field_name: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by_name: string | null;
+  changed_by_avatar: string | null;
+  changed_at: string;
+}
