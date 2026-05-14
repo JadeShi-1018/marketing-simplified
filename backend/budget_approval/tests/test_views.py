@@ -32,7 +32,8 @@ class TestBudgetRequestViews:
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data['amount'] == '1000.00'
         assert response.data['currency'] == 'AUD'
-        assert response.data['status'] == BudgetRequestStatus.SUBMITTED
+        # Task is DRAFT so BudgetRequest stays DRAFT; submission is deferred to task submission
+        assert response.data['status'] == BudgetRequestStatus.DRAFT
         assert response.data['requested_by'] == user1.id
     
     def test_create_budget_request_invalid_amount(self, api_client, user1, task, budget_pool, user2, ad_channel, team, user_role1, role_permissions):
@@ -131,8 +132,8 @@ class TestBudgetRequestDecisionView:
         response = api_client.patch(url, data, format='json')
         
         assert response.status_code == status.HTTP_200_OK
-        # The status should be LOCKED after approval (final approval)
-        assert response.data['status'] == BudgetRequestStatus.LOCKED
+        # Pool deduction is deferred to task lock; final approval leaves status APPROVED
+        assert response.data['status'] == BudgetRequestStatus.APPROVED
     
     def test_reject_budget_request(self, api_client, user2, budget_request_under_review, team, user_role2, role_permissions):
         """Test rejecting a budget request"""
