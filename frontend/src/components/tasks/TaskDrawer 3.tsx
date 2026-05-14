@@ -290,7 +290,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                     loading={loading}
                     readOnly={Boolean(readOnly)}
                     onUpdated={onMutated}
-                    onMutated={onMutated}
                   />
                   <TaskSubtasksBlock
                     task={taskShell}

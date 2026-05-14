@@ -1581,7 +1581,7 @@ export default function ListView({
                         </button>
                         {openOwnerTaskId === task.id ? (
                           <div
-                            className={`absolute left-0 z-20 min-w-[168px] rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg ${openOverlayUpward ? 'bottom-10' : 'top-10'
+                            className={`absolute left-0 z-20 min-w-[168px] max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg ${openOverlayUpward ? 'bottom-10' : 'top-10'
                               }`}
                           >
                             {memberOptions.map((member) => (
@@ -1643,7 +1643,7 @@ export default function ListView({
                             </button>
                             {!isDisabled && openApproverTaskId === task.id ? (
                               <div
-                                className={`absolute left-0 z-20 min-w-[168px] rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg ${openOverlayUpward ? 'bottom-10' : 'top-10'
+                                className={`absolute left-0 z-20 min-w-[168px] max-h-48 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg ${openOverlayUpward ? 'bottom-10' : 'top-10'
                                   }`}
                               >
                                 <button

@@ -124,9 +124,11 @@ export default function TaskListRowContextMenu({
   }, [state, closeMenu]);
 
   const taskIsReadOnly = state?.task.status === 'LOCKED';
+  const isSubmitted = state?.task.status !== 'DRAFT';
   const disabledPatch = patchBusy || taskIsReadOnly;
   const projectId = state?.task.project_id ?? state?.task.project?.id ?? null;
   const memberPickDisabled = disabledPatch || projectId == null;
+  const ownerApproverDisabled = patchBusy || taskIsReadOnly || isSubmitted || projectId == null;
   const activeMembers = menuMembers.filter((m) => m.is_active);
 
   const workflowItems = useMemo(
@@ -240,7 +242,9 @@ export default function TaskListRowContextMenu({
     : '';
 
   const ownerApproverTitle =
-    projectId == null ? 'Task has no project' : taskIsReadOnly ? 'Task is locked' : undefined;
+    projectId == null ? 'Task has no project' :
+    isSubmitted ? 'Owner and approver cannot be changed after the task is submitted' :
+    taskIsReadOnly ? 'Task is locked' : undefined;
 
   return (
     <>
@@ -301,7 +305,7 @@ export default function TaskListRowContextMenu({
             <button
               type="button"
               role="menuitem"
-              disabled={disabledPatch || memberPickDisabled}
+              disabled={ownerApproverDisabled}
               title={ownerApproverTitle}
               className={`${itemClass} disabled:cursor-not-allowed disabled:opacity-50`}
               onClick={() => setExpanded((e) => (e === 'owner' ? null : 'owner'))}
@@ -352,7 +356,7 @@ export default function TaskListRowContextMenu({
             <button
               type="button"
               role="menuitem"
-              disabled={disabledPatch || memberPickDisabled}
+              disabled={ownerApproverDisabled}
               title={ownerApproverTitle}
               className={`${itemClass} disabled:cursor-not-allowed disabled:opacity-50`}
               onClick={() => setExpanded((e) => (e === 'approver' ? null : 'approver'))}

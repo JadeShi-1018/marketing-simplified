@@ -98,15 +98,25 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
 
   const activeMembers = members.filter((m) => m.is_active);
 
-  const buttons: Array<{ label: string; variant: Variant; action: () => void | Promise<void> }> = [];
+  const buttons: Array<{ label: string; variant: Variant; action: () => void | Promise<void>; extraDisabled?: boolean; title?: string }> = [];
   switch (status) {
     case 'DRAFT':
       buttons.push({
         label: 'Submit',
         variant: 'primary',
+        extraDisabled: !task.current_approver || !task.owner,
+        title: !task.current_approver
+          ? 'Assign an approver before submitting'
+          : !task.owner
+          ? 'Assign an owner before submitting'
+          : undefined,
         action: () => {
           if (!task.current_approver) {
             toast.error('Assign an approver before submitting.', { id: 'fsm-submit-no-approver' });
+            return;
+          }
+          if (!task.owner) {
+            toast.error('Assign an owner before submitting.', { id: 'fsm-submit-no-owner' });
             return;
           }
           const schema = getTypeSchema(task.type);
@@ -171,6 +181,12 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
 
   if (buttons.length === 0 && !rejectOpen && !forwardOpen) return null;
 
+  const submitBlockReasons: string[] = [];
+  if (status === 'DRAFT') {
+    if (!task.owner) submitBlockReasons.push('an owner must be assigned');
+    if (!task.current_approver) submitBlockReasons.push('an approver must be assigned');
+  }
+
   return (
     <div>
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
@@ -180,10 +196,17 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
             label={b.label}
             variant={b.variant}
             onClick={b.action}
-            disabled={busy}
+            disabled={busy || !!b.extraDisabled}
+            title={b.title}
           />
         ))}
       </div>
+
+      {submitBlockReasons.length > 0 && (
+        <p className="mt-2 text-xs text-amber-600">
+          Cannot submit: {submitBlockReasons.join(' and ')}.
+        </p>
+      )}
 
       {rejectOpen && (
         <div className="mt-3 rounded-lg bg-rose-50 p-3 ring-1 ring-rose-200">

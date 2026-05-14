@@ -536,10 +536,12 @@ class TaskSerializer(serializers.ModelSerializer):
                         'current_approver_id': 'Approver is required.'
                     })
         else:
+            # Allow clearing the approver while in DRAFT; submission is blocked on the frontend
             if 'current_approver_id' in attrs and attrs['current_approver_id'] is None:
-                raise serializers.ValidationError({
-                    'current_approver_id': 'Approver is required.'
-                })
+                if self.instance and self.instance.status != 'DRAFT':
+                    raise serializers.ValidationError({
+                        'current_approver_id': 'Approver is required.'
+                    })
 
         if self.instance is not None and attrs.get('origin_meeting_id') is not None:
             try:

@@ -62,9 +62,9 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     setActiveTab('details');
   }, [taskId]);
 
-  const load = useCallback(async (silent = false) => {
+  const load = useCallback(async () => {
     if (!taskId) return;
-    if (!silent) setLoading(true);
+    setLoading(true);
     setError(null);
     try {
       const resp = await TaskAPI.getTask(taskId);
@@ -72,7 +72,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     } catch (e) {
       setError((e as any)?.response?.data?.detail || 'Failed to load task');
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   }, [taskId]);
 
@@ -109,7 +109,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
 
   const onMutated = useCallback(async () => {
     setRefreshKey((k) => k + 1);
-    await load(true);
+    await load();
     onTaskUpdate?.();
   }, [load, onTaskUpdate]);
 
@@ -290,7 +290,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                     loading={loading}
                     readOnly={Boolean(readOnly)}
                     onUpdated={onMutated}
-                    onMutated={onMutated}
                   />
                   <TaskSubtasksBlock
                     task={taskShell}

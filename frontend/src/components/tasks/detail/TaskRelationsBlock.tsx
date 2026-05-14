@@ -106,8 +106,8 @@ function TreeNode({
   return (
     <div className={depth > 0 ? 'ml-4 border-l border-gray-100 pl-3' : ''}>
       <div className="flex items-center gap-1.5 py-1">
-        {/* expand toggle — only show if not a leaf or not yet loaded */}
-        {depth < 3 ? (
+        {/* expand toggle — hide on circular nodes to prevent infinite loops */}
+        {depth < 3 && !isCircular ? (
           <button
             type="button"
             onClick={toggle}
