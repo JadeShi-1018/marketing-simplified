@@ -63,15 +63,15 @@ export default function AccountPicker({
           </span>
         )}
         {selected &&
-          (selected.connected_by_current_user ? (
+          (selected.connected_by_current_user && selected.is_owned ? (
             <span className="shrink-0 rounded bg-[#A6E661]/20 px-1 py-0.5 text-[10px] font-medium text-[#3d6b00]">
-              connected
+              owned
             </span>
-          ) : (
+          ) : !selected.connected_by_current_user ? (
             <span className="shrink-0 rounded bg-[#3CCED7]/15 px-1 py-0.5 text-[10px] font-medium text-[#1a9ba3]">
               shared
             </span>
-          ))}
+          ) : null)}
         <ChevronDown
           className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
         />
@@ -112,15 +112,15 @@ export default function AccountPicker({
                         <span className="truncate text-sm font-medium">
                           {a.name || `act_${a.meta_account_id}`}
                         </span>
-                        {a.connected_by_current_user ? (
+                        {a.connected_by_current_user && a.is_owned ? (
                           <span className="shrink-0 rounded bg-[#A6E661]/20 px-1 py-0.5 text-[10px] font-medium text-[#3d6b00]">
-                            connected
+                            owned
                           </span>
-                        ) : (
+                        ) : !a.connected_by_current_user ? (
                           <span className="shrink-0 rounded bg-[#3CCED7]/15 px-1 py-0.5 text-[10px] font-medium text-[#1a9ba3]">
                             shared
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-gray-500">
                         <span className="font-mono">{a.meta_account_id}</span>

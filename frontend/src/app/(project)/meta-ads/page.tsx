@@ -15,6 +15,7 @@ import {
   ChevronsRight,
   Clock3,
   Facebook,
+  Link2,
   Loader2,
   RefreshCcw,
   TrendingDown,
@@ -192,12 +193,15 @@ function MetaAdsContent() {
   const [loadingData, setLoadingData] = useState(false);
   const [metricTab, setMetricTab] = useState<MetricKey>('spend');
   const [syncing, setSyncing] = useState(false);
+  const [bindingProject, setBindingProject] = useState(false);
   const [latestRun, setLatestRun] = useState<MetaSyncRun | null>(null);
   const [viewTab, setViewTab] = useState<ViewKey>(initialTab);
   const [selectedCampaignIds, setSelectedCampaignIds] = useState<Set<number>>(
     new Set()
   );
-  const activeProjectId = useProjectStore((state) => state.activeProject?.id ?? null);
+  const activeProject = useProjectStore((state) => state.activeProject);
+  const projects = useProjectStore((state) => state.projects);
+  const activeProjectId = activeProject?.id ?? null;
   const hasProjectStoreHydrated = useProjectStore((state) => state.hasHydrated);
 
   const toggleSelectedCampaign = (id: number) => {
@@ -254,6 +258,12 @@ function MetaAdsContent() {
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(SELECTED_ACCOUNT_STORAGE_KEY, String(id));
     }
+  };
+
+  const resolveProjectName = (projectId: number | null | undefined) => {
+    if (!projectId) return null;
+    if (activeProject?.id === projectId) return activeProject.name;
+    return projects.find((project) => project.id === projectId)?.name ?? `Project #${projectId}`;
   };
 
   useEffect(() => {
@@ -414,6 +424,54 @@ function MetaAdsContent() {
     };
   };
 
+  const handleBindSelectedAccountToProject = async () => {
+    if (!selectedAccount) return;
+    if (!activeProject?.id) {
+      toast.error('Select a project before connecting an ad account.');
+      return;
+    }
+    if (!selectedAccount.connected_by_current_user || !selectedAccount.can_manage) {
+      toast.error('Only the user who connected this Meta account can manage its project.');
+      return;
+    }
+
+    const isMove =
+      selectedAccount.project_id !== null && selectedAccount.project_id !== activeProject.id;
+    if (isMove && typeof window !== 'undefined') {
+      const currentProjectName = resolveProjectName(selectedAccount.project_id);
+      const confirmed = window.confirm(
+        `Move this Meta ad account from ${currentProjectName} to ${activeProject.name}? Members of the previous project may lose access.`
+      );
+      if (!confirmed) return;
+    }
+
+    setBindingProject(true);
+    try {
+      const updated = await facebookApi.linkAdAccountToProject(
+        selectedAccount.id,
+        activeProject.id
+      );
+      setAdAccounts((prev) =>
+        prev.map((account) => (account.id === updated.id ? updated : account))
+      );
+      setSelectedId(updated.id);
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(SELECTED_ACCOUNT_STORAGE_KEY, String(updated.id));
+      }
+      toast.success(
+        isMove
+          ? `Moved ad account to ${activeProject.name}.`
+          : `Connected ad account to ${activeProject.name}.`
+      );
+    } catch (error: any) {
+      toast.error(
+        error?.response?.data?.detail || 'Failed to connect ad account to project.'
+      );
+    } finally {
+      setBindingProject(false);
+    }
+  };
+
   const chartData = useMemo(() => {
     if (!summary) return [];
     return summary.timeseries.map((p) => ({
@@ -429,6 +487,18 @@ function MetaAdsContent() {
   const campaigns = perf?.campaigns ?? [];
   const selectedAccount = adAccounts.find((a) => a.id === selectedId) ?? null;
   const canSyncSelectedAccount = Boolean(selectedAccount?.can_sync);
+  const showProjectBindingPanel = Boolean(
+    selectedAccount?.connected_by_current_user &&
+      selectedAccount.can_manage &&
+      activeProject?.id
+  );
+  const selectedAccountProjectName = resolveProjectName(selectedAccount?.project_id);
+  const selectedAccountConnectedToActiveProject = Boolean(
+    selectedAccount?.project_id && selectedAccount.project_id === activeProject?.id
+  );
+  const selectedAccountConnectedElsewhere = Boolean(
+    selectedAccount?.project_id && selectedAccount.project_id !== activeProject?.id
+  );
 
   if (loadingStatus) {
     return (
@@ -511,6 +581,57 @@ function MetaAdsContent() {
       </header>
 
       {latestRun && <SyncStatusCard run={latestRun} />}
+
+      {showProjectBindingPanel && selectedAccount && activeProject && (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${
+                selectedAccountConnectedToActiveProject
+                  ? 'bg-[#A6E661]/20 text-[#3d6b00]'
+                  : 'bg-[#3CCED7]/15 text-[#1a9ba3]'
+              }`}
+            >
+              {selectedAccountConnectedToActiveProject ? (
+                <CheckCircle2 className="h-4 w-4" />
+              ) : (
+                <Link2 className="h-4 w-4" />
+              )}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-medium text-gray-900">
+                {selectedAccountConnectedToActiveProject
+                  ? `Connected to ${activeProject.name}`
+                  : selectedAccountProjectName
+                    ? `Connected to ${selectedAccountProjectName}`
+                    : 'Not connected to a project'}
+              </div>
+              <div className="truncate text-xs text-gray-500">
+                {selectedAccount.name || `act_${selectedAccount.meta_account_id}`} is owned by your Meta connection.
+              </div>
+            </div>
+          </div>
+          {!selectedAccountConnectedToActiveProject && (
+            <button
+              type="button"
+              onClick={handleBindSelectedAccountToProject}
+              disabled={bindingProject}
+              className="inline-flex items-center gap-2 rounded-lg bg-[#1a9ba3] px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-[#137f86] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {bindingProject ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Link2 className="h-4 w-4" />
+              )}
+              {bindingProject
+                ? 'Connecting...'
+                : selectedAccountConnectedElsewhere
+                  ? 'Move to current project'
+                  : 'Connect to current project'}
+            </button>
+          )}
+        </section>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {DAY_OPTIONS.map((d) => (
