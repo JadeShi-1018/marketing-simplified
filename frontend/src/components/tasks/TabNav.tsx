@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 
-export type TasksTab = 'summary' | 'tasks' | 'board';
+export type TasksTab = 'summary' | 'tasks' | 'board' | 'gantt';
 
 interface TabConfig {
   id: TasksTab;
@@ -11,8 +11,9 @@ interface TabConfig {
 
 const TABS: TabConfig[] = [
   { id: 'summary', label: 'Summary' },
-  { id: 'tasks',   label: 'Tasks' },
-  { id: 'board',   label: 'Board' },
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'board', label: 'Board' },
+  { id: 'gantt', label: 'Gantt' },
 ];
 
 interface TabNavProps {

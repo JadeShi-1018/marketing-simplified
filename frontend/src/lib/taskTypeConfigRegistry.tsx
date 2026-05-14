@@ -468,13 +468,20 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
     api: ReportAPI.createReport,
     formComponent: ReportForm,
     requiredFields: [],
-    getPayload: (formData, _taskData, createdTask) => ({
+    getPayload: (formData, _taskData, createdTask) => {
+    if (
+      formData.audience_type === 'other' &&
+      !(formData.audience_details ?? '').trim()
+    ) {
+      throw new Error('Audience details are required when audience type is "Other".');
+    }
+    return {
       task: createdTask.id,
       audience_type: formData.audience_type,
-      audience_details: formData.audience_details || "",
+      audience_details: formData.audience_details || '',
       context: formData.context || defaultReportContext,
-      outcome_summary: formData.outcome_summary || "",
-      narrative_explanation: formData.narrative_explanation || "",
+      outcome_summary: formData.outcome_summary || '',
+      narrative_explanation: formData.narrative_explanation || '',
       key_actions: formData.key_actions || [],
     }),
     updateApi: ReportAPI.updateReport,

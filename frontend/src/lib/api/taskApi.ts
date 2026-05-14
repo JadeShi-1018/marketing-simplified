@@ -12,6 +12,7 @@ import {
   TaskListFilters,
   TaskBulkUpdateRequest,
   TaskBulkActionResponse,
+  GanttChartPayload,
 } from "@/types/task";
 
 export const TaskAPI = {
@@ -39,6 +40,11 @@ export const TaskAPI = {
       queryParams.has_parent = queryParams.has_parent.toString();
     }
     return api.get("/api/tasks/", { params: queryParams });
+  },
+
+  getTasksGantt: async (params?: { project_id?: number }): Promise<GanttChartPayload> => {
+    const response = await api.get("/api/tasks/gantt/", { params });
+    return response.data as GanttChartPayload;
   },
 
   // Get a specific task by ID
@@ -209,4 +215,18 @@ export const TaskAPI = {
 
   moveSubtask: (newParentId: number, subtaskId: number, data: { old_parent_id: number }) =>
     api.post(`/api/tasks/${newParentId}/subtasks/${subtaskId}/move/`, data),
+
+  getAutosave: async (type: string): Promise<Record<string, unknown> | null> => {
+    const response = await api.get('/api/task-form-autosave/', { params: { type } });
+    return response.status === 204 ? null : (response.data as Record<string, unknown>);
+  },
+
+  putAutosave: async (type: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const response = await api.put('/api/task-form-autosave/', payload, { params: { type } });
+    return response.data as Record<string, unknown>;
+  },
+
+  deleteAutosave: async (type: string): Promise<void> => {
+    await api.delete('/api/task-form-autosave/', { params: { type } });
+  },
 };

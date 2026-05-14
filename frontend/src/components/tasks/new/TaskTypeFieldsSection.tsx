@@ -55,6 +55,7 @@ export default function TaskTypeFieldsSection({ schema, values, onChange, contex
           value={values[field.key] ?? ''}
           options={field.options ?? optionsByKey[field.key] ?? []}
           onChange={(v) => onChange(field.key, v)}
+          values={values}
         />
       ))}
     </div>
@@ -62,7 +63,7 @@ export default function TaskTypeFieldsSection({ schema, values, onChange, contex
 }
 
 const INPUT_BASE =
-  'w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30';
+  'min-w-0 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30';
 
 function FieldRow({
   schemaType,
@@ -70,24 +71,30 @@ function FieldRow({
   value,
   options,
   onChange,
+  values,
 }: {
   schemaType: string;
   field: FieldDef;
   value: string;
   options: FieldOption[];
   onChange: (v: string) => void;
+  values: Record<string, string>;
 }) {
   const id = fieldId(schemaType, field.key);
+  const isConditionallyRequired = field.conditionalRequired
+    ? field.conditionalRequired.values.includes(values[field.conditionalRequired.dependsOn] ?? '')
+    : false;
+  const isRequired = field.required || isConditionallyRequired;
 
   return (
     <div>
       <label htmlFor={id} className="mb-1.5 block text-[12px] font-medium uppercase tracking-wider text-gray-500">
         {field.label}
-        {field.required && <span className="ml-1 text-rose-500">*</span>}
+        {isRequired && <span className="ml-1 text-rose-500">*</span>}
       </label>
       {renderControl(id, field, value, options, onChange)}
       {field.helpText && (
-        <p className="mt-1 text-[11px] text-gray-400">{field.helpText}</p>
+        <p className="mt-1 break-words text-[11px] text-gray-400">{field.helpText}</p>
       )}
     </div>
   );

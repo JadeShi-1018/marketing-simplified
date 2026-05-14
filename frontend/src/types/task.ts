@@ -196,6 +196,35 @@ export interface TaskListFilters {
   all_projects?: boolean;
 }
 
+/** GET /api/tasks/gantt/ — chart payload derived server-side from tasks + dates */
+export interface GanttLegendItem {
+  band: 'highest' | 'high' | 'medium' | 'low' | 'lowest';
+  label: string;
+}
+
+export interface GanttRow {
+  id: number;
+  display_key: string;
+  summary: string;
+  status_label: string;
+  priority?: string;
+  band: 'highest' | 'high' | 'medium' | 'low' | 'lowest';
+  owner_initials: string;
+  owner_color_index: number;
+  bar_start: string;
+  bar_end: string;
+  duration_days: number;
+}
+
+export interface GanttChartPayload {
+  sprint_label: string;
+  task_count: number;
+  today: string;
+  range: { start: string; end: string };
+  legend: GanttLegendItem[];
+  rows: GanttRow[];
+}
+
 export interface TaskBulkUpdateRequest {
   task_ids: number[];
   status?: TaskData['status'];

@@ -2,13 +2,26 @@
 
 import { GripVertical, Maximize2, Minimize2, X } from "lucide-react"
 import { useAgentLayout } from "../AgentLayoutContext"
+import { ApprovalToggle } from "./ApprovalToggle"
 
 interface FloatingTitleBarProps {
   title: string
   onPointerDown?: (e: React.PointerEvent) => void
+  /** When set, shows the same approval pill as the inline chat header. */
+  sessionId?: string | null
+  approvalRequired?: boolean
+  onApprovalChange?: (next: boolean) => void
+  approvalToggleDisabled?: boolean
 }
 
-export function FloatingTitleBar({ title, onPointerDown }: FloatingTitleBarProps) {
+export function FloatingTitleBar({
+  title,
+  onPointerDown,
+  sessionId,
+  approvalRequired = false,
+  onApprovalChange,
+  approvalToggleDisabled,
+}: FloatingTitleBarProps) {
   const { floatingChat, toggleMaximize, closeFloatingChat } = useAgentLayout()
   const isMaximized = floatingChat.mode === "maximized"
 
@@ -27,6 +40,23 @@ export function FloatingTitleBar({ title, onPointerDown }: FloatingTitleBarProps
       <span className="flex-1 text-sm font-medium text-foreground truncate px-1">
         {title}
       </span>
+
+      {sessionId ? (
+        <div
+          className="flex items-center gap-1.5 shrink-0 mr-1"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <span className="text-[11px] text-muted-foreground font-medium">
+            Approval
+          </span>
+          <ApprovalToggle
+            sessionId={sessionId}
+            value={approvalRequired}
+            onChange={onApprovalChange}
+            disabled={approvalToggleDisabled}
+          />
+        </div>
+      ) : null}
 
       {/* Maximize / Restore */}
       <button

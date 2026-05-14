@@ -285,8 +285,8 @@ export default function TaskRelationsBlock({
   const hasBlockerRelations = rel && (rel.blocks.length > 0 || rel.is_blocked_by.length > 0);
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
-      <div className="mb-3 flex items-center justify-between">
+    <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-gray-900">
           Linked work items
           {totalCount > 0 && (
@@ -315,7 +315,7 @@ export default function TaskRelationsBlock({
             <button
               type="button"
               onClick={() => setModalOpen(true)}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
             >
               <Plus className="h-3.5 w-3.5" />
               Link

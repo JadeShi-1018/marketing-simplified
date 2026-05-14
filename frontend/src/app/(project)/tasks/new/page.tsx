@@ -16,6 +16,7 @@ import TaskCreateChecklistAside, {
 import { getTypeSchema, getUnfilledRequiredKeys } from '@/lib/tasks/typeFieldSchemas';
 import { TASK_TYPE_CONFIG_STATIC } from '@/lib/taskTypeConfigRegistry';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useTaskFormAutosave } from '@/hooks/useTaskFormAutosave';
 
 const PRIORITIES: { value: string; label: string }[] = [
   { value: 'HIGHEST', label: 'Highest' },
@@ -36,6 +37,17 @@ const COMMON_ANCHOR = {
   priority: 'task-common-priority',
   schedule: 'task-common-schedule',
   approver: 'task-common-approver',
+};
+
+const DEFAULT_FORM = {
+  summary: '',
+  description: '',
+  priority: 'MEDIUM',
+  plannedStartDate: '',
+  startDate: '',
+  dueDate: '',
+  approverId: '',
+  typeFormState: {} as Record<string, string>,
 };
 
 function flashAndFocus(el: HTMLElement) {
@@ -81,6 +93,93 @@ export default function CreateTaskPage() {
   const [approverId, setApproverId] = useState('');
   const [typeFormState, setTypeFormState] = useState<Record<string, string>>({});
 
+  const { isSaving, lastSavedAt, save, saveNow, clear, suspend, resume } =
+    useTaskFormAutosave(type);
+
+  // Stable snapshot of all form fields — passed to save() without triggering
+  // infinite loops from object-literal deps.
+  const formSnapshot = useMemo(
+    () => ({
+      summary,
+      description,
+      priority,
+      planned_start_date: plannedStartDate,
+      start_date: startDate,
+      due_date: dueDate,
+      approver_id: approverId || undefined,
+      type_form: typeFormState,
+    }),
+    [summary, description, priority, plannedStartDate, startDate, dueDate, approverId, typeFormState],
+  );
+
+  // Hydrate all form fields from a remote draft, or reset to defaults if null.
+  const hydrateForm = useCallback((draft: Record<string, unknown> | null) => {
+    if (!draft) {
+      setSummary(DEFAULT_FORM.summary);
+      setDescription(DEFAULT_FORM.description);
+      setPriority(DEFAULT_FORM.priority);
+      setPlannedStartDate(DEFAULT_FORM.plannedStartDate);
+      setStartDate(DEFAULT_FORM.startDate);
+      setDueDate(DEFAULT_FORM.dueDate);
+      setApproverId(DEFAULT_FORM.approverId);
+      setTypeFormState(DEFAULT_FORM.typeFormState);
+      return;
+    }
+    setSummary(typeof draft.summary === 'string' ? draft.summary : DEFAULT_FORM.summary);
+    setDescription(typeof draft.description === 'string' ? draft.description : DEFAULT_FORM.description);
+    setPriority(typeof draft.priority === 'string' ? draft.priority : DEFAULT_FORM.priority);
+    setPlannedStartDate(typeof draft.planned_start_date === 'string' ? draft.planned_start_date : DEFAULT_FORM.plannedStartDate);
+    setStartDate(typeof draft.start_date === 'string' ? draft.start_date : DEFAULT_FORM.startDate);
+    setDueDate(typeof draft.due_date === 'string' ? draft.due_date : DEFAULT_FORM.dueDate);
+    setApproverId(typeof draft.approver_id === 'string' ? draft.approver_id : DEFAULT_FORM.approverId);
+    setTypeFormState(
+      draft.type_form && typeof draft.type_form === 'object'
+        ? (draft.type_form as Record<string, string>)
+        : DEFAULT_FORM.typeFormState,
+    );
+  }, []);
+
+  // Switch type with save → suspend → hydrate → resume(100ms) cycle.
+  const handleTypeChange = useCallback(
+    async (newType: string) => {
+      if (newType === type) return;
+      await saveNow();
+      suspend();
+      setType(newType);
+      try {
+        const draft = await TaskAPI.getAutosave(newType);
+        hydrateForm(draft);
+      } catch {
+        hydrateForm(null);
+      }
+      // Give the setType-induced re-render time to complete before re-enabling
+      // the autosave debounce, so we don't immediately persist stale state.
+      setTimeout(() => resume(), 100);
+    },
+    [type, saveNow, suspend, resume, hydrateForm],
+  );
+
+  // Trigger autosave whenever form state changes (only once a type is selected).
+  useEffect(() => {
+    if (!type) return;
+    save(formSnapshot);
+  }, [formSnapshot, save, type]);
+
+  // On window focus: refresh from the server draft (last-write-wins).
+  useEffect(() => {
+    if (!type) return;
+    const onFocus = async () => {
+      try {
+        const draft = await TaskAPI.getAutosave(type);
+        if (draft) hydrateForm(draft);
+      } catch {
+        // silent — focus refresh is best-effort
+      }
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [type, hydrateForm]);
+
   useEffect(() => {
     setTaskTypesLoading(true);
     TaskAPI.getTaskTypes()
@@ -105,11 +204,6 @@ export default function CreateTaskPage() {
   const updateTypeField = useCallback((key: string, value: string) => {
     setTypeFormState((prev) => ({ ...prev, [key]: value }));
   }, []);
-
-  // Reset type-specific fields when the type changes so stale values don't leak.
-  useEffect(() => {
-    setTypeFormState({});
-  }, [type]);
 
   const checklistItems: ChecklistItem[] = useMemo(() => {
     const base: ChecklistItem[] = [
@@ -152,10 +246,13 @@ export default function CreateTaskPage() {
     if (schema) {
       for (const field of schema.fields) {
         const filled = (typeFormState[field.key] ?? '').toString().trim().length > 0;
+        const isConditionallyRequired = field.conditionalRequired
+        ? field.conditionalRequired.values.includes(typeFormState[field.conditionalRequired.dependsOn] ?? '')
+        : false;
         base.push({
           key: `schema:${field.key}`,
           label: field.label,
-          required: field.required,
+          required: field.required || isConditionallyRequired,
           filled,
           anchorId: fieldId(schema.type, field.key),
         });
@@ -262,6 +359,8 @@ export default function CreateTaskPage() {
       }
 
       toast.success(asDraft ? 'Saved as draft' : 'Task submitted for review');
+      // Fire-and-forget: draft is superseded; TTL cleans up any orphan in 7 days.
+      void clear().catch(() => {});
       if (linkDecisionId) {
         const qs = projectId ? `?project_id=${projectId}` : '';
         router.push(`/decisions/${linkDecisionId}${qs}`);
@@ -284,10 +383,16 @@ export default function CreateTaskPage() {
     }
   };
 
+  const autosaveLabel = isSaving
+    ? 'Saving…'
+    : lastSavedAt
+    ? `Saved ${lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+    : 'Not saved yet';
+
   return (
     <ProtectedRoute renderChildrenWhileLoading>
       <DashboardLayout alerts={[]} upcomingMeetings={[]}>
-      <div className="mx-auto w-full max-w-5xl px-6 py-8">
+      <div className="mx-auto w-full max-w-5xl px-0 py-3 sm:px-6 sm:py-8">
         <button
           type="button"
           onClick={() => {
@@ -309,11 +414,11 @@ export default function CreateTaskPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
           <div className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
             <div className="h-[3px] w-full" style={{ background: BRAND_GRADIENT }} aria-hidden />
 
-            <div id={COMMON_ANCHOR.summary} className="px-8 pt-7 pb-2">
+            <div id={COMMON_ANCHOR.summary} className="px-4 pb-2 pt-5 sm:px-8 sm:pt-7">
               <p className="text-[11px] font-medium uppercase tracking-wider text-gray-400">
                 New task in{' '}
                 {activeProject?.name ?? (projectId ? '' : 'project')}
@@ -325,7 +430,7 @@ export default function CreateTaskPage() {
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
                 placeholder="Summary of this task"
-                className="mt-2 w-full border-0 bg-transparent p-0 text-[22px] font-semibold leading-tight text-gray-900 outline-none placeholder:text-gray-300 focus:border-b-2 focus:border-[#3CCED7]"
+                className="mt-2 w-full border-0 bg-transparent p-0 text-xl font-semibold leading-tight text-gray-900 outline-none placeholder:text-gray-300 focus:border-b-2 focus:border-[#3CCED7] sm:text-[22px]"
                 autoFocus
               />
               <textarea
@@ -339,7 +444,7 @@ export default function CreateTaskPage() {
 
             <div className="my-2 border-t border-gray-100" />
 
-            <div id={COMMON_ANCHOR.type} className="px-8 py-5">
+            <div id={COMMON_ANCHOR.type} className="px-4 py-5 sm:px-8">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
                 Work type *
               </p>
@@ -357,7 +462,7 @@ export default function CreateTaskPage() {
                     <button
                       key={t.value}
                       type="button"
-                      onClick={() => setType(t.value)}
+                      onClick={() => { void handleTypeChange(t.value); }}
                       className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
                         selected
                           ? 'border border-transparent bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-white shadow-sm'
@@ -374,7 +479,7 @@ export default function CreateTaskPage() {
             {!taskTypesLoading && schema && (
               <>
                 <div className="my-2 border-t border-gray-100" />
-                <div className="px-8 py-5">
+                <div className="px-4 py-5 sm:px-8">
                   <p className="mb-3 text-[11px] font-medium uppercase tracking-wider text-gray-400">
                     {schema.label} details
                   </p>
@@ -388,7 +493,7 @@ export default function CreateTaskPage() {
               </>
             )}
 
-            <div id={COMMON_ANCHOR.priority} className="px-8 py-5">
+            <div id={COMMON_ANCHOR.priority} className="px-4 py-5 sm:px-8">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
                 Priority
               </p>
@@ -415,11 +520,11 @@ export default function CreateTaskPage() {
 
             <div className="my-2 border-t border-gray-100" />
 
-            <div id={COMMON_ANCHOR.schedule} className="px-8 py-5">
+            <div id={COMMON_ANCHOR.schedule} className="px-4 py-5 sm:px-8">
               <p className="mb-3 text-[11px] font-medium uppercase tracking-wider text-gray-400">
                 Schedule
               </p>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <DateField
                   label="Planned start"
                   value={plannedStartDate}
@@ -441,7 +546,7 @@ export default function CreateTaskPage() {
               </div>
             </div>
 
-            <div id={COMMON_ANCHOR.approver} className="px-8 py-5">
+            <div id={COMMON_ANCHOR.approver} className="px-4 py-5 sm:px-8">
               <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
                 Approver{type.length > 0 && <span className="ml-0.5 text-rose-400">*</span>}
               </p>
@@ -461,10 +566,25 @@ export default function CreateTaskPage() {
               </select>
             </div>
 
-            <div className="flex items-center justify-end gap-2 border-t border-gray-100 bg-gray-50 px-8 py-4">
+            <div className="flex flex-col gap-2 border-t border-gray-100 bg-gray-50 px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:px-8">
+              {type && (
+                <span className="text-[11px] text-gray-400 sm:mr-auto">
+                  {autosaveLabel}
+                </span>
+              )}
               <button
                 type="button"
-                onClick={() => router.push('/tasks')}
+                onClick={async () => {
+                  if (type) {
+                    try { await clear(); } catch { /* best-effort */ }
+                  }
+                  if (linkDecisionId) {
+                    const qs = projectId ? `?project_id=${projectId}` : '';
+                    router.push(`/decisions/${linkDecisionId}${qs}`);
+                  } else {
+                    router.push('/tasks');
+                  }
+                }}
                 disabled={submitting !== null}
                 className="rounded-md px-3 py-2 text-sm font-medium text-gray-600 transition hover:bg-gray-100 disabled:opacity-60"
               >
@@ -482,7 +602,7 @@ export default function CreateTaskPage() {
                 type="button"
                 onClick={() => submit(false)}
                 disabled={submitting !== null || !allRequiredReady}
-                className="inline-flex items-center gap-2 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
               >
                 {submitting === 'submit' ? (
                   <>
@@ -496,7 +616,7 @@ export default function CreateTaskPage() {
             </div>
           </div>
 
-          <aside className="space-y-3 lg:sticky lg:top-6 lg:self-start">
+          <aside className="min-w-0 space-y-3 lg:sticky lg:top-6 lg:self-start">
             <TaskCreateChecklistAside items={checklistItems} onJump={onJump} />
             <div className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100 text-xs text-gray-500 leading-5">
               Drafts can be edited later. Submitting routes the task into the approval chain configured for this project + work type.

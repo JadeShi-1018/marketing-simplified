@@ -17,7 +17,7 @@ interface Props {
 }
 
 const BASE =
-  'inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-4 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50';
+  'inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium leading-none transition disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto';
 const VARIANT: Record<Variant, string> = {
   primary:
     'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white shadow-sm hover:opacity-95',
@@ -173,7 +173,7 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
 
   return (
     <div>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         {buttons.map((b) => (
           <ActionBtn
             key={b.label}
@@ -197,7 +197,7 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
             onChange={(e) => setRejectComment(e.target.value)}
             placeholder="Explain why you're rejecting…"
           />
-          <div className="mt-2 flex justify-end gap-2">
+          <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button
               type="button"
               className={`${BASE} ${VARIANT.ghost}`}
@@ -241,7 +241,7 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
               };
             })}
           />
-          <div className="mt-2 flex justify-end gap-2">
+          <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button
               type="button"
               className={`${BASE} ${VARIANT.ghost}`}

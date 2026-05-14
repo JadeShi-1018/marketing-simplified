@@ -1185,11 +1185,11 @@ export default function ListView({
 
       {bulkMode && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
-          <div className="text-xs text-gray-500">
+          <div className="min-w-0 text-xs text-gray-500">
             Bulk edit is active. Select tasks to apply bulk actions or send them to Linear.
           </div>
           <div
-            className="inline-flex items-stretch overflow-hidden rounded-lg border border-gray-200 bg-white"
+            className="grid w-full min-w-0 grid-cols-1 overflow-hidden rounded-lg border border-gray-200 bg-white sm:w-auto sm:grid-cols-2"
             role="group"
             aria-label="Linear bulk actions"
           >
@@ -1202,7 +1202,7 @@ export default function ListView({
                   : 'Import Linear issues as tasks in this project'
               }
               onClick={onOpenLinearImport}
-              className="inline-flex h-8 items-center gap-1.5 border-r border-gray-200 px-2.5 text-xs font-semibold text-gray-800 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-9 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap border-b border-gray-200 px-2.5 py-2 text-xs font-semibold leading-none text-gray-800 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 sm:border-b-0 sm:border-r"
             >
               <ArrowDownToLine className="h-3.5 w-3.5 shrink-0 text-[#5E6AD2]" aria-hidden />
               Import from Linear
@@ -1218,7 +1218,7 @@ export default function ListView({
                     : 'Push selected tasks to Linear'
               }
               onClick={openLinearOutput}
-              className="inline-flex h-8 items-center gap-1.5 bg-[#5E6AD2]/10 px-2.5 text-xs font-semibold text-[#4a55b8] transition hover:bg-[#5E6AD2]/15 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-9 min-w-0 items-center justify-center gap-1.5 whitespace-nowrap bg-[#5E6AD2]/10 px-2.5 py-2 text-xs font-semibold leading-none text-[#4a55b8] transition hover:bg-[#5E6AD2]/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <ArrowUpToLine className="h-3.5 w-3.5 shrink-0 text-[#5E6AD2]" aria-hidden />
               Output to Linear
@@ -1284,7 +1284,8 @@ export default function ListView({
             </p>
           </div>
         ) : (
-          <table data-testid="task-list" className="w-full table-fixed text-xs">
+          <div className="overflow-x-auto">
+          <table data-testid="task-list" className="w-full min-w-[980px] table-fixed text-xs">
             <colgroup>
               <col className={TABLE_COLUMN_WIDTHS.icon} />
               {bulkMode ? <col className={TABLE_COLUMN_WIDTHS.select} /> : null}
@@ -1808,6 +1809,7 @@ export default function ListView({
               )}
             </tbody>
           </table>
+          </div>
         )}
         {!loading && !error && sorted.length > LIST_PAGE_SIZE ? (
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-2.5 text-xs text-gray-600">

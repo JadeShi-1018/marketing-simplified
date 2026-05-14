@@ -412,7 +412,7 @@ export default function TaskTypeBlock({
   };
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
+    <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-gray-900">
           {prettyLabel(task.type)} details
@@ -451,7 +451,7 @@ export default function TaskTypeBlock({
       </div>
 
       {loading ? (
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
           {Array.from({ length: 4 }).map((_, index) => (
             <div key={`task-type-skeleton-${index}`} className="min-w-0 space-y-2">
               <Skeleton className="h-3 w-20" />
@@ -476,7 +476,7 @@ export default function TaskTypeBlock({
       ) : entries.length === 0 ? (
         <p className="text-sm text-gray-400">No details added yet. Click Edit to fill them in.</p>
       ) : (
-        <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
+        <dl className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
           {entries.map(([k, v, kind]) => (
             <div key={k} className="min-w-0 self-start">
               <dt className="text-[11px] font-medium uppercase tracking-wide text-gray-500">

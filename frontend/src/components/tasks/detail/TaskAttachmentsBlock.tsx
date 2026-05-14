@@ -175,8 +175,8 @@ export default function TaskAttachmentsBlock({
   };
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
-      <div className="mb-3 flex items-center justify-between">
+    <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
+      <div className="mb-3 flex min-w-0 items-center justify-between gap-2">
         <h2 className="text-[13px] font-semibold uppercase tracking-wide text-gray-900">
           Attachments
           {items && items.length > 0 && (
@@ -189,7 +189,7 @@ export default function TaskAttachmentsBlock({
           <button
             type="button"
             onClick={() => setModalOpen(true)}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900"
           >
             <Plus className="h-3.5 w-3.5" />
             Upload
@@ -224,7 +224,7 @@ export default function TaskAttachmentsBlock({
             const isPdf = ct === 'application/pdf' && a.scan_status === 'clean';
             const isExcel = EXCEL_TYPES.has(ct) && a.scan_status === 'clean';
             return (
-              <li key={a.id} className="flex items-center gap-3 py-2">
+              <li key={a.id} className="flex min-w-0 flex-wrap items-center gap-2 py-2 sm:flex-nowrap sm:gap-3">
                 {isImage ? (
                   <button
                     type="button"
@@ -309,14 +309,14 @@ export default function TaskAttachmentsBlock({
                     {formatSize(a.file_size)} · {a.uploaded_by?.username || 'unknown'}
                   </p>
                 </div>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${scan.cls}`}>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${scan.cls}`}>
                   {scan.label}
                 </span>
                 <button
                   type="button"
                   onClick={() => doDownload(a)}
                   title="Download"
-                  className="rounded p-1.5 text-gray-400 hover:bg-gray-50 hover:text-gray-900"
+                  className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-gray-50 hover:text-gray-900"
                   disabled={a.scan_status === 'infected'}
                 >
                   <Download className="h-3.5 w-3.5" />
@@ -326,7 +326,7 @@ export default function TaskAttachmentsBlock({
                     type="button"
                     onClick={() => setConfirmAtt(a)}
                     title="Delete"
-                    className="rounded p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
+                    className="shrink-0 rounded p-1.5 text-gray-400 hover:bg-rose-50 hover:text-rose-600"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
