@@ -1,7 +1,8 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { DashboardPanelPreferenceProvider } from '@/components/dashboard/DashboardPanelPreferenceContext';
 
 jest.mock('@/components/dashboard/DashboardSidebar', () => ({
   __esModule: true,
@@ -34,17 +35,19 @@ describe('DashboardLayout upcoming meetings panel preference', () => {
     localStorage.clear();
   });
 
-  it('initializes the UpcomingMeetingsPanel from localStorage and persists user toggles', () => {
+  it('initializes the UpcomingMeetingsPanel from localStorage and persists user toggles', async () => {
     localStorage.setItem('dashboard-upcoming-meetings-panel-open', 'false');
 
     const { container } = render(
-      <DashboardLayout>
-        <div>Page content</div>
-      </DashboardLayout>
+      <DashboardPanelPreferenceProvider initialUpcomingMeetingsPanelOpen>
+        <DashboardLayout>
+          <div>Page content</div>
+        </DashboardLayout>
+      </DashboardPanelPreferenceProvider>
     );
 
     const panel = container.querySelector('[data-upcoming-meetings-panel]');
-    expect(panel).toHaveClass('w-0');
+    await waitFor(() => expect(panel).toHaveClass('w-0'));
     expect(screen.getByRole('button', { name: /show panel/i })).toBeInTheDocument();
     expect(screen.queryByText('Upcoming Meetings')).not.toBeInTheDocument();
 
