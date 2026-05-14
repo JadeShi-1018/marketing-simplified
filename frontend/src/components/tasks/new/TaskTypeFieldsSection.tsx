@@ -2,18 +2,19 @@
 
 import { useEffect, useState } from 'react';
 import type { FieldDef, FieldOption, TypeSchema } from '@/lib/tasks/typeFieldSchemas';
-import { loadFieldOptions } from '@/lib/tasks/typeFieldOptions';
+import { loadFieldOptions, type LoaderContext } from '@/lib/tasks/typeFieldOptions';
 
 interface Props {
   schema: TypeSchema;
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
+  context?: LoaderContext;
 }
 
 export const fieldId = (schemaType: string, key: string) =>
   `task-field-${schemaType}-${key}`;
 
-export default function TaskTypeFieldsSection({ schema, values, onChange }: Props) {
+export default function TaskTypeFieldsSection({ schema, values, onChange, context }: Props) {
   const [optionsByKey, setOptionsByKey] = useState<Record<string, FieldOption[]>>({});
 
   useEffect(() => {
@@ -24,7 +25,7 @@ export default function TaskTypeFieldsSection({ schema, values, onChange }: Prop
     });
     (async () => {
       const entries = await Promise.all(
-        Array.from(loaderKeys).map(async (key) => [key, await loadFieldOptions(key)] as const),
+        Array.from(loaderKeys).map(async (key) => [key, await loadFieldOptions(key, context)] as const),
       );
       if (cancelled) return;
       const next: Record<string, FieldOption[]> = {};
@@ -38,11 +39,15 @@ export default function TaskTypeFieldsSection({ schema, values, onChange }: Prop
     return () => {
       cancelled = true;
     };
-  }, [schema]);
+  }, [schema, context]);
+
+  const visibleFields = schema.fields.filter(
+    (f) => !f.showWhen || f.showWhen(values as Record<string, unknown>),
+  );
 
   return (
     <div className="space-y-5">
-      {schema.fields.map((field) => (
+      {visibleFields.map((field) => (
         <FieldRow
           key={field.key}
           schemaType={schema.type}
@@ -122,7 +127,7 @@ function renderControl(
           onChange={(e) => onChange(e.target.value)}
           className={INPUT_BASE}
         >
-          <option value="" disabled>
+          <option value="">
             {field.placeholder ?? 'Select…'}
           </option>
           {options.map((opt) => (

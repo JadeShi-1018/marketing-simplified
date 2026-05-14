@@ -27,6 +27,7 @@ import {
   UserRoundCog,
   Notebook,
   Presentation,
+  PiggyBank,
 } from "lucide-react";
 import { AgentPanelToggleIcon } from "@/components/agent/AgentPanelToggleIcon";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -100,6 +101,12 @@ const getNavigationItems = (
       href: "/decisions",
       icon: CheckSquare,
       description: "Decision workbench and history",
+    },
+    {
+      name: "Budget Pools",
+      href: "/budget-pools",
+      icon: PiggyBank,
+      description: "Manage ad channel budget pools",
     },
     {
       name: t ? t('sidebar.notion') : 'Notion',
