@@ -246,10 +246,13 @@ export default function CreateTaskPage() {
     if (schema) {
       for (const field of schema.fields) {
         const filled = (typeFormState[field.key] ?? '').toString().trim().length > 0;
+        const isConditionallyRequired = field.conditionalRequired
+        ? field.conditionalRequired.values.includes(typeFormState[field.conditionalRequired.dependsOn] ?? '')
+        : false;
         base.push({
           key: `schema:${field.key}`,
           label: field.label,
-          required: field.required,
+          required: field.required || isConditionallyRequired,
           filled,
           anchorId: fieldId(schema.type, field.key),
         });
