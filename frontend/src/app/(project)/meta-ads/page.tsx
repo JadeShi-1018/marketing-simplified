@@ -48,6 +48,7 @@ import {
   type MetaSummary,
   type MetaSyncRun,
 } from '@/lib/api/facebookApi';
+import { useProjectStore } from '@/lib/projectStore';
 
 const DAY_OPTIONS = [1, 2, 3, 7, 14, 28, 30] as const;
 
@@ -196,6 +197,8 @@ function MetaAdsContent() {
   const [selectedCampaignIds, setSelectedCampaignIds] = useState<Set<number>>(
     new Set()
   );
+  const activeProjectId = useProjectStore((state) => state.activeProject?.id ?? null);
+  const hasProjectStoreHydrated = useProjectStore((state) => state.hasHydrated);
 
   const toggleSelectedCampaign = (id: number) => {
     setSelectedCampaignIds((prev) => {
@@ -216,10 +219,11 @@ function MetaAdsContent() {
   }, [selectedId, days]);
 
   useEffect(() => {
+    if (!hasProjectStoreHydrated) return;
     let active = true;
     setLoadingStatus(true);
     facebookApi
-      .getStatus()
+      .getStatus(activeProjectId)
       .then((status) => {
         if (!active) return;
         setConnected(status.connected);
@@ -232,8 +236,10 @@ function MetaAdsContent() {
               : null;
           const storedId = stored ? Number(stored) : NaN;
           const storedMatch = accounts.find((a) => a.id === storedId);
-          const owned = accounts.find((a) => a.is_owned);
-          setSelectedId((storedMatch ?? owned ?? accounts[0]).id);
+          const connectedByMe = accounts.find((a) => a.connected_by_current_user);
+          setSelectedId((storedMatch ?? connectedByMe ?? accounts[0]).id);
+        } else {
+          setSelectedId(null);
         }
       })
       .catch(() => setConnected(false))
@@ -241,7 +247,7 @@ function MetaAdsContent() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeProjectId, hasProjectStoreHydrated]);
 
   const handleSelectAccount = (id: number) => {
     setSelectedId(id);
@@ -421,6 +427,8 @@ function MetaAdsContent() {
 
   const currency = summary?.currency || perf?.currency || 'USD';
   const campaigns = perf?.campaigns ?? [];
+  const selectedAccount = adAccounts.find((a) => a.id === selectedId) ?? null;
+  const canSyncSelectedAccount = Boolean(selectedAccount?.can_sync);
 
   if (loadingStatus) {
     return (
@@ -485,18 +493,20 @@ function MetaAdsContent() {
             selectedId={selectedId}
             onSelect={handleSelectAccount}
           />
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
-          >
-            {syncing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCcw className="h-4 w-4" />
-            )}
-            {syncing ? 'Syncing...' : 'Refresh data'}
-          </button>
+          {canSyncSelectedAccount && (
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50"
+            >
+              {syncing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCcw className="h-4 w-4" />
+              )}
+              {syncing ? 'Syncing...' : 'Refresh data'}
+            </button>
+          )}
         </div>
       </header>
 
