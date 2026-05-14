@@ -26,9 +26,9 @@ import {
   ListTodo,
   UserRoundCog,
   Notebook,
-  Bot,
   Presentation,
 } from "lucide-react";
+import { AgentPanelToggleIcon } from "@/components/agent/AgentPanelToggleIcon";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePathname } from "next/navigation";
 
@@ -477,7 +477,7 @@ const Sidebar: FC<SidebarProps> = ({
             ${collapsed ? "justify-center" : ""}
           `}
           >
-            <Bot className="h-5 w-5 flex-shrink-0" />
+            <AgentPanelToggleIcon className="h-5 w-5 flex-shrink-0 text-[#1a9ba3]" />
             {!collapsed && (
               <>
                 <span>Agent</span>
