@@ -72,7 +72,7 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
 
   return (
     <div className="max-w-full overflow-x-auto pb-3">
-      <div className="flex min-w-full gap-3 sm:gap-4">
+      <div data-testid="board-columns" className="flex min-w-full gap-3 sm:gap-4">
         {sortedTypes.map((meta) => {
           const tasksInColumn = grouped[meta.value] ?? [];
           const currentPage = pageByType[meta.value] ?? 1;
