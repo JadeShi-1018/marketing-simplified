@@ -302,7 +302,7 @@ export default function DashboardSidebar() {
                         {childActive && (
                           <div className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-[#3CCED7]" />
                         )}
-                        <item.icon className="w-[18px] h-[18px] shrink-0" />
+                        <item.icon className="h-[18px] w-[18px] shrink-0" />
                         <span className="flex-1 text-left">{item.label}</span>
                         {isOpen ? (
                           <ChevronDown className="w-4 h-4 text-gray-400 shrink-0" />
@@ -377,7 +377,7 @@ export default function DashboardSidebar() {
                       {(item.href === '/agent' ? isAgentPanelOpen : isActive) && (
                         <div className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-[#3CCED7]" />
                       )}
-                      <item.icon className="w-[18px] h-[18px] shrink-0" />
+                      <item.icon className="h-[18px] w-[18px] shrink-0" />
                       <span className="hidden flex-1 text-left sm:block">{item.label}</span>
                     </button>
                   )}
