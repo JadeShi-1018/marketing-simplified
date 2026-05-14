@@ -296,34 +296,35 @@ function ProfileContent() {
       <div>
         <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 mb-3">Account</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
-          {/* Display name */}
+          {/* First name */}
           <div>
-            <div className="text-xs text-gray-500 mb-1">Display name</div>
+            <div className="text-xs text-gray-500 mb-1">First name</div>
             {profileLoading ? (
               <Skeleton className="h-4 w-32" />
             ) : (
-              <div className="flex items-center gap-3">
-                <div>
-                  <div className="text-[11px] text-gray-400 mb-0.5">First name</div>
-                  <EditableField
-                    label="First name"
-                    value={user?.first_name ?? ''}
-                    placeholder="Add first name"
-                    saving={saving}
-                    onSave={(val) => patchProfile({ first_name: val })}
-                  />
-                </div>
-                <div>
-                  <div className="text-[11px] text-gray-400 mb-0.5">Last name</div>
-                  <EditableField
-                    label="Last name"
-                    value={user?.last_name ?? ''}
-                    placeholder="Add last name"
-                    saving={saving}
-                    onSave={(val) => patchProfile({ last_name: val })}
-                  />
-                </div>
-              </div>
+              <EditableField
+                label="First name"
+                value={user?.first_name ?? ''}
+                placeholder="Add first name"
+                saving={saving}
+                onSave={(val) => patchProfile({ first_name: val })}
+              />
+            )}
+          </div>
+
+          {/* Last name */}
+          <div>
+            <div className="text-xs text-gray-500 mb-1">Last name</div>
+            {profileLoading ? (
+              <Skeleton className="h-4 w-32" />
+            ) : (
+              <EditableField
+                label="Last name"
+                value={user?.last_name ?? ''}
+                placeholder="Add last name"
+                saving={saving}
+                onSave={(val) => patchProfile({ last_name: val })}
+              />
             )}
           </div>
 
@@ -378,67 +379,112 @@ function ProfileContent() {
     </div>
   );
 
+  // ── Role badge style ──────────────────────────────────────────────────────
+
+  const roleBadgeClass = (role: string) => {
+    const r = role.toLowerCase();
+    if (r === 'owner') return 'bg-amber-50 text-amber-600 border-amber-200';
+    if (r === 'viewer') return 'bg-gray-100 text-gray-500 border-gray-200';
+    return 'bg-[#3CCED7]/10 text-[#3CCED7] border-[#3CCED7]/20'; // member / default
+  };
+
   // ── Render organization tab ───────────────────────────────────────────────
 
-  const renderOrganization = () => (
-    <div className="space-y-5">
-      {/* Org info */}
-      {user?.organization && (
-        <div className="flex items-center gap-3 p-4 rounded-lg border border-gray-100 bg-gray-50">
-          <div className="w-9 h-9 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
-            <Building2 className="w-4 h-4 text-white" />
-          </div>
-          <div>
-            <div className="text-sm font-medium text-gray-900">{user.organization.name}</div>
-            <div className="text-xs text-gray-400">Organization</div>
-          </div>
-        </div>
-      )}
+  const renderOrganization = () => {
+    // Group projects by role for clear multi-role display
+    const roleOrder = ['owner', 'member', 'viewer'];
+    const grouped = projects.reduce<Record<string, typeof projects>>((acc, p) => {
+      const key = p.role.toLowerCase();
+      if (!acc[key]) acc[key] = [];
+      acc[key].push(p);
+      return acc;
+    }, {});
+    const sortedRoles = Object.keys(grouped).sort(
+      (a, b) => (roleOrder.indexOf(a) === -1 ? 99 : roleOrder.indexOf(a)) - (roleOrder.indexOf(b) === -1 ? 99 : roleOrder.indexOf(b))
+    );
 
-      {/* Projects */}
-      <div>
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 mb-3">
-          Projects &amp; Roles
-        </h2>
-        {projectsLoading ? (
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100">
-                <Skeleton className="h-8 w-8 rounded-md" />
-                <div className="flex-1 space-y-1.5">
-                  <Skeleton className="h-3.5 w-32" />
-                  <Skeleton className="h-3 w-16" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : projects.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-gray-200 py-10 flex flex-col items-center text-center">
-            <Building2 className="w-8 h-8 text-gray-300 mb-2" />
-            <p className="text-sm text-gray-500">No project memberships yet.</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {projects.map((p) => (
-              <div key={p.project_id} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:border-[#3CCED7]/30 transition-colors">
-                <div className="w-8 h-8 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
-                  <span className="text-white text-xs font-bold">
-                    {p.project_name[0]?.toUpperCase()}
-                  </span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-900 truncate">{p.project_name}</div>
-                </div>
-                <span className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full bg-[#3CCED7]/10 text-[#3CCED7] border border-[#3CCED7]/20">
-                  {humanize(p.role)}
-                </span>
-              </div>
-            ))}
+    return (
+      <div className="space-y-5">
+        {/* Org info */}
+        {user?.organization && (
+          <div className="flex items-center gap-3 p-4 rounded-lg border border-gray-100 bg-gray-50">
+            <div className="w-9 h-9 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
+              <Building2 className="w-4 h-4 text-white" />
+            </div>
+            <div>
+              <div className="text-sm font-medium text-gray-900">{user.organization.name}</div>
+              <div className="text-xs text-gray-400">Organization</div>
+            </div>
           </div>
         )}
+
+        {/* Projects */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
+              Projects &amp; Roles
+            </h2>
+            {!projectsLoading && projects.length > 0 && (
+              <span className="text-xs text-gray-400">{projects.length} project{projects.length !== 1 ? 's' : ''}</span>
+            )}
+          </div>
+
+          {projectsLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100">
+                  <Skeleton className="h-8 w-8 rounded-md" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-3.5 w-32" />
+                    <Skeleton className="h-3 w-16" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-gray-200 py-10 flex flex-col items-center text-center">
+              <Building2 className="w-8 h-8 text-gray-300 mb-2" />
+              <p className="text-sm text-gray-500">No project memberships yet.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {sortedRoles.map((role) => (
+                <div key={role}>
+                  {/* Role group header — only shown when user has projects in multiple roles */}
+                  {sortedRoles.length > 1 && (
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${roleBadgeClass(role)}`}>
+                        {humanize(role)}
+                      </span>
+                      <span className="text-[11px] text-gray-400">{grouped[role].length} project{grouped[role].length !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    {grouped[role].map((p) => (
+                      <div key={p.project_id} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:border-[#3CCED7]/30 transition-colors">
+                        <div className="w-8 h-8 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
+                          <span className="text-white text-xs font-bold">
+                            {p.project_name[0]?.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-900 truncate">{p.project_name}</div>
+                        </div>
+                        {/* Role badge — always shown; color varies by role */}
+                        <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full border ${roleBadgeClass(role)}`}>
+                          {humanize(p.role)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ── Layout ────────────────────────────────────────────────────────────────
 
@@ -548,17 +594,6 @@ function ProfileContent() {
                           value={user?.department ?? ''}
                           saving={saving}
                           onSave={(val) => patchProfile({ department: val })}
-                        />
-                        <AboutRow
-                          icon={Building2}
-                          label="Organization"
-                          placeholder="—"
-                          value={user?.organization?.name ?? ''}
-                          saving={false}
-                          onSave={async () => {
-                            // Organization is managed at the account level; switch tab to see details
-                            setActiveSection('organization');
-                          }}
                         />
                         <AboutRow
                           icon={MapPin}
