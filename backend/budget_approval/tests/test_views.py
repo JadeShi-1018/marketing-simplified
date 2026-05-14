@@ -34,7 +34,8 @@ class TestBudgetRequestViews:
         assert response.data['currency'] == 'AUD'
         # Task is DRAFT so BudgetRequest stays DRAFT; submission is deferred to task submission
         assert response.data['status'] == BudgetRequestStatus.DRAFT
-        assert response.data['requested_by'] == user1.id
+        # requested_by now returns username/name string instead of ID
+        assert response.data['requested_by'] == user1.username
     
     def test_create_budget_request_invalid_amount(self, api_client, user1, task, budget_pool, user2, ad_channel, team, user_role1, role_permissions):
         """Test creating a budget request with invalid amount"""
