@@ -483,7 +483,8 @@ export const TASK_TYPE_CONFIG_STATIC: Record<string, TaskTypeConfigStatic> = {
       outcome_summary: formData.outcome_summary || '',
       narrative_explanation: formData.narrative_explanation || '',
       key_actions: formData.key_actions || [],
-    }),
+    };
+    },
     updateApi: ReportAPI.updateReport,
     getUpdatePayload: (formData) => ({
       audience_type: formData.audience_type,
