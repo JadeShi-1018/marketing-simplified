@@ -144,6 +144,7 @@ export default function TaskDetailHeader({
     }
   };
 
+  const isSubmitted = task.status !== 'DRAFT';
   const projectName = task.project?.name || 'Project';
   const projectId = task.project?.id ?? task.project_id;
   const issueKey = buildIssueKey(projectName, task.id);
@@ -327,9 +328,9 @@ export default function TaskDetailHeader({
               <button
                 type="button"
                 data-testid="header-owner-trigger"
-                disabled={readOnly || fieldSaving}
+                disabled={readOnly || fieldSaving || isSubmitted}
                 onClick={() => setOpenField(openField === 'owner' ? null : 'owner')}
-                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] text-gray-500 transition disabled:cursor-not-allowed disabled:opacity-60 ${!readOnly ? 'hover:bg-gray-100 hover:text-gray-700' : ''}`}
+                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] text-gray-500 transition disabled:cursor-not-allowed disabled:opacity-60 ${!readOnly && !isSubmitted ? 'hover:bg-gray-100 hover:text-gray-700' : ''}`}
                 title="Change owner"
               >
                 <UserInitialsAvatar name={ownerName} />

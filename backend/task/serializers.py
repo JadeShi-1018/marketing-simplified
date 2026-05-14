@@ -514,6 +514,20 @@ class TaskSerializer(serializers.ModelSerializer):
     
     def validate(self, attrs):
         """Validate the data"""
+        # Lock owner, approver, planned_start_date, start_date after submit
+        if self.instance and self.instance.status != 'DRAFT':
+            locked_fields = {
+                'owner_id': 'Owner',
+                'current_approver_id': 'Approver',
+                'planned_start_date': 'Planned date',
+                'start_date': 'Start date',
+            }
+            for field, label in locked_fields.items():
+                if field in attrs:
+                    raise serializers.ValidationError({
+                        field: f'{label} cannot be changed after the task has been submitted.'
+                    })
+
         # Approver requirement
         if not self.instance:
             if not attrs.get('create_as_draft'):
