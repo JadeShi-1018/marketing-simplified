@@ -15,7 +15,9 @@ from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
+from django.core.paginator import Paginator
 from django.core.signing import BadSignature, SignatureExpired
+from django.db.models import Q
 from django.shortcuts import redirect
 from rest_framework import status as drf_status
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -49,6 +51,18 @@ def _parse_optional_int(raw) -> int | None:
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_positive_int(raw, default: int, *, max_value: int | None = None) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    if value < 1:
+        value = default
+    if max_value is not None:
+        value = min(value, max_value)
+    return value
 
 
 def _status_payload(request) -> dict:
@@ -165,6 +179,50 @@ class FacebookStatusView(APIView):
 
     def get(self, request):
         return Response(_serialized_status_payload(request))
+
+
+class MetaAdAccountListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        project_id = _parse_optional_int(request.query_params.get("project_id"))
+        queryset = get_accessible_meta_ad_accounts(
+            request.user,
+            project_id=project_id,
+        )
+
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search)
+                | Q(meta_account_id__icontains=search)
+                | Q(business_id__icontains=search)
+            )
+
+        queryset = queryset.order_by("name", "id")
+
+        page = _parse_positive_int(request.query_params.get("page"), 1)
+        page_size = _parse_positive_int(
+            request.query_params.get("page_size"),
+            5,
+            max_value=100,
+        )
+        paginator = Paginator(queryset, page_size)
+        page_obj = paginator.get_page(page)
+        serializer = MetaAdAccountSerializer(
+            page_obj,
+            many=True,
+            context={"request": request},
+        )
+
+        return Response(
+            {
+                "count": paginator.count,
+                "page": page,
+                "page_size": page_size,
+                "results": serializer.data,
+            }
+        )
 
 
 class FacebookDisconnectView(APIView):

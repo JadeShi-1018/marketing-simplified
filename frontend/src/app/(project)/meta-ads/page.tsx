@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
@@ -34,6 +34,7 @@ import {
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Skeleton } from '@/components/ui/skeleton';
+import ConfirmDialog from '@/components/tasks/detail/ConfirmDialog';
 import AccountPicker from '@/components/meta-ads/AccountPicker';
 import AdsDrilldownPanel from '@/components/meta-ads/AdsDrilldownPanel';
 import CampaignHierarchyTable from '@/components/meta-ads/CampaignHierarchyTable';
@@ -186,6 +187,7 @@ function MetaAdsContent() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connected, setConnected] = useState(false);
   const [adAccounts, setAdAccounts] = useState<FacebookAdAccount[]>([]);
+  const [accountTotalCount, setAccountTotalCount] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [days, setDays] = useState<number>(28);
   const [summary, setSummary] = useState<MetaSummary | null>(null);
@@ -194,6 +196,8 @@ function MetaAdsContent() {
   const [metricTab, setMetricTab] = useState<MetricKey>('spend');
   const [syncing, setSyncing] = useState(false);
   const [bindingProject, setBindingProject] = useState(false);
+  const [pendingMoveAccount, setPendingMoveAccount] =
+    useState<FacebookAdAccount | null>(null);
   const [latestRun, setLatestRun] = useState<MetaSyncRun | null>(null);
   const [viewTab, setViewTab] = useState<ViewKey>(initialTab);
   const [selectedCampaignIds, setSelectedCampaignIds] = useState<Set<number>>(
@@ -233,6 +237,7 @@ function MetaAdsContent() {
         setConnected(status.connected);
         const accounts = status.ad_accounts ?? [];
         setAdAccounts(accounts);
+        setAccountTotalCount(null);
         if (accounts.length > 0) {
           const stored =
             typeof window !== 'undefined'
@@ -253,12 +258,34 @@ function MetaAdsContent() {
     };
   }, [activeProjectId, hasProjectStoreHydrated]);
 
-  const handleSelectAccount = (id: number) => {
+  const handleSelectAccount = useCallback((id: number, account?: FacebookAdAccount) => {
     setSelectedId(id);
+    if (account) {
+      setAdAccounts((prev) => {
+        const next = new Map(prev.map((item) => [item.id, item]));
+        next.set(account.id, account);
+        return Array.from(next.values());
+      });
+    }
     if (typeof window !== 'undefined') {
       window.localStorage.setItem(SELECTED_ACCOUNT_STORAGE_KEY, String(id));
     }
-  };
+  }, []);
+
+  const handleAccountsLoaded = useCallback(
+    (accounts: FacebookAdAccount[], count: number) => {
+      setAccountTotalCount(count);
+      if (accounts.length === 0) return;
+      setAdAccounts((prev) => {
+        const next = new Map(prev.map((item) => [item.id, item]));
+        for (const account of accounts) {
+          next.set(account.id, account);
+        }
+        return Array.from(next.values());
+      });
+    },
+    []
+  );
 
   const resolveProjectName = (projectId: number | null | undefined) => {
     if (!projectId) return null;
@@ -267,7 +294,11 @@ function MetaAdsContent() {
   };
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      setSummary(null);
+      setPerf(null);
+      return;
+    }
     let active = true;
     setLoadingData(true);
     Promise.all([
@@ -290,7 +321,10 @@ function MetaAdsContent() {
   }, [selectedId, days]);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      setLatestRun(null);
+      return;
+    }
     let active = true;
     facebookApi
       .getSyncRuns(selectedId)
@@ -424,31 +458,27 @@ function MetaAdsContent() {
     };
   };
 
-  const handleBindSelectedAccountToProject = async () => {
-    if (!selectedAccount) return;
+  const getAccountLabel = (account: FacebookAdAccount) =>
+    account.name || `act_${account.meta_account_id}`;
+
+  const bindAccountToProject = async (
+    account: FacebookAdAccount
+  ): Promise<boolean> => {
     if (!activeProject?.id) {
       toast.error('Select a project before connecting an ad account.');
-      return;
+      return false;
     }
-    if (!selectedAccount.connected_by_current_user || !selectedAccount.can_manage) {
-      toast.error('Only the user who connected this Meta account can manage its project.');
-      return;
+    if (!account.can_manage) {
+      toast.error('You do not have permission to manage this ad account.');
+      return false;
     }
 
-    const isMove =
-      selectedAccount.project_id !== null && selectedAccount.project_id !== activeProject.id;
-    if (isMove && typeof window !== 'undefined') {
-      const currentProjectName = resolveProjectName(selectedAccount.project_id);
-      const confirmed = window.confirm(
-        `Move this Meta ad account from ${currentProjectName} to ${activeProject.name}? Members of the previous project may lose access.`
-      );
-      if (!confirmed) return;
-    }
+    const isMove = account.project_id !== null && account.project_id !== activeProject.id;
 
     setBindingProject(true);
     try {
       const updated = await facebookApi.linkAdAccountToProject(
-        selectedAccount.id,
+        account.id,
         activeProject.id
       );
       setAdAccounts((prev) =>
@@ -463,13 +493,49 @@ function MetaAdsContent() {
           ? `Moved ad account to ${activeProject.name}.`
           : `Connected ad account to ${activeProject.name}.`
       );
+      return true;
     } catch (error: any) {
       toast.error(
         error?.response?.data?.detail || 'Failed to connect ad account to project.'
       );
+      return false;
     } finally {
       setBindingProject(false);
     }
+  };
+
+  const handleBindSelectedAccountToProject = async () => {
+    if (!selectedAccount) return;
+    if (!activeProject?.id) {
+      toast.error('Select a project before connecting an ad account.');
+      return;
+    }
+    if (!selectedAccount.can_manage) {
+      toast.error('You do not have permission to manage this ad account.');
+      return;
+    }
+
+    const isMove =
+      selectedAccount.project_id !== null && selectedAccount.project_id !== activeProject.id;
+    if (isMove) {
+      setPendingMoveAccount(selectedAccount);
+      return;
+    }
+
+    await bindAccountToProject(selectedAccount);
+  };
+
+  const handleConfirmMoveAccount = async () => {
+    if (!pendingMoveAccount) return;
+    const moved = await bindAccountToProject(pendingMoveAccount);
+    if (moved) {
+      setPendingMoveAccount(null);
+    }
+  };
+
+  const handleMoveDialogOpenChange = (open: boolean) => {
+    if (open || bindingProject) return;
+    setPendingMoveAccount(null);
   };
 
   const chartData = useMemo(() => {
@@ -488,9 +554,7 @@ function MetaAdsContent() {
   const selectedAccount = adAccounts.find((a) => a.id === selectedId) ?? null;
   const canSyncSelectedAccount = Boolean(selectedAccount?.can_sync);
   const showProjectBindingPanel = Boolean(
-    selectedAccount?.connected_by_current_user &&
-      selectedAccount.can_manage &&
-      activeProject?.id
+    selectedAccount?.can_manage && activeProject?.id
   );
   const selectedAccountProjectName = resolveProjectName(selectedAccount?.project_id);
   const selectedAccountConnectedToActiveProject = Boolean(
@@ -535,16 +599,6 @@ function MetaAdsContent() {
     );
   }
 
-  if (adAccounts.length === 0) {
-    return (
-      <div className="mx-auto max-w-2xl py-16 text-center">
-        <p className="text-sm text-gray-600">
-          No ad accounts are accessible from this Meta connection yet. Try refreshing the connection on the Integrations page.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-4">
@@ -559,9 +613,11 @@ function MetaAdsContent() {
         </div>
         <div className="flex items-center gap-3">
           <AccountPicker
-            accounts={adAccounts}
+            projectId={activeProjectId}
+            knownAccounts={adAccounts}
             selectedId={selectedId}
             onSelect={handleSelectAccount}
+            onAccountsLoaded={handleAccountsLoaded}
           />
           {canSyncSelectedAccount && (
             <button
@@ -579,6 +635,14 @@ function MetaAdsContent() {
           )}
         </div>
       </header>
+
+      {!selectedId && (
+        <div className="rounded-xl border border-gray-200 bg-white p-8 text-center text-sm text-gray-600">
+          {accountTotalCount === 0
+            ? 'No ad accounts are accessible from this Meta connection yet. Try refreshing the connection on the Integrations page.'
+            : 'Choose a Meta ad account to view performance data.'}
+        </div>
+      )}
 
       {latestRun && <SyncStatusCard run={latestRun} />}
 
@@ -607,7 +671,7 @@ function MetaAdsContent() {
                     : 'Not connected to a project'}
               </div>
               <div className="truncate text-xs text-gray-500">
-                {selectedAccount.name || `act_${selectedAccount.meta_account_id}`} is owned by your Meta connection.
+                {getAccountLabel(selectedAccount)} is available for this project.
               </div>
             </div>
           </div>
@@ -624,13 +688,27 @@ function MetaAdsContent() {
                 <Link2 className="h-4 w-4" />
               )}
               {bindingProject
-                ? 'Connecting...'
+                ? selectedAccountConnectedElsewhere
+                  ? 'Moving...'
+                  : 'Connecting...'
                 : selectedAccountConnectedElsewhere
                   ? 'Move to current project'
                   : 'Connect to current project'}
             </button>
           )}
         </section>
+      )}
+
+      {pendingMoveAccount && activeProject && (
+        <ConfirmDialog
+          open={Boolean(pendingMoveAccount)}
+          onOpenChange={handleMoveDialogOpenChange}
+          title="Move Meta ad account"
+          description={`Move ${getAccountLabel(pendingMoveAccount)} from ${resolveProjectName(pendingMoveAccount.project_id)} to ${activeProject.name}? Members of the previous project may lose access.`}
+          confirmLabel="Move account"
+          busy={bindingProject}
+          onConfirm={handleConfirmMoveAccount}
+        />
       )}
 
       <div className="flex flex-wrap items-center gap-2">

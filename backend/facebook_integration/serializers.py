@@ -51,7 +51,8 @@ class MetaAdAccountSerializer(serializers.ModelSerializer):
         return user_can_sync_meta_ad_account(user, obj)
 
     def get_connector_name(self, obj):
-        return obj.connection.fb_user_name or obj.connection.user.email
+        user = obj.connection.user
+        return user.get_full_name().strip() or user.username or user.email
 
 
 class FacebookConnectionStatusSerializer(serializers.Serializer):

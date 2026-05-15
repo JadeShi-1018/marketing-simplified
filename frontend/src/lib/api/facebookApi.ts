@@ -27,6 +27,20 @@ export interface FacebookStatus {
   ad_accounts?: FacebookAdAccount[];
 }
 
+export interface FacebookAdAccountListParams {
+  project_id?: number;
+  page?: number;
+  page_size?: number;
+  search?: string;
+}
+
+export interface FacebookAdAccountListResponse {
+  count: number;
+  page: number;
+  page_size: number;
+  results: FacebookAdAccount[];
+}
+
 export interface FacebookConnectPayload {
   authorize_url: string;
   state: string;
@@ -528,6 +542,16 @@ export const facebookApi = {
     const response = await api.get("/api/facebook_integration/status/", {
       params: projectId ? { project_id: projectId } : undefined,
     });
+    return response.data;
+  },
+
+  listAdAccounts: async (
+    params?: FacebookAdAccountListParams
+  ): Promise<FacebookAdAccountListResponse> => {
+    const response = await api.get<FacebookAdAccountListResponse>(
+      "/api/facebook_integration/ad_accounts/",
+      { params }
+    );
     return response.data;
   },
 
