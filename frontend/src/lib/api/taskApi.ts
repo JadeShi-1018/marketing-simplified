@@ -13,6 +13,8 @@ import {
   TaskBulkUpdateRequest,
   TaskBulkActionResponse,
   GanttChartPayload,
+  TaskIntelligencePayload,
+  WorkCycleHistoryPayload,
 } from "@/types/task";
 
 export const TaskAPI = {
@@ -228,5 +230,25 @@ export const TaskAPI = {
 
   deleteAutosave: async (type: string): Promise<void> => {
     await api.delete('/api/task-form-autosave/', { params: { type } });
+  },
+
+  getIntelligence: async (params: {
+    project_id?: number;
+    stall_days?: number;
+    due_soon_days?: number;
+    activity_limit?: number;
+    velocity_weeks?: number;
+  }): Promise<TaskIntelligencePayload> => {
+    const response = await api.get('/api/tasks/intelligence/', { params });
+    return response.data as TaskIntelligencePayload;
+  },
+
+  getWorkCycle: async (params: {
+    project_id?: number;
+    from?: string;
+    to?: string;
+  }): Promise<WorkCycleHistoryPayload> => {
+    const response = await api.get('/api/tasks/work-cycle/', { params });
+    return response.data as WorkCycleHistoryPayload;
   },
 };

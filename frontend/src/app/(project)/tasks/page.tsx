@@ -13,10 +13,14 @@ import SummaryView from '@/components/tasks/SummaryView';
 import ListView from '@/components/tasks/ListView';
 import BoardView from '@/components/tasks/BoardView';
 import GanttView from '@/components/tasks/GanttView';
+import InsightsView from '@/components/tasks/InsightsView';
+import MyActionsView from '@/components/tasks/MyActionsView';
+import PlanningView from '@/components/tasks/PlanningView';
+import StatusReportsView from '@/components/tasks/StatusReportsView';
 import { Skeleton } from '@/components/ui/skeleton';
 import LinearImportModal from '@/components/linear/LinearImportModal';
 
-const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt'];
+const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt', 'insights', 'my-actions', 'planning', 'status-reports'];
 
 export default function TasksV2Page() {
   const router = useRouter();
@@ -151,6 +155,10 @@ export default function TasksV2Page() {
           {tab === 'gantt' && (
             <GanttView projectId={projectId} projectContextLoading={projectContextLoading} />
           )}
+          {tab === 'insights' && <InsightsView projectId={projectId} />}
+          {tab === 'my-actions' && <MyActionsView projectId={projectId} />}
+          {tab === 'planning' && <PlanningView projectId={projectId} />}
+          {tab === 'status-reports' && <StatusReportsView projectId={projectId} />}
         </div>
         <LinearImportModal
           isOpen={linearImportOpen}

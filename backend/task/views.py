@@ -482,6 +482,51 @@ class TaskViewSet(viewsets.ModelViewSet):
             'risk': intel.risk_summary(project_ids, today, stall_days),
         })
 
+    @action(detail=False, methods=['get'], url_path='work-cycle')
+    def work_cycle(self, request):
+        """
+        GET /api/tasks/work-cycle/?project_id=<id>&from=YYYY-MM-DD&to=YYYY-MM-DD
+
+        Returns grouped task changes (added, completed, field changes) within
+        the requested date window.
+        """
+        from datetime import date as _date
+
+        user = request.user
+        accessible_ids = set(
+            ProjectMember.objects.filter(user=user, is_active=True)
+            .values_list('project_id', flat=True)
+        )
+
+        project_id_param = request.query_params.get('project_id')
+        if project_id_param:
+            try:
+                pid = int(project_id_param)
+            except ValueError:
+                return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
+            if pid not in accessible_ids:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            project_ids = [pid]
+        else:
+            active = getattr(user, 'active_project', None)
+            project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
+
+        if not project_ids:
+            return Response({'detail': 'No accessible projects.'}, status=status.HTTP_404_NOT_FOUND)
+
+        today = _date.today()
+        try:
+            date_to = _date.fromisoformat(request.query_params.get('to', today.isoformat()))
+        except ValueError:
+            return Response({'detail': 'Invalid to date.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            default_from = (date_to.replace(day=1)).isoformat()
+            date_from = _date.fromisoformat(request.query_params.get('from', default_from))
+        except ValueError:
+            return Response({'detail': 'Invalid from date.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(intel.work_cycle_history(project_ids, date_from, date_to))
+
     def gantt(self, request, *args, **kwargs):
         """
         Return chart-ready task rows for the Gantt view (same filters as list).
@@ -780,8 +825,8 @@ class TaskViewSet(viewsets.ModelViewSet):
     def cancel(self, request, pk=None):
         """Cancel a task"""
         task = self.get_object()
-        
-        # Validate task can be cancelled
+
+        # Validate task can be cancelled (status check first)
         cancellable_statuses = [
             Task.Status.SUBMITTED,
             Task.Status.UNDER_REVIEW,
@@ -793,6 +838,14 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {'error': 'Task cannot be cancelled in current status'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        is_approver = task.current_approver_id and task.current_approver_id == request.user.id
+        is_owner = task.owner_id and task.owner_id == request.user.id
+        if task.status == Task.Status.SUBMITTED:
+            if not is_approver and not is_owner:
+                return Response({'error': 'Only the task owner or approver can cancel this task.'}, status=status.HTTP_403_FORBIDDEN)
+        elif task.current_approver_id and not is_approver:
+            return Response({'error': 'Only the task approver can cancel this task.'}, status=status.HTTP_403_FORBIDDEN)
         
         try:
             # Cancel the task
@@ -969,6 +1022,8 @@ class TaskViewSet(viewsets.ModelViewSet):
     def submit_task(self, request, pk=None):
         """Submit a task (change status from DRAFT to SUBMITTED)"""
         task = self.get_object()
+        if task.owner_id and task.owner_id != request.user.id:
+            return Response({'error': 'Only the task owner can submit this task.'}, status=status.HTTP_403_FORBIDDEN)
         if task.status != Task.Status.DRAFT:
             return Response(
                 {'error': 'Task must be in DRAFT status to submit'},
@@ -1015,12 +1070,16 @@ class TaskViewSet(viewsets.ModelViewSet):
         """
         task = self.get_object()
 
-        # Validate task can start review
+        # Validate task can start review (status check first)
         if task.status != Task.Status.SUBMITTED:
             return Response(
                 {'error': 'Task must be in SUBMITTED status to start review'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if task.current_approver_id and task.current_approver_id != request.user.id:
+            return Response({'error': 'Only the task approver can start review.'}, status=status.HTTP_403_FORBIDDEN)
+
 
         try:
             # Transition status: SUBMITTED → UNDER_REVIEW
@@ -1056,13 +1115,16 @@ class TaskViewSet(viewsets.ModelViewSet):
         """Lock a task (change status to LOCKED)"""
         task = self.get_object()
 
-        # Validate task can be locked
+        # Validate task can be locked (status check first)
         lockable_statuses = [Task.Status.APPROVED]
         if task.status not in lockable_statuses:
             return Response(
                 {'error': 'Task must be in APPROVED status to be locked'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if task.current_approver_id and task.current_approver_id != request.user.id:
+            return Response({'error': 'Only the task approver can lock this task.'}, status=status.HTTP_403_FORBIDDEN)
 
         # Enforce minimum approval count when an approval chain is assigned
         if task.approval_chain:
@@ -1125,6 +1187,10 @@ class TaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='unlock')
     def unlock(self, request, pk=None):
         task = self.get_object()
+
+        if task.current_approver_id and task.current_approver_id != request.user.id:
+            return Response({'error': 'Only the task approver can unlock this task.'}, status=status.HTTP_403_FORBIDDEN)
+
         try:
             task.unlock()
             task.save()

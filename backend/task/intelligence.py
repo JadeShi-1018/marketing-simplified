@@ -145,6 +145,95 @@ def velocity_trend(project_ids, weeks=8, today=None):
     return [{'week': row['week'].date().isoformat(), 'count': row['count']} for row in rows]
 
 
+# ── Work cycle history ───────────────────────────────────────────────────────
+
+CYCLE_TRACKED_FIELDS = {'status', 'owner', 'priority', 'due_date'}
+
+
+def work_cycle_history(project_ids, date_from, date_to):
+    """
+    Returns grouped changes within [date_from, date_to] for the given projects.
+
+    Shape:
+      {
+        'date_from': str,
+        'date_to': str,
+        'added': [task stubs],
+        'completed': [task stubs],
+        'field_changes': {
+          'status':   [history entries],
+          'owner':    [history entries],
+          'priority': [history entries],
+          'due_date': [history entries],
+        },
+      }
+    """
+    from datetime import datetime, time, timezone as dt_tz
+
+    start = datetime.combine(date_from, time.min).replace(tzinfo=dt_tz.utc)
+    end = datetime.combine(date_to, time.max).replace(tzinfo=dt_tz.utc)
+
+    # Tasks created in range
+    added_qs = (
+        Task.objects.filter(project_id__in=project_ids, created_at__range=[start, end])
+        .select_related('owner', 'current_approver')
+        .order_by('created_at')
+    )
+
+    # Field history in range for tracked fields
+    history_qs = (
+        TaskFieldHistory.objects.filter(
+            task__project_id__in=project_ids,
+            field_name__in=CYCLE_TRACKED_FIELDS,
+            changed_at__range=[start, end],
+        )
+        .select_related('task', 'changed_by')
+        .order_by('-changed_at')
+    )
+
+    def _stub(t):
+        return {
+            'id': t.id,
+            'summary': t.summary,
+            'status': t.status,
+            'priority': getattr(t, 'priority', None),
+            'type': t.type,
+            'due_date': t.due_date.isoformat() if t.due_date else None,
+            'project_id': t.project_id,
+        }
+
+    def _entry(h):
+        return {
+            'task_id': h.task_id,
+            'task_summary': h.task.summary,
+            'old_value': h.old_value,
+            'new_value': h.new_value,
+            'changed_by': h.changed_by.username if h.changed_by else None,
+            'changed_at': h.changed_at.isoformat(),
+        }
+
+    # Completed = status changed TO DONE_STATUS in the range
+    completed_ids = set()
+    field_groups: dict = {f: [] for f in CYCLE_TRACKED_FIELDS}
+    for h in history_qs:
+        field_groups[h.field_name].append(_entry(h))
+        if h.field_name == 'status' and h.new_value == DONE_STATUS:
+            completed_ids.add(h.task_id)
+
+    completed_qs = (
+        Task.objects.filter(id__in=completed_ids)
+        .select_related('owner', 'current_approver')
+    ) if completed_ids else Task.objects.none()
+
+    return {
+        'date_from': date_from.isoformat(),
+        'date_to': date_to.isoformat(),
+        'added': [_stub(t) for t in added_qs],
+        'completed': [_stub(t) for t in completed_qs],
+        'field_changes': field_groups,
+    }
+
+
 # ── Risk summary ─────────────────────────────────────────────────────────────
 
 def risk_summary(project_ids, today=None, stall_days=7):

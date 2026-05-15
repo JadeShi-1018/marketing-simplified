@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import type { TaskData } from '@/types/task';
+import { useTaskStore } from '@/lib/taskStore';
 
 import TaskDetailHeader from '@/components/tasks/detail/TaskDetailHeader';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
@@ -30,6 +31,7 @@ interface TaskDrawerProps {
 
 export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = [], onNavigate, externalRefreshKey }: TaskDrawerProps) {
   const router = useRouter();
+  const updateTaskInStore = useTaskStore((s) => s.updateTask);
 
   const [task, setTask] = useState<TaskData | null>(null);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
@@ -68,7 +70,9 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     setError(null);
     try {
       const resp = await TaskAPI.getTask(taskId);
-      setTask(resp.data as TaskData);
+      const fresh = resp.data as TaskData;
+      setTask(fresh);
+      if (fresh.id) updateTaskInStore(fresh.id, fresh);
     } catch (e) {
       setError((e as any)?.response?.data?.detail || 'Failed to load task');
     } finally {

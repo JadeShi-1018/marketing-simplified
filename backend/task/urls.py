@@ -11,6 +11,7 @@ urlpatterns = [
     # Task CRUD endpoints (static paths like gantt before generic tasks/ if ever ambiguous)
     path('tasks/gantt/', TaskViewSet.as_view({'get': 'gantt'}), name='task-gantt'),
     path('tasks/intelligence/', TaskViewSet.as_view({'get': 'intelligence'}), name='task-intelligence'),
+    path('tasks/work-cycle/', TaskViewSet.as_view({'get': 'work_cycle'}), name='task-work-cycle'),
     path('tasks/', TaskViewSet.as_view({'get': 'list', 'post': 'create'}), name='task-list'),
     path('tasks/bulk_action/', TaskViewSet.as_view({'post': 'bulk_action'}), name='task-bulk-action'),
     path('tasks/force-create/', TaskViewSet.as_view({'post': 'force_create'}), name='task-force-create'),

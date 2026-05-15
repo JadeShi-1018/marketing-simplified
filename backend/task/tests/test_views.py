@@ -1525,11 +1525,11 @@ class TaskAPITest(TestCase):
         )
         
         url = reverse('task-start-review', kwargs={'pk': task.id})
-        response = self.client.post(url, {}, format='json')
-        
+        response = self.approver_client.post(url, {}, format='json')
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['task']['status'], 'UNDER_REVIEW')
-        
+
         # Verify database was updated
         task = Task.objects.get(pk=task.pk)
         self.assertEqual(task.status, Task.Status.UNDER_REVIEW)
@@ -1575,7 +1575,7 @@ class TaskAPITest(TestCase):
         br.submit(); br.send_for_review(); br.approve(); br.save()
 
         url = reverse('task-lock', kwargs={'pk': task.id})
-        response = self.client.post(url, {}, format='json')
+        response = self.approver_client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['task']['status'], 'LOCKED')
@@ -1830,7 +1830,7 @@ class TaskAPITest(TestCase):
         )
 
         url = reverse('task-start-review', kwargs={'pk': task.id})
-        response = self.client.post(url, {}, format='json')
+        response = self.approver_client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         task_data = response.data['task']
@@ -2101,7 +2101,7 @@ class TaskAPITest(TestCase):
         br.submit(); br.send_for_review(); br.approve(); br.save()
 
         url = reverse('task-lock', kwargs={'pk': task.id})
-        response = self.client.post(url, {}, format='json')
+        response = self.approver_client.post(url, {}, format='json')
 
         # Must succeed: legacy mode has no minimum requirement
         self.assertEqual(response.status_code, status.HTTP_200_OK)

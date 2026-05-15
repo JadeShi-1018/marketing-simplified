@@ -266,3 +266,99 @@ export interface TaskFieldHistoryEntry {
   changed_by_avatar: string | null;
   changed_at: string;
 }
+
+// ── Task Intelligence ────────────────────────────────────────────────────────
+
+export interface IntelligenceTaskStub {
+  id: number;
+  summary: string;
+  status: string;
+  priority: string | null;
+  type: string;
+  due_date: string | null;
+  project_id: number;
+  owner: { id: number; username: string } | null;
+  current_approver: { id: number; username: string } | null;
+}
+
+export interface IntelligenceSignal {
+  count: number;
+  tasks: IntelligenceTaskStub[];
+}
+
+export interface IntelligenceActivityEntry {
+  task_id: number;
+  task_summary: string;
+  field: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by: string | null;
+  changed_at: string;
+}
+
+export interface IntelligenceVelocityPoint {
+  week: string;
+  count: number;
+}
+
+export interface IntelligenceRisk {
+  score: number;
+  level: 'low' | 'medium' | 'high';
+  signals: { type: string; count: number }[];
+}
+
+export interface IntelligenceProgress {
+  total: number;
+  todo: number;
+  in_progress: number;
+  done: number;
+  by_status: Record<string, number>;
+  completion_pct: number;
+}
+
+export interface TaskIntelligencePayload {
+  overdue: IntelligenceSignal & { };
+  due_soon: IntelligenceSignal & { days_window: number };
+  blocked: IntelligenceSignal;
+  high_priority: IntelligenceSignal;
+  awaiting_approval: IntelligenceSignal;
+  stalled: IntelligenceSignal & { stall_days: number };
+  progress: IntelligenceProgress;
+  recent_activity: IntelligenceActivityEntry[];
+  velocity: IntelligenceVelocityPoint[];
+  risk: IntelligenceRisk;
+}
+
+// ── Work Cycle History ───────────────────────────────────────────────────────
+
+export interface WorkCycleTaskStub {
+  id: number;
+  summary: string;
+  status: string;
+  priority: string | null;
+  type: string;
+  due_date: string | null;
+  project_id: number;
+}
+
+export interface WorkCycleFieldEntry {
+  task_id: number;
+  task_summary: string;
+  old_value: string | null;
+  new_value: string | null;
+  changed_by: string | null;
+  changed_at: string;
+}
+
+export interface WorkCycleHistoryPayload {
+  date_from: string;
+  date_to: string;
+  added: WorkCycleTaskStub[];
+  completed: WorkCycleTaskStub[];
+  field_changes: {
+    status: WorkCycleFieldEntry[];
+    owner: WorkCycleFieldEntry[];
+    priority: WorkCycleFieldEntry[];
+    due_date: WorkCycleFieldEntry[];
+  };
+}
