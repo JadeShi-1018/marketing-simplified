@@ -362,3 +362,28 @@ export interface WorkCycleHistoryPayload {
     due_date: WorkCycleFieldEntry[];
   };
 }
+
+// ── My Actions ───────────────────────────────────────────────────────────────
+
+export interface MyActionsTaskStub {
+  id: number;
+  summary: string;
+  status: string;
+  priority: string | null;
+  type: string;
+  due_date: string | null;
+  project_id: number;
+  owner: { id: number; username: string } | null;
+  current_approver: { id: number; username: string } | null;
+}
+
+export interface MyActionsPayload {
+  assigned_to_me: MyActionsTaskStub[];
+  awaiting_my_approval: MyActionsTaskStub[];
+  approved_pending_lock: MyActionsTaskStub[];
+  overdue_i_own: MyActionsTaskStub[];
+  due_soon_i_own: MyActionsTaskStub[];
+  blocked_i_own: MyActionsTaskStub[];
+  high_priority_i_own: MyActionsTaskStub[];
+  comment_followups: MyActionsTaskStub[];
+}

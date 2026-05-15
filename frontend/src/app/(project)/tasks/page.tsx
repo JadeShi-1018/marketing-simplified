@@ -41,6 +41,7 @@ export default function TasksV2Page() {
   const { tasks, loading, error, fetchTasks } = useTaskData();
   const [linearImportOpen, setLinearImportOpen] = useState(false);
   const [hasLoadedTaskListOnce, setHasLoadedTaskListOnce] = useState(false);
+  const [myActionsRefreshKey, setMyActionsRefreshKey] = useState(0);
   const projectContextLoading = !projectIdParam && !hasProjectStoreHydrated;
 
   useEffect(() => {
@@ -92,6 +93,7 @@ export default function TasksV2Page() {
     if (projectId) {
       void fetchTasks({ project_id: projectId, page: 1 });
     }
+    setMyActionsRefreshKey((k) => k + 1);
   };
 
   const headerActions = (
@@ -156,7 +158,7 @@ export default function TasksV2Page() {
             <GanttView projectId={projectId} projectContextLoading={projectContextLoading} />
           )}
           {tab === 'insights' && <InsightsView projectId={projectId} />}
-          {tab === 'my-actions' && <MyActionsView projectId={projectId} />}
+          {tab === 'my-actions' && <MyActionsView projectId={projectId} refreshKey={myActionsRefreshKey} />}
           {tab === 'planning' && <PlanningView projectId={projectId} />}
           {tab === 'status-reports' && <StatusReportsView projectId={projectId} />}
         </div>

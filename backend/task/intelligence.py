@@ -8,10 +8,10 @@ so it can be called from tests or management commands as well.
 
 from datetime import date, timedelta
 
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, Q, Subquery
 from django.db.models.functions import TruncWeek
 
-from .models import Task, TaskFieldHistory, TaskRelation
+from .models import Task, TaskComment, TaskFieldHistory, TaskRelation
 
 # ── Status groupings ─────────────────────────────────────────────────────────
 
@@ -231,6 +231,98 @@ def work_cycle_history(project_ids, date_from, date_to):
         'added': [_stub(t) for t in added_qs],
         'completed': [_stub(t) for t in completed_qs],
         'field_changes': field_groups,
+    }
+
+
+# ── My actions ───────────────────────────────────────────────────────────────
+
+def my_actions(user, project_ids, today=None, due_soon_days=7):
+    today = today or date.today()
+
+    def _stub(t):
+        return {
+            'id': t.id,
+            'summary': t.summary,
+            'status': t.status,
+            'priority': getattr(t, 'priority', None),
+            'type': t.type,
+            'due_date': t.due_date.isoformat() if t.due_date else None,
+            'project_id': t.project_id,
+            'owner': {'id': t.owner_id, 'username': t.owner.username} if t.owner_id else None,
+            'current_approver': {'id': t.current_approver_id, 'username': t.current_approver.username}
+                if t.current_approver_id else None,
+        }
+
+    base = _tasks(project_ids)
+
+    assigned_qs = base.filter(owner=user, status__in=ACTIVE_STATUSES)
+    awaiting_qs = base.filter(current_approver=user, status__in=['SUBMITTED', 'UNDER_REVIEW'])
+    approved_pending_lock_qs = base.filter(current_approver=user, status='APPROVED')
+
+    overdue_qs = assigned_qs.filter(due_date__lt=today)
+    due_soon_qs = assigned_qs.filter(
+        due_date__range=[today, today + timedelta(days=due_soon_days)],
+    )
+
+    blocked_ids = TaskRelation.objects.filter(
+        relationship_type=TaskRelation.BLOCKS,
+        target_task__project_id__in=project_ids,
+        target_task__owner=user,
+        target_task__status__in=ACTIVE_STATUSES,
+    ).values_list('target_task_id', flat=True)
+    blocked_qs = base.filter(id__in=blocked_ids)
+
+    high_priority_qs = assigned_qs.filter(priority__in=['HIGHEST', 'HIGH'])
+
+    # comment_followups: tasks where the user has commented, are still active,
+    # and have had activity (comment or field change) after the user's last comment.
+    from django.db.models import OuterRef
+
+    user_last_comment = (
+        TaskComment.objects.filter(user=user, task=OuterRef('pk'))
+        .order_by('-created_at')
+        .values('created_at')[:1]
+    )
+
+    commented_task_ids = (
+        TaskComment.objects.filter(user=user, task__project_id__in=project_ids)
+        .values_list('task_id', flat=True)
+        .distinct()
+    )
+
+    active_commented_qs = base.filter(
+        id__in=commented_task_ids,
+        status__in=ACTIVE_STATUSES,
+    ).annotate(user_last_comment_at=Subquery(user_last_comment))
+
+    newer_comment_sq = TaskComment.objects.filter(
+        task_id=OuterRef('pk'),
+        created_at__gt=OuterRef('user_last_comment_at'),
+    ).exclude(user=user)
+
+    newer_change_sq = TaskFieldHistory.objects.filter(
+        task_id=OuterRef('pk'),
+        changed_at__gt=OuterRef('user_last_comment_at'),
+    ).exclude(changed_by=user)
+
+    followup_qs = active_commented_qs.annotate(
+        has_newer_comment=Exists(newer_comment_sq),
+        has_newer_change=Exists(newer_change_sq),
+    ).filter(
+        user_last_comment_at__isnull=False,
+    ).filter(
+        Q(has_newer_comment=True) | Q(has_newer_change=True)
+    )
+
+    return {
+        'assigned_to_me': [_stub(t) for t in assigned_qs],
+        'awaiting_my_approval': [_stub(t) for t in awaiting_qs],
+        'approved_pending_lock': [_stub(t) for t in approved_pending_lock_qs],
+        'overdue_i_own': [_stub(t) for t in overdue_qs],
+        'due_soon_i_own': [_stub(t) for t in due_soon_qs],
+        'blocked_i_own': [_stub(t) for t in blocked_qs],
+        'high_priority_i_own': [_stub(t) for t in high_priority_qs],
+        'comment_followups': [_stub(t) for t in followup_qs],
     }
 
 

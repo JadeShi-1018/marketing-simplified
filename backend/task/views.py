@@ -527,6 +527,41 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         return Response(intel.work_cycle_history(project_ids, date_from, date_to))
 
+    @action(detail=False, methods=['get'], url_path='my-actions')
+    def my_actions(self, request):
+        """GET /api/tasks/my-actions/?project_id=<id>&due_soon_days=7"""
+        from datetime import date as _date
+
+        user = request.user
+        accessible_ids = set(
+            ProjectMember.objects.filter(user=user, is_active=True)
+            .values_list('project_id', flat=True)
+        )
+
+        project_id_param = request.query_params.get('project_id')
+        if project_id_param:
+            try:
+                pid = int(project_id_param)
+            except ValueError:
+                return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
+            if pid not in accessible_ids:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            project_ids = [pid]
+        else:
+            active = getattr(user, 'active_project', None)
+            project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
+
+        if not project_ids:
+            return Response({'detail': 'No accessible projects.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            due_soon_days = max(1, int(request.query_params.get('due_soon_days', 7)))
+        except (ValueError, TypeError):
+            due_soon_days = 7
+
+        today = _date.today()
+        return Response(intel.my_actions(user, project_ids, today, due_soon_days))
+
     def gantt(self, request, *args, **kwargs):
         """
         Return chart-ready task rows for the Gantt view (same filters as list).

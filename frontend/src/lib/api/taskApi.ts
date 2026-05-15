@@ -15,6 +15,7 @@ import {
   GanttChartPayload,
   TaskIntelligencePayload,
   WorkCycleHistoryPayload,
+  MyActionsPayload,
 } from "@/types/task";
 
 export const TaskAPI = {
@@ -250,5 +251,13 @@ export const TaskAPI = {
   }): Promise<WorkCycleHistoryPayload> => {
     const response = await api.get('/api/tasks/work-cycle/', { params });
     return response.data as WorkCycleHistoryPayload;
+  },
+
+  getMyActions: async (params: {
+    project_id?: number;
+    due_soon_days?: number;
+  }): Promise<MyActionsPayload> => {
+    const response = await api.get('/api/tasks/my-actions/', { params });
+    return response.data as MyActionsPayload;
   },
 };
