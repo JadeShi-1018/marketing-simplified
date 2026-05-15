@@ -20,6 +20,7 @@ from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSeriali
 from task.signals import set_current_user
 from task.services import bulk_update_tasks
 from task.gantt_service import build_gantt_payload, resolve_sprint_label_from_tasks
+from task import intelligence as intel
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -374,6 +375,112 @@ class TaskViewSet(viewsets.ModelViewSet):
             }, "H2_H3_H5")
             # endregion
             raise
+
+    @action(detail=False, methods=['get'], url_path='intelligence')
+    def intelligence(self, request):
+        """
+        GET /api/task/tasks/intelligence/?project_id=<id>[&stall_days=7][&due_soon_days=7][&activity_limit=20][&velocity_weeks=8]
+
+        Returns a single payload with all task-intelligence signals for the
+        given project (or the user's active project when project_id is omitted).
+        """
+        from datetime import date as _date
+
+        user = request.user
+        accessible_ids = set(
+            ProjectMember.objects.filter(user=user, is_active=True)
+            .values_list('project_id', flat=True)
+        )
+
+        project_id_param = request.query_params.get('project_id')
+        if project_id_param:
+            try:
+                pid = int(project_id_param)
+            except ValueError:
+                return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
+            if pid not in accessible_ids:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            project_ids = [pid]
+        else:
+            active = getattr(user, 'active_project', None)
+            project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
+
+        if not project_ids:
+            return Response({'detail': 'No accessible projects.'}, status=status.HTTP_404_NOT_FOUND)
+
+        stall_days = max(1, int(request.query_params.get('stall_days', 7)))
+        due_soon_days = max(1, int(request.query_params.get('due_soon_days', 7)))
+        activity_limit = min(100, max(1, int(request.query_params.get('activity_limit', 20))))
+        velocity_weeks = max(1, int(request.query_params.get('velocity_weeks', 8)))
+        today = _date.today()
+
+        def _task_stub(t):
+            return {
+                'id': t.id,
+                'summary': t.summary,
+                'status': t.status,
+                'priority': getattr(t, 'priority', None),
+                'type': t.type,
+                'due_date': t.due_date.isoformat() if t.due_date else None,
+                'project_id': t.project_id,
+                'owner': {'id': t.owner_id, 'username': t.owner.username} if t.owner_id else None,
+                'current_approver': {'id': t.current_approver_id, 'username': t.current_approver.username}
+                    if t.current_approver_id else None,
+            }
+
+        def _qs_to_stubs(qs):
+            return [_task_stub(t) for t in qs]
+
+        def _activity_entry(h):
+            return {
+                'task_id': h.task_id,
+                'task_summary': h.task.summary,
+                'field': h.field_name,
+                'old_value': h.old_value,
+                'new_value': h.new_value,
+                'changed_by': h.changed_by.username if h.changed_by else None,
+                'changed_at': h.changed_at.isoformat(),
+            }
+
+        overdue_qs = intel.overdue_tasks(project_ids, today)
+        due_soon_qs = intel.due_soon_tasks(project_ids, due_soon_days, today)
+        blocked_qs = intel.blocked_tasks(project_ids)
+        high_priority_qs = intel.high_priority_incomplete_tasks(project_ids)
+        awaiting_qs = intel.awaiting_approval_tasks(project_ids)
+        stalled_qs = intel.stalled_tasks(project_ids, stall_days, today)
+
+        return Response({
+            'overdue': {
+                'count': overdue_qs.count(),
+                'tasks': _qs_to_stubs(overdue_qs),
+            },
+            'due_soon': {
+                'count': due_soon_qs.count(),
+                'tasks': _qs_to_stubs(due_soon_qs),
+                'days_window': due_soon_days,
+            },
+            'blocked': {
+                'count': blocked_qs.count(),
+                'tasks': _qs_to_stubs(blocked_qs),
+            },
+            'high_priority': {
+                'count': high_priority_qs.count(),
+                'tasks': _qs_to_stubs(high_priority_qs),
+            },
+            'awaiting_approval': {
+                'count': awaiting_qs.count(),
+                'tasks': _qs_to_stubs(awaiting_qs),
+            },
+            'stalled': {
+                'count': stalled_qs.count(),
+                'tasks': _qs_to_stubs(stalled_qs),
+                'stall_days': stall_days,
+            },
+            'progress': intel.progress_counts(project_ids),
+            'recent_activity': [_activity_entry(h) for h in intel.recent_activity(project_ids, activity_limit)],
+            'velocity': intel.velocity_trend(project_ids, velocity_weeks, today),
+            'risk': intel.risk_summary(project_ids, today, stall_days),
+        })
 
     def gantt(self, request, *args, **kwargs):
         """
