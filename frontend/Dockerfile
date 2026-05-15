@@ -9,14 +9,14 @@ RUN mkdir -p /app/.next && chown -R appuser:appuser /app/.next
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm install && npm cache clean --force
 
 # Copy the rest of the application
 COPY . .
 
 # Build production bundle and drop webpack cache artifacts.
 # The cache is not needed at runtime and can exhaust CI runner disk.
-RUN npm run build && rm -rf /app/.next/cache
+RUN npm run build && rm -rf /app/.next/cache /tmp/*
 
 # Assign permission
 RUN chown -R appuser:appuser /app
