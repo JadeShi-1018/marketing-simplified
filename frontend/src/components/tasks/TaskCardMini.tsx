@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import type { TaskData } from '@/types/task';
 import UserAvatar from '@/people/UserAvatar';
-import { STATUS_META } from './TYPE_META';
+import { getStatusMeta } from './TYPE_META';
 import { getTaskStatusLucideIcon } from './taskStatusIcons';
 
 interface TaskCardMiniProps {
@@ -15,8 +15,8 @@ interface TaskCardMiniProps {
 export default function TaskCardMini({ task, columnAccentHex }: TaskCardMiniProps) {
   const router = useRouter();
   const status = task.status ?? 'DRAFT';
-  const statusMeta = STATUS_META[status] ?? STATUS_META.DRAFT;
-  const statusLabel = STATUS_META[status]?.label ?? status;
+  const statusMeta = getStatusMeta(status);
+  const statusLabel = statusMeta.label || status;
   const description = task.description?.trim() ?? '';
   const StatusIcon = getTaskStatusLucideIcon(status);
 

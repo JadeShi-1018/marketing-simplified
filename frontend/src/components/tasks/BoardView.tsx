@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
 import type { TaskData } from '@/types/task';
-import { TASK_TYPES } from './TYPE_META';
+import { TASK_TYPE_ORDER_INDEX, TASK_TYPES } from './TYPE_META';
 import TaskCardMini from './TaskCardMini';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -43,8 +43,7 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
       [...TASK_TYPES].sort((a, b) => {
         const countDiff = (grouped[b.value]?.length ?? 0) - (grouped[a.value]?.length ?? 0);
         if (countDiff !== 0) return countDiff;
-        return TASK_TYPES.findIndex((type) => type.value === a.value) -
-          TASK_TYPES.findIndex((type) => type.value === b.value);
+        return TASK_TYPE_ORDER_INDEX[a.value] - TASK_TYPE_ORDER_INDEX[b.value];
       }),
     [grouped]
   );

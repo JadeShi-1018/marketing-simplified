@@ -1,26 +1,86 @@
-// Single source of truth for the 11 task types defined in backend bible §3.
+// Single source of truth for task display metadata.
 // Matches /api/task-types/ exactly. Order is the kanban column order.
+export const TASK_TYPE_VALUES = [
+  'budget',
+  'asset',
+  'retrospective',
+  'report',
+  'execution',
+  'scaling',
+  'alert',
+  'experiment',
+  'optimization',
+  'communication',
+  'platform_policy_update',
+] as const;
+
+export type TaskTypeValue = (typeof TASK_TYPE_VALUES)[number];
+
 export interface TypeMeta {
-  value: string;
+  value: TaskTypeValue;
   label: string;
   shortLabel: string;
-  // Donut + column accent color (HSL preferred for legend tinting).
+  // Donut + column accent color.
   hex: string;
 }
 
 export const TASK_TYPES: TypeMeta[] = [
-  { value: 'budget',                  label: 'Budget',                  shortLabel: 'Budget',     hex: '#3CCED7' },
-  { value: 'asset',                   label: 'Asset',                   shortLabel: 'Asset',      hex: '#A6E661' },
-  { value: 'retrospective',           label: 'Retrospective',           shortLabel: 'Retro',      hex: '#8B5CF6' },
-  { value: 'report',                  label: 'Report',                  shortLabel: 'Report',    hex: '#F59E0B' },
-  { value: 'execution',               label: 'Execution',               shortLabel: 'Exec',      hex: '#10B981' },
-  { value: 'scaling',                 label: 'Scaling',                 shortLabel: 'Scaling',   hex: '#EC4899' },
-  { value: 'alert',                   label: 'Alert',                   shortLabel: 'Alert',     hex: '#EF4444' },
-  { value: 'experiment',              label: 'Experiment',              shortLabel: 'Exp',       hex: '#6366F1' },
-  { value: 'optimization',            label: 'Optimization',            shortLabel: 'Opt',       hex: '#14B8A6' },
-  { value: 'communication',           label: 'Client Communication',    shortLabel: 'Comm',      hex: '#F97316' },
-  { value: 'platform_policy_update',  label: 'Platform Policy Update',  shortLabel: 'Policy',    hex: '#64748B' },
+  { value: 'budget', label: 'Budget', shortLabel: 'Budget', hex: '#3CCED7' },
+  { value: 'asset', label: 'Asset', shortLabel: 'Asset', hex: '#A6E661' },
+  { value: 'retrospective', label: 'Retrospective', shortLabel: 'Retro', hex: '#8B5CF6' },
+  { value: 'report', label: 'Report', shortLabel: 'Report', hex: '#F59E0B' },
+  { value: 'execution', label: 'Execution', shortLabel: 'Exec', hex: '#10B981' },
+  { value: 'scaling', label: 'Scaling', shortLabel: 'Scaling', hex: '#EC4899' },
+  { value: 'alert', label: 'Alert', shortLabel: 'Alert', hex: '#EF4444' },
+  { value: 'experiment', label: 'Experiment', shortLabel: 'Exp', hex: '#6366F1' },
+  { value: 'optimization', label: 'Optimization', shortLabel: 'Opt', hex: '#14B8A6' },
+  { value: 'communication', label: 'Client Communication', shortLabel: 'Comm', hex: '#F97316' },
+  { value: 'platform_policy_update', label: 'Platform Policy Update', shortLabel: 'Policy', hex: '#64748B' },
 ];
+
+export const TASK_TYPE_META_BY_VALUE: Record<TaskTypeValue, TypeMeta> = TASK_TYPES.reduce(
+  (acc, meta) => {
+    acc[meta.value] = meta;
+    return acc;
+  },
+  {} as Record<TaskTypeValue, TypeMeta>,
+);
+
+export const TASK_TYPE_SHORT_LABEL_BY_VALUE: Record<TaskTypeValue, string> = TASK_TYPES.reduce(
+  (acc, meta) => {
+    acc[meta.value] = meta.shortLabel;
+    return acc;
+  },
+  {} as Record<TaskTypeValue, string>,
+);
+
+export const TASK_TYPE_ORDER_INDEX: Record<TaskTypeValue, number> = TASK_TYPES.reduce(
+  (acc, meta, index) => {
+    acc[meta.value] = index;
+    return acc;
+  },
+  {} as Record<TaskTypeValue, number>,
+);
+
+export const getTaskTypeMeta = (value?: string | null): TypeMeta | undefined => {
+  if (!value) return undefined;
+  return TASK_TYPE_META_BY_VALUE[value as TaskTypeValue];
+};
+
+export const getTaskTypeShortLabel = (value?: string | null): string | undefined =>
+  getTaskTypeMeta(value)?.shortLabel;
+
+export const TASK_STATUS_VALUES = [
+  'DRAFT',
+  'SUBMITTED',
+  'UNDER_REVIEW',
+  'APPROVED',
+  'REJECTED',
+  'LOCKED',
+  'CANCELLED',
+] as const;
+
+export type TaskStatusValue = (typeof TASK_STATUS_VALUES)[number];
 
 export interface StatusMetaEntry {
   label: string;
@@ -31,7 +91,7 @@ export interface StatusMetaEntry {
   summaryStrip: string;
 }
 
-export const STATUS_META: Record<string, StatusMetaEntry> = {
+const STATUS_META_STRICT: Record<TaskStatusValue, StatusMetaEntry> = {
   DRAFT: {
     label: 'Draft',
     classes: 'bg-gray-100 text-gray-700',
@@ -76,17 +136,31 @@ export const STATUS_META: Record<string, StatusMetaEntry> = {
   },
 };
 
-export const STATUS_OPTIONS = Object.keys(STATUS_META);
+export const STATUS_META: Record<string, StatusMetaEntry> = STATUS_META_STRICT;
 
-export const PRIORITY_META: Record<string, { label: string; dot: string }> = {
+export const STATUS_OPTIONS: string[] = [...TASK_STATUS_VALUES];
+
+export const getStatusMeta = (status?: string | null): StatusMetaEntry =>
+  STATUS_META_STRICT[(status as TaskStatusValue) ?? 'DRAFT'] ?? STATUS_META_STRICT.DRAFT;
+
+export const TASK_PRIORITY_VALUES = ['HIGHEST', 'HIGH', 'MEDIUM', 'LOW', 'LOWEST'] as const;
+
+export type TaskPriorityValue = (typeof TASK_PRIORITY_VALUES)[number];
+
+const PRIORITY_META_STRICT: Record<TaskPriorityValue, { label: string; dot: string }> = {
   HIGHEST: { label: 'Highest', dot: 'bg-rose-500' },
-  HIGH:    { label: 'High',    dot: 'bg-orange-500' },
-  MEDIUM:  { label: 'Medium',  dot: 'bg-amber-400' },
-  LOW:     { label: 'Low',     dot: 'bg-sky-400' },
-  LOWEST:  { label: 'Lowest',  dot: 'bg-gray-300' },
+  HIGH: { label: 'High', dot: 'bg-orange-500' },
+  MEDIUM: { label: 'Medium', dot: 'bg-amber-400' },
+  LOW: { label: 'Low', dot: 'bg-sky-400' },
+  LOWEST: { label: 'Lowest', dot: 'bg-gray-300' },
 };
 
-export const PRIORITY_OPTIONS = Object.keys(PRIORITY_META);
+export const PRIORITY_META: Record<string, { label: string; dot: string }> = PRIORITY_META_STRICT;
+
+export const PRIORITY_OPTIONS: string[] = [...TASK_PRIORITY_VALUES];
+
+export const getPriorityMeta = (priority?: string | null) =>
+  PRIORITY_META_STRICT[(priority as TaskPriorityValue) ?? 'MEDIUM'] ?? PRIORITY_META_STRICT.MEDIUM;
 
 export const formatDateShort = (iso?: string | null): string => {
   if (!iso) return '—';

@@ -10,6 +10,7 @@ import {
   PRIORITY_OPTIONS,
   STATUS_META,
   STATUS_OPTIONS,
+  getTaskTypeShortLabel,
   TASK_TYPES,
   formatDateShort,
 } from '@/components/tasks/TYPE_META';
@@ -32,11 +33,6 @@ interface ListViewProps {
   error: string | null;
   projectId: number | null;
 }
-
-const TYPE_LABEL = TASK_TYPES.reduce<Record<string, string>>((acc, t) => {
-  acc[t.value] = t.shortLabel;
-  return acc;
-}, {});
 
 const TABLE_COLUMN_WIDTHS = {
   icon: 'w-10',
@@ -812,7 +808,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                                   <div className="text-gray-500">No description</div>
                                 )}
                                 <div className="mt-1 text-[10px] uppercase tracking-wide text-gray-400">
-                                  {TYPE_LABEL[task.type] ?? task.type ?? 'Task'}
+                                  {getTaskTypeShortLabel(task.type) ?? task.type ?? 'Task'}
                                 </div>
                               </div>
                             ) : null}
@@ -841,7 +837,7 @@ export default function ListView({ tasks, loading, error, projectId }: ListViewP
                       </div>
                     </td>
                     <td className={`${TABLE_COLUMN_WIDTHS.type} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'} text-xs font-medium uppercase tracking-wide text-gray-500`}>
-                      {TYPE_LABEL[task.type] ?? task.type ?? '—'}
+                      {getTaskTypeShortLabel(task.type) ?? task.type ?? '—'}
                     </td>
                     <td className={`${TABLE_COLUMN_WIDTHS.status} align-middle px-4 ${density === 'compact' ? 'py-1.5' : 'py-2'}`}>
                       <div className="relative" onClick={(e) => e.stopPropagation()}>
