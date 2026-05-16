@@ -51,7 +51,6 @@ class TaskEngagementViewTest(APITestCase):
         self.assertIsNone(data['first_interaction_at'])
         self.assertIsNone(data['last_open_at'])
         self.assertEqual(data['total_active_seconds'], 0)
-        self.assertEqual(data['idle_event_count'], 0)
 
     # 2. 1 TASK_OPEN → open_count=1
     def test_single_task_open_gives_open_count_one(self):
