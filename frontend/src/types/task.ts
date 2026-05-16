@@ -81,6 +81,8 @@ export interface TaskData {
   origin_action_item?: OriginActionItemPayload | null;
   /** Set when this task was imported from Linear. */
   linear_issue_id?: string | null;
+  /** ISO datetime of the last modification (auto-set by server). */
+  updated_at?: string;
 }
 
 // Type for creating a new task (current_approver_id is user ID)
@@ -361,6 +363,25 @@ export interface WorkCycleHistoryPayload {
     priority: WorkCycleFieldEntry[];
     due_date: WorkCycleFieldEntry[];
   };
+}
+
+// ── AI Summary ───────────────────────────────────────────────────────────────
+
+export interface TaskAISummaryAttachment {
+  name: string;
+  type: string;
+  truncated: boolean;
+  readable: boolean;
+}
+
+export interface TaskAISummaryPayload {
+  key_decisions: string[];
+  blockers: string[];
+  escalations: string[];
+  action_items: string[];
+  status_changes: string[];
+  unresolved_questions: string[];
+  _attachments?: TaskAISummaryAttachment[];
 }
 
 // ── My Actions ───────────────────────────────────────────────────────────────

@@ -88,6 +88,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting_id',
             'origin_action_item',
             'linear_issue_id',
+            'updated_at',
         ]
         read_only_fields = [
             'id', 'status', 'owner', 'content_type', 'object_id', 'linked_object',
@@ -97,6 +98,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting',
             'origin_action_item',
             'linear_issue_id',
+            'updated_at',
         ]
 
     def get_content_type(self, obj):

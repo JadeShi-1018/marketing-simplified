@@ -39,6 +39,10 @@ urlpatterns = [
     path('tasks/<int:pk>/relations/', TaskViewSet.as_view({'get': 'relations', 'post': 'relations'}), name='task-relations'),
     path('tasks/<int:pk>/relations/<int:relation_id>/', TaskViewSet.as_view({'delete': 'relation_detail'}), name='task-relation-detail'),
 
+    # Task AI summary and Q&A
+    path('tasks/<int:pk>/ai-summary/', TaskViewSet.as_view({'post': 'ai_summary'}), name='task-ai-summary'),
+    path('tasks/<int:pk>/ai-qa/', TaskViewSet.as_view({'post': 'ai_qa'}), name='task-ai-qa'),
+
     # Task field history
     path('tasks/<int:pk>/field-history/', TaskViewSet.as_view({'get': 'field_history'}), name='task-field-history'),
 
