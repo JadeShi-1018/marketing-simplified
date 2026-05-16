@@ -84,7 +84,7 @@ export default function TaskActivityBlock({
 
   return (
     <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
-      <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-gray-900">
+      <h2 data-testid="task-comments-heading" className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-gray-900">
         Activity
       </h2>
 
