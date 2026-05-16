@@ -119,6 +119,7 @@ MIDDLEWARE = [
     'access_control.middleware.authorization.AuthorizationMiddleware', 
     'user_preferences.middleware.user_locale.UserLocaleMiddleware',
     'django.middleware.locale.LocaleMiddleware',
+    'tracking.middleware.ServerSideTrackingMiddleware',
     "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
