@@ -299,7 +299,7 @@ export default function TaskLabelsPicker({
                 <button
                   type="button"
                   onClick={addCustomTag}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-gray-900 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-2.5 py-1 text-[11px] font-medium text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={disabled || value.length >= TASK_TAG_MAX_COUNT || isNameTooLong}
                 >
                   <Plus className="h-3 w-3" aria-hidden />
