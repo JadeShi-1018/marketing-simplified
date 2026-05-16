@@ -87,11 +87,6 @@ export default function EngagementPanel({
             <span className={LABEL}>Your active time</span>
             <span className={VALUE}>{activeTime(data.total_active_seconds)}</span>
           </div>
-          <div className="mt-1 border-t border-gray-100 pt-1.5">
-            <span className="text-[10px] text-gray-400">
-              {data.idle_event_count} idle event{data.idle_event_count !== 1 ? 's' : ''}
-            </span>
-          </div>
         </div>
       ) : null}
     </section>
