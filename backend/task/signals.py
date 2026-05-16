@@ -5,6 +5,7 @@ from .models import Task, TaskAttachment, TaskHierarchy
 from .tasks import scan_task_attachment
 
 _task_status_cache: dict[int, str] = {}
+_task_anomaly_cache: dict[int, str] = {}
 
 
 @receiver(pre_save, sender=Task)
@@ -14,8 +15,10 @@ def _cache_previous_task_status(sender, instance, **kwargs):
     try:
         prev = Task.objects.get(pk=instance.pk)
         _task_status_cache[instance.pk] = prev.status
+        _task_anomaly_cache[instance.pk] = prev.anomaly_status
     except Task.DoesNotExist:
         _task_status_cache[instance.pk] = None
+        _task_anomaly_cache[instance.pk] = None
 
 
 @receiver(post_save, sender=Task)
@@ -50,6 +53,43 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
             # Legacy keys kept for backward-compat with existing notifications.
             "old_status": old,
             "new_status": instance.status,
+        },
+    )
+
+
+@receiver(post_save, sender=Task)
+def notify_on_anomaly_status_change(sender, instance, created, **kwargs):
+    """Fire TASK_ANOMALY when anomaly_status transitions away from NORMAL."""
+    if created:
+        _task_anomaly_cache.pop(instance.pk, None)
+        return
+    old_anomaly = _task_anomaly_cache.pop(instance.pk, None)
+    if old_anomaly is None or old_anomaly == instance.anomaly_status:
+        return
+    if instance.anomaly_status in (None, "", "NORMAL"):
+        return
+    if not instance.owner_id:
+        return
+
+    from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
+    from notifications.services import create_notification  # noqa: PLC0415
+
+    create_notification(
+        recipient_id=instance.owner_id,
+        actor_id=None,
+        category=NotificationCategory.TASKS,
+        event_type=NotificationEventType.TASK_ANOMALY,
+        title=f"Anomaly detected on task: {instance.summary}",
+        body=f"Task anomaly status changed to {instance.anomaly_status}.",
+        related_object_type="task",
+        related_object_id=str(instance.id),
+        action_url=f"/tasks/{instance.id}",
+        metadata={
+            "task_id": instance.id,
+            "project_id": instance.project_id,
+            "change_type": "task_anomaly",
+            "old_value": old_anomaly or "NORMAL",
+            "new_value": instance.anomaly_status,
         },
     )
 

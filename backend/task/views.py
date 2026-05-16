@@ -1282,13 +1282,46 @@ class TaskCommentListView(generics.ListCreateAPIView):
         return TaskComment.objects.filter(task_id=task_id)
 
     def perform_create(self, serializer):
+        import re  # noqa: PLC0415
+
         task_id = self.kwargs.get('task_id')
         task = get_object_or_404(Task, pk=task_id)
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to comment on this task.')
 
-        serializer.save(task=task, user=self.request.user)
+        comment = serializer.save(task=task, user=self.request.user)
+
+        # Parse @username mentions and notify each mentioned user once
+        body = comment.body or ""
+        mentioned_usernames = set(re.findall(r'@(\w+)', body))
+        if mentioned_usernames:
+            User = get_user_model()
+            for username in mentioned_usernames:
+                try:
+                    mentioned_user = User.objects.get(username=username)
+                except User.DoesNotExist:
+                    continue
+                if mentioned_user.id == self.request.user.id:
+                    continue
+                create_notification(
+                    recipient_id=mentioned_user.id,
+                    actor_id=self.request.user.id,
+                    category=NotificationCategory.TASKS,
+                    event_type=NotificationEventType.TASK_COMMENT_MENTION,
+                    title=f"You were mentioned in a comment on: {task.summary}",
+                    body=body[:200] + ("…" if len(body) > 200 else ""),
+                    related_object_type="task",
+                    related_object_id=str(task.id),
+                    action_url=f"/tasks/{task.id}",
+                    metadata={
+                        "task_id": task.id,
+                        "project_id": task.project_id,
+                        "comment_id": comment.id,
+                        "comment_excerpt": body[:300],
+                        "change_type": "comment_mention",
+                    },
+                )
 
 
 class TaskAttachmentListView(generics.ListCreateAPIView):

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { Bell, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Bell, Check, CheckCheck, ChevronDown, ChevronUp, Settings, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AlertCard from './AlertCard';
 import { notificationsApi } from '@/lib/api/notificationsApi';
@@ -104,7 +104,7 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
   const [alertsExpanded, setAlertsExpanded] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const { lastRefresh, setUnreadCount: setGlobalUnreadCount } = useNotificationStore();
+  const { lastRefresh, setUnreadCount: setGlobalUnreadCount, triggerRefresh } = useNotificationStore();
   const { openDrawer } = useNotificationDrawer();
 
   // Keep local alerts in sync with prop
@@ -172,6 +172,19 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
     try {
       await notificationsApi.markRead({ mark_all: true });
       await fetchNotifications(tab);
+      triggerRefresh();
+    } catch {
+      // non-critical
+    }
+  };
+
+  // Clear all notifications
+  const handleClearAll = async () => {
+    if (items.length === 0) return;
+    try {
+      await notificationsApi.clear({ scope: 'all' });
+      await fetchNotifications(tab);
+      triggerRefresh();
     } catch {
       // non-critical
     }
@@ -229,15 +242,32 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
                 </span>
               )}
             </div>
-            {unreadCount > 0 && (
+            <div className="flex items-center gap-0.5">
               <button
                 onClick={() => void handleMarkAllRead()}
-                className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-700 transition-colors"
+                disabled={loading || unreadCount === 0}
+                className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40 transition-colors"
+                title="Mark all as read"
               >
-                <Check className="w-3 h-3" />
-                Mark all read
+                <CheckCheck className="w-4 h-4" />
               </button>
-            )}
+              <button
+                onClick={() => void handleClearAll()}
+                disabled={loading || items.length === 0}
+                className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40 transition-colors"
+                title="Clear all notifications"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+              <Link
+                href="/notifications/preferences"
+                onClick={() => setOpen(false)}
+                className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+                title="Notification preferences"
+              >
+                <Settings className="w-4 h-4" />
+              </Link>
+            </div>
           </div>
 
           {/* ── Tab filters ── */}

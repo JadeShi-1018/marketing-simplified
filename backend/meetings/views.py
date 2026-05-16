@@ -268,8 +268,37 @@ class MeetingViewSet(viewsets.ModelViewSet):
             "layout_config": validated.get("layout_config", before["layout_config"]),
         }
 
+        # Detect minutes publish transition (False → True) before save
+        becoming_published = (
+            not meeting.minutes_published
+            and serializer.validated_data.get("minutes_published") is True
+        )
+
         # Save to database
         serializer.save()
+
+        # Meeting minutes published notification
+        if becoming_published:
+            participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+            for uid in participant_ids:
+                if uid == self.request.user.id:
+                    continue
+                create_notification(
+                    recipient_id=uid,
+                    actor_id=self.request.user.id,
+                    category=NotificationCategory.MEETINGS,
+                    event_type=NotificationEventType.MEETING_MINUTES_PUBLISHED,
+                    title=f"Meeting minutes published: {meeting.title}",
+                    body="The meeting minutes have been published.",
+                    related_object_type="meeting",
+                    related_object_id=str(meeting.id),
+                    action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                    metadata={
+                        "project_id": meeting.project_id,
+                        "meeting_title": meeting.title,
+                        "change_type": "minutes_published",
+                    },
+                )
 
         # Check if anything changed
         if json.dumps(before, sort_keys=True, default=str) == json.dumps(after, sort_keys=True, default=str):

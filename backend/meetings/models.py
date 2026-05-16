@@ -158,6 +158,10 @@ class Meeting(TimeStampedModel):
         default=False,
         help_text="Soft-delete flag (added in migration 0002).",
     )
+    minutes_published = models.BooleanField(
+        default=False,
+        help_text="Whether the meeting minutes have been published to all participants.",
+    )
 
     objects = MeetingManager()
 

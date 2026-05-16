@@ -7,75 +7,115 @@ interface DrawerActivitySummaryProps {
   notification: NotificationItem;
 }
 
-// Generate a human-readable activity description based on event type
-function getActivityDescription(notification: NotificationItem): string {
+// Small inline chip: avatar circle + bold name
+function ActorChip({ name, avatar }: { name: string; avatar?: string | null }) {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      <span className="inline-flex w-5 h-5 rounded-full bg-blue-500 text-white items-center justify-center text-[10px] font-semibold overflow-hidden shrink-0">
+        {avatar ? (
+          <img src={avatar} alt={name} className="w-full h-full object-cover" />
+        ) : (
+          name.charAt(0).toUpperCase()
+        )}
+      </span>
+      <span className="font-semibold text-gray-900">{name}</span>
+    </span>
+  );
+}
+
+// Returns a ReactNode description. `actor` is null for system/automated events.
+function getActivityDescription(
+  notification: NotificationItem,
+  actor: React.ReactNode
+): React.ReactNode {
   const { event_type, metadata, title, body } = notification;
-  const actorName = (metadata?.actor_name as string) || "Someone";
+
+  // Fallback plain name used only for cases that need a string (e.g. chat starter)
+  const actorName =
+    notification.actor_name ||
+    (metadata?.actor_name as string) ||
+    (metadata?.sender_name as string) ||
+    "Someone";
 
   switch (event_type) {
     // Task events
     case "task_assigned":
-      return `${actorName} assigned you to this task.`;
+      return <>{actor} assigned you to this task.</>;
     case "task_owner_changed":
-      return `Task ownership was transferred to you by ${actorName}.`;
+      return <>Task ownership was transferred to you by {actor}.</>;
     case "task_status_changed": {
       const oldStatus = (metadata?.old_status as string) || "unknown";
       const newStatus = (metadata?.new_status as string) || "unknown";
-      return `Task status changed from ${oldStatus.replace(/_/g, " ")} to ${newStatus.replace(/_/g, " ")}.`;
+      return (
+        <>
+          Task status changed from{" "}
+          <span className="font-medium">{oldStatus.replace(/_/g, " ")}</span> to{" "}
+          <span className="font-medium">{newStatus.replace(/_/g, " ")}</span>.
+        </>
+      );
     }
     case "task_deadline_soon":
-      return `This task is due soon. Don't forget to complete it!`;
+      return <>This task is due soon. Don&apos;t forget to complete it!</>;
     case "task_overdue":
-      return `This task is now overdue. Please take action.`;
+      return <>This task is now overdue. Please take action.</>;
     case "task_comment_mention":
-      return `${actorName} mentioned you in a comment.`;
+      return <>{actor} mentioned you in a comment.</>;
     case "task_anomaly":
-      return `An anomaly was detected in this task.`;
+      return <>An anomaly was detected in this task.</>;
 
     // Meeting events
     case "meeting_created":
-      return `${actorName} created a new meeting.`;
+      return <>{actor} created a new meeting.</>;
     case "meeting_updated":
-      return `${actorName} updated the meeting details.`;
+      return <>{actor} updated the meeting details.</>;
     case "meeting_participant_added":
-      return `You were added as a participant to this meeting.`;
+      return <>You were added as a participant to this meeting.</>;
     case "meeting_participant_removed":
-      return `You were removed from this meeting.`;
+      return <>You were removed from this meeting.</>;
     case "meeting_starting_soon":
-      return `This meeting is starting soon. Be ready to join!`;
+      return <>This meeting is starting soon. Be ready to join!</>;
     case "meeting_agenda_changed":
-      return `${actorName} updated the meeting agenda.`;
+      return <>{actor} updated the meeting agenda.</>;
     case "meeting_minutes_published":
-      return `Meeting minutes have been published.`;
+      return <>Meeting minutes have been published.</>;
 
     // Decision events
     case "decision_review_needed":
-      return `A decision requires your review.`;
+      return <>A decision requires your review.</>;
     case "decision_deadline":
-      return `Decision deadline is approaching.`;
+      return <>Decision deadline is approaching.</>;
     case "decision_published":
-      return `A decision has been published.`;
+      return <>A decision has been published.</>;
 
     // Chat events
     case "chat_new_message":
-      return `${actorName} sent you a message.`;
+      return <>{actor} sent you a message.</>;
     case "chat_new_conversation": {
       const starter =
+        notification.actor_name ||
         (metadata?.sender_name as string) ||
         (metadata?.actor_name as string) ||
         actorName;
-      const title = (metadata?.conversation_title as string) || "";
-      if (title && title !== "Direct message") {
-        return `${starter} started "${title}".`;
+      const starterChip = notification.actor_name ? (
+        <ActorChip
+          name={notification.actor_name}
+          avatar={notification.actor_avatar}
+        />
+      ) : (
+        <span className="font-semibold text-gray-900">{starter}</span>
+      );
+      const convTitle = (metadata?.conversation_title as string) || "";
+      if (convTitle && convTitle !== "Direct message") {
+        return <>{starterChip} started &ldquo;{convTitle}&rdquo;.</>;
       }
-      return `${starter} started a new conversation with you.`;
+      return <>{starterChip} started a new conversation with you.</>;
     }
 
     // Collaboration events
     case "project_invite":
-      return `You've been invited to join a project.`;
+      return <>You&apos;ve been invited to join a project.</>;
     case "calendar_reminder":
-      return `Calendar reminder for an upcoming event.`;
+      return <>Calendar reminder for an upcoming event.</>;
     case "doc_asset_update": {
       const mt = metadata as {
         meeting_id?: number;
@@ -84,30 +124,32 @@ function getActivityDescription(notification: NotificationItem): string {
       };
       const meetingTitle = mt?.new_title || mt?.old_title;
       if (meetingTitle) {
-        return `The collaborative document for "${meetingTitle}" was edited.`;
+        return (
+          <>
+            The collaborative document for &ldquo;{meetingTitle}&rdquo; was edited.
+          </>
+        );
       }
       if (mt?.meeting_id != null) {
-        return `Meeting document was updated (meeting #${mt.meeting_id}).`;
+        return <>Meeting document was updated (meeting #{mt.meeting_id}).</>;
       }
-      return `A collaborative document was updated.`;
+      return <>A collaborative document was updated.</>;
     }
 
-    // Approval events
+    // Approval / system events
     case "budget_approval_result":
-      return `Budget approval decision has been made.`;
+      return <>Budget approval decision has been made.</>;
     case "workflow_node":
-      return `Workflow automation update.`;
+      return <>Workflow automation update.</>;
     case "account_permission":
-      return `Your account permissions have changed.`;
+      return <>Your account permissions have changed.</>;
     case "billing_anomaly":
-      return `A billing anomaly was detected.`;
-
-    // System events
+      return <>A billing anomaly was detected.</>;
     case "system":
-      return body || "System notification.";
+      return <>{body || "System notification."}</>;
 
     default:
-      return body || title || "You have a new notification.";
+      return <>{body || title || "You have a new notification."}</>;
   }
 }
 
@@ -119,7 +161,12 @@ function renderChatBubble(notification: NotificationItem) {
     return null;
   }
 
-  const senderName = (metadata?.sender_name as string) || (metadata?.actor_name as string) || "Unknown";
+  const senderName =
+    notification.actor_name ||
+    (metadata?.sender_name as string) ||
+    (metadata?.actor_name as string) ||
+    "Unknown";
+  const senderAvatar = notification.actor_avatar;
   const messagePreview = (metadata?.message_preview as string) || notification.body;
 
   if (!messagePreview) return null;
@@ -127,8 +174,16 @@ function renderChatBubble(notification: NotificationItem) {
   return (
     <div className="mt-4 rounded-lg bg-gray-50 border border-gray-200 p-3">
       <div className="flex items-start gap-2">
-        <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium shrink-0">
-          {senderName.charAt(0).toUpperCase()}
+        <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium shrink-0 overflow-hidden">
+          {senderAvatar ? (
+            <img
+              src={senderAvatar}
+              alt={senderName}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            senderName.charAt(0).toUpperCase()
+          )}
         </div>
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-gray-900">{senderName}</div>
@@ -144,7 +199,14 @@ function renderChatBubble(notification: NotificationItem) {
 export default function DrawerActivitySummary({
   notification,
 }: DrawerActivitySummaryProps) {
-  const description = getActivityDescription(notification);
+  const actorNode = notification.actor_name ? (
+    <ActorChip
+      name={notification.actor_name}
+      avatar={notification.actor_avatar}
+    />
+  ) : null;
+
+  const description = getActivityDescription(notification, actorNode);
 
   return (
     <div className="px-5 py-4">
@@ -156,7 +218,7 @@ export default function DrawerActivitySummary({
       <p className="text-base text-gray-900 leading-relaxed">
         {notification.title}
       </p>
-      <p className="text-sm text-gray-600 mt-1">{description}</p>
+      <p className="text-sm text-gray-600 mt-1 leading-relaxed">{description}</p>
 
       {/* Chat bubble for message notifications */}
       {renderChatBubble(notification)}

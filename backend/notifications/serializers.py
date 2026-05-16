@@ -4,6 +4,9 @@ from .models import Notification, default_notification_preferences
 
 
 class NotificationSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+    actor_avatar = serializers.SerializerMethodField()
+
     class Meta:
         model = Notification
         fields = [
@@ -20,8 +23,23 @@ class NotificationSerializer(serializers.ModelSerializer):
             "created_at",
             "responded",
             "response",
+            "actor_name",
+            "actor_avatar",
         ]
         read_only_fields = fields
+
+    def get_actor_name(self, obj):
+        if obj.actor:
+            return obj.actor.get_full_name() or obj.actor.username
+        return None
+
+    def get_actor_avatar(self, obj):
+        if obj.actor and obj.actor.avatar:
+            request = self.context.get("request")
+            if request:
+                return request.build_absolute_uri(obj.actor.avatar.url)
+            return obj.actor.avatar.url
+        return None
 
 
 class NotificationRespondSerializer(serializers.Serializer):

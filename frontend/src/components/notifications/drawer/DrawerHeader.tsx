@@ -3,7 +3,6 @@
 import React from "react";
 import {
   X,
-  Check,
   Calendar,
   CheckSquare,
   Scale,
@@ -21,7 +20,6 @@ import { formatRelativeTime } from "@/lib/formatRelativeTime";
 interface DrawerHeaderProps {
   notification: NotificationItem;
   onClose: () => void;
-  onMarkAsRead: () => void;
 }
 
 // Category configuration for styling and icons
@@ -90,7 +88,6 @@ const DEFAULT_CATEGORY_CONFIG = {
 export default function DrawerHeader({
   notification,
   onClose,
-  onMarkAsRead,
 }: DrawerHeaderProps) {
   const categoryKey = notification.category?.toUpperCase() || "";
   const config = CATEGORY_CONFIG[categoryKey] || DEFAULT_CATEGORY_CONFIG;
@@ -110,16 +107,6 @@ export default function DrawerHeader({
 
         {/* Action buttons */}
         <div className="flex items-center gap-1">
-          {!notification.is_read && (
-            <button
-              type="button"
-              onClick={onMarkAsRead}
-              className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
-              title="Mark as read"
-            >
-              <Check className="w-5 h-5" />
-            </button>
-          )}
           <button
             type="button"
             onClick={onClose}

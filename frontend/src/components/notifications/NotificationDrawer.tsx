@@ -81,7 +81,6 @@ export default function NotificationDrawer() {
         <DrawerHeader
           notification={notification}
           onClose={closeDrawer}
-          onMarkAsRead={markAsRead}
         />
 
         {/* Scrollable content */}

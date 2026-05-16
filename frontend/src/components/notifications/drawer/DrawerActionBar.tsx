@@ -31,6 +31,9 @@ function getActionType(notification: NotificationItem): ActionType {
   const et = notification.event_type;
   const changeType = notification.metadata?.change_type as string | undefined;
 
+  // Response feedback notifications (actor receives "X accepted/declined") — no action buttons
+  if (notification.metadata?.is_response_feedback) return "default";
+
   if (INVITE_EVENT_TYPES.has(et)) return "invite";
 
   // task_owner_changed is always an assignment invitation

@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, CheckCheck, Settings, Trash2 } from "lucide-react";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useNotificationDrawer } from "@/components/notifications/NotificationDrawerProvider";
@@ -189,6 +189,21 @@ function NotificationsContent() {
     triggerRefresh();
   };
 
+  const markAllRead = async () => {
+    await notificationsApi.markRead({ mark_all: true });
+    setSelected(new Set());
+    await load();
+    triggerRefresh();
+  };
+
+  const clearAll = async () => {
+    if (items.length === 0) return;
+    await notificationsApi.clear({ scope: "all" });
+    setSelected(new Set());
+    await load();
+    triggerRefresh();
+  };
+
   return (
     <DashboardLayout hideRightPanel>
       <div className="w-full px-6 lg:px-10 py-8">
@@ -201,7 +216,36 @@ function NotificationsContent() {
           Back
         </button>
 
-        <h1 className="text-2xl font-bold text-gray-900">Notifications</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-gray-900">Notifications</h1>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={markAllRead}
+              disabled={loading || unreadCount === 0}
+              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40"
+              title="Mark all as read"
+            >
+              <CheckCheck className="h-5 w-5" />
+            </button>
+            <button
+              type="button"
+              onClick={clearAll}
+              disabled={loading || items.length === 0}
+              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40"
+              title="Clear all notifications"
+            >
+              <Trash2 className="h-5 w-5" />
+            </button>
+            <Link
+              href={buildPreferencesHrefFromNotificationsSearch(fromRaw)}
+              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+              title="Notification preferences"
+            >
+              <Settings className="h-5 w-5" />
+            </Link>
+          </div>
+        </div>
         <p className="text-sm text-gray-500 mt-1">
           {tabCounts.all} total · {unreadCount} unread
         </p>

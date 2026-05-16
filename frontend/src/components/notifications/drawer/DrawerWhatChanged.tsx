@@ -9,6 +9,7 @@ import {
   Type,
   Paperclip,
   MessageCircle,
+  MessageSquare,
   Tag,
   Calendar,
   User,
@@ -60,6 +61,7 @@ const TASK_EVENT_TYPES = new Set([
   "task_deadline_soon",
   "task_anomaly",
   "task_overdue",
+  "task_comment_mention",
 ]);
 
 // Check if this notification type supports "What Changed" section
@@ -69,6 +71,7 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
   // Task events: show when the backend has emitted a change_type.
   // Legacy task_status_changed also renders with old_status / new_status alone.
   if (TASK_EVENT_TYPES.has(event_type)) {
+    if (event_type === "task_comment_mention") return !!(metadata?.comment_excerpt);
     return !!(
       metadata?.change_type ||
       (metadata?.old_status && metadata?.new_status)
@@ -109,6 +112,8 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
   if (event_type === "meeting_starting_soon") {
     return !!(metadata?.change_type === "meeting_start" || metadata?.start_time);
   }
+
+  if (event_type === "meeting_minutes_published") return true;
 
   return false;
 }
@@ -441,6 +446,14 @@ function resolveTaskCardProps(metadata: Record<string, unknown>): {
         afterValue:  after  ? formatPriority(after)  : undefined,
         afterDanger: false,
       };
+    case "task_anomaly":
+      return {
+        icon: AlertCircle,
+        label: "Anomaly",
+        beforeValue: before ? formatStatus(before) : "Normal",
+        afterValue:  after  ? formatStatus(after)  : "Anomaly Detected",
+        afterDanger: true,
+      };
     default:
       // Legacy task_status_changed that only has old_status / new_status
       if (metadata?.old_status || metadata?.new_status) {
@@ -481,6 +494,38 @@ function TaskChangesSection({ metadata }: { metadata: Record<string, unknown> })
       afterValue={afterValue}
       afterDanger={afterDanger}
     />
+  );
+}
+
+// Comment mention — shows the excerpt where the user was @mentioned
+function CommentMentionSection({ metadata }: { metadata: Record<string, unknown> }) {
+  const excerpt = metadata?.comment_excerpt as string | undefined;
+  if (!excerpt) return null;
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="flex items-center gap-2 mb-2">
+        <MessageSquare className="w-4 h-4 text-gray-500" />
+        <span className="text-sm font-semibold text-gray-800">Comment</span>
+      </div>
+      <p className="text-sm text-gray-700 pl-6 leading-relaxed italic">
+        &ldquo;{excerpt.length > 200 ? excerpt.slice(0, 200) + "…" : excerpt}&rdquo;
+      </p>
+    </div>
+  );
+}
+
+// Meeting minutes published — simple confirmation card
+function MinutesPublishedSection() {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="flex items-center gap-2">
+        <FileText className="w-4 h-4 text-blue-500" />
+        <span className="text-sm font-semibold text-gray-800">Minutes Published</span>
+      </div>
+      <p className="text-sm text-gray-600 pl-6 mt-1">
+        The official meeting minutes are now available.
+      </p>
+    </div>
   );
 }
 
@@ -759,8 +804,13 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
           What Changed
         </div>
 
-        {/* Task changes (status, assignee, due date, title, priority, overdue …) */}
-        {TASK_EVENT_TYPES.has(event_type) && metadata && (
+        {/* Task comment @mention */}
+        {event_type === "task_comment_mention" && metadata && (
+          <CommentMentionSection metadata={metadata} />
+        )}
+
+        {/* Task changes (status, assignee, due date, title, priority, overdue, anomaly …) */}
+        {TASK_EVENT_TYPES.has(event_type) && event_type !== "task_comment_mention" && metadata && (
           <TaskChangesSection metadata={metadata} />
         )}
 
@@ -781,6 +831,11 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
         {/* Meeting starting soon */}
         {event_type === "meeting_starting_soon" && metadata && (
           <MeetingStartingSoonSection metadata={metadata} />
+        )}
+
+        {/* Meeting minutes published */}
+        {event_type === "meeting_minutes_published" && (
+          <MinutesPublishedSection />
         )}
 
         {/* Meeting changes + collaborative document / notes */}

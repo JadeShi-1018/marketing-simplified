@@ -23,6 +23,10 @@ export interface NotificationItem {
   responded: boolean;
   /** The response value: "accept" | "reject" | "" */
   response: string;
+  /** Display name of the actor who triggered this notification (null for system events). */
+  actor_name?: string | null;
+  /** Absolute URL of the actor's avatar image (null if no avatar). */
+  actor_avatar?: string | null;
 }
 
 export interface NotificationTabCounts {

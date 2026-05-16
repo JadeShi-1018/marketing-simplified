@@ -25,7 +25,7 @@ interface MeetingData {
   title: string;
   scheduled_time?: string | null;
   status?: string;
-  participants?: Array<{ id: number; username: string }>;
+  participants?: Array<{ id: number; username: string; avatar?: string | null }>;
 }
 
 // Status color mapping
@@ -158,13 +158,21 @@ function MeetingCard({ meeting }: { meeting: MeetingData }) {
           <div className="flex items-center gap-1.5">
             <Users className="w-4 h-4 text-gray-400" />
             <div className="flex -space-x-1.5">
-              {meeting.participants.slice(0, 3).map((p, i) => (
+              {meeting.participants.slice(0, 3).map((p) => (
                 <div
                   key={p.id}
-                  className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center text-xs font-medium ring-2 ring-white"
+                  className="w-6 h-6 rounded-full ring-2 ring-white overflow-hidden flex items-center justify-center text-xs font-medium bg-blue-500 text-white"
                   title={p.username}
                 >
-                  {p.username.charAt(0).toUpperCase()}
+                  {p.avatar ? (
+                    <img
+                      src={p.avatar}
+                      alt={p.username}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    p.username.charAt(0).toUpperCase()
+                  )}
                 </div>
               ))}
               {meeting.participants.length > 3 && (
@@ -234,7 +242,8 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
               status: data.status,
               participants: data.participants?.map((p) => ({
                 id: p.user_id,
-                username: `User ${p.user_id}`,
+                username: p.username ?? `User ${p.user_id}`,
+                avatar: p.avatar ?? null,
               })),
             });
           } else {
@@ -249,7 +258,8 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
                 status: data.status,
                 participants: data.participants?.map((p) => ({
                   id: p.user_id,
-                  username: `User ${p.user_id}`,
+                  username: p.username ?? `User ${p.user_id}`,
+                  avatar: p.avatar ?? null,
                 })),
               });
             }

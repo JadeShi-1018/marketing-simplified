@@ -46,7 +46,7 @@ class NotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     serializer_class = NotificationSerializer
 
     def get_queryset(self):
-        return Notification.objects.filter(recipient=self.request.user)
+        return Notification.objects.filter(recipient=self.request.user).select_related("actor")
 
     def list(self, request, *args, **kwargs):
         qs = self.get_queryset()
@@ -244,6 +244,7 @@ def _send_response_notification(notification, responder, responder_display, acti
                 **notification.metadata,
                 "response": action_label,
                 "responder": responder_display,
+                "is_response_feedback": True,
             },
         )
     except Exception:

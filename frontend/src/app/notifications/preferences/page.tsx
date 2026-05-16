@@ -6,7 +6,7 @@ import Link from "next/link";
 import axios from "axios";
 import { ArrowLeft, Settings } from "lucide-react";
 import toast from "react-hot-toast";
-import Layout from "@/components/layout/Layout";
+import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import type { NotificationPreferencesData, PrefRow } from "@/types/notifications";
@@ -230,7 +230,7 @@ function PreferencesContent() {
   const showSpinner = !hasHydrated || !initialized || !isAuthenticated || loading;
 
   return (
-    <Layout>
+    <DashboardLayout hideRightPanel>
       <div className="max-w-4xl mx-auto px-4 py-8">
         <button
           type="button"
@@ -338,7 +338,7 @@ function PreferencesContent() {
           </>
         ) : null}
       </div>
-    </Layout>
+    </DashboardLayout>
   );
 }
 
@@ -347,9 +347,9 @@ export default function NotificationPreferencesPage() {
     <ProtectedRoute>
       <Suspense
         fallback={
-          <Layout>
+          <DashboardLayout hideRightPanel>
             <div className="max-w-4xl mx-auto px-4 py-16 text-center text-gray-500 text-sm">Loading…</div>
-          </Layout>
+          </DashboardLayout>
         }
       >
         <PreferencesContent />
