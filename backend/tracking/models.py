@@ -16,7 +16,7 @@ class TrackingSession(models.Model):
         related_name='tracking_sessions',
     )
     started_at = models.DateTimeField(auto_now_add=True)
-    last_heartbeat_at = models.DateTimeField(default=timezone.now)
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)
     ended_at = models.DateTimeField(null=True, blank=True)
     end_reason = models.CharField(
         max_length=20,
@@ -24,7 +24,7 @@ class TrackingSession(models.Model):
         null=True,
         blank=True,
     )
-    active_seconds = models.PositiveIntegerField(default=0)
+    active_seconds = models.PositiveIntegerField(null=True, blank=True, default=0)
     user_agent = models.CharField(max_length=512, blank=True, default='')
 
     def __str__(self):
