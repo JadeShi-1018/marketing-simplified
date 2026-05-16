@@ -6,17 +6,15 @@ import { Check, X, Send, ExternalLink, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { NotificationItem } from "@/types/notifications";
 import { TaskAPI } from "@/lib/api/taskApi";
-import { notificationsApi } from "@/lib/api/notificationsApi";
 
 interface DrawerActionBarProps {
   notification: NotificationItem;
   onActionComplete: () => void;
 }
 
-// Determine action type based on event_type (and optionally metadata)
-type ActionType = "approval" | "invite" | "assignment" | "quick_reply" | "default";
+type ActionType = "approval" | "quick_reply" | "default";
 
-/** Event types that show an invite-style Accept / Decline button pair. */
+/** Event types that previously showed invite-style Accept / Decline — now handled by DrawerInviteCard. */
 const INVITE_EVENT_TYPES = new Set([
   "project_invite",
   "meeting_participant_added",
@@ -24,27 +22,23 @@ const INVITE_EVENT_TYPES = new Set([
 
 /**
  * Determine the action type for a notification.
- * `task_assigned` can mean either a task-workflow approval (old) or a new
- * assignment invitation — the `change_type` in metadata disambiguates them.
+ * Invite / assignment types are handled upstream by DrawerInviteCard.
  */
 function getActionType(notification: NotificationItem): ActionType {
   const et = notification.event_type;
   const changeType = notification.metadata?.change_type as string | undefined;
 
-  // Response feedback notifications (actor receives "X accepted/declined") — no action buttons
+  // Response feedback notifications — no action buttons
   if (notification.metadata?.is_response_feedback) return "default";
 
-  if (INVITE_EVENT_TYPES.has(et)) return "invite";
-
-  // task_owner_changed is always an assignment invitation
-  if (et === "task_owner_changed") return "assignment";
-
-  // task_assigned: new assignment invitation when change_type is set explicitly
+  // Invite events are handled by DrawerInviteCard — skip here
+  if (INVITE_EVENT_TYPES.has(et)) return "default";
+  if (et === "task_owner_changed") return "default";
   if (et === "task_assigned" && (changeType === "task_assignee" || changeType === "task_approver")) {
-    return "assignment";
+    return "default";
   }
 
-  // Existing task-approval workflow (no change_type or legacy paths)
+  // Existing task-approval workflow (legacy paths)
   if (
     et === "task_assigned" ||
     et === "decision_review_needed" ||
@@ -121,75 +115,6 @@ function ApprovalActions({
           <X className="w-4 h-4" />
         )}
         Reject
-      </button>
-    </div>
-  );
-}
-
-// ─── Already-responded banner ────────────────────────────────────────────────
-function RespondedBanner({ response }: { response: string }) {
-  const accepted = response === "accept";
-  return (
-    <div
-      className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium ${
-        accepted
-          ? "bg-green-50 text-green-700 border border-green-200"
-          : "bg-red-50 text-red-700 border border-red-200"
-      }`}
-    >
-      {accepted ? <Check className="w-4 h-4" /> : <X className="w-4 h-4" />}
-      {accepted ? "You accepted this invitation" : "You declined this invitation"}
-    </div>
-  );
-}
-
-// ─── Generic Accept / Decline buttons (invite + assignment) ──────────────────
-function RespondActions({
-  notification,
-  onComplete,
-  acceptLabel = "Accept",
-  declineLabel = "Decline",
-}: {
-  notification: NotificationItem;
-  onComplete: () => void;
-  acceptLabel?: string;
-  declineLabel?: string;
-}) {
-  const [loading, setLoading] = useState<"accept" | "reject" | null>(null);
-
-  const handle = async (action: "accept" | "reject") => {
-    setLoading(action);
-    try {
-      await notificationsApi.respond(notification.id, action);
-      toast.success(action === "accept" ? `${acceptLabel}ed!` : `${declineLabel}d`);
-      onComplete();
-    } catch (err) {
-      console.error("Respond action failed:", err);
-      toast.error(`Failed to ${action === "accept" ? acceptLabel.toLowerCase() : declineLabel.toLowerCase()}`);
-    } finally {
-      setLoading(null);
-    }
-  };
-
-  return (
-    <div className="flex gap-3">
-      <button
-        type="button"
-        onClick={() => handle("accept")}
-        disabled={loading !== null}
-        className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {loading === "accept" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-        {acceptLabel}
-      </button>
-      <button
-        type="button"
-        onClick={() => handle("reject")}
-        disabled={loading !== null}
-        className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {loading === "reject" ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />}
-        {declineLabel}
       </button>
     </div>
   );
@@ -364,7 +289,6 @@ export default function DrawerActionBar({
   onActionComplete,
 }: DrawerActionBarProps) {
   const actionType = getActionType(notification);
-  const alreadyResponded = notification.responded && !!notification.response;
 
   return (
     <div className="px-5 py-4 border-t border-gray-200 bg-gray-50 space-y-3 shrink-0">
@@ -372,20 +296,6 @@ export default function DrawerActionBar({
       {/* ── Existing task-workflow approval ── */}
       {actionType === "approval" && notification.related_object_type === "task" && (
         <ApprovalActions notification={notification} onComplete={onActionComplete} />
-      )}
-
-      {/* ── Invite (project / meeting) or assignment (task owner/approver) ── */}
-      {(actionType === "invite" || actionType === "assignment") && (
-        alreadyResponded ? (
-          <RespondedBanner response={notification.response} />
-        ) : (
-          <RespondActions
-            notification={notification}
-            onComplete={onActionComplete}
-            acceptLabel="Accept"
-            declineLabel="Decline"
-          />
-        )
       )}
 
       {/* ── Chat / mention quick reply ── */}

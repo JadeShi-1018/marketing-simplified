@@ -8,14 +8,10 @@ import {
   MapPin,
   Type,
   Paperclip,
-  MessageCircle,
   MessageSquare,
   Tag,
-  Calendar,
   User,
   AlertCircle,
-  Bell,
-  Hourglass,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 
@@ -53,15 +49,11 @@ function formatDateTime(timeStr: string | undefined | null): string {
   }
 }
 
-/** Task event types that can surface a "What Changed" card. */
+/** Task event types that surface a "What Changed" card (field-level diffs). */
 const TASK_EVENT_TYPES = new Set([
   "task_status_changed",
   "task_assigned",
   "task_owner_changed",
-  "task_deadline_soon",
-  "task_anomaly",
-  "task_overdue",
-  "task_comment_mention",
 ]);
 
 // Check if this notification type supports "What Changed" section
@@ -71,49 +63,24 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
   // Task events: show when the backend has emitted a change_type.
   // Legacy task_status_changed also renders with old_status / new_status alone.
   if (TASK_EVENT_TYPES.has(event_type)) {
-    if (event_type === "task_comment_mention") return !!(metadata?.comment_excerpt);
     return !!(
       metadata?.change_type ||
       (metadata?.old_status && metadata?.new_status)
     );
   }
 
-  // Meeting updates - always show for meeting-related events
+  // Meeting field changes (title, time, location, agenda, artifacts)
   if (
     event_type === "meeting_updated" ||
-    event_type === "meeting_agenda_changed" ||
-    event_type === "meeting_participant_added" ||
-    event_type === "meeting_participant_removed"
+    event_type === "meeting_agenda_changed"
   ) {
     return true;
-  }
-
-  // New chat session — show when metadata has sender or title (matches backend contract)
-  if (event_type === "chat_new_conversation") {
-    return !!(
-      metadata?.sender_name ||
-      metadata?.conversation_title ||
-      metadata?.first_message
-    );
   }
 
   // Meeting notes / collaborative document (DOC_ASSET_UPDATE)
   if (event_type === "doc_asset_update") {
     return hasMeetingChangeData(metadata || {});
   }
-
-  // System-triggered alerts
-  if (event_type === "calendar_reminder") {
-    return !!(metadata?.event_title || metadata?.start_time);
-  }
-  if (event_type === "decision_deadline") {
-    return !!(metadata?.change_type === "decision_deadline" || metadata?.new_value);
-  }
-  if (event_type === "meeting_starting_soon") {
-    return !!(metadata?.change_type === "meeting_start" || metadata?.start_time);
-  }
-
-  if (event_type === "meeting_minutes_published") return true;
 
   return false;
 }
@@ -804,45 +771,14 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
           What Changed
         </div>
 
-        {/* Task comment @mention */}
-        {event_type === "task_comment_mention" && metadata && (
-          <CommentMentionSection metadata={metadata} />
-        )}
-
-        {/* Task changes (status, assignee, due date, title, priority, overdue, anomaly …) */}
-        {TASK_EVENT_TYPES.has(event_type) && event_type !== "task_comment_mention" && metadata && (
+        {/* Task changes (status, assignee, due date, title, priority …) */}
+        {TASK_EVENT_TYPES.has(event_type) && metadata && (
           <TaskChangesSection metadata={metadata} />
         )}
 
-        {event_type === "chat_new_conversation" && (
-          <ChatNewConversationSection notification={notification} />
-        )}
-
-        {/* Calendar reminder */}
-        {event_type === "calendar_reminder" && metadata && (
-          <CalendarReminderSection metadata={metadata} />
-        )}
-
-        {/* Decision deadline */}
-        {event_type === "decision_deadline" && metadata && (
-          <DecisionDeadlineSection metadata={metadata} />
-        )}
-
-        {/* Meeting starting soon */}
-        {event_type === "meeting_starting_soon" && metadata && (
-          <MeetingStartingSoonSection metadata={metadata} />
-        )}
-
-        {/* Meeting minutes published */}
-        {event_type === "meeting_minutes_published" && (
-          <MinutesPublishedSection />
-        )}
-
-        {/* Meeting changes + collaborative document / notes */}
+        {/* Meeting field changes + collaborative document / notes */}
         {(event_type === "meeting_updated" ||
           event_type === "meeting_agenda_changed" ||
-          event_type === "meeting_participant_added" ||
-          event_type === "meeting_participant_removed" ||
           event_type === "doc_asset_update") && (
           <MeetingChangesSection event_type={event_type} metadata={metadata || {}} />
         )}

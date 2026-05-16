@@ -7,7 +7,9 @@ import { useNotificationStore } from "@/lib/notificationStore";
 import DrawerHeader from "./drawer/DrawerHeader";
 import DrawerActivitySummary from "./drawer/DrawerActivitySummary";
 import DrawerObjectCard from "./drawer/DrawerObjectCard";
+import DrawerInviteCard, { isInviteNotification } from "./drawer/DrawerInviteCard";
 import DrawerWhatChanged from "./drawer/DrawerWhatChanged";
+import DrawerNotificationCard, { isNotificationCard } from "./drawer/DrawerNotificationCard";
 import DrawerActionBar from "./drawer/DrawerActionBar";
 
 export default function NotificationDrawer() {
@@ -88,11 +90,23 @@ export default function NotificationDrawer() {
           {/* Activity Summary (description) */}
           <DrawerActivitySummary notification={notification} />
 
-          {/* Embedded Object Card (Details) */}
+          {/* Module card: Task / Meeting / Generic */}
           <DrawerObjectCard notification={notification} />
 
-          {/* What Changed section (below Details) */}
-          <DrawerWhatChanged notification={notification} />
+          {/* Type card — Invite (with Accept/Decline) */}
+          {isInviteNotification(notification) && (
+            <DrawerInviteCard notification={notification} />
+          )}
+
+          {/* Type card — Change (field-level diffs) */}
+          {!isInviteNotification(notification) && (
+            <DrawerWhatChanged notification={notification} />
+          )}
+
+          {/* Type card — Notification (reminders, alerts, announcements) */}
+          {isNotificationCard(notification) && (
+            <DrawerNotificationCard notification={notification} />
+          )}
         </div>
 
         {/* Action Bar (sticky at bottom) */}
