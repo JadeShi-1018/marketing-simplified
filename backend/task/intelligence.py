@@ -251,6 +251,7 @@ def my_actions(user, project_ids, today=None, due_soon_days=7):
             'owner': {'id': t.owner_id, 'username': t.owner.username} if t.owner_id else None,
             'current_approver': {'id': t.current_approver_id, 'username': t.current_approver.username}
                 if t.current_approver_id else None,
+            'updated_at': t.updated_at.isoformat() if t.updated_at else None,
         }
 
     base = _tasks(project_ids)
