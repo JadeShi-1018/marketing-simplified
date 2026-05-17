@@ -51,7 +51,8 @@ export default function MessageInput({
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  
+  const [shouldRefocus, setShouldRefocus] = useState(false);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
@@ -93,6 +94,14 @@ export default function MessageInput({
     };
   }, [pendingAttachments]);
 
+  // Refocus input after sending message
+  useEffect(() => {
+    if (shouldRefocus) {
+      textareaRef.current?.focus();
+      setShouldRefocus(false);
+    }
+  }, [shouldRefocus]);
+
   const handleSend = async () => {
     const trimmedContent = content.trim();
     const uploadedAttachments = pendingAttachments.filter(a => a.uploaded);
@@ -114,19 +123,23 @@ export default function MessageInput({
       return;
     }
 
+    // Clear state first to provide immediate feedback
+    setContent('');
+    setPendingAttachments([]);
+    setShowEmojiPicker(false);
+
+    // Send the message
     if (uploadedAttachments.length > 0 && onSendWithAttachments) {
       const attachmentIds = uploadedAttachments
         .map(a => a.uploaded?.id)
         .filter((id): id is number => id !== undefined);
-      onSendWithAttachments(trimmedContent, attachmentIds);
+      await Promise.resolve(onSendWithAttachments(trimmedContent, attachmentIds));
     } else {
-      onSend(trimmedContent);
+      await Promise.resolve(onSend(trimmedContent));
     }
-    
-    // Clear state
-    setContent('');
-    setPendingAttachments([]);
-    setShowEmojiPicker(false);
+
+    // Trigger refocus after next render cycle
+    setShouldRefocus(true);
   };
 
   const handleKeyPress = (e: KeyboardEvent<HTMLTextAreaElement>) => {
