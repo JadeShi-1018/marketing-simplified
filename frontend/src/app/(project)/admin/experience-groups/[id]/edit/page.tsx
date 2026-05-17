@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-import Layout from '@/components/layout/Layout';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { ExperienceGroup } from '@/types/experienceGroup';
@@ -110,12 +110,12 @@ const EditExperienceGroupPage: React.FC = () => {
   if (loading) {
     return (
       <ProtectedRoute requiredAuth={true} fallback="/unauthorized">
-        <Layout>
+        <DashboardLayout alerts={[]} upcomingMeetings={[]}>
           <div className="flex flex-col items-center justify-center min-h-[400px] gap-3">
             <LoadingSpinner />
             <p className="text-sm text-gray-500">Loading...</p>
           </div>
-        </Layout>
+        </DashboardLayout>
       </ProtectedRoute>
     );
   }
@@ -123,7 +123,7 @@ const EditExperienceGroupPage: React.FC = () => {
   if (fetchError || !group) {
     return (
       <ProtectedRoute requiredAuth={true} fallback="/unauthorized">
-        <Layout>
+        <DashboardLayout alerts={[]} upcomingMeetings={[]}>
           <div className="p-8">
             <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
               <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
@@ -136,14 +136,14 @@ const EditExperienceGroupPage: React.FC = () => {
               </button>
             </div>
           </div>
-        </Layout>
+        </DashboardLayout>
       </ProtectedRoute>
     );
   }
 
   return (
     <ProtectedRoute requiredAuth={true} fallback="/unauthorized">
-      <Layout>
+      <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="p-8 max-w-2xl">
 
           {/* Back + title */}
@@ -254,7 +254,7 @@ const EditExperienceGroupPage: React.FC = () => {
             )}
           </div>
         </div>
-      </Layout>
+      </DashboardLayout>
     </ProtectedRoute>
   );
 };

@@ -28,6 +28,7 @@ import {
   Notebook,
   Presentation,
   PiggyBank,
+  Layers,
 } from "lucide-react";
 import { AgentPanelToggleIcon } from "@/components/agent/AgentPanelToggleIcon";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -173,6 +174,13 @@ const getNavigationItems = (
       ],
     });
   }
+
+  baseItems.push({
+    name: "Experience Groups",
+    href: "/admin/experience-groups",
+    icon: Layers,
+    description: "Manage support experience configurations",
+  });
 
   baseItems.push({
     name: "Integrations",

@@ -1,15 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-import Layout from '@/components/layout/Layout';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Modal from '@/components/ui/Modal';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
-import { ExperienceGroupListItem, CreateExperienceGroupData } from '@/types/experienceGroup';
-import { Plus, Pencil, Trash2, Send, Eye, AlertCircle } from 'lucide-react';
+import { ExperienceGroup, ExperienceGroupListItem, CreateExperienceGroupData } from '@/types/experienceGroup';
+import { Plus, Pencil, Trash2, Send, Eye, AlertCircle, X, Users } from 'lucide-react';
 
-// ── Create Form (inside Modal) ────────────────────────────────────────────────
+// ── Create Form ───────────────────────────────────────────────────────────────
 
 interface CreateFormProps {
   onSuccess: (group: ExperienceGroupListItem) => void;
@@ -105,6 +105,218 @@ const CreateForm: React.FC<CreateFormProps> = ({ onSuccess, onCancel }) => {
   );
 };
 
+// ── Edit Form ─────────────────────────────────────────────────────────────────
+
+interface EditFormProps {
+  groupId: number;
+  onSaved: (group: ExperienceGroup) => void;
+  onClose: () => void;
+}
+
+const EditForm: React.FC<EditFormProps> = ({ groupId, onSaved, onClose }) => {
+  const [group, setGroup] = useState<ExperienceGroup | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [savedMessage, setSavedMessage] = useState(false);
+
+  const isDirty = group !== null && (name !== group.name || description !== group.description);
+
+  const fetchGroup = useCallback(async () => {
+    setLoading(true);
+    setFetchError(null);
+    try {
+      const res = await ExperienceGroupAPI.retrieve(groupId);
+      setGroup(res.data);
+      setName(res.data.name);
+      setDescription(res.data.description);
+    } catch {
+      setFetchError('Failed to load group details.');
+    } finally {
+      setLoading(false);
+    }
+  }, [groupId]);
+
+  useEffect(() => {
+    fetchGroup();
+  }, [fetchGroup]);
+
+  const handleSave = async () => {
+    if (!isDirty) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const res = await ExperienceGroupAPI.update(groupId, { name, description });
+      setGroup(res.data);
+      setName(res.data.name);
+      setDescription(res.data.description);
+      onSaved(res.data);
+      setSavedMessage(true);
+      setTimeout(() => setSavedMessage(false), 2500);
+    } catch (err: any) {
+      const detail =
+        err?.response?.data?.name?.[0] ||
+        err?.response?.data?.detail ||
+        'Failed to save changes.';
+      setSaveError(detail);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handlePublish = async () => {
+    if (!window.confirm('Publishing will update the live customer portal for this group. Continue?')) return;
+    setPublishing(true);
+    setSaveError(null);
+    try {
+      const res = await ExperienceGroupAPI.publish(groupId);
+      setGroup(res.data);
+      onSaved(res.data);
+    } catch (err: any) {
+      const detail =
+        err?.response?.data?.detail ||
+        'Could not publish this group.';
+      setSaveError(detail);
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const handleClose = () => {
+    if (isDirty && !window.confirm('You have unsaved changes. Close anyway?')) return;
+    onClose();
+  };
+
+  if (loading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-48 gap-3">
+        <LoadingSpinner />
+        <p className="text-sm text-gray-500">Loading...</p>
+      </div>
+    );
+  }
+
+  if (fetchError || !group) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+          <p className="text-sm text-red-700 flex-1">{fetchError || 'Group not found.'}</p>
+          <button
+            onClick={fetchGroup}
+            className="px-3 py-1.5 text-sm text-red-700 border border-red-300 rounded-lg hover:bg-red-100"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-0">
+      {/* Draft notice */}
+      {group.status === 'DRAFT' && (
+        <div className="flex items-center justify-between px-6 py-3 bg-yellow-50 border-b border-yellow-200 text-sm text-yellow-800">
+          <span>This group has unpublished changes.</span>
+          <button
+            onClick={handlePublish}
+            disabled={publishing || isDirty}
+            title={isDirty ? 'Save your changes first before publishing' : undefined}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-yellow-600 rounded-lg hover:bg-yellow-700 disabled:opacity-50"
+          >
+            <Send className="h-3.5 w-3.5" />
+            {publishing ? 'Publishing...' : 'Publish'}
+          </button>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-5 p-6">
+        {/* Error */}
+        {saveError && (
+          <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            {saveError}
+          </div>
+        )}
+
+        {/* Saved confirmation */}
+        {savedMessage && (
+          <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+            Changes saved.
+          </div>
+        )}
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-gray-700">
+            Name <span className="text-red-500">*</span>
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            disabled={saving || publishing}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-gray-700">Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={4}
+            className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+            disabled={saving || publishing}
+          />
+        </div>
+
+        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+          <div className="text-xs text-gray-400 flex gap-4 items-center">
+            <span>Status: <strong className="text-gray-500">{group.status}</strong></span>
+            {group.published_at && (
+              <span>Published: {new Date(group.published_at).toLocaleDateString()}</span>
+            )}
+            <a
+              href={`/admin/customers?group=${group.id}`}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 text-indigo-500 hover:text-indigo-700 transition-colors"
+            >
+              <Users className="h-3.5 w-3.5" />
+              {group.customer_count ?? 0} customer{group.customer_count !== 1 ? 's' : ''}
+            </a>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-400">
+              {isDirty ? 'Unsaved changes' : 'No changes'}
+            </span>
+            <button
+              onClick={handleClose}
+              disabled={saving || publishing}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+            >
+              Close
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!isDirty || saving || publishing}
+              className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ── Status Badge ──────────────────────────────────────────────────────────────
 
 const StatusBadge: React.FC<{ status: ExperienceGroupListItem['status'] }> = ({ status }) => {
@@ -126,6 +338,7 @@ const ExperienceGroupsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [publishingId, setPublishingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -135,7 +348,8 @@ const ExperienceGroupsPage: React.FC = () => {
     setError(null);
     try {
       const res = await ExperienceGroupAPI.list();
-      setGroups(res.data);
+      const data = res.data;
+      setGroups(Array.isArray(data) ? data : (data as any).results ?? []);
     } catch {
       setError('Failed to load experience groups. Please try again.');
     } finally {
@@ -150,6 +364,17 @@ const ExperienceGroupsPage: React.FC = () => {
   const handleCreated = (newGroup: ExperienceGroupListItem) => {
     setGroups((prev) => [newGroup, ...prev]);
     setIsCreateModalOpen(false);
+  };
+
+  // Called by EditForm on every save or publish — updates the matching row in the table
+  const handleEdited = (updated: ExperienceGroup) => {
+    setGroups((prev) =>
+      prev.map((g) =>
+        g.id === updated.id
+          ? { ...g, name: updated.name, description: updated.description, status: updated.status, updated_at: updated.updated_at }
+          : g
+      )
+    );
   };
 
   const handleDelete = async (id: number, name: string) => {
@@ -193,7 +418,7 @@ const ExperienceGroupsPage: React.FC = () => {
 
   return (
     <ProtectedRoute requiredAuth={true} fallback="/unauthorized">
-      <Layout>
+      <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="p-8 flex flex-col gap-6">
 
           {/* Header */}
@@ -294,14 +519,14 @@ const ExperienceGroupsPage: React.FC = () => {
                             <Eye className="h-4 w-4" />
                           </button>
 
-                          {/* Edit */}
-                          <a
-                            href={`/admin/experience-groups/${group.id}/edit`}
+                          {/* Edit — opens modal */}
+                          <button
+                            onClick={() => setEditingGroupId(group.id)}
                             title="Edit"
                             className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
                           >
                             <Pencil className="h-4 w-4" />
-                          </a>
+                          </button>
 
                           {/* Publish (only if DRAFT) */}
                           {group.status === 'DRAFT' && (
@@ -349,7 +574,38 @@ const ExperienceGroupsPage: React.FC = () => {
             />
           </div>
         </Modal>
-      </Layout>
+
+        {/* Edit Modal */}
+        <Modal
+          isOpen={editingGroupId !== null}
+          onClose={() => setEditingGroupId(null)}
+          disableBackdropClose={true}
+        >
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Edit Experience Group</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Changes are saved as draft until published.
+                </p>
+              </div>
+              <button
+                onClick={() => setEditingGroupId(null)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {editingGroupId !== null && (
+              <EditForm
+                groupId={editingGroupId}
+                onSaved={handleEdited}
+                onClose={() => setEditingGroupId(null)}
+              />
+            )}
+          </div>
+        </Modal>
+      </DashboardLayout>
     </ProtectedRoute>
   );
 };

@@ -97,6 +97,7 @@ INSTALLED_APPS = [
     'facebook_integration.apps.FacebookIntegrationConfig',
     'meta_ads.apps.MetaAdsConfig',
     'experience_group',
+    'customer',
 ]
 
 MIDDLEWARE = [

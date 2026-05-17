@@ -10,7 +10,7 @@ const BASE = '/api/experience-groups';
 
 export const ExperienceGroupAPI = {
   list: () =>
-    api.get<ExperienceGroupListItem[]>(`${BASE}/`),
+    api.get<{ count: number; next: string | null; previous: string | null; results: ExperienceGroupListItem[] } | ExperienceGroupListItem[]>(`${BASE}/`),
 
   retrieve: (id: number) =>
     api.get<ExperienceGroup>(`${BASE}/${id}/`),

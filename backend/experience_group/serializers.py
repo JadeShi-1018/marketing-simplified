@@ -5,7 +5,9 @@ from .models import ExperienceGroup
 
 
 class ExperienceGroupSerializer(serializers.ModelSerializer):
-    """Creating and Editing the detial page """
+    """Creating and Editing the detail page"""
+
+    customer_count = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = ExperienceGroup
@@ -19,8 +21,12 @@ class ExperienceGroupSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
             'published_at',
+            'customer_count',
         ]
-        read_only_fields = ['id', 'status', 'created_by', 'created_at', 'updated_at', 'published_at']
+        read_only_fields = ['id', 'status', 'created_by', 'created_at', 'updated_at', 'published_at', 'customer_count']
+
+    def get_customer_count(self, obj):
+        return obj.customers.count()
 
     def validate_name(self, value):
         qs = ExperienceGroup.objects.filter(name__iexact=value)

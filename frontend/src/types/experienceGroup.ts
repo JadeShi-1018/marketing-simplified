@@ -10,6 +10,7 @@ export interface ExperienceGroup {
   created_at: string;
   updated_at: string;
   published_at: string | null;
+  customer_count: number;
 }
 
 export interface ExperienceGroupListItem {

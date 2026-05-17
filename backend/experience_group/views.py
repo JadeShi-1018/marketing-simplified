@@ -25,9 +25,36 @@ class ExperienceGroupViewSet(viewsets.ModelViewSet):
         # Automatically record the creator when creating
         serializer.save(created_by=self.request.user)
 
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+
+        # If the group is currently published, editing it reverts it to DRAFT.
+        # This ensures customers always see the last explicitly published version
+        # until the admin re-publishes.
+        if instance.status == ExperienceGroup.PublishStatus.PUBLISHED:
+            instance.revert_to_draft()
+
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        if getattr(instance, '_prefetched_objects_cache', None):
+            instance._prefetched_objects_cache = {}
+
+        return Response(serializer.data)
+
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
 
+        # Guard: refuse deletion if customers are assigned to this group
+        customer_count = instance.customers.count()
+        if customer_count > 0:
+            return Response(
+                {'detail': f'Cannot delete: {customer_count} customer(s) are assigned to this group. Reassign them first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # TODO: Once Channel and RoutingRule models are implemented, also guard against active channel/routing references.
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 

@@ -10,7 +10,7 @@ import {
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
   User as UserIcon, CreditCard, Plug, LogOut,
-  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank,
+  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank, Layers,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
 import { useAuthStore } from '@/lib/authStore';
@@ -482,6 +482,20 @@ export default function DashboardSidebar() {
           >
             <Plug className="text-gray-500" />
             <span>Integrations</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
+            onSelect={() => router.push('/admin/experience-groups')}
+          >
+            <Layers className="text-gray-500" />
+            <span>Experience Groups</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
+            onSelect={() => router.push('/admin/customers')}
+          >
+            <Users className="text-gray-500" />
+            <span>Customers</span>
           </DropdownMenuItem>
           <DropdownMenuSeparator className="my-1" />
           <DropdownMenuItem

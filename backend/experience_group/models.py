@@ -40,13 +40,22 @@ class ExperienceGroup(models.Model):
     def __str__(self):                                                                                                                                             
         return f"ExperienceGroup '{self.name}' ({self.status})"
                                                                                                                                                                    
-    # --- FSM Transitions ---                                                                                                                                    
-    @transition(field=status, source=PublishStatus.DRAFT, target=PublishStatus.PUBLISHED)                                                                          
-    def publish(self):                  
-        """                                                                                                                                                        
+    # --- FSM Transitions ---
+
+    @transition(field=status, source=PublishStatus.DRAFT, target=PublishStatus.PUBLISHED)
+    def publish(self):
+        """
         Publish: Applies the draft snapshot's content to the main field, then clears the snapshot.
         The snapshot merging logic is handled by the View layer before this method is called.
-        """                                                                                                                                                        
-        from django.utils import timezone                                                                                                                        
-        self.published_at = timezone.now()                                                                                                                         
-        self.draft_snapshot = None           
+        """
+        from django.utils import timezone
+        self.published_at = timezone.now()
+        self.draft_snapshot = None
+
+    @transition(field=status, source=PublishStatus.PUBLISHED, target=PublishStatus.DRAFT)
+    def revert_to_draft(self):
+        """
+        Called automatically when a published group is edited.
+        Moves the group back to DRAFT so it must be re-published to go live.
+        """
+        pass
