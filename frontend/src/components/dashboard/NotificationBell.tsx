@@ -11,6 +11,7 @@ import { useNotificationDrawer } from '@/components/notifications/NotificationDr
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import { getModuleBarClass } from '@/lib/notificationVisuals';
 import type { NotificationItem, NotificationTab } from '@/types/notifications';
+import { NOTIFICATION_EVENT } from '@/types/notifications';
 import type { AlertData, AlertStatus } from '@/lib/mock/dashboardMock';
 
 // ── Tab config ────────────────────────────────────────────────────────────────
@@ -33,6 +34,11 @@ function NotifCard({
   item: NotificationItem;
   onClick: (item: NotificationItem) => void;
 }) {
+  // Check if this is a chat notification with multiple messages
+  const isChatNotification = item.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE;
+  const messageCount = (item.metadata?.message_count as number) || 1;
+  const showMessageCount = isChatNotification && messageCount > 1;
+
   return (
     <div
       role="button"
@@ -56,7 +62,18 @@ function NotifCard({
             {item.title}
           </p>
           {!item.is_read && (
-            <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-500" aria-hidden />
+            showMessageCount ? (
+              // Red count badge for chat notifications with multiple messages
+              <span
+                className="mt-0.5 min-w-[18px] h-[18px] px-1 shrink-0 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center"
+                aria-label={`${messageCount} unread messages`}
+              >
+                {messageCount > 99 ? '99+' : messageCount}
+              </span>
+            ) : (
+              // Blue dot for other unread notifications
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-500" aria-hidden />
+            )
           )}
         </div>
         {item.body ? (

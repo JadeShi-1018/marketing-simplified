@@ -4,6 +4,7 @@ import React, { useEffect, useCallback } from "react";
 import { useNotificationDrawer } from "./NotificationDrawerProvider";
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import { useNotificationStore } from "@/lib/notificationStore";
+import { NOTIFICATION_EVENT, type NotificationItem } from "@/types/notifications";
 import DrawerHeader from "./drawer/DrawerHeader";
 import DrawerActivitySummary from "./drawer/DrawerActivitySummary";
 import DrawerObjectCard from "./drawer/DrawerObjectCard";
@@ -11,6 +12,17 @@ import DrawerInviteCard, { isInviteNotification } from "./drawer/DrawerInviteCar
 import DrawerWhatChanged from "./drawer/DrawerWhatChanged";
 import DrawerNotificationCard, { isNotificationCard } from "./drawer/DrawerNotificationCard";
 import DrawerActionBar from "./drawer/DrawerActionBar";
+import DrawerChatView from "./drawer/DrawerChatView";
+
+/**
+ * Check if a notification is a chat/message notification that should render the chat view.
+ */
+function isChatNotification(notification: NotificationItem): boolean {
+  return (
+    notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE ||
+    notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_CONVERSATION
+  );
+}
 
 export default function NotificationDrawer() {
   const { isOpen, notification, closeDrawer } = useNotificationDrawer();
@@ -79,41 +91,51 @@ export default function NotificationDrawer() {
         aria-modal="true"
         aria-labelledby="notification-drawer-title"
       >
-        {/* Header */}
-        <DrawerHeader
-          notification={notification}
-          onClose={closeDrawer}
-        />
+        {/* Chat notifications get a special chat-based UI */}
+        {isChatNotification(notification) ? (
+          <DrawerChatView
+            notification={notification}
+            onClose={closeDrawer}
+          />
+        ) : (
+          <>
+            {/* Header */}
+            <DrawerHeader
+              notification={notification}
+              onClose={closeDrawer}
+            />
 
-        {/* Scrollable content */}
-        <div className="flex-1 overflow-y-auto">
-          {/* Activity Summary (description) */}
-          <DrawerActivitySummary notification={notification} />
+            {/* Scrollable content */}
+            <div className="flex-1 overflow-y-auto">
+              {/* Activity Summary (description) */}
+              <DrawerActivitySummary notification={notification} />
 
-          {/* Module card: Task / Meeting / Generic */}
-          <DrawerObjectCard notification={notification} />
+              {/* Module card: Task / Meeting / Generic */}
+              <DrawerObjectCard notification={notification} />
 
-          {/* Type card — Invite (with Accept/Decline) */}
-          {isInviteNotification(notification) && (
-            <DrawerInviteCard notification={notification} />
-          )}
+              {/* Type card — Invite (with Accept/Decline) */}
+              {isInviteNotification(notification) && (
+                <DrawerInviteCard notification={notification} />
+              )}
 
-          {/* Type card — Change (field-level diffs) */}
-          {!isInviteNotification(notification) && (
-            <DrawerWhatChanged notification={notification} />
-          )}
+              {/* Type card — Change (field-level diffs) */}
+              {!isInviteNotification(notification) && (
+                <DrawerWhatChanged notification={notification} />
+              )}
 
-          {/* Type card — Notification (reminders, alerts, announcements) */}
-          {isNotificationCard(notification) && (
-            <DrawerNotificationCard notification={notification} />
-          )}
-        </div>
+              {/* Type card — Notification (reminders, alerts, announcements) */}
+              {isNotificationCard(notification) && (
+                <DrawerNotificationCard notification={notification} />
+              )}
+            </div>
 
-        {/* Action Bar (sticky at bottom) */}
-        <DrawerActionBar
-          notification={notification}
-          onActionComplete={closeDrawer}
-        />
+            {/* Action Bar (sticky at bottom) */}
+            <DrawerActionBar
+              notification={notification}
+              onActionComplete={closeDrawer}
+            />
+          </>
+        )}
       </div>
 
       {/* Animation styles */}

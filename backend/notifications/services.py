@@ -12,6 +12,7 @@ from .models import (
     DEADLINE_TAB_EVENT_TYPES,
     MENTION_TAB_EVENT_TYPES,
     Notification,
+    NotificationCategory,
     NotificationEventType,
     UserNotificationPreference,
     default_notification_preferences,
@@ -337,6 +338,110 @@ def create_notifications_for_users(
         if n:
             created.append(n)
     return created
+
+
+def create_or_update_chat_notification(
+    *,
+    recipient_id: int,
+    actor_id: int,
+    chat_id: int,
+    message_id: int,
+    project_id: int,
+    message_preview: str,
+    actor_name: str = "",
+) -> Notification | None:
+    """
+    Create or update an aggregated chat notification.
+
+    If an unread chat_new_message notification for the same chat already exists,
+    increment its message_count instead of creating a new notification.
+    This prevents flooding the notification panel with multiple cards for the same chat.
+    """
+    from django.utils import timezone
+
+    if recipient_id == actor_id:
+        return None
+
+    try:
+        recipient = User.objects.get(pk=recipient_id)
+    except User.DoesNotExist:
+        logger.warning(
+            "create_or_update_chat_notification: SKIPPED — recipient_id=%s does not exist",
+            recipient_id,
+        )
+        return None
+
+    event_type = NotificationEventType.CHAT_NEW_MESSAGE
+
+    if not _is_in_app_enabled(recipient, event_type):
+        logger.warning(
+            "create_or_update_chat_notification: SKIPPED — in-app disabled for recipient_id=%s",
+            recipient_id,
+        )
+        return None
+
+    if _legacy_notification_settings_blocks_in_app(recipient, event_type):
+        logger.warning(
+            "create_or_update_chat_notification: SKIPPED — legacy settings block recipient_id=%s",
+            recipient_id,
+        )
+        return None
+
+    # Check for existing unread notification for the same chat
+    existing = Notification.objects.filter(
+        recipient_id=recipient_id,
+        event_type=event_type,
+        related_object_type="chat",
+        related_object_id=str(chat_id),
+        is_read=False,
+    ).first()
+
+    if existing:
+        # Update existing notification: increment message_count
+        current_count = existing.metadata.get("message_count", 1)
+        new_count = current_count + 1
+
+        existing.metadata["message_count"] = new_count
+        existing.metadata["last_message_id"] = message_id
+        existing.actor_id = actor_id  # Update to latest sender
+        existing.title = f"{new_count} new messages"
+        existing.body = message_preview[:200] + "…" if len(message_preview) > 200 else message_preview
+        existing.created_at = timezone.now()  # Move to top of list
+        existing.save(update_fields=["metadata", "actor_id", "title", "body", "created_at"])
+
+        _push_notification_to_redis(recipient_id, existing)
+        logger.info(
+            "create_or_update_chat_notification: UPDATED — id=%s recipient_id=%s chat_id=%s message_count=%s",
+            existing.id, recipient_id, chat_id, new_count,
+        )
+        return existing
+    else:
+        # Create new notification with message_count = 1
+        n = Notification.objects.create(
+            recipient_id=recipient_id,
+            actor_id=actor_id,
+            category=NotificationCategory.COLLABORATION,
+            event_type=event_type,
+            related_object_type="chat",
+            related_object_id=str(chat_id),
+            title="New message",
+            body=message_preview[:200] + "…" if len(message_preview) > 200 else message_preview,
+            action_url=f"/messages?chatId={chat_id}&projectId={project_id}",
+            metadata={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "project_id": project_id,
+                "message_count": 1,
+            },
+        )
+
+        maybe_dispatch_external_channels(notification=n, user=recipient, event_type=event_type)
+        _push_notification_to_redis(recipient_id, n)
+        logger.info(
+            "create_or_update_chat_notification: CREATED — id=%s recipient_id=%s chat_id=%s",
+            n.id, recipient_id, chat_id,
+        )
+        return n
 
 
 def filter_notifications_for_user(

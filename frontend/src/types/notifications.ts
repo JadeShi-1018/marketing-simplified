@@ -5,6 +5,31 @@ export const NOTIFICATION_EVENT = {
   DOC_ASSET_UPDATE: "doc_asset_update",
 } as const;
 
+/** Metadata structure for chat_new_message notifications */
+export interface ChatMessageNotificationMetadata {
+  chat_id: number;
+  message_id: number;
+  project_id: number;
+  /** Number of unread messages in this chat (for aggregated notifications) */
+  message_count?: number;
+  /** ID of the last message (when aggregated) */
+  last_message_id?: number;
+}
+
+/** Metadata structure for chat_new_conversation notifications */
+export interface ChatConversationNotificationMetadata {
+  chat_id: number;
+  project_id: number;
+  sender_name: string;
+  conversation_title: string;
+  chat_type: "private" | "group";
+}
+
+/** Union type for chat notification metadata */
+export type ChatNotificationMetadata =
+  | ChatMessageNotificationMetadata
+  | ChatConversationNotificationMetadata;
+
 export type NotificationTab = "all" | "unread" | "mentions" | "deadlines";
 
 export interface NotificationItem {

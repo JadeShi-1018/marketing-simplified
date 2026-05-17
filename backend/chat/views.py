@@ -571,8 +571,25 @@ class MessageViewSet(viewsets.ModelViewSet):
                 )
                 for recipient in recipients
             ])
-            
-            # Trigger async notification task
+
+            # Create in-app notifications for all recipients (sync)
+            try:
+                from notifications.services import create_or_update_chat_notification
+
+                for recipient in recipients:
+                    create_or_update_chat_notification(
+                        recipient_id=recipient.user_id,
+                        actor_id=request.user.id,
+                        chat_id=message.chat.id,
+                        message_id=message.id,
+                        project_id=message.chat.project_id,
+                        message_preview=message.content or "",
+                        actor_name=request.user.username or request.user.email or "",
+                    )
+            except Exception as e:
+                logger.exception(f"Failed to create in-app notifications for message {message.id}: {e}")
+
+            # Trigger async notification task (for WebSocket delivery)
             notify_new_message.delay(message.id)
             
             # Return message with attachments

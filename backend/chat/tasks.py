@@ -244,32 +244,35 @@ def update_message_status_task(self, message_id: int, user_id: int, status: str)
 def notify_new_message(message_id: int):
     """
     Celery task to notify all chat participants of a new message.
-    
+
     This is called after a message is created to push notifications
     to all participants (both online and offline).
-    
+
     Args:
         message_id: ID of the newly created message
     """
     try:
         message = Message.objects.select_related('chat', 'sender').prefetch_related('attachments').get(id=message_id)
         message_payload = build_realtime_message_payload(message)
-        
+
         # Get all active participants except sender
         participants = ChatParticipant.objects.filter(
             chat=message.chat,
             is_active=True
         ).exclude(user=message.sender).select_related('user')
-        
+
         channel_layer = get_channel_layer()
         offline_users = []
-        
+
+        # Note: In-app notifications are created synchronously in views.py
+        # This task only handles WebSocket delivery for online users
+
         for participant in participants:
             user = participant.user
             is_online = OnlineStatusService.is_online(user.id)
-            
+
             logger.info(f"[notify_new_message] Checking user {user.id} ({user.username}) online status: {is_online}")
-            
+
             if is_online:
                 # User is online, send via WebSocket immediately
                 try:
@@ -281,15 +284,15 @@ def notify_new_message(message_id: int):
                             'message': message_payload
                         }
                     )
-                    
+
                     # Mark as delivered
                     MessageStatus.objects.filter(
                         message=message,
                         user=user
                     ).update(status='delivered')
-                    
+
                     logger.info(f"Successfully sent message {message_id} to online user {user.id}")
-                    
+
                 except Exception as e:
                     logger.error(f"Failed to send message to user {user.id}: {e}")
                     offline_users.append(user.id)
@@ -297,7 +300,7 @@ def notify_new_message(message_id: int):
                 # User is offline, queue for later delivery
                 offline_users.append(user.id)
                 logger.info(f"User {user.id} ({user.username}) is OFFLINE, queuing message {message_id}")
-        
+
         # Schedule delivery task for offline users
         if offline_users:
             logger.info(f"Scheduling delivery task for message {message_id} to {len(offline_users)} offline users")
@@ -305,7 +308,7 @@ def notify_new_message(message_id: int):
                 args=[message_id],
                 countdown=5  # Retry after 5 seconds (reduced from 60)
             )
-        
+
     except Message.DoesNotExist:
         logger.error(f"Message {message_id} not found")
     except Exception as e:

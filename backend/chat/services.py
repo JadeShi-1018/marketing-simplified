@@ -477,22 +477,17 @@ class MessageService:
         logger.info(f"Created message {message.id} in chat {chat.id} by user {sender.id}")
 
         try:
-            from notifications.models import NotificationCategory, NotificationEventType
-            from notifications.services import create_notification
+            from notifications.services import create_or_update_chat_notification
 
             for recipient in recipients:
-                uid = recipient.user_id
-                create_notification(
-                    recipient_id=uid,
+                create_or_update_chat_notification(
+                    recipient_id=recipient.user_id,
                     actor_id=sender.id,
-                    category=NotificationCategory.COLLABORATION,
-                    event_type=NotificationEventType.CHAT_NEW_MESSAGE,
-                    title="New chat message",
-                    body=(content[:200] + "…") if len(content) > 200 else content,
-                    related_object_type="chat",
-                    related_object_id=str(chat.id),
-                    action_url=f"/projects/{chat.project_id}/tasks",
-                    metadata={"chat_id": chat.id, "message_id": message.id, "project_id": chat.project_id},
+                    chat_id=chat.id,
+                    message_id=message.id,
+                    project_id=chat.project_id,
+                    message_preview=content,
+                    actor_name=sender.username or sender.email or "",
                 )
         except Exception:
             logger.exception("In-app notification for chat message failed")

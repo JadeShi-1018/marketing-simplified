@@ -41,6 +41,24 @@ from .services import (
 )
 
 
+def _calculate_unread_count(user) -> int:
+    """
+    Calculate the total unread count for a user.
+
+    For chat notifications (chat_new_message), we count the message_count from metadata
+    instead of counting as 1, so the bell badge reflects actual unread messages.
+    """
+    unread_notifications = Notification.objects.filter(recipient=user, is_read=False)
+    total = 0
+    for n in unread_notifications:
+        if n.event_type == NotificationEventType.CHAT_NEW_MESSAGE:
+            # Use message_count from metadata, default to 1 if not present
+            total += n.metadata.get("message_count", 1) if n.metadata else 1
+        else:
+            total += 1
+    return total
+
+
 class NotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = NotificationSerializer
@@ -69,7 +87,7 @@ class NotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         )
 
         page = self.paginate_queryset(qs)
-        unread_total = Notification.objects.filter(recipient=request.user, is_read=False).count()
+        unread_total = _calculate_unread_count(request.user)
 
         tab_counts = {
             "all": Notification.objects.filter(recipient=request.user).count(),
