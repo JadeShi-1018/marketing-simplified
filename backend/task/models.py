@@ -45,6 +45,14 @@ class Task(models.Model):
       null=True,
       help_text="The user who is currently reviewing the task"
     )
+    owner_invite_pending = models.BooleanField(
+        default=False,
+        help_text="True while the assigned owner has not yet accepted the task assignment.",
+    )
+    approver_invite_pending = models.BooleanField(
+        default=False,
+        help_text="True while the assigned approver has not yet accepted the approver assignment.",
+    )
     approval_chain = models.ForeignKey(
       'ApprovalChain',
       on_delete=models.SET_NULL,

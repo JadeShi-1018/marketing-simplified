@@ -84,9 +84,9 @@ function ResponseFeedbackSection({ notification }: { notification: NotificationI
       }`}
     >
       {accepted ? <Check className="w-4 h-4 shrink-0" /> : <X className="w-4 h-4 shrink-0" />}
-      <span>
+      <span className="inline-flex items-center gap-1.5 flex-wrap">
         <span className="inline-flex items-center gap-1 align-middle">
-          <span className="w-4 h-4 rounded-full bg-current/20 text-current flex items-center justify-center text-[9px] font-semibold overflow-hidden shrink-0">
+          <span className="inline-flex w-5 h-5 rounded-full bg-blue-500 text-white items-center justify-center text-[10px] font-semibold overflow-hidden shrink-0">
             {actorAvatar ? (
               <img src={actorAvatar} alt={actorName} className="w-full h-full object-cover" />
             ) : (
@@ -94,8 +94,8 @@ function ResponseFeedbackSection({ notification }: { notification: NotificationI
             )}
           </span>
           <span className="font-semibold">{actorName}</span>
-        </span>{" "}
-        {accepted ? "accepted" : "declined"} your invitation
+        </span>
+        <span>{accepted ? "accepted" : "declined"} your invitation</span>
       </span>
     </div>
   );
@@ -360,6 +360,39 @@ function ChatMessageSection({ notification }: { notification: NotificationItem }
   );
 }
 
+/** account_permission — removed_from_project */
+function ProjectMemberRemovedSection({ notification }: { notification: NotificationItem }) {
+  const projectName = notification.metadata?.project_name as string | undefined;
+  const actorName = notification.actor_name || null;
+  const actorAvatar = notification.actor_avatar || null;
+
+  return (
+    <div className="flex items-start gap-2">
+      <UserMinus className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+      <p className="text-sm text-gray-700 leading-relaxed">
+        {actorName ? (
+          <span className="inline-flex items-center gap-1 align-middle mr-1">
+            <span className="inline-flex w-5 h-5 rounded-full bg-blue-500 text-white items-center justify-center text-[10px] font-semibold overflow-hidden shrink-0">
+              {actorAvatar ? (
+                <img src={actorAvatar} alt={actorName} className="w-full h-full object-cover" />
+              ) : (
+                actorName.charAt(0).toUpperCase()
+              )}
+            </span>
+            <span className="font-semibold text-gray-900">{actorName}</span>
+          </span>
+        ) : null}
+        removed you from{" "}
+        {projectName ? (
+          <span className="font-semibold text-gray-900">{projectName}</span>
+        ) : (
+          "the project"
+        )}
+      </p>
+    </div>
+  );
+}
+
 /** billing_anomaly / account_permission / workflow_node / system / generic */
 function GenericNotificationSection({
   notification,
@@ -434,6 +467,11 @@ export default function DrawerNotificationCard({
         return <ChatMessageSection notification={notification} />;
       case "calendar_reminder":
         return <CalendarReminderSection metadata={meta} />;
+      case "account_permission":
+        if (meta?.action === "removed_from_project") {
+          return <ProjectMemberRemovedSection notification={notification} />;
+        }
+        return <GenericNotificationSection notification={notification} />;
       default:
         return <GenericNotificationSection notification={notification} />;
     }

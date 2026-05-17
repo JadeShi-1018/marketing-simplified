@@ -311,7 +311,7 @@ def fire_meeting_starting_soon_notifications() -> int:
             continue
 
         participant_ids = list(
-            meeting.participant_links.values_list("user_id", flat=True)
+            meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
         )
         minutes_away = max(1, int((scheduled_dt - now).total_seconds() / 60))
         start_label = f"{minutes_away} minute{'s' if minutes_away != 1 else ''} from now"

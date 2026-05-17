@@ -294,9 +294,7 @@ def _handle_project_invite(notification, action, user):
 
 
 def _handle_meeting_participant(notification, action, user):
-    """Reject → remove participant link so they are no longer in the meeting."""
-    if action != "reject":
-        return
+    """Accept → mark participant link as accepted; reject → remove the link entirely."""
     from meetings.models import ParticipantLink  # noqa: PLC0415
 
     participant_link_id = notification.metadata.get("participant_link_id")
@@ -304,13 +302,14 @@ def _handle_meeting_participant(notification, action, user):
         logger.warning("MEETING_PARTICIPANT_ADDED notification %s has no participant_link_id", notification.pk)
         return
 
-    ParticipantLink.objects.filter(pk=participant_link_id, user=user).delete()
+    if action == "accept":
+        ParticipantLink.objects.filter(pk=participant_link_id, user=user).update(is_accepted=True)
+    elif action == "reject":
+        ParticipantLink.objects.filter(pk=participant_link_id, user=user).delete()
 
 
 def _handle_task_assignment(notification, action, user):
-    """Reject → clear the owner or approver field on the task."""
-    if action != "reject":
-        return
+    """Accept → clear the invite-pending flag; reject → clear the owner or approver field."""
     from task.models import Task  # noqa: PLC0415
 
     task_id = notification.related_object_id
@@ -322,11 +321,21 @@ def _handle_task_assignment(notification, action, user):
         logger.warning("Task %s not found for assignment response", task_id)
         return
 
-    if change_type == "task_approver":
-        task.approver = None
-    else:
-        task.owner = None
-    task.save()
+    if action == "accept":
+        if change_type == "task_approver":
+            task.approver_invite_pending = False
+            task.save(update_fields=["approver_invite_pending"])
+        else:
+            task.owner_invite_pending = False
+            task.save(update_fields=["owner_invite_pending"])
+    elif action == "reject":
+        if change_type == "task_approver":
+            task.approver = None
+            task.approver_invite_pending = False
+        else:
+            task.owner = None
+            task.owner_invite_pending = False
+        task.save()
 
 
 async def stream_notifications(request):

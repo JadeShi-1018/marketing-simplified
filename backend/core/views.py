@@ -588,9 +588,38 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
                 'error': 'Cannot remove project owner'
             })
 
+        removed_user = instance.user
+        project = instance.project
+        actor = self.request.user
+
         # Deactivate instead of delete
         instance.is_active = False
         instance.save()
+
+        # Notify the removed user (skip self-removal)
+        if removed_user.id != actor.id:
+            try:
+                from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
+                from notifications.services import create_notification  # noqa: PLC0415
+                create_notification(
+                    recipient_id=removed_user.id,
+                    actor_id=actor.id,
+                    category=NotificationCategory.COLLABORATION,
+                    event_type=NotificationEventType.ACCOUNT_PERMISSION,
+                    title=f"Removed from project: {project.name}",
+                    body=f"You have been removed from the project \"{project.name}\".",
+                    related_object_type="project",
+                    related_object_id=str(project.id),
+                    action_url=f"/projects/{project.id}",
+                    metadata={
+                        "project_name": project.name,
+                        "action": "removed_from_project",
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to send removal notification for user %s", removed_user.id
+                )
 
 
 class ListProjectAvailableRolesView(APIView):

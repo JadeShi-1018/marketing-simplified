@@ -191,7 +191,12 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     ParticipantLink.objects.get_or_create(
                         meeting=meeting,
                         user_id=uid,
-                        defaults={"role": None},
+                        defaults={
+                            "role": None,
+                            # Meeting creator auto-accepts their own participation;
+                            # everyone else starts as pending until they respond.
+                            "is_accepted": uid == self.request.user.id,
+                        },
                     )
                 except IntegrityError as exc:
                     raise ValidationError(
@@ -445,8 +450,8 @@ class MeetingViewSet(viewsets.ModelViewSet):
         if not changes:
             return
 
-        # Send notifications to participants
-        participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+        # Send notifications to participants (only those who accepted the meeting invite)
+        participant_ids = meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
         for uid in participant_ids:
             if uid == self.request.user.id:
                 continue
@@ -562,7 +567,7 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
 
         # Notify participants about the new agenda item (dedup-aware, keyed per item).
         actor_id = self.request.user.id
-        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        participant_ids = list(meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True))
         recipients = [uid for uid in participant_ids if uid != actor_id]
         logger.info(
             "AgendaItem CREATE: meeting=%s item=%s actor=%s participants=%s recipients=%s",
@@ -700,7 +705,11 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
-        link = serializer.save(meeting=meeting)
+        # Self-addition (organiser adding themselves) auto-accepts; inviting others is pending.
+        # validated_data["user"] is a User object (ForeignKey), so compare via .pk
+        invited_user = serializer.validated_data.get("user")
+        is_self = bool(invited_user and invited_user.pk == self.request.user.id)
+        link = serializer.save(meeting=meeting, is_accepted=is_self)
         if link.user_id != self.request.user.id:
             create_notification(
                 recipient_id=link.user_id,

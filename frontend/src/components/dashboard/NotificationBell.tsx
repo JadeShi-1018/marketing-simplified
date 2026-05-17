@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { Bell, Check, CheckCheck, ChevronDown, ChevronUp, Settings, Trash2 } from 'lucide-react';
+import { Bell, CheckCheck, ChevronDown, ChevronUp, Settings, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AlertCard from './AlertCard';
 import { notificationsApi } from '@/lib/api/notificationsApi';
 import { useNotificationStore } from '@/lib/notificationStore';
 import { useNotificationDrawer } from '@/components/notifications/NotificationDrawerProvider';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
+import { getModuleBarClass } from '@/lib/notificationVisuals';
 import type { NotificationItem, NotificationTab } from '@/types/notifications';
 import type { AlertData, AlertStatus } from '@/lib/mock/dashboardMock';
 
@@ -22,20 +23,6 @@ const TABS: { value: TabKey; label: string }[] = [
   { value: 'mentions', label: 'Mentions' },
   { value: 'deadlines', label: 'Deadlines' },
 ];
-
-// ── Category colour bar ───────────────────────────────────────────────────────
-
-const CATEGORY_COLOR: Record<string, string> = {
-  MEETINGS: 'bg-blue-500',
-  TASKS: 'bg-orange-400',
-  DECISIONS: 'bg-purple-500',
-  COLLABORATION: 'bg-teal-500',
-  SYSTEM: 'bg-gray-400',
-  AUTOMATION: 'bg-indigo-400',
-};
-
-const categoryColor = (category: string) =>
-  CATEGORY_COLOR[category?.toUpperCase()] ?? 'bg-gray-400';
 
 // ── Single real notification card ─────────────────────────────────────────────
 
@@ -56,8 +43,8 @@ function NotifCard({
         if (e.key === 'Enter' || e.key === ' ') onClick(item);
       }}
     >
-      {/* Category colour bar */}
-      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${categoryColor(item.category)}`} />
+      {/* Module colour bar (matches drawer module pill) */}
+      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${getModuleBarClass(item)}`} />
 
       <div className="pl-4 pr-3 py-3">
         <div className="flex min-w-0 items-start justify-between gap-2">

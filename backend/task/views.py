@@ -441,6 +441,9 @@ class TaskViewSet(viewsets.ModelViewSet):
         """Create a new task and notify the assigned owner (if not the creator)."""
         task = serializer.save()
         if task.owner_id and task.owner_id != self.request.user.id:
+            # Mark invite as pending before notifying
+            task.owner_invite_pending = True
+            task.save(update_fields=["owner_invite_pending"])
             create_notification(
                 recipient_id=task.owner_id,
                 actor_id=self.request.user.id,
@@ -481,6 +484,9 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         # ── Owner reassigned ──────────────────────────────────────────────────
         if task.owner_id and task.owner_id != old_owner_id:
+            # New owner must accept before they receive further change notifications
+            task.owner_invite_pending = True
+            task.save(update_fields=["owner_invite_pending"])
             create_notification(
                 recipient_id=task.owner_id,
                 actor_id=actor_id,
@@ -501,6 +507,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         # ── Approver changed ──────────────────────────────────────────────────
         if task.current_approver_id and task.current_approver_id != old_approver_id:
+            task.approver_invite_pending = True
+            task.save(update_fields=["approver_invite_pending"])
             create_notification(
                 recipient_id=task.current_approver_id,
                 actor_id=actor_id,
@@ -519,8 +527,11 @@ class TaskViewSet(viewsets.ModelViewSet):
                 },
             )
 
+        # Skip change notifications for users who have not yet accepted their assignment
+        owner_accepted = task.owner_id and not task.owner_invite_pending
+
         # ── Due date changed ──────────────────────────────────────────────────
-        if task.due_date != old_due_date and task.owner_id and task.owner_id != actor_id:
+        if task.due_date != old_due_date and owner_accepted and task.owner_id != actor_id:
             create_notification(
                 recipient_id=task.owner_id,
                 actor_id=actor_id,
@@ -540,7 +551,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             )
 
         # ── Title / summary changed ───────────────────────────────────────────
-        if task.summary != old_summary and task.owner_id and task.owner_id != actor_id:
+        if task.summary != old_summary and owner_accepted and task.owner_id != actor_id:
             create_notification(
                 recipient_id=task.owner_id,
                 actor_id=actor_id,
@@ -560,7 +571,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             )
 
         # ── Priority changed ──────────────────────────────────────────────────
-        if task.priority != old_priority and task.owner_id and task.owner_id != actor_id:
+        if task.priority != old_priority and owner_accepted and task.owner_id != actor_id:
             create_notification(
                 recipient_id=task.owner_id,
                 actor_id=actor_id,

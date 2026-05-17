@@ -31,6 +31,9 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
     old = _task_status_cache.pop(instance.pk, None)
     if old is None or old == instance.status or not instance.owner_id:
         return
+    # Skip while the owner hasn't accepted their assignment yet
+    if instance.owner_invite_pending:
+        return
     from notifications.models import NotificationCategory, NotificationEventType
     from notifications.services import create_notification
 

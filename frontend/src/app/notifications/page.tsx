@@ -10,6 +10,7 @@ import { useNotificationDrawer } from "@/components/notifications/NotificationDr
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import { useNotificationStore } from "@/lib/notificationStore";
 import { formatRelativeTime } from "@/lib/formatRelativeTime";
+import { getModuleBarClass } from "@/lib/notificationVisuals";
 import {
   NOTIFICATIONS_FROM_PARAM,
   buildPreferencesHrefFromNotificationsSearch,
@@ -50,12 +51,16 @@ function NotificationCard({
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") handleCardClick();
       }}
-      className={`rounded-xl border p-4 flex gap-3 cursor-pointer transition-colors hover:bg-gray-50 ${
+      className={`relative overflow-hidden rounded-xl border p-4 flex gap-3 cursor-pointer transition-colors hover:bg-gray-50 ${
         notification.is_read
           ? "bg-white border-gray-200"
           : "bg-white border-blue-200 shadow-sm"
       }`}
     >
+      <div
+        className={`absolute left-0 top-0 bottom-0 w-[3px] ${getModuleBarClass(notification)}`}
+        aria-hidden
+      />
       <input
         type="checkbox"
         className="mt-1 rounded border-gray-300"
@@ -63,7 +68,7 @@ function NotificationCard({
         onChange={onToggle}
         onClick={(e) => e.stopPropagation()}
       />
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 pl-1">
         <div className="flex justify-between gap-2">
           <p className="text-base font-bold text-gray-900">{notification.title}</p>
           {!notification.is_read && (

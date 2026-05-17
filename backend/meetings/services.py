@@ -522,7 +522,7 @@ def notify_participants_meeting_document_updated(
     if document_id is not None:
         meta["asset_id"] = document_id
 
-    participant_ids = meeting.participant_links.values_list("user_id", flat=True)
+    participant_ids = meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
     for uid in participant_ids:
         if uid == editor_id:
             continue
