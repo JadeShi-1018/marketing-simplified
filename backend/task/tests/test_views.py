@@ -913,6 +913,40 @@ class TaskAPITest(TestCase):
         # Verify database was updated (avoid FSM field refresh)
         task = Task.objects.get(pk=task.id)
         self.assertEqual(task.summary, 'Updated Summary')
+
+    def test_update_task_forbidden_for_project_member_who_is_not_owner_or_approver(self):
+        """Project access alone is not enough to edit a task."""
+        viewer = User.objects.create_user(
+            email='viewer@example.com',
+            username='viewer',
+            password='testpass123'
+        )
+        ProjectMember.objects.create(
+            user=viewer,
+            project=self.project,
+            role='member',
+            is_active=True
+        )
+        viewer_client = APIClient()
+        viewer_client.force_authenticate(user=viewer)
+        task = Task.objects.create(
+            summary='Original Summary',
+            type='budget',
+            owner=self.user,
+            current_approver=self.approver,
+            project=self.project
+        )
+
+        url = reverse('task-detail', kwargs={'pk': task.id})
+        response = viewer_client.patch(
+            url,
+            {'summary': 'Unauthorized Update'},
+            format='json'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        task.refresh_from_db(fields=['summary'])
+        self.assertEqual(task.summary, 'Original Summary')
     
     def test_update_task_project_id_null_keeps_existing(self):
         """Explicit null project_id should leave project unchanged"""

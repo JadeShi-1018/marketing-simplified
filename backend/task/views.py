@@ -623,6 +623,20 @@ class TaskViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         """Update a task"""
+        task = serializer.instance
+        user = self.request.user
+        is_owner = task.owner_id is not None and task.owner_id == user.id
+        is_approver = (
+            task.current_approver_id is not None and
+            task.current_approver_id == user.id
+        )
+
+        if task.status == Task.Status.LOCKED:
+            raise PermissionDenied('Locked tasks cannot be edited.')
+
+        if not is_owner and not is_approver:
+            raise PermissionDenied('Only the task owner or current approver can edit this task.')
+
         instance = serializer.save()
         from task.ai_summary import invalidate_task_ai_cache
         invalidate_task_ai_cache(instance.id)

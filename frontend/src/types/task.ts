@@ -397,6 +397,7 @@ export interface MyActionsTaskStub {
   project_id: number;
   owner: { id: number; username: string } | null;
   current_approver: { id: number; username: string } | null;
+  updated_at: string | null;
 }
 
 export interface MyActionsPayload {
