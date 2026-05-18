@@ -337,8 +337,10 @@ const StatusBadge: React.FC<{ status: ExperienceGroupListItem['status'] }> = ({ 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const ExperienceGroupsPage: React.FC = () => {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = Number(searchParams.get('project'));
+  const projectValid = Number.isFinite(projectId) && projectId > 0;
 
   const [groups, setGroups] = useState<ExperienceGroupListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -350,6 +352,10 @@ const ExperienceGroupsPage: React.FC = () => {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchGroups = useCallback(async () => {
+    if (!projectValid) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -361,7 +367,7 @@ const ExperienceGroupsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, projectValid]);
 
   useEffect(() => {
     fetchGroups();
@@ -459,7 +465,20 @@ const ExperienceGroupsPage: React.FC = () => {
           )}
 
           {/* Content */}
-          {loading ? (
+          {!projectValid ? (
+            <div className="flex flex-col items-center justify-center min-h-[300px] gap-3 text-center">
+              <p className="text-sm text-gray-600">
+                Open this page from a project card to manage experience groups for that project.
+              </p>
+              <button
+                type="button"
+                onClick={() => router.push('/select-project')}
+                className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+              >
+                Go to projects
+              </button>
+            </div>
+          ) : loading ? (
             <div className="flex flex-col items-center justify-center min-h-[300px] gap-3">
               <LoadingSpinner />
               <p className="text-sm text-gray-500">Loading experience groups...</p>

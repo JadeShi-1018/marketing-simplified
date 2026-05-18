@@ -2,7 +2,7 @@ from django.db import models
 
 
 class Customer(models.Model):
-    email = models.EmailField(unique=True)
+    email = models.EmailField()
     full_name = models.CharField(max_length=200)
     company = models.CharField(max_length=200, blank=True, default='')
     phone = models.CharField(max_length=50, blank=True, default='')
@@ -26,6 +26,12 @@ class Customer(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'email'],
+                name='customer_unique_email_per_project',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.full_name} <{self.email}>"

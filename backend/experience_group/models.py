@@ -17,7 +17,7 @@ class ExperienceGroup(models.Model):
       null=True,
       blank=True,
   )                                                                                                                                                               
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
     description = models.TextField(blank=True, default='')                                                                                                         
                                                                                                                                                                  
     status = FSMField(                                                                                                                                             
@@ -40,8 +40,14 @@ class ExperienceGroup(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)                                                                                                               
     published_at = models.DateTimeField(null=True, blank=True)                                                                                                   
-    class Meta:                                                                                                                                                    
-        ordering = ['-created_at']      
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'name'],
+                name='experience_group_unique_name_per_project',
+            ),
+        ]      
                                                                                                                                                                    
     def __str__(self):                                                                                                                                             
         return f"ExperienceGroup '{self.name}' ({self.status})"
