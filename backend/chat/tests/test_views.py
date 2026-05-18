@@ -8,7 +8,6 @@ from rest_framework import status
 from core.models import Project, Organization, Team, TeamMember, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType
 from chat.services import MessageService
-from notifications.models import Notification, NotificationEventType
 from chat.serializers import MessageSerializer
 from django.core.files.uploadedfile import SimpleUploadedFile
 
@@ -1063,112 +1062,6 @@ class AttachmentAPITest(TestCase):
         self.assertIn('chat', row)
         self.assertEqual(row['chat']['id'], self.chat.id)
         self.assertEqual(row['message_id'], msg_allowed.id)
-
-
-class ChatNewConversationNotificationTests(TestCase):
-    """CHAT_NEW_CONVERSATION when POST /chats/ creates a new conversation."""
-
-    def setUp(self):
-        self.user_a = User.objects.create_user(
-            email="alice@example.com",
-            username="alice",
-            password="pass12345",
-        )
-        self.user_b = User.objects.create_user(
-            email="bob@example.com",
-            username="bob",
-            password="pass12345",
-        )
-        self.user_c = User.objects.create_user(
-            email="carol@example.com",
-            username="carol",
-            password="pass12345",
-        )
-
-        self.organization = Organization.objects.create(name="Org")
-        self.team = Team.objects.create(organization=self.organization, name="Team")
-        self.project = Project.objects.create(
-            name="Project",
-            organization=self.organization,
-        )
-
-        for u in (self.user_a, self.user_b, self.user_c):
-            TeamMember.objects.create(user=u, team=self.team)
-            ProjectMember.objects.create(
-                user=u, project=self.project, role="member", is_active=True
-            )
-
-        self.client = APIClient()
-        self.client.force_authenticate(user=self.user_a)
-
-    def test_private_chat_notifies_other_participant_only(self):
-        url = reverse("chat-list")
-        response = self.client.post(
-            url,
-            {
-                "project": self.project.id,
-                "type": ChatType.PRIVATE,
-                "participant_ids": [self.user_b.id],
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-
-        notif = Notification.objects.filter(
-            recipient=self.user_b,
-            actor=self.user_a,
-            event_type=NotificationEventType.CHAT_NEW_CONVERSATION,
-        )
-        self.assertEqual(notif.count(), 1)
-        n = notif.first()
-        self.assertEqual(n.related_object_type, "chat")
-        self.assertEqual(n.related_object_id, str(response.data["id"]))
-        self.assertEqual(n.metadata.get("chat_id"), response.data["id"])
-        self.assertEqual(n.metadata.get("project_id"), self.project.id)
-        self.assertEqual(n.metadata.get("sender_name"), "alice")
-        self.assertEqual(n.metadata.get("conversation_title"), "Direct message")
-        self.assertEqual(n.metadata.get("chat_type"), ChatType.PRIVATE)
-
-        self.assertFalse(
-            Notification.objects.filter(
-                recipient=self.user_a,
-                event_type=NotificationEventType.CHAT_NEW_CONVERSATION,
-            ).exists()
-        )
-
-    def test_group_chat_notifies_all_other_participants(self):
-        url = reverse("chat-list")
-        response = self.client.post(
-            url,
-            {
-                "project": self.project.id,
-                "type": ChatType.GROUP,
-                "name": "Design sync",
-                "participant_ids": [self.user_b.id, self.user_c.id],
-            },
-            format="json",
-        )
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        chat_id = response.data["id"]
-
-        for recipient in (self.user_b, self.user_c):
-            qs = Notification.objects.filter(
-                recipient=recipient,
-                actor=self.user_a,
-                event_type=NotificationEventType.CHAT_NEW_CONVERSATION,
-                related_object_id=str(chat_id),
-            )
-            self.assertEqual(qs.count(), 1, f"Expected one notification for user {recipient.id}")
-            n = qs.first()
-            self.assertEqual(n.metadata.get("conversation_title"), "Design sync")
-            self.assertEqual(n.metadata.get("chat_type"), ChatType.GROUP)
-
-        self.assertFalse(
-            Notification.objects.filter(
-                recipient=self.user_a,
-                event_type=NotificationEventType.CHAT_NEW_CONVERSATION,
-            ).exists()
-        )
 
 
 class StarredChatAPITest(TestCase):

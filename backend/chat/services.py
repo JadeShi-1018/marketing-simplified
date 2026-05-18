@@ -283,57 +283,6 @@ class ChatService:
         logger.info(f"Removed participant {user.id} from chat {chat.id} by user {removed_by.id}")
 
 
-def notify_participants_new_conversation(*, chat: Chat, actor: User) -> None:
-    """
-    In-app notifications when a new conversation is created (POST /chats/).
-
-    Recipients: all active participants except the actor. Mirrors WebSocket
-    fan-out in ChatViewSet._notify_chat_created.
-    """
-    from notifications.models import NotificationCategory, NotificationEventType
-    from notifications.services import create_notification
-
-    sender_name = ChatService.display_name_for_user(actor)
-    if chat.type == ChatType.GROUP:
-        conversation_title = (chat.name or "").strip() or "Group chat"
-        body = f'You were added to "{conversation_title}".'
-    else:
-        conversation_title = "Direct message"
-        body = "A new direct message thread was started with you."
-
-    action_url = f"/projects/{chat.project_id}/tasks"
-    metadata = {
-        "project_id": chat.project_id,
-        "chat_id": chat.id,
-        "sender_name": sender_name,
-        "conversation_title": conversation_title,
-        "chat_type": chat.type,
-    }
-
-    try:
-        for participant in (
-            ChatParticipant.objects.filter(chat=chat, is_active=True)
-            .exclude(user_id=actor.id)
-            .select_related("user")
-        ):
-            create_notification(
-                recipient_id=participant.user_id,
-                actor_id=actor.id,
-                category=NotificationCategory.COLLABORATION,
-                event_type=NotificationEventType.CHAT_NEW_CONVERSATION,
-                title=f"{sender_name} started a chat",
-                body=body,
-                related_object_type="chat",
-                related_object_id=str(chat.id),
-                action_url=action_url,
-                metadata=metadata,
-            )
-    except Exception:
-        logger.exception(
-            "In-app CHAT_NEW_CONVERSATION notifications failed for chat %s", chat.id
-        )
-
-
 class ChatStarService:
     """Starred chats per user (project-scoped ordering)."""
 

@@ -25,6 +25,10 @@ export default function DrawerChatView({
   const messageId = notification.metadata?.message_id as number | undefined;
   const projectId = notification.metadata?.project_id as number | undefined;
 
+  // Only highlight the message if this notification is still unread.
+  // This ensures highlight/scroll only happens on the first view.
+  const shouldHighlight = !notification.is_read;
+
   const {
     chat,
     messages,
@@ -38,7 +42,7 @@ export default function DrawerChatView({
     currentUserId,
   } = useDrawerChat({
     chatId: chatId ?? null,
-    highlightMessageId: messageId,
+    highlightMessageId: shouldHighlight ? messageId : null,
     enabled: !!chatId,
   });
 
