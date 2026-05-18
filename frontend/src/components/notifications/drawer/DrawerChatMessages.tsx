@@ -81,6 +81,20 @@ export default function DrawerChatMessages({
   const lastMessageCountRef = useRef(messages.length);
   // Track whether animation has played to prevent re-triggering
   const [hasAnimated, setHasAnimated] = useState(false);
+  // Store the initial highlight message ID for the session
+  // This ensures the divider stays visible even if highlightMessageId is later cleared by parent
+  const sessionHighlightIdRef = useRef<number | null>(null);
+
+  // Lock in the highlightMessageId when it first becomes non-null
+  // This ensures the divider persists even if highlightMessageId is cleared (e.g., when notification is marked as read)
+  useEffect(() => {
+    if (highlightMessageId !== null && sessionHighlightIdRef.current === null) {
+      sessionHighlightIdRef.current = highlightMessageId;
+    }
+  }, [highlightMessageId]);
+
+  // The persistent target message ID for this drawer session
+  const sessionHighlightId = sessionHighlightIdRef.current ?? highlightMessageId;
 
   // Group messages by date
   const messageGroups = useMemo(() => {
@@ -141,9 +155,9 @@ export default function DrawerChatMessages({
 
   // Scroll to highlighted message and trigger animation
   useEffect(() => {
-    if (!highlightMessageId || hasAnimated) return;
+    if (!sessionHighlightId || hasAnimated) return;
 
-    const el = document.getElementById(`drawer-message-${highlightMessageId}`);
+    const el = document.getElementById(`drawer-message-${sessionHighlightId}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       // Mark animation as played after it completes (1.8s)
@@ -171,10 +185,10 @@ export default function DrawerChatMessages({
     return <EmptyState />;
   }
 
-  // Divider stays visible for the entire drawer session (as long as highlightMessageId is set)
+  // Divider stays visible for the entire drawer session using the locked-in session ID
   // Animation only plays once and fades out after 1.8s
-  const shouldShowDivider = highlightMessageId !== null;
-  const shouldShowHighlightAnimation = highlightMessageId !== null && !hasAnimated;
+  const shouldShowDivider = sessionHighlightId !== null;
+  const shouldShowHighlightAnimation = sessionHighlightId !== null && !hasAnimated;
 
   return (
     <>
@@ -222,7 +236,7 @@ export default function DrawerChatMessages({
                 const prevMessage = index > 0 ? group.messages[index - 1] : null;
                 const showSender =
                   !prevMessage || prevMessage.sender.id !== message.sender.id;
-                const isTargetMessage = highlightMessageId === message.id;
+                const isTargetMessage = sessionHighlightId === message.id;
                 // Divider persists for the drawer session
                 const showDivider = isTargetMessage && shouldShowDivider;
                 // Animation fades out after 1.8s
