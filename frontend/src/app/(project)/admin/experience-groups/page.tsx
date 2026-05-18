@@ -8,15 +8,18 @@ import Modal from '@/components/ui/Modal';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { ExperienceGroup, ExperienceGroupListItem, CreateExperienceGroupData } from '@/types/experienceGroup';
 import { Plus, Pencil, Trash2, Send, Eye, AlertCircle, X, Users } from 'lucide-react';
+import { useParams, useRouter, useSearchParams } from 'next/navigation'; 
 
 // ── Create Form ───────────────────────────────────────────────────────────────
 
 interface CreateFormProps {
+  projectId: number;
   onSuccess: (group: ExperienceGroupListItem) => void;
   onCancel: () => void;
 }
 
-const CreateForm: React.FC<CreateFormProps> = ({ onSuccess, onCancel }) => {
+const CreateForm: React.FC<CreateFormProps> = ({ projectId, onSuccess, onCancel }) => {
+  const searchParams = useSearchParams();                                                                                                                       
   const [form, setForm] = useState<CreateExperienceGroupData>({ name: '', description: '' });
   const [errors, setErrors] = useState<Partial<CreateExperienceGroupData>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -35,7 +38,7 @@ const CreateForm: React.FC<CreateFormProps> = ({ onSuccess, onCancel }) => {
     setSubmitting(true);
     setServerError(null);
     try {
-      const res = await ExperienceGroupAPI.create(form);
+      const res = await ExperienceGroupAPI.create(form, projectId);
       onSuccess(res.data);
     } catch (err: any) {
       const detail =
@@ -334,6 +337,9 @@ const StatusBadge: React.FC<{ status: ExperienceGroupListItem['status'] }> = ({ 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const ExperienceGroupsPage: React.FC = () => {
+  const searchParams = useSearchParams();
+  const projectId = Number(searchParams.get('project'));
+
   const [groups, setGroups] = useState<ExperienceGroupListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -343,11 +349,11 @@ const ExperienceGroupsPage: React.FC = () => {
   const [publishingId, setPublishingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const fetchGroups = async () => {
+  const fetchGroups = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await ExperienceGroupAPI.list();
+      const res = await ExperienceGroupAPI.list({ project: projectId });
       const data = res.data;
       setGroups(Array.isArray(data) ? data : (data as any).results ?? []);
     } catch {
@@ -355,11 +361,11 @@ const ExperienceGroupsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [projectId]);
 
   useEffect(() => {
     fetchGroups();
-  }, []);
+  }, [fetchGroups]);
 
   const handleCreated = (newGroup: ExperienceGroupListItem) => {
     setGroups((prev) => [newGroup, ...prev]);
@@ -569,6 +575,7 @@ const ExperienceGroupsPage: React.FC = () => {
               </p>
             </div>
             <CreateForm
+              projectId={projectId}
               onSuccess={handleCreated}
               onCancel={() => setIsCreateModalOpen(false)}
             />

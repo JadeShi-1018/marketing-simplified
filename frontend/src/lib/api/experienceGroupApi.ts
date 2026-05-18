@@ -9,14 +9,14 @@ import {
 const BASE = '/api/experience-groups';
 
 export const ExperienceGroupAPI = {
-  list: () =>
-    api.get<{ count: number; next: string | null; previous: string | null; results: ExperienceGroupListItem[] } | ExperienceGroupListItem[]>(`${BASE}/`),
+  list: (params?: { project?: number }) =>
+    api.get<{ count: number; next: string | null; previous: string | null; results: ExperienceGroupListItem[] } | ExperienceGroupListItem[]>(`${BASE}/`, { params }),
 
   retrieve: (id: number) =>
     api.get<ExperienceGroup>(`${BASE}/${id}/`),
 
-  create: (data: CreateExperienceGroupData) =>
-    api.post<ExperienceGroup>(`${BASE}/`, data),
+  create: (data: CreateExperienceGroupData, projectId: number) =>                                                                                               
+    api.post<ExperienceGroup>(`${BASE}/`, data, { params: { project: projectId } }),
 
   update: (id: number, data: UpdateExperienceGroupData) =>
     api.patch<ExperienceGroup>(`${BASE}/${id}/`, data),

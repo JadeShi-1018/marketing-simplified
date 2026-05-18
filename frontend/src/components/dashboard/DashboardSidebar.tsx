@@ -483,20 +483,7 @@ export default function DashboardSidebar() {
             <Plug className="text-gray-500" />
             <span>Integrations</span>
           </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => router.push('/admin/experience-groups')}
-          >
-            <Layers className="text-gray-500" />
-            <span>Experience Groups</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => router.push('/admin/customers')}
-          >
-            <Users className="text-gray-500" />
-            <span>Customers</span>
-          </DropdownMenuItem>
+
           <DropdownMenuSeparator className="my-1" />
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5 text-red-600 focus:text-red-700 focus:bg-red-50"

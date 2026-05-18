@@ -13,6 +13,13 @@ class Customer(models.Model):
         blank=True,
         related_name='customers',
     )
+    project = models.ForeignKey(                                                                                                                                  
+      'core.Project',                                                                                                                                           
+      on_delete=models.CASCADE,                                                                                                                                 
+      related_name='customers',                                                                                                                                 
+      null=True,                                                                                                                                                
+      blank=True,
+  )       
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

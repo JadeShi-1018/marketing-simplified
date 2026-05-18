@@ -9,7 +9,8 @@ import { CustomerAPI } from '@/lib/api/customerApi';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { Customer, CreateCustomerData, UpdateCustomerData } from '@/types/customer';
 import { ExperienceGroupListItem } from '@/types/experienceGroup';
-import { Plus, Pencil, Trash2, AlertCircle, X, Users } from 'lucide-react';
+import { Plus, Pencil, Trash2, AlertCircle, X, Users, ArrowLeft } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 // ── Group selector shared between Create and Edit forms ───────────────────────
 
@@ -39,12 +40,13 @@ const GroupSelect: React.FC<GroupSelectProps> = ({ value, onChange, groups, disa
 // ── Create Form ───────────────────────────────────────────────────────────────
 
 interface CreateFormProps {
+  projectId: number;
   groups: ExperienceGroupListItem[];
   onSuccess: (customer: Customer) => void;
   onCancel: () => void;
 }
 
-const CreateForm: React.FC<CreateFormProps> = ({ groups, onSuccess, onCancel }) => {
+const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, onSuccess, onCancel }) => {
   const [form, setForm] = useState<CreateCustomerData>({
     email: '',
     full_name: '',
@@ -71,7 +73,7 @@ const CreateForm: React.FC<CreateFormProps> = ({ groups, onSuccess, onCancel }) 
     setSubmitting(true);
     setServerError(null);
     try {
-      const res = await CustomerAPI.create(form);
+      const res = await CustomerAPI.create(form, projectId);
       onSuccess(res.data);
     } catch (err: any) {
       const detail =
@@ -379,11 +381,14 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, onSaved, onClos
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const CustomersPage: React.FC = () => {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const projectId = Number(searchParams.get('project'));
+
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [groups, setGroups] = useState<ExperienceGroupListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filterGroupId, setFilterGroupId] = useState<number | ''>('');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingCustomerId, setEditingCustomerId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -394,8 +399,8 @@ const CustomersPage: React.FC = () => {
     setError(null);
     try {
       const [custRes, grpRes] = await Promise.all([
-        CustomerAPI.list(filterGroupId !== '' ? { experience_group: filterGroupId } : undefined),
-        ExperienceGroupAPI.list(),
+        CustomerAPI.list({ project: projectId }),
+        ExperienceGroupAPI.list({ project: projectId }),
       ]);
       const custData = custRes.data;
       setCustomers(Array.isArray(custData) ? custData : (custData as any).results ?? []);
@@ -406,7 +411,7 @@ const CustomersPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [filterGroupId]);
+  }, [projectId]);
 
   useEffect(() => {
     fetchData();
@@ -443,11 +448,19 @@ const CustomersPage: React.FC = () => {
 
           {/* Header */}
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
-              <p className="mt-1 text-sm text-gray-500">
-                Manage external customers and their Experience Group assignments.
-              </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => router.push('/select-project')}
+                className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
+                <p className="mt-1 text-sm text-gray-500">
+                  Manage external customers and their Experience Group assignments.
+                </p>
+              </div>
             </div>
             <button
               onClick={() => setIsCreateModalOpen(true)}
@@ -456,21 +469,6 @@ const CustomersPage: React.FC = () => {
               <Plus className="h-4 w-4" />
               Add Customer
             </button>
-          </div>
-
-          {/* Filter */}
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-gray-500 shrink-0">Filter by group:</label>
-            <select
-              value={filterGroupId}
-              onChange={(e) => setFilterGroupId(e.target.value === '' ? '' : Number(e.target.value))}
-              className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-            >
-              <option value="">All groups</option>
-              {groups.map((g) => (
-                <option key={g.id} value={g.id}>{g.name}</option>
-              ))}
-            </select>
           </div>
 
           {/* Action error */}
@@ -578,6 +576,7 @@ const CustomersPage: React.FC = () => {
               <p className="text-sm text-gray-500 mt-0.5">Create a new customer and optionally assign them to an experience group.</p>
             </div>
             <CreateForm
+              projectId={projectId}
               groups={groups}
               onSuccess={handleCreated}
               onCancel={() => setIsCreateModalOpen(false)}

@@ -21,9 +21,21 @@ class ExperienceGroupViewSet(viewsets.ModelViewSet):
             return ExperienceGroupListSerializer
         return ExperienceGroupSerializer
 
+    def get_queryset(self):
+        if self.action == 'list':
+            project_id = self.request.query_params.get('project')
+            if project_id:
+                return ExperienceGroup.objects.filter(project_id=project_id)
+            return ExperienceGroup.objects.none()
+        return ExperienceGroup.objects.all()
+    
     def perform_create(self, serializer):
         # Automatically record the creator when creating
-        serializer.save(created_by=self.request.user)
+        serializer.save(                                                                                                                                          
+          created_by=self.request.user,                                                                                                                         
+          project_id=self.request.query_params.get('project'),                                                                                                  
+      ) 
+
 
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)

@@ -12,15 +12,20 @@ class CustomerViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        group_id = self.request.query_params.get('experience_group')
-        if group_id is not None:
-            qs = qs.filter(experience_group_id=group_id)
-        is_active = self.request.query_params.get('is_active')
-        if is_active is not None:
-            qs = qs.filter(is_active=is_active.lower() == 'true')
-        return qs
-
+        if self.action == 'list':
+            project_id = self.request.query_params.get('project')
+            if project_id:
+                return Customer.objects.select_related('experience_group').filter(
+                    project_id=project_id
+                )
+            return Customer.objects.none()
+        return Customer.objects.select_related('experience_group').all()                                                                                                                            
+                                                                                                                                                             
+    def perform_create(self, serializer):                                                                                                                         
+        serializer.save(                                                                                                                                       
+            project_id=self.request.query_params.get('project'),
+        )
+    
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         instance.delete()

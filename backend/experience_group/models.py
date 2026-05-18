@@ -10,7 +10,13 @@ class ExperienceGroup(models.Model):
     class PublishStatus(models.TextChoices):                                                                                                                     
         DRAFT = 'DRAFT', 'Draft'        
         PUBLISHED = 'PUBLISHED', 'Published'
-                                                                                                                                                                   
+    project = models.ForeignKey(                                                                                                                                  
+      'core.Project',                                                                                                                                        
+      on_delete=models.CASCADE,
+      related_name='experience_groups',  
+      null=True,
+      blank=True,
+  )                                                                                                                                                               
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, default='')                                                                                                         
                                                                                                                                                                  

@@ -11,14 +11,14 @@ type PaginatedCustomers = {
 };
 
 export const CustomerAPI = {
-  list: (params?: { experience_group?: number; is_active?: boolean }) =>
+  list: (params?: { project?: number; experience_group?: number; is_active?: boolean }) =>
     api.get<PaginatedCustomers | Customer[]>(`${BASE}/`, { params }),
 
   retrieve: (id: number) =>
     api.get<Customer>(`${BASE}/${id}/`),
 
-  create: (data: CreateCustomerData) =>
-    api.post<Customer>(`${BASE}/`, data),
+  create: (data: CreateCustomerData, projectId?: number) =>
+    api.post<Customer>(`${BASE}/`, data, { params: { project: projectId } }),
 
   update: (id: number, data: UpdateCustomerData) =>
     api.patch<Customer>(`${BASE}/${id}/`, data),
