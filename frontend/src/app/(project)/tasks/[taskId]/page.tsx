@@ -19,6 +19,7 @@ import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock
 import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
+import FocusInsightsPanel from '@/components/tasks/detail/FocusInsightsPanel';
 
 export default function TaskV2DetailPage() {
   const params = useParams();
@@ -158,6 +159,13 @@ export default function TaskV2DetailPage() {
                 />
                 {(task?.id || loading) && (
                   <ApprovalTimelinePanel
+                    taskId={task?.id ?? 0}
+                    refreshKey={refreshKey}
+                    loading={loading}
+                  />
+                )}
+                {(task?.id || loading) && (
+                  <FocusInsightsPanel
                     taskId={task?.id ?? 0}
                     refreshKey={refreshKey}
                     loading={loading}

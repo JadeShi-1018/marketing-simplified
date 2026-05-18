@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'asset.apps.AssetConfig',
     'budget_approval',
     'retrospective',
+    'behavioral_tracking.apps.BehavioralTrackingConfig',
     'task',
     'alerting.apps.AlertingConfig',
     'dashboard',
