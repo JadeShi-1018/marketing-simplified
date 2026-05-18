@@ -44,6 +44,7 @@ class TaskSerializer(serializers.ModelSerializer):
     """Serializer for Task model"""
     owner = UserSummarySerializer(read_only=True)
     owner_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    created_by = serializers.SerializerMethodField()
     project = ProjectSummarySerializer(read_only=True)
     project_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     current_approver = UserSummarySerializer(read_only=True)
@@ -74,7 +75,7 @@ class TaskSerializer(serializers.ModelSerializer):
         model = Task
         fields = [
             'id', 'summary', 'description', 'status', 'type', 'priority',
-            'owner', 'owner_id', 'project', 'project_id',
+            'owner', 'owner_id', 'created_by', 'project', 'project_id',
             'current_approver', 'current_approver_id',
             'content_type', 'object_id', 'linked_object',
             'start_date', 'due_date', 'planned_start_date',
@@ -91,7 +92,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = [
-            'id', 'status', 'owner', 'content_type', 'object_id', 'linked_object',
+            'id', 'status', 'owner', 'created_by', 'content_type', 'object_id', 'linked_object',
             'is_subtask', 'parent_relationship', 'anomaly_status',
             'approval_chain_progress', 'can_lock', 'approvals_summary',
             'revision_round', 'revision_label', # SMP-501
@@ -111,6 +112,21 @@ class TaskSerializer(serializers.ModelSerializer):
         if not obj.content_type:
             return None
         return obj.content_type.model
+
+    def get_created_by(self, obj):
+        user = obj.created_by
+        if user is None:
+            history = (
+                obj.field_history.filter(
+                    field_name="task_created",
+                    changed_by__isnull=False,
+                )
+                .select_related("changed_by")
+                .order_by("changed_at")
+                .first()
+            )
+            user = history.changed_by if history else None
+        return UserSummarySerializer(user).data if user else None
 
     _LINKED_SERIALIZERS = {
         'budgetrequest':       ('budget_approval.serializers', 'BudgetRequestSerializer'),
@@ -372,6 +388,7 @@ class TaskSerializer(serializers.ModelSerializer):
         try:
             user = self.context['request'].user
             validated_data['owner'] = user
+            validated_data['created_by'] = user
 
             project = self._resolve_project(user, validated_data.pop('project_id', None))
             self._ensure_project_membership(user, project)

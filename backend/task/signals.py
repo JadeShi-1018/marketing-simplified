@@ -76,6 +76,9 @@ def record_task_created(sender, instance, created, **kwargs):
     if not created:
         return
     user = _get_current_user_safe()
+    if user is not None and instance.created_by_id is None:
+        Task.objects.filter(pk=instance.pk, created_by__isnull=True).update(created_by=user)
+        instance.created_by = user
     try:
         TaskFieldHistory.objects.create(
             task=instance,
@@ -281,4 +284,3 @@ def record_relation_removed(sender, instance, **kwargs):
             TaskFieldHistory.objects.bulk_create(records)
     except Exception:
         logger.exception('TaskFieldHistory: failed to record relation_removed for TaskRelation %s', instance.pk)
-

@@ -18,7 +18,7 @@ from django.utils import timezone
 from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, ApprovalChain
 from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer, TaskFieldHistorySerializer
 from task.signals import set_current_user
-from task.services import bulk_update_tasks
+from task.services import bulk_update_tasks, user_can_edit_task
 from task.gantt_service import build_gantt_payload, resolve_sprint_label_from_tasks
 from task import intelligence as intel
 from django.utils import timezone
@@ -56,6 +56,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     queryset = Task.objects.select_related(
         'project',
         'owner',
+        'created_by',
         'current_approver',
         'meeting_origin__meeting__type_definition',
     )
@@ -132,6 +133,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         queryset = Task.objects.select_related(
             'project',
             'owner',
+            'created_by',
             'current_approver',
             'meeting_origin__meeting__type_definition',
         ).annotate(subtask_count=Count('subtasks', distinct=True))
@@ -590,6 +592,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         base_qs = Task.objects.select_related(
             'project',
             'owner',
+            'created_by',
             'current_approver',
             'meeting_origin__meeting__type_definition',
         )
@@ -624,18 +627,10 @@ class TaskViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         """Update a task"""
         task = serializer.instance
-        user = self.request.user
-        is_owner = task.owner_id is not None and task.owner_id == user.id
-        is_approver = (
-            task.current_approver_id is not None and
-            task.current_approver_id == user.id
-        )
-
-        if task.status == Task.Status.LOCKED:
-            raise PermissionDenied('Locked tasks cannot be edited.')
-
-        if not is_owner and not is_approver:
-            raise PermissionDenied('Only the task owner or current approver can edit this task.')
+        if not user_can_edit_task(self.request.user, task):
+            raise PermissionDenied(
+                'Only the task owner, current approver, or unassigned draft creator can edit this task.'
+            )
 
         instance = serializer.save()
         from task.ai_summary import invalidate_task_ai_cache

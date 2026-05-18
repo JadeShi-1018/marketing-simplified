@@ -39,6 +39,7 @@ export interface TaskData {
   id?: number;
   owner?: UserSummary;
   owner_id?: number | null; // Write-only for updates
+  created_by?: UserSummary | null;
   project_id: number; // Required for creation
   /** Task type; valid values come from GET /api/task-types/ */
   type: string;

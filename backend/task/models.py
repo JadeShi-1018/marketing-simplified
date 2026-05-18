@@ -45,6 +45,14 @@ class Task(models.Model):
       null=True,
       help_text="The user who is currently reviewing the task"
     )
+    created_by = models.ForeignKey(
+      User,
+      related_name='created_tasks',
+      on_delete=models.SET_NULL,
+      null=True,
+      blank=True,
+      help_text="The user who originally created the task"
+    )
     approval_chain = models.ForeignKey(
       'ApprovalChain',
       on_delete=models.SET_NULL,
@@ -859,7 +867,7 @@ class TaskFieldHistory(models.Model):
         db_table = 'task_field_history'
         ordering = ['-changed_at']
         indexes = [
-            models.Index(fields=['task', '-changed_at']),
+            models.Index(fields=['task', '-changed_at'], name='task_field_history_task_idx'),
         ]
 
     def __str__(self):

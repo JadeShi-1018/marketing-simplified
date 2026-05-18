@@ -346,6 +346,7 @@ def _gather_context(task) -> "tuple[str, list, list]":
     lines.append(f"Status: {task.status}")
     lines.append(f"Priority: {task.priority or 'Not set'}")
     lines.append(f"Due date: {task.due_date or 'Not set'}")
+    lines.append(f"Creator: {task.created_by.username if task.created_by else 'Unknown'}")
     lines.append(f"Owner: {task.owner.username if task.owner else 'Unassigned'}")
     lines.append(
         f"Current approver: {task.current_approver.username if task.current_approver else 'None'}"

@@ -89,7 +89,12 @@ export default function TaskV2DetailPage() {
     Number(currentUser.id) === Number(task.owner.id);
   const isApprover = currentUser?.id != null && task?.current_approver?.id != null &&
     Number(currentUser.id) === Number(task.current_approver.id);
-  const readOnly = task?.status === 'LOCKED' || (!isOwner && !isApprover);
+  const isCreator = currentUser?.id != null && task?.created_by?.id != null &&
+    Number(currentUser.id) === Number(task.created_by.id);
+  const creatorCanEditUnassignedDraft = Boolean(
+    task?.status === 'DRAFT' && !task.owner && !task.current_approver && isCreator
+  );
+  const readOnly = task?.status === 'LOCKED' || (!isOwner && !isApprover && !creatorCanEditUnassignedDraft);
   const taskShell = (task ?? {
     id: taskId ?? undefined,
     summary: '',
