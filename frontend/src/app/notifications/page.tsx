@@ -26,6 +26,31 @@ const TABS: { id: NotificationTab; label: string }[] = [
   { id: "deadlines", label: "Deadlines" },
 ];
 
+// Actor avatar component with brand gradient fallback
+function ActorAvatar({
+  name,
+  avatar,
+  size = "md",
+}: {
+  name: string;
+  avatar?: string | null;
+  size?: "sm" | "md";
+}) {
+  const sizeClasses = size === "sm" ? "h-6 w-6 text-[10px]" : "h-8 w-8 text-xs";
+  return (
+    <div
+      className={`${sizeClasses} shrink-0 rounded-full flex items-center justify-center font-semibold text-white overflow-hidden bg-gradient-to-br from-[#3CCED7] to-[#A6E661]`}
+      title={name}
+    >
+      {avatar ? (
+        <img src={avatar} alt={name} className="w-full h-full object-cover" />
+      ) : (
+        name.charAt(0).toUpperCase()
+      )}
+    </div>
+  );
+}
+
 // Notification card component that uses the drawer hook inside Layout's provider
 function NotificationCard({
   notification,
@@ -41,9 +66,26 @@ function NotificationCard({
   const { openDrawer } = useNotificationDrawer();
 
   // Check if this is a chat notification with multiple messages
-  const isChatNotification = notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE;
+  const isChatNotification =
+    notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE ||
+    notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_CONVERSATION;
   const messageCount = (notification.metadata?.message_count as number) || 1;
-  const showMessageCount = isChatNotification && messageCount > 1;
+  const showMessageCount =
+    notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE && messageCount > 1;
+
+  // For non-message notifications, show actor avatar and SVO-style header
+  const showActorIdentity = !isChatNotification && notification.actor_name;
+
+  // For message notifications, get actor info
+  const actorName = notification.actor_name || (notification.metadata?.actor_name as string) || null;
+
+  // Build message title text
+  const getMessageTitleText = () => {
+    if (!actorName) return notification.title;
+    return messageCount > 1
+      ? `${actorName} sent you ${messageCount} new messages`
+      : `${actorName} sent you a new message`;
+  };
 
   const handleCardClick = () => {
     openDrawer(notification);
@@ -74,9 +116,46 @@ function NotificationCard({
         onChange={onToggle}
         onClick={(e) => e.stopPropagation()}
       />
-      <div className="flex-1 min-w-0 pl-1">
+
+      {/* Actor Avatar - for message notifications (larger) or non-message notifications */}
+      {isChatNotification && actorName ? (
+        <div
+          className="h-10 w-10 shrink-0 rounded-full flex items-center justify-center font-semibold text-white text-sm overflow-hidden bg-gradient-to-br from-[#3CCED7] to-[#A6E661]"
+          title={actorName}
+        >
+          {notification.actor_avatar ? (
+            <img src={notification.actor_avatar} alt={actorName} className="w-full h-full object-cover" />
+          ) : (
+            actorName.charAt(0).toUpperCase()
+          )}
+        </div>
+      ) : showActorIdentity ? (
+        <ActorAvatar
+          name={notification.actor_name!}
+          avatar={notification.actor_avatar}
+          size="md"
+        />
+      ) : null}
+
+      <div className="flex-1 min-w-0">
         <div className="flex justify-between gap-2">
-          <p className="text-base font-bold text-gray-900">{notification.title}</p>
+          {/* Title with SVO structure */}
+          {isChatNotification ? (
+            <p className="text-base font-bold text-gray-900 leading-tight flex-1 min-w-0">
+              {getMessageTitleText()}
+            </p>
+          ) : showActorIdentity ? (
+            <div className="flex-1 min-w-0">
+              <p className="text-base font-bold text-gray-900 leading-tight">
+                {notification.title}
+              </p>
+              <p className="text-sm text-gray-600 mt-0.5">
+                by <span className="font-medium text-gray-700">{notification.actor_name}</span>
+              </p>
+            </div>
+          ) : (
+            <p className="text-base font-bold text-gray-900">{notification.title}</p>
+          )}
           {!notification.is_read && (
             showMessageCount ? (
               // Red count badge for chat notifications with multiple messages
@@ -95,8 +174,10 @@ function NotificationCard({
             )
           )}
         </div>
-        {notification.body ? (
+        {notification.body && !showActorIdentity && !isChatNotification ? (
           <p className="text-sm text-gray-600 mt-1">{notification.body}</p>
+        ) : notification.body && (showActorIdentity || isChatNotification) ? (
+          <p className="text-sm text-gray-500 mt-1.5 leading-relaxed">{notification.body}</p>
         ) : null}
         <p className="text-xs text-gray-400 mt-2">
           {formatRelativeTime(notification.created_at)}
@@ -278,9 +359,9 @@ function NotificationsContent() {
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
-              className={`rounded-full px-4 py-1.5 text-sm border transition-colors ${
+              className={`rounded-full px-4 py-1.5 text-sm border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3CCED7]/40 ${
                 tab === t.id
-                  ? "border-gray-900 bg-gray-900 text-white"
+                  ? "border-transparent bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white shadow-sm"
                   : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
               }`}
             >

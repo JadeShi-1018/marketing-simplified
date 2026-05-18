@@ -15,6 +15,7 @@ import { TaskAPI } from "@/lib/api/taskApi";
 import { MeetingsAPI } from "@/lib/api/meetingsApi";
 import { ProjectAPI } from "@/lib/api/projectApi";
 import { DecisionAPI } from "@/lib/api/decisionApi";
+import DrawerSectionDivider from "./DrawerSectionDivider";
 
 interface DrawerObjectCardProps {
   notification: NotificationItem;
@@ -551,7 +552,9 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
   const sectionTitle = SECTION_TITLES[objectType] ?? "Related Item";
 
   return (
-    <div className="px-5 py-4 border-t border-gray-100">
+    <>
+      <DrawerSectionDivider />
+      <div className="px-5 py-4">
       {/* Drawer section heading — blend ~midpoint between brand teal #3CCED7 and lime #A6E661 → #71DA9C */}
       <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#71DA9C]">
         {sectionTitle}
@@ -575,5 +578,6 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
         <GenericCard notification={notification} />
       )}
     </div>
+    </>
   );
 }

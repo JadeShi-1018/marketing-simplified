@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 import { isInviteNotification } from "./DrawerInviteCard";
+import DrawerSectionDivider from "./DrawerSectionDivider";
 
 // ── Which event_types render a notification card ──────────────────────────────
 
@@ -481,7 +482,9 @@ export default function DrawerNotificationCard({
   if (!content) return null;
 
   return (
-    <div className="border-t border-gray-100 px-5 py-4">
+    <>
+      <DrawerSectionDivider />
+      <div className="px-5 py-4">
       {/* Drawer section heading — blend ~midpoint between brand teal #3CCED7 and lime #A6E661 → #71DA9C */}
       <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#71DA9C]">
         Details
@@ -490,5 +493,6 @@ export default function DrawerNotificationCard({
         <div className="space-y-3">{content}</div>
       </div>
     </div>
+    </>
   );
 }

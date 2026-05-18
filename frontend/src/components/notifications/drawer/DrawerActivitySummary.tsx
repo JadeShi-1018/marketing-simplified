@@ -215,10 +215,11 @@ export default function DrawerActivitySummary({
         Activity Summary
       </div>
 
-      {/* Main description */}
-      <p className="text-base text-gray-900 leading-relaxed">
+      {/* Title (bold) */}
+      <p className="text-base font-bold text-gray-900 leading-relaxed">
         {notification.title}
       </p>
+      {/* SVO Description with inline ActorChip (unbolded) */}
       <p className="text-sm text-gray-600 mt-1 leading-relaxed">{description}</p>
 
       {/* Chat bubble for message notifications */}

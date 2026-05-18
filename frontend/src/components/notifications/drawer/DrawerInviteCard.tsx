@@ -13,6 +13,7 @@ import {
 import toast from "react-hot-toast";
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import type { NotificationItem } from "@/types/notifications";
+import DrawerSectionDivider from "./DrawerSectionDivider";
 
 // ── Which event_types are invite-type ─────────────────────────────────────────
 
@@ -134,7 +135,9 @@ export default function DrawerInviteCard({ notification }: DrawerInviteCardProps
   };
 
   return (
-    <div className="border-t border-gray-100 px-5 py-4">
+    <>
+      <DrawerSectionDivider />
+      <div className="px-5 py-4">
       {/* Drawer section heading — blend ~midpoint between brand teal #3CCED7 and lime #A6E661 → #71DA9C */}
       <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#71DA9C]">
         Invitation
@@ -192,5 +195,6 @@ export default function DrawerInviteCard({ notification }: DrawerInviteCardProps
         )}
       </div>
     </div>
+    </>
   );
 }

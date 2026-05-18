@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
 import { Bell, CheckCheck, ChevronDown, ChevronUp, Settings, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -25,6 +25,67 @@ const TABS: { value: TabKey; label: string }[] = [
   { value: 'deadlines', label: 'Deadlines' },
 ];
 
+// ── Inline actor chip with avatar ─────────────────────────────────────────────
+
+function InlineActorChip({ name, avatar }: { name: string; avatar?: string | null }) {
+  return (
+    <span className="inline-flex items-center gap-1 align-middle">
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-[8px] font-semibold text-white overflow-hidden">
+        {avatar ? (
+          <img src={avatar} alt={name} className="w-full h-full object-cover" />
+        ) : (
+          name.charAt(0).toUpperCase()
+        )}
+      </span>
+      <span className="font-medium text-gray-700">{name}</span>
+    </span>
+  );
+}
+
+// ── Generate SVO description for notification ─────────────────────────────────
+
+function getSVODescription(item: NotificationItem): React.ReactNode {
+  const { event_type, metadata, body } = item;
+  const actorName = item.actor_name || (metadata?.actor_name as string) || null;
+
+  // If no actor, just return the body
+  if (!actorName) {
+    return body || null;
+  }
+
+  const actorChip = <InlineActorChip name={actorName} avatar={item.actor_avatar} />;
+
+  switch (event_type) {
+    case 'task_assigned':
+      return <>{actorChip} assigned you to this task.</>;
+    case 'task_owner_changed':
+      return <>Task ownership transferred by {actorChip}.</>;
+    case 'task_status_changed':
+      return <>{actorChip} changed the task status.</>;
+    case 'task_comment_mention':
+      return <>{actorChip} mentioned you in a comment.</>;
+    case 'meeting_created':
+      return <>{actorChip} created a new meeting.</>;
+    case 'meeting_updated':
+      return <>{actorChip} updated the meeting details.</>;
+    case 'meeting_participant_added':
+      return <>{actorChip} added you to the meeting.</>;
+    case 'meeting_participant_removed':
+      return <>{actorChip} removed you from the meeting.</>;
+    case 'meeting_agenda_changed':
+      return <>{actorChip} updated the meeting agenda.</>;
+    case 'project_invite':
+      return <>{actorChip} invited you to join.</>;
+    case 'decision_review_needed':
+      return <>{actorChip} requested your review.</>;
+    case 'decision_published':
+      return <>{actorChip} published a decision.</>;
+    default:
+      // Fallback: show body or generic description
+      return body || null;
+  }
+}
+
 // ── Single real notification card ─────────────────────────────────────────────
 
 function NotifCard({
@@ -34,10 +95,26 @@ function NotifCard({
   item: NotificationItem;
   onClick: (item: NotificationItem) => void;
 }) {
-  // Check if this is a chat notification with multiple messages
-  const isChatNotification = item.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE;
+  // Check if this is a chat/message notification
+  const isChatNotification =
+    item.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE ||
+    item.event_type === NOTIFICATION_EVENT.CHAT_NEW_CONVERSATION;
   const messageCount = (item.metadata?.message_count as number) || 1;
-  const showMessageCount = isChatNotification && messageCount > 1;
+  const showMessageCount = item.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE && messageCount > 1;
+
+  // For non-message notifications, use SVO description with actor avatar
+  const svoDescription = !isChatNotification ? getSVODescription(item) : null;
+
+  // For message notifications, get actor info
+  const actorName = item.actor_name || (item.metadata?.actor_name as string) || null;
+
+  // Build message title text
+  const getMessageTitleText = () => {
+    if (!actorName) return item.title;
+    return messageCount > 1
+      ? `${actorName} sent you ${messageCount} new messages`
+      : `${actorName} sent you a new message`;
+  };
 
   return (
     <div
@@ -52,36 +129,54 @@ function NotifCard({
       {/* Module colour bar (matches drawer module pill) */}
       <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${getModuleBarClass(item)}`} />
 
-      <div className="pl-4 pr-3 py-3">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <p
-            className={`min-w-0 text-[13px] leading-snug ${
-              item.is_read ? 'text-gray-700' : 'font-semibold text-gray-900'
-            }`}
+      <div className="pl-4 pr-3 py-3 flex gap-2.5">
+        {/* Actor Avatar for message notifications - larger, on the left */}
+        {isChatNotification && actorName && (
+          <div
+            className="h-8 w-8 shrink-0 rounded-full flex items-center justify-center font-semibold text-white text-xs overflow-hidden bg-gradient-to-br from-[#3CCED7] to-[#A6E661]"
+            title={actorName}
           >
-            {item.title}
-          </p>
-          {!item.is_read && (
-            showMessageCount ? (
-              // Red count badge for chat notifications with multiple messages
-              <span
-                className="mt-0.5 min-w-[18px] h-[18px] px-1 shrink-0 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center"
-                aria-label={`${messageCount} unread messages`}
-              >
-                {messageCount > 99 ? '99+' : messageCount}
-              </span>
+            {item.actor_avatar ? (
+              <img src={item.actor_avatar} alt={actorName} className="w-full h-full object-cover" />
             ) : (
-              // Blue dot for other unread notifications
-              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-500" aria-hidden />
-            )
-          )}
+              actorName.charAt(0).toUpperCase()
+            )}
+          </div>
+        )}
+
+        <div className="flex-1 min-w-0">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            {/* Title - bold */}
+            <p className="min-w-0 text-[13px] leading-snug font-bold text-gray-900">
+              {isChatNotification ? getMessageTitleText() : item.title}
+            </p>
+            {!item.is_read && (
+              showMessageCount ? (
+                // Red count badge for chat notifications with multiple messages
+                <span
+                  className="mt-0.5 min-w-[18px] h-[18px] px-1 shrink-0 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center"
+                  aria-label={`${messageCount} unread messages`}
+                >
+                  {messageCount > 99 ? '99+' : messageCount}
+                </span>
+              ) : (
+                // Blue dot for other unread notifications
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-blue-500" aria-hidden />
+              )
+            )}
+          </div>
+          {/* Body: SVO description for non-message, plain body for message */}
+          {isChatNotification ? (
+            item.body ? (
+              <p className="mt-0.5 text-[12px] text-gray-500 line-clamp-1">{item.body}</p>
+            ) : null
+          ) : svoDescription ? (
+            <p className="mt-0.5 text-[12px] text-gray-500 line-clamp-1">{svoDescription}</p>
+          ) : null}
+          <p className="mt-1.5 text-[11px] text-gray-400">
+            {formatRelativeTime(item.created_at)}
+          </p>
         </div>
-        {item.body ? (
-          <p className="mt-0.5 text-[12px] text-gray-500 line-clamp-1">{item.body}</p>
-        ) : null}
-        <p className="mt-1.5 text-[11px] text-gray-400">
-          {formatRelativeTime(item.created_at)}
-        </p>
       </div>
     </div>
   );
@@ -282,9 +377,9 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
                 <button
                   key={t.value}
                   onClick={() => setTab(t.value)}
-                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                  className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#3CCED7]/40 ${
                     active
-                      ? 'bg-gray-900 text-white'
+                      ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white shadow-sm'
                       : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'
                   }`}
                 >
