@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo, useState } from 'react';
 import { format, isSameDay } from 'date-fns';
 import type { Message } from '@/types/chat';
 import MessageItem from '@/components/chat/MessageItem';
@@ -11,6 +11,21 @@ interface DrawerChatMessagesProps {
   currentUserId: number;
   highlightMessageId: number | null;
   isLoading?: boolean;
+}
+
+/**
+ * New Messages Divider - shown above the first unread message
+ */
+function NewMessagesDivider() {
+  return (
+    <div className="flex items-center gap-3 my-3 px-2">
+      <div className="flex-1 h-px bg-gray-300" />
+      <span className="text-xs font-medium text-gray-400 whitespace-nowrap">
+        New Messages Below
+      </span>
+      <div className="flex-1 h-px bg-gray-300" />
+    </div>
+  );
 }
 
 // Loading skeleton for messages
@@ -64,6 +79,8 @@ export default function DrawerChatMessages({
 }: DrawerChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageCountRef = useRef(messages.length);
+  // Track whether animation has played to prevent re-triggering
+  const [hasAnimated, setHasAnimated] = useState(false);
 
   // Group messages by date
   const messageGroups = useMemo(() => {
@@ -122,15 +139,27 @@ export default function DrawerChatMessages({
     }
   }, [isLoading, messages.length]);
 
-  // Scroll to highlighted message
+  // Scroll to highlighted message and trigger animation
   useEffect(() => {
-    if (!highlightMessageId) return;
+    if (!highlightMessageId || hasAnimated) return;
 
     const el = document.getElementById(`drawer-message-${highlightMessageId}`);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Mark animation as played after it completes (1.8s)
+      const timer = setTimeout(() => {
+        setHasAnimated(true);
+      }, 1800);
+      return () => clearTimeout(timer);
     }
-  }, [highlightMessageId, messages]);
+  }, [highlightMessageId, messages, hasAnimated]);
+
+  // Reset animation state when highlightMessageId changes
+  useEffect(() => {
+    if (highlightMessageId) {
+      setHasAnimated(false);
+    }
+  }, [highlightMessageId]);
 
   // Loading state
   if (isLoading) {
@@ -142,52 +171,89 @@ export default function DrawerChatMessages({
     return <EmptyState />;
   }
 
+  // Divider stays visible for the entire drawer session (as long as highlightMessageId is set)
+  // Animation only plays once and fades out after 1.8s
+  const shouldShowDivider = highlightMessageId !== null;
+  const shouldShowHighlightAnimation = highlightMessageId !== null && !hasAnimated;
+
   return (
-    <div
-      ref={scrollRef}
-      className="flex-1 overflow-y-auto p-3 space-y-4"
-    >
-      {messageGroups.map((group) => (
-        <div key={group.date}>
-          {/* Date Header */}
-          <div className="flex justify-center mb-3">
-            <span className="bg-gray-100 text-gray-600 text-xs font-medium px-3 py-1 rounded-full">
-              {formatDateHeader(group.date)}
-            </span>
-          </div>
+    <>
+      {/* CSS Keyframes for highlight animation */}
+      <style jsx>{`
+        @keyframes messageHighlightFade {
+          0% {
+            background-color: transparent;
+          }
+          8.3% {
+            /* 150ms / 1800ms = 8.3% - peak brightness */
+            background-color: rgba(255, 235, 170, 0.35);
+          }
+          66.7% {
+            /* 1200ms / 1800ms = 66.7% - hold peak, then start fade */
+            background-color: rgba(255, 235, 170, 0.35);
+          }
+          100% {
+            /* 1800ms - completely faded */
+            background-color: transparent;
+          }
+        }
+        .animate-message-highlight {
+          animation: messageHighlightFade 1.8s ease-out forwards;
+          border-radius: 0.5rem;
+        }
+      `}</style>
 
-          {/* Messages */}
-          <div className="space-y-2">
-            {group.messages.map((message, index) => {
-              const prevMessage = index > 0 ? group.messages[index - 1] : null;
-              const showSender =
-                !prevMessage || prevMessage.sender.id !== message.sender.id;
-              const isHighlighted = highlightMessageId === message.id;
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto p-3 space-y-4"
+      >
+        {messageGroups.map((group) => (
+          <div key={group.date}>
+            {/* Date Header */}
+            <div className="flex justify-center mb-3">
+              <span className="bg-gray-100 text-gray-600 text-xs font-medium px-3 py-1 rounded-full">
+                {formatDateHeader(group.date)}
+              </span>
+            </div>
 
-              return (
-                <div
-                  key={message.id}
-                  id={`drawer-message-${message.id}`}
-                  className={
-                    isHighlighted
-                      ? 'ring-2 ring-amber-300 bg-amber-50/50 rounded-lg transition-all duration-300'
-                      : ''
-                  }
-                >
-                  <MessageItem
-                    message={message}
-                    isOwnMessage={message.sender.id === currentUserId}
-                    showSender={showSender}
-                    isSelectMode={false}
-                    isSelected={false}
-                    isHighlighted={isHighlighted}
-                  />
-                </div>
-              );
-            })}
+            {/* Messages */}
+            <div className="space-y-2">
+              {group.messages.map((message, index) => {
+                const prevMessage = index > 0 ? group.messages[index - 1] : null;
+                const showSender =
+                  !prevMessage || prevMessage.sender.id !== message.sender.id;
+                const isTargetMessage = highlightMessageId === message.id;
+                // Divider persists for the drawer session
+                const showDivider = isTargetMessage && shouldShowDivider;
+                // Animation fades out after 1.8s
+                const showHighlightAnimation = isTargetMessage && shouldShowHighlightAnimation;
+
+                return (
+                  <div key={message.id}>
+                    {/* New Messages Divider - shown above the target message */}
+                    {showDivider && <NewMessagesDivider />}
+
+                    {/* Message with optional highlight animation */}
+                    <div
+                      id={`drawer-message-${message.id}`}
+                      className={showHighlightAnimation ? 'animate-message-highlight' : ''}
+                    >
+                      <MessageItem
+                        message={message}
+                        isOwnMessage={message.sender.id === currentUserId}
+                        showSender={showSender}
+                        isSelectMode={false}
+                        isSelected={false}
+                        isHighlighted={false}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }

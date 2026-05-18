@@ -9,9 +9,13 @@ import {
   Type,
   Paperclip,
   MessageSquare,
+  MessageCircle,
   Tag,
   User,
   AlertCircle,
+  Calendar,
+  Hourglass,
+  Bell,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 
