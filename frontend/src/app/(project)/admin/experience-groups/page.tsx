@@ -112,11 +112,12 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, onSuccess, onCancel 
 
 interface EditFormProps {
   groupId: number;
+  projectId: number;
   onSaved: (group: ExperienceGroup) => void;
   onClose: () => void;
 }
 
-const EditForm: React.FC<EditFormProps> = ({ groupId, onSaved, onClose }) => {
+const EditForm: React.FC<EditFormProps> = ({ groupId, projectId, onSaved, onClose }) => {
   const [group, setGroup] = useState<ExperienceGroup | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -625,6 +626,7 @@ const ExperienceGroupsPage: React.FC = () => {
             {editingGroupId !== null && (
               <EditForm
                 groupId={editingGroupId}
+                projectId={projectId}
                 onSaved={handleEdited}
                 onClose={() => setEditingGroupId(null)}
               />
