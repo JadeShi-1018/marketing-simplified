@@ -11,8 +11,6 @@ import {
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 
 interface ProjectCardProps {
@@ -217,7 +215,7 @@ export default function ProjectCard({ project, isDefault, onSetDefault, onSelect
           </div>
           <DropdownMenu onOpenChange={setMenuOpen}>
             <DropdownMenuTrigger asChild>
-         <button className="p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transtition-colors"
+         <button className="p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors"
           onClick={(e) => e.stopPropagation()}>
           <Settings2 className="w-3.5 h-3.5" />
          </button>

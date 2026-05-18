@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -12,7 +12,9 @@ import { AlertCircle, ArrowLeft, Eye, Send } from 'lucide-react';
 const EditExperienceGroupPage: React.FC = () => {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const id = Number(params.id);
+  const projectId = searchParams.get('project');
 
   const [group, setGroup] = useState<ExperienceGroup | null>(null);
   const [loading, setLoading] = useState(true);
@@ -102,7 +104,10 @@ const EditExperienceGroupPage: React.FC = () => {
 
   const handleBack = () => {
     if (isDirty && !window.confirm('You have unsaved changes. Leave anyway?')) return;
-    router.push('/admin/experience-groups');
+    const dest = projectId
+      ? `/admin/experience-groups?project=${projectId}`
+      : '/select-project';
+    router.push(dest);
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────

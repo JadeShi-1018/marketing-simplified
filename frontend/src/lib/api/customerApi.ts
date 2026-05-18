@@ -17,7 +17,7 @@ export const CustomerAPI = {
   retrieve: (id: number) =>
     api.get<Customer>(`${BASE}/${id}/`),
 
-  create: (data: CreateCustomerData, projectId?: number) =>
+  create: (data: CreateCustomerData, projectId: number) =>
     api.post<Customer>(`${BASE}/`, data, { params: { project: projectId } }),
 
   update: (id: number, data: UpdateCustomerData) =>

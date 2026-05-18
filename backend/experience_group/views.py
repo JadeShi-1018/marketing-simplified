@@ -2,7 +2,6 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.utils import timezone
 from django_fsm import TransitionNotAllowed
 
 from core.permissions import IsProjectMember
@@ -46,8 +45,18 @@ class ExperienceGroupViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         instance = self.get_object()
 
         if instance.status == ExperienceGroup.PublishStatus.PUBLISHED:
+            # Preserve the live published content in main fields.
+            # Store incoming edits in draft_snapshot so publish()/preview() can apply them.
+            allowed_fields = ['name', 'description']
+            snapshot = {k: request.data[k] for k in allowed_fields if k in request.data}
             instance.revert_to_draft()
+            instance.draft_snapshot = snapshot
+            instance.save()
+            serializer = self.get_serializer(instance)
+            return Response(serializer.data)
 
+        # DRAFT group: save edits directly to main fields and clear any stale snapshot.
+        instance.draft_snapshot = None
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
@@ -84,6 +93,7 @@ class ExperienceGroupViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
             for field in allowed_fields:
                 if field in snapshot:
                     setattr(instance, field, snapshot[field])
+            instance.draft_snapshot = None
 
         try:
             instance.publish()

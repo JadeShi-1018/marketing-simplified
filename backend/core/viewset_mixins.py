@@ -1,6 +1,6 @@
 """Shared DRF mixins for project-scoped resources."""
 
-from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from core.models import ProjectMember
 

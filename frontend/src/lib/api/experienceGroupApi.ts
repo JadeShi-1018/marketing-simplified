@@ -15,7 +15,7 @@ export const ExperienceGroupAPI = {
   retrieve: (id: number) =>
     api.get<ExperienceGroup>(`${BASE}/${id}/`),
 
-  create: (data: CreateExperienceGroupData, projectId: number) =>                                                                                               
+  create: (data: CreateExperienceGroupData, projectId: number) =>
     api.post<ExperienceGroup>(`${BASE}/`, data, { params: { project: projectId } }),
 
   update: (id: number, data: UpdateExperienceGroupData) =>

@@ -8,7 +8,7 @@ import Modal from '@/components/ui/Modal';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { ExperienceGroup, ExperienceGroupListItem, CreateExperienceGroupData } from '@/types/experienceGroup';
 import { Plus, Pencil, Trash2, Send, Eye, AlertCircle, X, Users } from 'lucide-react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation'; 
+import { useRouter, useSearchParams } from 'next/navigation';
 
 // ── Create Form ───────────────────────────────────────────────────────────────
 
@@ -286,7 +286,7 @@ const EditForm: React.FC<EditFormProps> = ({ groupId, onSaved, onClose }) => {
               <span>Published: {new Date(group.published_at).toLocaleDateString()}</span>
             )}
             <a
-              href={`/admin/customers?group=${group.id}`}
+              href={`/admin/customers?project=${projectId}&group=${group.id}`}
               target="_blank"
               rel="noreferrer"
               className="flex items-center gap-1 text-indigo-500 hover:text-indigo-700 transition-colors"

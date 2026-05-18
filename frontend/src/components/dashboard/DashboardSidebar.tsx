@@ -10,7 +10,7 @@ import {
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
   User as UserIcon, CreditCard, Plug, LogOut,
-  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank, Layers,
+  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
 import { useAuthStore } from '@/lib/authStore';
