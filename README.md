@@ -1,254 +1,277 @@
 # MediaJira
 
-> **The best media buyer Jira platform in the world**  
+> **The best media buyer Jira platform in the world**
 > MediaJira is a campaign management platform tailored for media buying teams. It streamlines the process of creating, tracking, and optimizing advertising campaigns, while providing collaboration tools, performance analytics, budget control, and professional API access.
 
 ---
 
 ## ✨ Features
 
-- **Campaign Management**  
-  Create, track, and optimize advertising campaigns with detailed performance metrics and lifecycle state management.
-
-- **Task Management**  
+- **Campaign Management**
+  Plan and execute campaign workflows, including lifecycle states, ownership, and approvals across teams.
+- **Task Management**
   Comprehensive task tracking with assignments, status updates, and workflow automation.
-
-- **Team Collaboration**  
+- **Team Collaboration**
   Assign roles and permissions for seamless teamwork with real-time chat and notifications.
-
-- **Real-time Chat**  
+- **Real-time Chat**
   WebSocket-based messaging system for team communication and collaboration.
-
-- **Calendar Integration**  
+- **Calendar Integration**
   Google Calendar-style event management with recurring events, reminders, and sharing capabilities.
-
-- **Decision Tracking**  
+- **Decision Tracking**
   Track and document important decisions with approval workflows.
-
-- **Workflow Automation**  
+- **Workflow Automation**
   Visual workflow builder with automation canvas for process optimization.
-
-- **Performance Tracking**  
-  Monitor impressions, clicks, conversions, and costs in real time with analytics and reporting.
-
-- **Budget Tracking & Alerts**  
+- **Performance Tracking**
+  Monitor campaign outcomes with reporting on delivery and efficiency metrics (for example impressions, clicks, conversions, and spend).
+- **Budget Tracking & Alerts**
   Track budget usage and receive alerts when limits are exceeded with approval workflows.
-
-- **Multi-Platform Integration**  
+- **Multi-Platform Integration**
   Integrate with Facebook Meta, Google Ads, TikTok, Klaviyo, Mailchimp, and other advertising platforms.
-
-- **Asset Management**  
+- **Asset Management**
   Upload, organize, and manage creative assets with virus scanning and version control.
-
-- **Spreadsheet Functionality**  
+- **Spreadsheet Functionality**
   Advanced spreadsheet features with formula engine and data manipulation.
-
-- **Professional API Access**  
+- **OpenAPI-based API Access**
   Integrate with third-party systems via a fully documented REST API with OpenAPI specifications.
+- **Background Jobs**
+  Run asynchronous and scheduled workloads with Celery workers and Celery Beat for long-running or periodic tasks.
+- **Event Streaming**
+  Use Kafka-based event pipelines for decoupled, event-driven workflows across services.
+- **Observability**
+  Monitor and troubleshoot the system with Prometheus metrics, Grafana dashboards, Loki logs, and Jaeger distributed tracing.
 
 ---
 
 ## 🛠 Tech Stack
 
-**Frontend**  
-- Next.js 14  
-- React 18  
-- TypeScript  
-- Tailwind CSS  
-- Radix UI (component library)  
-- Zustand (state management)  
-- Axios (API requests)  
-- Pino (structured logging)  
-- OpenTelemetry (distributed tracing)  
-- KafkaJS (event streaming)  
-- Storybook (component development)  
+**Frontend**
 
-**Backend**  
-- Django 4.2  
-- Django REST Framework  
-- Django Channels (WebSocket support)  
-- Celery (background tasks)  
-- PostgreSQL  
-- Redis (caching & message broker)  
-- OpenTelemetry (distributed tracing)  
-- Kafka Python (event streaming)  
-- Pino (structured logging)  
+- Next.js 14
+- React 18
+- TypeScript
+- Tailwind CSS
+- Radix UI (component library)
+- Zustand (state management)
+- Axios (API requests)
+- Pino (structured logging)
+- OpenTelemetry (distributed tracing)
+- KafkaJS (event streaming)
+- Storybook (component development)
 
-**Infrastructure**  
-- Docker & Docker Compose  
-- Nginx (reverse proxy)  
-- Redis (caching / async tasks)  
-- ClamAV (file scanning)  
-- Kafka (event streaming)  
-- Celery Workers (background processing)  
-- Prometheus (metrics collection)  
-- Grafana (metrics visualization)  
-- Jaeger (distributed tracing)  
-- ELK Stack (Elasticsearch, Filebeat, Kibana for logging)  
-- InfluxDB (time-series database for metrics)  
-- SonarQube (code quality analysis)  
-- GitHub Actions (CI/CD)  
+**Backend**
 
-**Testing**  
-- Jest (frontend unit testing)  
-- pytest (backend testing)  
-- Storybook (component testing)  
-- K6 (load testing)  
-- Testing Library (React component testing)  
+* Django 4.2
+* Django REST Framework
+* Django Channels (WebSocket support)
+* Celery (background tasks)
+* PostgreSQL
+* Redis (caching & message broker)
+* OpenTelemetry (distributed tracing)
+* kafka-python (event streaming)
+* python-json-logger / json-log-formatter (structured logging)
+
+**Infrastructure (Development)**
+
+- Docker & Docker Compose
+- Nginx reverse proxy
+- Redis
+- ClamAV
+- Kafka + Kafka UI
+- Prometheus + Grafana + Loki + Jaeger
+- InfluxDB (for K6 metrics)
+
+**Testing**
+
+- Jest (frontend unit testing)
+- pytest (backend testing)
+- Playwright / Cypress (frontend e2e)
+- K6 (load testing)
 
 ---
 
 ## 📂 Repository Structure
 
-```
+```text
 .
-├── backend/                  # Django backend source code
-│   ├── campaigns/            # Campaign management app
-│   ├── task/                 # Task management app
-│   ├── chat/                 # Real-time chat app
-│   ├── calendars/            # Calendar management app
-│   ├── decision/             # Decision tracking app
-│   ├── automationWorkflow/  # Workflow automation app
-│   └── ...                   # Other Django apps
-├── frontend/                 # Next.js frontend source code
+├── backend/                    # Django backend source code
+│   ├── backend/                # Django project settings/urls/asgi
+│   ├── campaign/               # Campaign management app
+│   ├── task/                   # Task management app
+│   ├── chat/                   # Real-time chat app
+│   ├── calendars/              # Calendar management app
+│   ├── meetings/               # Meeting workflows app
+│   ├── decision/               # Decision tracking app
+│   ├── automationWorkflow/     # Workflow automation app
+│   ├── agent/                  # Agent workflows app
+│   ├── ...                     # Other Django apps
+│   ├── manage.py               # Django management entrypoint
+│   └── requirements.txt        # Backend Python dependencies
+├── frontend/                   # Next.js frontend source code
 │   ├── src/
-│   │   ├── app/              # Next.js app router pages
-│   │   ├── components/        # React components
-│   │   ├── lib/               # Utilities and API clients
-│   │   └── ...                # Other frontend code
-│   └── ...                   # Frontend configuration
-├── nginx/                    # Nginx configuration files
-├── devops/                   # DevOps and infrastructure configs
-│   ├── prometheus/           # Prometheus configuration
-│   ├── grafana/              # Grafana dashboards
-│   ├── elk/                  # ELK Stack configuration
-│   ├── sonarqube/            # SonarQube configuration
-│   └── ...                   # Other DevOps tools
-├── k6/                       # K6 load testing scripts and configs
-│   ├── scripts/              # Test scenarios and flows
-│   └── ...                   # K6 configuration
-├── openapi/openapi_spec/     # OpenAPI specification files
-├── docs/                      # Additional documentation
-├── docker-compose.dev.yml    # Docker Compose for development
-├── docker-compose.yml        # Docker Compose for production
-├── env.example               # Example environment variables
-├── DOCKER_README.md          # Detailed Docker deployment guide
-├── CICD_README.md            # CI/CD pipeline documentation
-└── ...                       # Other project files
+│   │   ├── app/                # Next.js app router pages
+│   │   ├── components/         # React components
+│   │   ├── lib/                # Utilities and API clients
+│   │   └── ...                 # Other frontend code
+│   └── ...                     # Frontend configuration
+├── nginx/                      # Nginx configuration files
+├── devops/                     # DevOps and infrastructure configs
+│   ├── prometheus/             # Prometheus configuration
+│   ├── grafana/                # Grafana dashboards
+│   ├── elk/                    # ELK Stack configuration
+│   ├── sonarqube/              # SonarQube configuration (not active by default in dev compose)
+│   └── ...                     # Other DevOps tools
+├── k6/                         # K6 load testing scripts and configs
+│   ├── scripts/                # Test scenarios and flows
+│   └── ...                     # K6 configuration
+├── openapi/openapi_spec/       # OpenAPI specification files
+├── docs/                       # Additional documentation
+├── docker-compose.dev.yml      # Docker Compose for development
+├── docker-compose.yml          # Additional compose setup (non-dev/CI profile usage)
+├── env.example                 # Root environment variable template
+├── DOCKER_README.md            # Detailed Docker deployment guide
+├── CICD_README.md              # CI/CD pipeline documentation
+└── ...                         # Other project files
 ```
 
 ---
 
-## 🚀 Quick Start (Docker)
+## 🚀 Quick Start (Docker Development)
 
 This section follows the official steps from [DOCKER_README.md](DOCKER_README.md).
 
-### 📋 Prerequisites
-- Docker Desktop installed and running  
-- Docker Compose (included with Docker Desktop)  
-- PostgreSQL installed locally (for pgAdmin access)  
-- Git (to clone the repository)  
+### Prerequisites
 
-### 1. Clone and Setup
+- Docker Desktop installed and running
+- Docker Compose (included in Docker Desktop)
+- Local PostgreSQL running on host machine (Docker dev backend connects through `host.docker.internal`)
+- Git
+
+### 1. Clone and setup
+
 ```bash
 git clone <your-repo-url>
-cd mediaJira
+cd marketing-simplified
 
 # Copy environment file
 cp env.example .env
+
 ```
 
-### 2. Local PostgreSQL Setup
-**Option: Manual setup by SQL Shell(psql) -- **
-Server [localhost]:localhost
-Database [postgres]:postgres
-Port [5432]:5432
-Username [postgres]:postgres
-User postgres password:your_postgres_password
+### 2. Configure environment variables
 
-Execute PSQL commands:
-create database mediajira_db;
-CREATE USER mediajira_user WITH PASSWORD 'mediajira_password';
-GRANT ALL PRIVILEGES ON DATABASE mediajira_db TO mediajira_user; 
-\c mediajira_db;
-GRANT CREATE ON SCHEMA public TO mediajira_user;
-GRANT USAGE ON SCHEMA public TO mediajira_user;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO mediajira_user;
-exit
+- The only template file in this repository is `env.example` at repo root.
+- There is no `.env.example`, `backend/.env.example`, or `frontend/.env.example`.
+- Update `.env` with valid local values before startup, especially database credentials and integration keys you need.
 
-Then update your .env file, especially DB relevant variables.
+Minimum local DB-related values:
 
-### 3. Build and Run (Dev Mode)
+```env
+DB_HOST=host.docker.internal
+POSTGRES_DB=mediajira_db
+POSTGRES_USER=mediajira_user
+POSTGRES_PASSWORD=<your-password>
+POSTGRES_PORT=5432
+```
+
+### 3. Start development environment
+
 ```bash
-find * -type f -name "Dockerfile*" | xargs dos2unix
-find * -type f -name "entrypoint" | xargs dos2unix
-find * -type f -name "entrypoint-dev" | xargs dos2unix
-find * -type f -name "crontab.txt*" | xargs dos2unix
-find * -type f -name "init-sonar" | xargs dos2unix
-
 docker compose -f docker-compose.dev.yml --env-file .env up --build -d
 ```
 
-### 4. Access the app
+### 4. Useful day-to-day commands
 
-**Core Services:**
-- Frontend: http://localhost/
+```bash
+# List running services
+docker compose -f docker-compose.dev.yml --env-file .env ps
 
-**Infrastructure Services:**
-- Redis: localhost:6379  
-- ClamAV: localhost:3310  
-- PostgreSQL: localhost:5432  
+# Follow logs
+docker compose -f docker-compose.dev.yml --env-file .env logs -f
 
-**Monitoring & Observability:**
-- Prometheus: http://localhost:9090  
-- Grafana: http://localhost:3001  
-- Jaeger UI: http://localhost:16686  
-- Kibana (ELK Stack): http://localhost:5601  
-- Elasticsearch: http://localhost:9200  
+# Stop services
+docker compose -f docker-compose.dev.yml --env-file .env down
 
-**Development Tools:**
-- Kafka UI: http://localhost:8081  
-- Kafka Metrics: http://localhost:9308/metrics  
-- SonarQube: http://localhost:9000  
-- InfluxDB (K6 metrics): http://localhost:8086  
+# Rebuild and restart
+docker compose -f docker-compose.dev.yml --env-file .env up --build -d
+```
 
-**Kafka Access:**
-- Internal (containers): `kafka:9092`  
-- External (host): `localhost:29092`  
+### 5. Access the app
 
-> For detailed Docker deployment, production setup, and troubleshooting, please see [DOCKER_README.md](DOCKER_README.md).
+**Core Services**
 
+- App (via Nginx): http://localhost/
+- Frontend (direct): http://localhost:3000
+- Backend API (direct): http://localhost:8000
+
+**Infrastructure Services**
+
+- Redis: localhost:6379
+- ClamAV: localhost:3310
+- PostgreSQL (host machine, not a dev compose service): localhost:5432
+
+**Monitoring & Observability (active in dev compose)**
+
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001
+- Jaeger UI: http://localhost:16686
+- Loki: http://localhost:3100
+- InfluxDB (K6 metrics): http://localhost:8086
+
+**Development Tools**
+
+- Kafka UI: http://localhost:8081
+- Kafka Metrics Exporter: http://localhost:9308/metrics
+
+**Kafka Access**
+
+- Internal (containers): `kafka:9092`
+- External (host): `localhost:29092`
+
+> Note:
+> SonarQube, Elasticsearch, and Kibana are not active default services in `docker-compose.dev.yml`.
+> For optional setup details, see [DOCKER_README.md](DOCKER_README.md) and [ELK Setup Guide](devops/elk/kibana/ELK_SETUP.md).
 
 ## 📊 Monitoring & Observability
 
-MediaJira includes comprehensive monitoring and observability tools for production-ready operations:
+MediaJira includes monitoring and observability tools for local development and troubleshooting:
 
 ### Metrics Collection
+
 - **Prometheus**: Collects metrics from backend and frontend services
   - Access: http://localhost:9090
   - Metrics endpoint: `/metrics` on backend and frontend
 
 ### Visualization
+
 - **Grafana**: Visualize metrics and create dashboards
   - Access: http://localhost:3001
   - Pre-configured dashboards for application metrics
   - K6 load test dashboard for performance monitoring
 
 ### Distributed Tracing
+
 - **Jaeger**: End-to-end request tracing across services
   - Access: http://localhost:16686
   - Traces requests through Nginx → Frontend → Backend → Database
   - OpenTelemetry integration for automatic instrumentation
 
 ### Logging
-- **ELK Stack** (Elasticsearch, Filebeat, Kibana): Centralized logging
-  - Elasticsearch: http://localhost:9200
-  - Kibana: http://localhost:5601
-  - Structured JSON logging from Django (python-json-logger) and Next.js (Pino)
-  - 7-day log retention policy
-  - See [ELK Setup Guide](devops/elk/kibana/ELK_SETUP.md) for detailed configuration
+
+**Application Logs (default in dev compose)**
+
+- Structured JSON logging is enabled for Django (`python-json-logger`) and Next.js (`Pino`).
+- Use Docker logs for day-to-day debugging:
+
+  - `docker compose -f docker-compose.dev.yml --env-file .env logs -f backend`
+  - `docker compose -f docker-compose.dev.yml --env-file .env logs -f frontend`
+- **ELK Stack (optional setup)**
+
+  - Elasticsearch, Filebeat, and Kibana are optional and are not active default services in `docker-compose.dev.yml`.
+  - If centralized log indexing/search is needed, follow the setup guide:
+    - [ELK Setup Guide](devops/elk/kibana/ELK_SETUP.md)
 
 ### Metrics Storage
+
 - **InfluxDB**: Time-series database for K6 load test metrics
   - Access: http://localhost:8086
   - Stores performance metrics from load tests
@@ -256,54 +279,106 @@ MediaJira includes comprehensive monitoring and observability tools for producti
 
 ---
 
+## 🧩 Development Services (Current `docker-compose.dev.yml`)
+
+Service list below is based on:
+`docker compose -f docker-compose.dev.yml --env-file .env config --services`
+
+- `clamav`
+- `redis`
+- `backend`
+- `frontend`
+- `prometheus`
+- `jaeger`
+- `kafka`
+- `topic-init`
+- `celery-worker`
+- `grafana`
+- `influxdb`
+- `kafka-exporter`
+- `kcat`
+- `nginx`
+- `celery-beat`
+- `kafka-ui`
+- `loki`
+
+Common access points:
+
+- App via Nginx: http://localhost/
+- Frontend direct: http://localhost:3000
+- Backend API direct: http://localhost:8000
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3001
+- Jaeger UI: http://localhost:16686
+- Kafka UI: http://localhost:8081
+- InfluxDB: http://localhost:8086
+
+Notes:
+
+- SonarQube, Elasticsearch, and Kibana are not active default services in `docker-compose.dev.yml`.
+- In dev compose, PostgreSQL is not defined as a containerized service; backend uses host PostgreSQL via `host.docker.internal`.
+
+---
+
+
 ## 🧪 Testing
 
 ### Unit & Integration Tests
 
 **Backend (Django + pytest)**
+
 ```bash
 # Run all backend tests
-docker compose exec backend pytest
+docker compose -f docker-compose.dev.yml --env-file .env exec backend pytest
 
 # Run with coverage
-docker compose exec backend pytest --cov
+docker compose -f docker-compose.dev.yml --env-file .env exec backend pytest --cov
 
 # Run specific test file
-docker compose exec backend pytest path/to/test_file.py
+docker compose -f docker-compose.dev.yml --env-file .env exec backend pytest path/to/test_file.py
 ```
 
 **Frontend (Next.js + Jest)**
+
 ```bash
 # Run all frontend tests
-docker compose exec frontend npm run test
+docker compose -f docker-compose.dev.yml --env-file .env exec frontend npm run test
 
 # Run tests in watch mode
-docker compose exec frontend npm run test:watch
+docker compose -f docker-compose.dev.yml --env-file .env exec frontend npm run test:watch
 
 # Run tests with coverage
-docker compose exec frontend npm run test:coverage
+docker compose -f docker-compose.dev.yml --env-file .env exec frontend npm run test:coverage
 
 # Run tests in CI mode
-docker compose exec frontend npm run test:ci
+docker compose -f docker-compose.dev.yml --env-file .env exec frontend npm run test:ci
 ```
 
 ### Component Testing
+
 - **Storybook**: Component development and testing
+
   ```bash
-  docker compose exec frontend npm run storybook
+  docker compose -f docker-compose.dev.yml --env-file .env exec frontend npm run storybook
   ```
+
   Access at: http://localhost:6006
 
 ### Load Testing
+
 - **K6**: Performance and load testing with InfluxDB metrics storage
+
   - Smoke test (1 VU, 30 seconds): `python k6/run_smoke_test.py`
   - Load test (10→50 VUs): `python k6/run_load_test.py`
   - Stress test (50→200 VUs): `python k6/run_stress_test.py`
   - Spike test (0→100 VUs): `python k6/run_spike_test.py`
-  
+
+  * Compose profile example: docker compose -f docker-compose.dev.yml --env-file .env --profile k6 run --rm k6 run /scripts/scenarios/smoke-test.js
+
   See [K6 Load Testing Guide](k6/README.md) for detailed documentation.
 
 ### CI/CD Testing
+
 All tests run automatically in GitHub Actions CI/CD pipeline. See [CICD_README.md](CICD_README.md) for details.
 
 ---
@@ -311,6 +386,7 @@ All tests run automatically in GitHub Actions CI/CD pipeline. See [CICD_README.m
 ## 🔧 Additional Services
 
 ### Event Streaming
+
 - **Kafka**: Event streaming and messaging system
   - Kafka UI: http://localhost:8081 (Web-based cluster management)
   - Internal broker: `kafka:9092` (from containers)
@@ -320,19 +396,18 @@ All tests run automatically in GitHub Actions CI/CD pipeline. See [CICD_README.m
   - Pre-defined topic management via topic-init container
 
 ### Background Processing
+
 - **Celery**: Asynchronous task processing
   - Workers process background jobs (file scanning, report generation, etc.)
   - Redis as message broker
   - Integrated with Django for long-running tasks
 
 ### Code Quality
-<!-- - **SonarQube**: Static code analysis and quality gates
-  - Access: http://localhost:9000
-  - Automated code quality checks
-  - Security vulnerability scanning
-  - Code coverage analysis -->
+
+SonarQube is optional and not active by default in **docker-compose.dev.yml**.
 
 ### File Security
+
 - **ClamAV**: Virus scanning for uploaded files
   - Port: localhost:3310
   - Automatic scanning of all file uploads
@@ -351,29 +426,30 @@ API specifications are located in `openapi/openapi_spec/` and are served through
 For detailed information on specific topics, please refer to the following documentation:
 
 - **[DOCKER_README.md](DOCKER_README.md)**: Comprehensive Docker deployment guide
+
   - Development vs Production setup
   - Service configuration
   - Troubleshooting guide
   - Common commands
-
 - **[CICD_README.md](CICD_README.md)**: CI/CD pipeline documentation
+
   - GitHub Actions workflow
   - Testing in CI/CD
   - Best practices for developers
   - Adding new models and migrations
-
 - **[K6 Load Testing Guide](k6/README.md)**: Performance testing documentation
+
   - Test scenarios (smoke, load, stress, spike)
   - InfluxDB integration
   - Grafana dashboards
   - Performance thresholds
-
 - **ELK Stack Setup**: [devops/elk/kibana/ELK_SETUP.md](devops/elk/kibana/ELK_SETUP.md)
+
   - Centralized logging setup
   - Kibana dashboard configuration
   - Log retention policies
-
 - **API Specifications**: Located in `openapi/openapi_spec/`
+
   - OpenAPI 3.0 specifications
   - Available through API Docs page when application is running
 
@@ -381,4 +457,4 @@ For detailed information on specific topics, please refer to the following docum
 
 ## 📜 License
 
-This project is licensed under the **LGPL-2.1** license. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the **LGPL-2.1** license. See the [LICENSE](LICENSE) file for details
