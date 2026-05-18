@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
-from task.models import Task, ApprovalRecord, TaskFieldHistory
+from task.models import Task, ApprovalRecord, TaskFieldHistory, TaskPin
 from core.models import Project, Organization, Team, AdChannel, ProjectMember
 from budget_approval.models import BudgetPool, BudgetRequest
 from asset.models import Asset
@@ -344,6 +344,70 @@ class TaskAPITest(TestCase):
         self.assertIn('object_id', response.data)
         self.assertEqual(response.data['content_type'], 'budgetrequest')
         self.assertEqual(response.data['object_id'], str(budget_request.id))
+
+    def test_pin_task_is_personal_and_does_not_require_edit_permission(self):
+        """A project member can pin a visible task without changing the task itself."""
+        task = Task.objects.create(
+            summary='Pinnable Task',
+            type='budget',
+            owner=self.user,
+            current_approver=self.user,
+            project=self.project,
+        )
+        url = reverse('task-pin', kwargs={'pk': task.id})
+
+        response = self.approver_client.post(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['is_pinned'])
+        self.assertTrue(TaskPin.objects.filter(task=task, user=self.approver).exists())
+        self.assertFalse(TaskPin.objects.filter(task=task, user=self.user).exists())
+
+    def test_unpin_task_removes_only_current_users_pin(self):
+        task = Task.objects.create(
+            summary='Pinned Task',
+            type='budget',
+            owner=self.user,
+            current_approver=self.user,
+            project=self.project,
+        )
+        TaskPin.objects.create(task=task, user=self.user)
+        TaskPin.objects.create(task=task, user=self.approver)
+        url = reverse('task-pin', kwargs={'pk': task.id})
+
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['is_pinned'])
+        self.assertFalse(TaskPin.objects.filter(task=task, user=self.user).exists())
+        self.assertTrue(TaskPin.objects.filter(task=task, user=self.approver).exists())
+
+    def test_list_returns_current_user_pins_first(self):
+        unpinned = Task.objects.create(
+            summary='Unpinned Task',
+            type='budget',
+            owner=self.user,
+            current_approver=self.user,
+            project=self.project,
+        )
+        pinned = Task.objects.create(
+            summary='Pinned Task',
+            type='budget',
+            owner=self.user,
+            current_approver=self.user,
+            project=self.project,
+        )
+        TaskPin.objects.create(task=pinned, user=self.user)
+        TaskPin.objects.create(task=unpinned, user=self.approver)
+
+        response = self.client.get(reverse('task-list'))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data.get('results', response.data)
+        self.assertEqual(results[0]['id'], pinned.id)
+        self.assertTrue(results[0]['is_pinned'])
+        unpinned_row = next(item for item in results if item['id'] == unpinned.id)
+        self.assertFalse(unpinned_row['is_pinned'])
     
     def test_create_task_missing_required_fields(self):
         """Test task creation with missing required fields"""

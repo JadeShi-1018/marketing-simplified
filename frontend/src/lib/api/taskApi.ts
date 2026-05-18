@@ -58,6 +58,10 @@ export const TaskAPI = {
   updateTask: (taskId: number, data: Partial<TaskData>) =>
     api.patch(`/api/tasks/${taskId}/`, data),
 
+  pinTask: (taskId: number) => api.post(`/api/tasks/${taskId}/pin/`),
+
+  unpinTask: (taskId: number) => api.delete(`/api/tasks/${taskId}/pin/`),
+
   bulkAction: async (
     payload: TaskBulkUpdateRequest
   ): Promise<TaskBulkActionResponse> => {

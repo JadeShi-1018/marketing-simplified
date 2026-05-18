@@ -10,12 +10,12 @@ from django.core.cache import cache
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, ApprovalChain
+from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, ApprovalChain, TaskPin
 from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer, TaskFieldHistorySerializer
 from task.signals import set_current_user
 from task.services import bulk_update_tasks, user_can_edit_task
@@ -136,7 +136,12 @@ class TaskViewSet(viewsets.ModelViewSet):
             'created_by',
             'current_approver',
             'meeting_origin__meeting__type_definition',
-        ).annotate(subtask_count=Count('subtasks', distinct=True))
+        ).annotate(
+            subtask_count=Count('subtasks', distinct=True),
+            _is_pinned=Exists(
+                TaskPin.objects.filter(task_id=OuterRef('pk'), user=user)
+            ),
+        )
         accessible_project_ids = set(
             ProjectMember.objects.filter(
                 user=user,
@@ -348,8 +353,8 @@ class TaskViewSet(viewsets.ModelViewSet):
             else:
                 raise DRFValidationError({'has_parent': 'has_parent must be true or false'})
 
-        # Order by order_in_project, then by creation date (newest first)
-        queryset = queryset.order_by('order_in_project', '-id')
+        # Personal pins should float to the top without changing the project order.
+        queryset = queryset.order_by('-_is_pinned', 'order_in_project', '-id')
         # List response does not include draft_payload; defer it so list works if migration adding the column is not yet applied.
         if getattr(self, 'action', None) in ('list', 'gantt'):
             queryset = queryset.defer('draft_payload')
@@ -635,6 +640,22 @@ class TaskViewSet(viewsets.ModelViewSet):
         instance = serializer.save()
         from task.ai_summary import invalidate_task_ai_cache
         invalidate_task_ai_cache(instance.id)
+
+    def pin(self, request, pk=None):
+        """Pin a task for the current user."""
+        task = self.get_object()
+        TaskPin.objects.get_or_create(task=task, user=request.user)
+        task._is_pinned = True
+        serializer = self.get_serializer(task, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def unpin(self, request, pk=None):
+        """Remove the current user's pin from a task."""
+        task = self.get_object()
+        TaskPin.objects.filter(task=task, user=request.user).delete()
+        task._is_pinned = False
+        serializer = self.get_serializer(task, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'], url_path='ai-summary')
     def ai_summary(self, request, pk=None):

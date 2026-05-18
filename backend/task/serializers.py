@@ -5,7 +5,7 @@ from rest_framework import serializers
 from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
 from meetings.services import validate_meeting_for_origin_link
-from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation
+from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, TaskPin
 from core.models import Project, ProjectMember
 from core.utils.project import get_user_active_project
 from django.contrib.auth import get_user_model
@@ -58,6 +58,7 @@ class TaskSerializer(serializers.ModelSerializer):
     approval_chain_progress = serializers.SerializerMethodField()
     can_lock = serializers.SerializerMethodField()
     approvals_summary = serializers.SerializerMethodField()
+    is_pinned = serializers.SerializerMethodField()
     content_type = serializers.SerializerMethodField()
     # Revision tracking fields for SMP-501
     revision_round = serializers.IntegerField(read_only=True)
@@ -83,7 +84,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'anomaly_status', 'approval_chain_progress',
             # Revision tracking fields for SMP-501
             'revision_round', 'revision_label',
-            'can_lock', 'approvals_summary',
+            'can_lock', 'approvals_summary', 'is_pinned',
             'create_as_draft', 'draft_payload',
             'origin_meeting',
             'origin_meeting_id',
@@ -94,13 +95,24 @@ class TaskSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'status', 'owner', 'created_by', 'content_type', 'object_id', 'linked_object',
             'is_subtask', 'parent_relationship', 'anomaly_status',
-            'approval_chain_progress', 'can_lock', 'approvals_summary',
+            'approval_chain_progress', 'can_lock', 'approvals_summary', 'is_pinned',
             'revision_round', 'revision_label', # SMP-501
             'origin_meeting',
             'origin_action_item',
             'linear_issue_id',
             'updated_at',
         ]
+
+    def get_is_pinned(self, obj):
+        annotated = getattr(obj, "_is_pinned", None)
+        if annotated is not None:
+            return bool(annotated)
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated or obj.pk is None:
+            return False
+        return TaskPin.objects.filter(task=obj, user=user).exists()
 
     def get_content_type(self, obj):
         """

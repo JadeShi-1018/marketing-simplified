@@ -74,6 +74,8 @@ export interface TaskData {
     required_count: number;
     display: string;
   } | null;
+  /** True when the current user has pinned this task. */
+  is_pinned?: boolean;
   /** Draft-only: persisted create-panel state (backend stores JSON) */
   draft_payload?: unknown | null;
   /** Provenance: meeting this task is anchored to, if any (task detail only). */

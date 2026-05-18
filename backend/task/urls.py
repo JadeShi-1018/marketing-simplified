@@ -30,6 +30,7 @@ urlpatterns = [
     path('tasks/<int:pk>/start-review/', TaskViewSet.as_view({'post': 'start_review'}), name='task-start-review'),
     path('tasks/<int:pk>/lock/', TaskViewSet.as_view({'post': 'lock'}), name='task-lock'),
     path('tasks/<int:pk>/unlock/', TaskViewSet.as_view({'post': 'unlock'}), name='task-unlock'),
+    path('tasks/<int:pk>/pin/', TaskViewSet.as_view({'post': 'pin', 'delete': 'unpin'}), name='task-pin'),
     
     # Task subtasks endpoints
     path('tasks/<int:pk>/subtasks/', TaskViewSet.as_view({'get': 'subtasks', 'post': 'subtasks'}), name='task-subtasks'),

@@ -425,6 +425,38 @@ class Task(models.Model):
         ).delete()
 
 
+class TaskPin(models.Model):
+    """Personal pinned-task marker."""
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        related_name='pins',
+        help_text="Task pinned by the user",
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='task_pins',
+        help_text="User who pinned the task",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['task', 'user'],
+                name='taskpin_unique_task_user',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'task'], name='taskpin_user_task_idx'),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"TaskPin task={self.task_id} user={self.user_id}"
+
+
 
 class ApprovalRecord(models.Model):
     """
