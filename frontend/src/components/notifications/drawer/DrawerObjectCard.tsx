@@ -87,20 +87,12 @@ const RISK_COLORS: Record<string, { bg: string; text: string }> = {
   LOW: { bg: "bg-green-100", text: "text-green-700" },
 };
 
-// Deterministic color for avatar initials based on index
-const AVATAR_PALETTE = [
-  "bg-blue-500",
-  "bg-emerald-500",
-  "bg-purple-500",
-  "bg-orange-500",
-  "bg-red-500",
-  "bg-teal-500",
-  "bg-indigo-500",
-  "bg-pink-500",
-];
-function avatarColor(index: number) {
-  return AVATAR_PALETTE[index % AVATAR_PALETTE.length];
-}
+/** Matches DrawerInviteCard inner panel — brand tint border + wash */
+const MODULE_CARD_SHELL =
+  "rounded-lg border border-[#3CCED7]/25 bg-gradient-to-r from-[#3CCED7]/8 to-[#A6E661]/8 p-4";
+
+const AVATAR_PLACEHOLDER_RING =
+  "bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-white";
 
 function formatDate(dateStr?: string | null): string | null {
   if (!dateStr) return null;
@@ -138,17 +130,19 @@ function StackedAvatars({
 
   return (
     <div className="flex -space-x-1.5">
-      {shown.map((p, i) => {
+      {shown.map((p) => {
         const label = p.name || p.username || "?";
         const initial = label.charAt(0).toUpperCase();
         return (
           <div
             key={p.id}
             title={label}
-            className={`w-6 h-6 rounded-full ring-2 ring-white overflow-hidden flex items-center justify-center text-xs font-semibold text-white ${avatarColor(i)}`}
+            className={`flex h-6 w-6 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ring-2 ring-white ${
+              p.avatar ? "" : AVATAR_PLACEHOLDER_RING
+            }`}
           >
             {p.avatar ? (
-              <img src={p.avatar} alt={label} className="w-full h-full object-cover" />
+              <img src={p.avatar} alt={label} className="h-full w-full object-cover" />
             ) : (
               initial
             )}
@@ -169,20 +163,20 @@ function StackedAvatars({
 function OwnerChip({
   name,
   avatar,
-  colorIndex = 0,
 }: {
   name: string;
   avatar?: string | null;
-  colorIndex?: number;
 }) {
   return (
     <div className="flex items-center gap-1.5">
       <div
         title={name}
-        className={`w-6 h-6 rounded-full ring-2 ring-white overflow-hidden flex items-center justify-center text-xs font-semibold text-white ${avatarColor(colorIndex)}`}
+        className={`flex h-6 w-6 items-center justify-center overflow-hidden rounded-full text-xs font-semibold ring-2 ring-white ${
+          avatar ? "" : AVATAR_PLACEHOLDER_RING
+        }`}
       >
         {avatar ? (
-          <img src={avatar} alt={name} className="w-full h-full object-cover" />
+          <img src={avatar} alt={name} className="h-full w-full object-cover" />
         ) : (
           name.charAt(0).toUpperCase()
         )}
@@ -196,7 +190,7 @@ function OwnerChip({
 
 function LoadingSkeleton() {
   return (
-    <div className="animate-pulse">
+    <div className={`animate-pulse ${MODULE_CARD_SHELL}`}>
       <div className="h-4 bg-gray-200 rounded w-1/4 mb-2"></div>
       <div className="h-5 bg-gray-200 rounded w-3/4 mb-3"></div>
       <div className="flex gap-2 mb-3">
@@ -214,9 +208,9 @@ function TaskCard({ task }: { task: TaskData }) {
   const priorityStyle = PRIORITY_COLORS[task.priority] || PRIORITY_COLORS.MEDIUM;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className={MODULE_CARD_SHELL}>
       <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
-        <CheckSquare className="w-3.5 h-3.5" />
+        <CheckSquare className="w-3.5 h-3.5 text-brand-teal" />
         <span>TASK-{task.id}</span>
       </div>
       <h4 className="text-base font-medium text-gray-900 mb-3">{task.summary}</h4>
@@ -254,9 +248,9 @@ function MeetingCard({ meeting }: { meeting: MeetingData }) {
   const statusStyle = STATUS_COLORS[meeting.status || "scheduled"] || STATUS_COLORS.scheduled;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className={MODULE_CARD_SHELL}>
       <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
-        <Calendar className="w-3.5 h-3.5" />
+        <Calendar className="w-3.5 h-3.5 text-brand-teal" />
         <span>MEET-{meeting.id}</span>
       </div>
       <h4 className="text-base font-medium text-gray-900 mb-3">{meeting.title}</h4>
@@ -305,7 +299,9 @@ function ProjectCard({ project, notification }: { project: ProjectCardData; noti
     project.owner?.email ||
     notification.actor_name ||
     null;
-  const ownerAvatar = project.owner ? null : (notification.actor_avatar ?? null);
+  const ownerAvatar = project.owner
+    ? (project.owner as { avatar?: string | null }).avatar ?? null
+    : notification.actor_avatar ?? null;
 
   // Date: prefer project creation date from API; fallback to notification (invite) date
   const createdDate =
@@ -315,9 +311,9 @@ function ProjectCard({ project, notification }: { project: ProjectCardData; noti
   const totalMembers = project.member_count ?? members.length;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className={MODULE_CARD_SHELL}>
       <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
-        <Briefcase className="w-3.5 h-3.5" />
+        <Briefcase className="w-3.5 h-3.5 text-brand-teal" />
         <span>PROJ-{project.id}</span>
       </div>
       <h4 className="text-base font-medium text-gray-900 mb-3">{project.name}</h4>
@@ -338,7 +334,7 @@ function ProjectCard({ project, notification }: { project: ProjectCardData; noti
         {ownerName && (
           <div className="flex items-center gap-1.5">
             <Users className="w-4 h-4 text-gray-400" />
-            <OwnerChip name={ownerName} avatar={ownerAvatar} colorIndex={0} />
+            <OwnerChip name={ownerName} avatar={ownerAvatar} />
           </div>
         )}
         {members.length > 0 && (
@@ -375,9 +371,9 @@ function DecisionCard({
   const ownerAvatar = notification.actor_avatar || null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className={MODULE_CARD_SHELL}>
       <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
-        <Scale className="w-3.5 h-3.5" />
+        <Scale className="w-3.5 h-3.5 text-brand-teal" />
         <span>DEC-{seq}</span>
       </div>
       <h4 className="text-base font-medium text-gray-900 mb-3">
@@ -400,7 +396,7 @@ function DecisionCard({
         {ownerName && (
           <div className="flex items-center gap-1.5">
             <Users className="w-4 h-4 text-gray-400" />
-            <OwnerChip name={ownerName} avatar={ownerAvatar} colorIndex={0} />
+            <OwnerChip name={ownerName} avatar={ownerAvatar} />
           </div>
         )}
       </div>
@@ -410,9 +406,9 @@ function DecisionCard({
 
 function GenericCard({ notification }: { notification: NotificationItem }) {
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <div className={MODULE_CARD_SHELL}>
       <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
-        <AlertCircle className="w-3.5 h-3.5" />
+        <AlertCircle className="w-3.5 h-3.5 text-brand-teal" />
         <span>{notification.related_object_type.toUpperCase()}</span>
       </div>
       <h4 className="text-base font-medium text-gray-900 mb-2">{notification.title}</h4>
@@ -515,6 +511,7 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
                 id: m.user.id,
                 username: m.user.username,
                 name: m.user.name,
+                avatar: (m.user as { avatar?: string | null }).avatar ?? null,
               })),
             });
           } catch {
@@ -555,7 +552,8 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
 
   return (
     <div className="px-5 py-4 border-t border-gray-100">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+      {/* Drawer section heading — blend ~midpoint between brand teal #3CCED7 and lime #A6E661 → #71DA9C */}
+      <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#71DA9C]">
         {sectionTitle}
       </div>
 

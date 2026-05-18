@@ -86,11 +86,15 @@ export default function NotificationDrawer() {
 
       {/* Drawer panel */}
       <div
-        className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl flex flex-col rounded-l-xl animate-slide-in-right"
+        className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl flex flex-col rounded-l-xl animate-slide-in-right overflow-hidden"
         role="dialog"
         aria-modal="true"
         aria-labelledby="notification-drawer-title"
       >
+        <div
+          className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#3CCED7] to-[#A6E661]"
+          aria-hidden
+        />
         {/* Chat notifications get a special chat-based UI */}
         {isChatNotification(notification) ? (
           <DrawerChatView

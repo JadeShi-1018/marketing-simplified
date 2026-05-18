@@ -128,7 +128,7 @@ function ChangeCard({
   const afterColorClass = afterDanger ? "text-red-600" : "text-green-600";
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       {/* Header with icon and label */}
       <div className="flex items-center gap-2 mb-2">
         <Icon className={`w-4 h-4 ${afterDanger ? "text-red-500" : "text-gray-500"}`} />
@@ -186,7 +186,7 @@ function ChatNewConversationSection({
 
   return (
     <div className="space-y-3">
-      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="rounded-lg bg-white p-3">
         <div className="flex items-center gap-2 mb-2">
           <MessageCircle className="w-4 h-4 text-gray-500" />
           <span className="text-sm font-semibold text-gray-800">New conversation</span>
@@ -250,7 +250,7 @@ function ParticipantChanges({ metadata }: { metadata: Record<string, unknown> })
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
         <Users className="w-4 h-4 text-gray-500" />
@@ -299,7 +299,7 @@ function ArtifactChanges({ metadata }: { metadata: Record<string, unknown> }) {
     const title = artifactTitle || (artifactType ? `${typeLabel} #${metadata?.artifact_id}` : 'Unknown');
 
     return (
-      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="rounded-lg bg-white p-3">
         <div className="flex items-center gap-2 mb-2">
           <Paperclip className="w-4 h-4 text-gray-500" />
           <span className="text-sm font-semibold text-gray-800">{typeLabel}</span>
@@ -324,7 +324,7 @@ function ArtifactChanges({ metadata }: { metadata: Record<string, unknown> }) {
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       <div className="flex items-center gap-2 mb-2">
         <Paperclip className="w-4 h-4 text-gray-500" />
         <span className="text-sm font-semibold text-gray-800">Artifacts</span>
@@ -444,7 +444,7 @@ function TaskChangesSection({ metadata }: { metadata: Record<string, unknown> })
 
   if (!beforeValue && !afterValue) {
     return (
-      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="rounded-lg bg-white p-3">
         <p className="text-sm text-gray-600">Task details were updated.</p>
         <p className="text-xs text-gray-400 mt-1 italic">
           (Detailed change information not available for this notification)
@@ -469,7 +469,7 @@ function CommentMentionSection({ metadata }: { metadata: Record<string, unknown>
   const excerpt = metadata?.comment_excerpt as string | undefined;
   if (!excerpt) return null;
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       <div className="flex items-center gap-2 mb-2">
         <MessageSquare className="w-4 h-4 text-gray-500" />
         <span className="text-sm font-semibold text-gray-800">Comment</span>
@@ -484,7 +484,7 @@ function CommentMentionSection({ metadata }: { metadata: Record<string, unknown>
 // Meeting minutes published — simple confirmation card
 function MinutesPublishedSection() {
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       <div className="flex items-center gap-2">
         <FileText className="w-4 h-4 text-blue-500" />
         <span className="text-sm font-semibold text-gray-800">Minutes Published</span>
@@ -520,7 +520,7 @@ function CalendarReminderSection({
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       <div className="flex items-center gap-2 mb-2">
         <Calendar className="w-4 h-4 text-blue-500" />
         <span className="text-sm font-semibold text-gray-800">Event</span>
@@ -556,7 +556,7 @@ function DecisionDeadlineSection({
     (metadata.new_value as string) || "Awaiting approval";
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       <div className="flex items-center gap-2 mb-2">
         <Hourglass className="w-4 h-4 text-amber-500" />
         <span className="text-sm font-semibold text-gray-800">Deadline</span>
@@ -590,7 +590,7 @@ function MeetingStartingSoonSection({
   const startExact = (metadata.start_time_exact as string) || "";
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+    <div className="rounded-lg bg-white p-3">
       <div className="flex items-center gap-2 mb-2">
         <Bell className="w-4 h-4 text-indigo-500" />
         <span className="text-sm font-semibold text-gray-800">Starts In</span>
@@ -702,7 +702,7 @@ function MeetingChangesSection({
     }
 
     return (
-      <div className="bg-white rounded-lg border border-gray-200 p-3 shadow-sm">
+      <div className="rounded-lg bg-white p-3">
         <p className="text-sm text-gray-600">{fallbackMessage}</p>
         <p className="text-xs text-gray-400 mt-1 italic">
           (Detailed change information not available for this notification)
@@ -765,12 +765,12 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
   }
 
   return (
-    <div className="px-5 py-4 border-t border-gray-100">
-      <div className="rounded-lg bg-orange-50 border border-orange-200 p-4">
-        <div className="text-xs font-semibold text-orange-800 uppercase tracking-wide mb-3">
-          What Changed
-        </div>
-
+    <div className="border-t border-gray-100 px-5 py-4">
+      {/* Drawer section heading — blend ~midpoint between brand teal #3CCED7 and lime #A6E661 → #71DA9C */}
+      <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#71DA9C]">
+        What Changed
+      </div>
+      <div className="rounded-lg border border-[#3CCED7]/25 bg-gradient-to-r from-[#3CCED7]/8 to-[#A6E661]/8 p-4">
         {/* Task changes (status, assignee, due date, title, priority …) */}
         {TASK_EVENT_TYPES.has(event_type) && metadata && (
           <TaskChangesSection metadata={metadata} />

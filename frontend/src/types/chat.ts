@@ -362,6 +362,8 @@ export interface MessageItemProps {
 export interface MessageInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
+  /** Drawer-style input: brand top border handled by parent; gradient send button. */
+  variant?: 'default' | 'drawer';
 }
 
 export interface CreateChatDialogProps {

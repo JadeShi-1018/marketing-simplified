@@ -28,7 +28,7 @@ export default function DrawerHeader({
   const TypeIcon = typeCfg.icon;
 
   return (
-    <div className="px-5 py-4 border-b border-gray-200 shrink-0">
+    <div className="px-5 py-4 border-b border-[#3CCED7]/20 shrink-0">
       <div className="flex items-start justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
           {/* Module — same colour family as notification panel left bar */}
@@ -51,7 +51,7 @@ export default function DrawerHeader({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors"
+            className="p-2 rounded-lg text-gray-500 transition-colors hover:bg-[#3CCED7]/10 hover:text-brand-teal"
             title="Close"
           >
             <X className="w-5 h-5" />

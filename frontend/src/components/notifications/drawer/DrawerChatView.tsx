@@ -113,8 +113,9 @@ export default function DrawerChatView({
       />
 
       {/* Input area */}
-      <div className="flex-shrink-0 border-t border-gray-200 bg-white">
+      <div className="flex-shrink-0 border-t border-[#3CCED7]/25 bg-white">
         <MessageInput
+          variant="drawer"
           onSend={handleSendMessage}
           onSendWithAttachments={handleSendWithAttachments}
           disabled={isSending || isLoading}

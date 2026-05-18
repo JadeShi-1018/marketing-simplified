@@ -86,7 +86,7 @@ function ResponseFeedbackSection({ notification }: { notification: NotificationI
       {accepted ? <Check className="w-4 h-4 shrink-0" /> : <X className="w-4 h-4 shrink-0" />}
       <span className="inline-flex items-center gap-1.5 flex-wrap">
         <span className="inline-flex items-center gap-1 align-middle">
-          <span className="inline-flex w-5 h-5 rounded-full bg-blue-500 text-white items-center justify-center text-[10px] font-semibold overflow-hidden shrink-0">
+          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-[10px] font-semibold text-white overflow-hidden">
             {actorAvatar ? (
               <img src={actorAvatar} alt={actorName} className="w-full h-full object-cover" />
             ) : (
@@ -372,7 +372,7 @@ function ProjectMemberRemovedSection({ notification }: { notification: Notificat
       <p className="text-sm text-gray-700 leading-relaxed">
         {actorName ? (
           <span className="inline-flex items-center gap-1 align-middle mr-1">
-            <span className="inline-flex w-5 h-5 rounded-full bg-blue-500 text-white items-center justify-center text-[10px] font-semibold overflow-hidden shrink-0">
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-[10px] font-semibold text-white overflow-hidden">
               {actorAvatar ? (
                 <img src={actorAvatar} alt={actorName} className="w-full h-full object-cover" />
               ) : (
@@ -481,11 +481,12 @@ export default function DrawerNotificationCard({
   if (!content) return null;
 
   return (
-    <div className="px-5 py-4 border-t border-gray-100">
-      <div className="rounded-lg bg-gray-50 border border-gray-200 p-4">
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-          Details
-        </div>
+    <div className="border-t border-gray-100 px-5 py-4">
+      {/* Drawer section heading — blend ~midpoint between brand teal #3CCED7 and lime #A6E661 → #71DA9C */}
+      <div className="mb-3 text-xs font-semibold uppercase tracking-wide text-[#71DA9C]">
+        Details
+      </div>
+      <div className="rounded-lg border border-[#3CCED7]/25 bg-gradient-to-r from-[#3CCED7]/8 to-[#A6E661]/8 p-4">
         <div className="space-y-3">{content}</div>
       </div>
     </div>

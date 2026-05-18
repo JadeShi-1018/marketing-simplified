@@ -11,7 +11,7 @@ interface DrawerActivitySummaryProps {
 function ActorChip({ name, avatar }: { name: string; avatar?: string | null }) {
   return (
     <span className="inline-flex items-center gap-1 align-middle">
-      <span className="inline-flex w-5 h-5 rounded-full bg-blue-500 text-white items-center justify-center text-[10px] font-semibold overflow-hidden shrink-0">
+      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-[10px] font-semibold text-white overflow-hidden">
         {avatar ? (
           <img src={avatar} alt={name} className="w-full h-full object-cover" />
         ) : (
@@ -172,9 +172,9 @@ function renderChatBubble(notification: NotificationItem) {
   if (!messagePreview) return null;
 
   return (
-    <div className="mt-4 rounded-lg bg-gray-50 border border-gray-200 p-3">
+    <div className="mt-4 rounded-lg border border-[#3CCED7]/20 bg-gradient-to-r from-[#3CCED7]/6 to-[#A6E661]/6 p-3">
       <div className="flex items-start gap-2">
-        <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-medium shrink-0 overflow-hidden">
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-sm font-medium text-white overflow-hidden">
           {senderAvatar ? (
             <img
               src={senderAvatar}
@@ -210,7 +210,8 @@ export default function DrawerActivitySummary({
 
   return (
     <div className="px-5 py-4">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+      {/* Drawer section heading — blend ~midpoint between brand teal #3CCED7 and lime #A6E661 → #71DA9C */}
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-[#71DA9C]">
         Activity Summary
       </div>
 

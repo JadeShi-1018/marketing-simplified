@@ -44,7 +44,8 @@ interface ExtendedMessageInputProps extends MessageInputProps {
 export default function MessageInput({ 
   onSend, 
   onSendWithAttachments,
-  disabled = false 
+  disabled = false,
+  variant = 'default',
 }: ExtendedMessageInputProps) {
   const [content, setContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -291,7 +292,11 @@ export default function MessageInput({
     : (isMobile ? 'Message...' : 'Type a message...');
 
   return (
-    <div className="relative border-t border-gray-200 bg-white px-3 py-2 sm:px-4 sm:py-3">
+    <div
+      className={`relative bg-white px-3 py-2 sm:px-4 sm:py-3 ${
+        variant === 'drawer' ? '' : 'border-t border-gray-200'
+      }`}
+    >
       {/* Attachment Previews */}
       {hasAttachments && (
         <div className="mb-3 flex flex-wrap gap-2">
@@ -414,7 +419,11 @@ export default function MessageInput({
         <button
           onClick={handleSend}
           disabled={!canSend || disabled}
-          className="bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg p-2 transition-colors flex-shrink-0"
+          className={`flex-shrink-0 rounded-lg p-2 text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50 ${
+            variant === 'drawer'
+              ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] shadow-sm'
+              : 'bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:opacity-100'
+          }`}
           aria-label="Send message"
         >
           <Send className="w-5 h-5" />
