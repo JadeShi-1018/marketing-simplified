@@ -31,7 +31,7 @@ interface ListViewProps {
   tasks: TaskData[];
   loading: boolean;
   error: string | null;
-  projectId: number | null;
+  projectId?: number | null;
   /** Opens the shared Linear import modal owned by the tasks page. */
   onOpenLinearImport?: () => void;
   /** After a successful bulk push to Linear, refresh task list from parent. */
@@ -126,7 +126,7 @@ export default function ListView({
   tasks,
   loading,
   error,
-  projectId,
+  projectId = null,
   onOpenLinearImport,
   onLinearBulkSynced,
   onRefresh,

@@ -90,6 +90,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting_id',
             'origin_action_item',
             'linear_issue_id',
+            'created_at',
             'updated_at',
         ]
         read_only_fields = [
@@ -100,6 +101,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting',
             'origin_action_item',
             'linear_issue_id',
+            'created_at',
             'updated_at',
         ]
 

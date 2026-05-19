@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
-from task.models import Task, ApprovalRecord, TaskFieldHistory, TaskPin
+from task.models import Task, ApprovalRecord, TaskFieldHistory, TaskPin, TaskRelation
 from core.models import Project, Organization, Team, AdChannel, ProjectMember
 from budget_approval.models import BudgetPool, BudgetRequest
 from asset.models import Asset
@@ -408,6 +408,51 @@ class TaskAPITest(TestCase):
         self.assertTrue(results[0]['is_pinned'])
         unpinned_row = next(item for item in results if item['id'] == unpinned.id)
         self.assertFalse(unpinned_row['is_pinned'])
+
+    def test_delete_task_with_relations_does_not_write_history_for_deleted_task(self):
+        """Deleting a task with relations should not fail from cascade history rows."""
+        source = Task.objects.create(
+            summary='Source Task',
+            type='budget',
+            owner=self.user,
+            current_approver=self.user,
+            project=self.project,
+        )
+        doomed = Task.objects.create(
+            summary='Doomed Task',
+            type='budget',
+            owner=self.user,
+            current_approver=self.user,
+            project=self.project,
+        )
+        target = Task.objects.create(
+            summary='Target Task',
+            type='budget',
+            owner=self.user,
+            current_approver=self.user,
+            project=self.project,
+        )
+        TaskRelation.objects.create(source_task=source, target_task=doomed, relationship_type='blocks')
+        TaskRelation.objects.create(source_task=doomed, target_task=target, relationship_type='blocks')
+
+        response = self.client.delete(reverse('task-detail', kwargs={'pk': doomed.id}))
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Task.objects.filter(pk=doomed.id).exists())
+        self.assertEqual(TaskRelation.objects.filter(source_task_id=doomed.id).count(), 0)
+        self.assertEqual(TaskRelation.objects.filter(target_task_id=doomed.id).count(), 0)
+        self.assertTrue(
+            TaskFieldHistory.objects.filter(
+                task=source,
+                field_name='relation_blocks_removed',
+            ).exists()
+        )
+        self.assertTrue(
+            TaskFieldHistory.objects.filter(
+                task=target,
+                field_name='relation_blocks_removed',
+            ).exists()
+        )
     
     def test_create_task_missing_required_fields(self):
         """Test task creation with missing required fields"""

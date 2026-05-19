@@ -46,7 +46,7 @@ export interface TaskData {
   summary: string;
   description?: string;
   current_approver?: UserSummary; // For display (from API response)
-  current_approver_id?: number;
+  current_approver_id?: number | null;
   start_date?: string | null; // Date field
   due_date?: string; // Date field
   content_type?: string;
@@ -84,6 +84,8 @@ export interface TaskData {
   origin_action_item?: OriginActionItemPayload | null;
   /** Set when this task was imported from Linear. */
   linear_issue_id?: string | null;
+  /** ISO datetime of creation (auto-set by server). */
+  created_at?: string;
   /** ISO datetime of the last modification (auto-set by server). */
   updated_at?: string;
 }

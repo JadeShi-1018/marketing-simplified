@@ -80,7 +80,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [taskId]);
+  }, [taskId, updateTaskInStore]);
 
   useEffect(() => {
     if (taskId === null) {
@@ -307,7 +307,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                     loading={loading}
                     readOnly={Boolean(readOnly)}
                     onUpdated={onMutated}
-                    onMutated={onMutated}
                   />
                   <TaskSubtasksBlock
                     task={taskShell}

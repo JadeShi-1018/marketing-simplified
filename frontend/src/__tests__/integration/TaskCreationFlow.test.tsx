@@ -15,6 +15,7 @@ jest.mock('next/navigation', () => ({
     push: jest.fn(),
     prefetch: jest.fn(),
   }),
+  usePathname: () => '/tasks',
   useSearchParams: jest.fn(),
 }));
 
@@ -201,8 +202,8 @@ describe('TaskCreationFlow - Budget Task', () => {
       render(<TasksPage />);
 
       // 1. Open Create Task modal
-      const createButton = screen.getByText('Create Task');
-      fireEvent.click(createButton);
+      const openCreateButton = screen.getByText('Create Task');
+      fireEvent.click(openCreateButton);
 
       // 2. Fill in task form
       await waitFor(() => {
@@ -248,8 +249,8 @@ describe('TaskCreationFlow - Budget Task', () => {
 
       // 4. Create the form
       const createPanel = screen.getByTestId('task-create-panel');
-      const createButton = within(createPanel).getByRole('button', { name: 'Create' });
-      fireEvent.click(createButton);
+      const submitCreateButton = within(createPanel).getByRole('button', { name: 'Create' });
+      fireEvent.click(submitCreateButton);
 
       // 5. Verify API calls were made in correct order
       await waitFor(() => {
@@ -289,8 +290,8 @@ describe('TaskCreationFlow - Budget Task', () => {
       render(<TasksPage />);
 
       // Open Create Task modal
-      const createButton = screen.getByText('Create Task');
-      fireEvent.click(createButton);
+      const openCreateButton = screen.getByText('Create Task');
+      fireEvent.click(openCreateButton);
 
       await waitFor(() => {
         expect(screen.getByTestId('task-create-panel')).toBeInTheDocument();
@@ -298,8 +299,8 @@ describe('TaskCreationFlow - Budget Task', () => {
 
       // Try to Create without filling required fields
       const createPanel = screen.getByTestId('task-create-panel');
-      const createButton = within(createPanel).getByRole('button', { name: 'Create' });
-      fireEvent.click(createButton);
+      const submitCreateButton = within(createPanel).getByRole('button', { name: 'Create' });
+      fireEvent.click(submitCreateButton);
 
       // Verify validation errors appear
       await waitFor(() => {
@@ -322,8 +323,8 @@ describe('TaskCreationFlow - Budget Task', () => {
       render(<TasksPage />);
 
       // Open Create Task modal
-      const createButton = screen.getByText('Create Task');
-      fireEvent.click(createButton);
+      const openCreateButton = screen.getByText('Create Task');
+      fireEvent.click(openCreateButton);
 
       await waitFor(() => {
         expect(screen.getByTestId('task-create-panel')).toBeInTheDocument();
@@ -360,8 +361,8 @@ describe('TaskCreationFlow - Budget Task', () => {
       // Create and check error handling
       await act(async () => {
         const createPanel = screen.getByTestId('task-create-panel');
-        const createButton = within(createPanel).getByRole('button', { name: 'Create' });
-        fireEvent.click(createButton);
+        const submitCreateButton = within(createPanel).getByRole('button', { name: 'Create' });
+        fireEvent.click(submitCreateButton);
       });
 
       // Wait for error handling to complete

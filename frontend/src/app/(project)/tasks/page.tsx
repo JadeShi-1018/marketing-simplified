@@ -159,7 +159,14 @@ export default function TasksV2Page() {
           )}
           {tab === 'insights' && <InsightsView projectId={projectId} />}
           {tab === 'my-actions' && <MyActionsView projectId={projectId} refreshKey={myActionsRefreshKey} />}
-          {tab === 'planning' && <PlanningView projectId={projectId} />}
+          {tab === 'planning' && (
+            <PlanningView
+              projectId={projectId}
+              tasks={tasks}
+              loading={taskListLoading}
+              error={error}
+            />
+          )}
           {tab === 'status-reports' && <StatusReportsView projectId={projectId} />}
         </div>
         <LinearImportModal
