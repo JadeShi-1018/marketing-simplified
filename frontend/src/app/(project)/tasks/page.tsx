@@ -144,6 +144,7 @@ export default function TasksV2Page() {
               projectId={projectId}
               onOpenLinearImport={() => setLinearImportOpen(true)}
               onLinearBulkSynced={refreshTasks}
+              onRefresh={refreshTasks}
             />
           )}
           {tab === 'board' && <BoardView tasks={tasks} loading={taskListLoading} error={error} />}

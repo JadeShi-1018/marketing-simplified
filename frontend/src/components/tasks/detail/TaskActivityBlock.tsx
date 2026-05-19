@@ -36,11 +36,13 @@ export default function TaskActivityBlock({
   readOnly,
   refreshKey,
   loading = false,
+  onFirstInteraction,
 }: {
   taskId: number;
   readOnly: boolean;
   refreshKey: number;
   loading?: boolean;
+  onFirstInteraction?: () => void;
 }) {
   const [items, setItems] = useState<TaskComment[] | null>(null);
   const [body, setBody] = useState('');
@@ -82,7 +84,7 @@ export default function TaskActivityBlock({
 
   return (
     <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
-      <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-gray-900">
+      <h2 data-testid="task-comments-heading" className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-gray-900">
         Activity
       </h2>
 
@@ -135,6 +137,7 @@ export default function TaskActivityBlock({
             rows={1}
             placeholder="Add a comment…"
             value={body}
+            onClick={onFirstInteraction}
             onChange={(e) => {
               setBody(e.target.value);
               resizeTextarea();
