@@ -1,20 +1,14 @@
 "use client";
 
 import React, { Suspense, useCallback, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import axios from "axios";
-import { ArrowLeft, Settings } from "lucide-react";
+import { Settings } from "lucide-react";
 import toast from "react-hot-toast";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import type { NotificationPreferencesData, PrefRow } from "@/types/notifications";
 import { useAuthStore } from "@/lib/authStore";
-import {
-  NOTIFICATIONS_FROM_PARAM,
-  buildNotificationsListHrefPreservingFrom,
-} from "@/lib/notificationsNavigation";
 
 type SectionId =
   | "collaboration_assets"
@@ -102,8 +96,10 @@ function Toggle({
       aria-checked={on}
       disabled={disabled}
       onClick={onToggle}
-      className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 ${
-        on ? "bg-blue-600" : "bg-gray-200"
+      className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3CCED7]/40 focus-visible:ring-offset-2 disabled:opacity-50 ${
+        on
+          ? "bg-gradient-to-r from-[#3CCED7] to-[#A6E661]"
+          : "bg-gray-200"
       }`}
     >
       <span
@@ -137,11 +133,6 @@ const PREFERENCE_LOAD_MAX_ATTEMPTS = 3;
 const PREFERENCE_LOAD_RETRY_BASE_MS = 400;
 
 function PreferencesContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const fromParam = searchParams.get(NOTIFICATIONS_FROM_PARAM);
-  const backToNotificationsHref = buildNotificationsListHrefPreservingFrom(fromParam);
-
   const initialized = useAuthStore((s) => s.initialized);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -231,16 +222,7 @@ function PreferencesContent() {
 
   return (
     <DashboardLayout hideRightPanel>
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <button
-          type="button"
-          onClick={() => router.replace(backToNotificationsHref)}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4"
-        >
-          <ArrowLeft className="h-5 w-5" />
-          Back to notifications
-        </button>
-
+      <div className="w-full px-6 lg:px-10 py-8">
         <h1 className="text-2xl font-bold text-gray-900">Notification preferences</h1>
         <p className="text-sm text-gray-500 mt-1">
           Control in-app (Web) and email alerts. External channels such as Slack use your existing
@@ -249,7 +231,7 @@ function PreferencesContent() {
 
         {showSpinner ? (
           <div className="mt-12 flex flex-col items-center justify-center gap-3 text-gray-500">
-            <div className="h-10 w-10 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#3CCED7] border-t-transparent" />
             <p className="text-sm">Loading preferences…</p>
           </div>
         ) : error ? (
@@ -329,12 +311,6 @@ function PreferencesContent() {
                 </tbody>
               </table>
             </div>
-
-            <p className="mt-6 text-sm text-gray-500">
-              <Link href={backToNotificationsHref} replace className="text-blue-600 hover:underline">
-                Back to notifications
-              </Link>
-            </p>
           </>
         ) : null}
       </div>
@@ -348,7 +324,7 @@ export default function NotificationPreferencesPage() {
       <Suspense
         fallback={
           <DashboardLayout hideRightPanel>
-            <div className="max-w-4xl mx-auto px-4 py-16 text-center text-gray-500 text-sm">Loading…</div>
+            <div className="w-full px-6 lg:px-10 py-16 text-center text-sm text-gray-500">Loading…</div>
           </DashboardLayout>
         }
       >

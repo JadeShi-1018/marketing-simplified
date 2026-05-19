@@ -9,7 +9,6 @@ import { notificationsApi } from '@/lib/api/notificationsApi';
 import { useNotificationStore } from '@/lib/notificationStore';
 import { useNotificationDrawer } from '@/components/notifications/NotificationDrawerProvider';
 import { formatRelativeTime } from '@/lib/formatRelativeTime';
-import { getModuleBarClass } from '@/lib/notificationVisuals';
 import type { NotificationItem, NotificationTab } from '@/types/notifications';
 import { NOTIFICATION_EVENT } from '@/types/notifications';
 import type { AlertData, AlertStatus } from '@/lib/mock/dashboardMock';
@@ -120,16 +119,13 @@ function NotifCard({
     <div
       role="button"
       tabIndex={0}
-      className="relative border-[0.5px] border-gray-200 rounded-lg bg-white overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors"
+      className="border-[0.5px] border-gray-200 rounded-lg bg-white overflow-hidden cursor-pointer hover:bg-gray-50 transition-colors"
       onClick={() => onClick(item)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onClick(item);
       }}
     >
-      {/* Module colour bar (matches drawer module pill) */}
-      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${getModuleBarClass(item)}`} />
-
-      <div className="pl-4 pr-3 py-3 flex gap-2.5">
+      <div className="px-3 py-3 flex gap-2.5">
         {/* Actor Avatar for message notifications - larger, on the left */}
         {isChatNotification && actorName && (
           <div

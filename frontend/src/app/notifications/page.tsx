@@ -1,20 +1,18 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCheck, Settings, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useNotificationDrawer } from "@/components/notifications/NotificationDrawerProvider";
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import { useNotificationStore } from "@/lib/notificationStore";
 import { formatRelativeTime } from "@/lib/formatRelativeTime";
-import { getModuleBarClass } from "@/lib/notificationVisuals";
 import {
   NOTIFICATIONS_FROM_PARAM,
   buildPreferencesHrefFromNotificationsSearch,
-  getSafeInternalReturnPath,
 } from "@/lib/notificationsNavigation";
 import type { NotificationItem, NotificationTab } from "@/types/notifications";
 import { NOTIFICATION_EVENT } from "@/types/notifications";
@@ -99,16 +97,12 @@ function NotificationCard({
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") handleCardClick();
       }}
-      className={`relative overflow-hidden rounded-xl border p-4 flex gap-3 cursor-pointer transition-colors hover:bg-gray-50 ${
+      className={`overflow-hidden rounded-xl border p-4 flex gap-3 cursor-pointer transition-colors hover:bg-gray-50 ${
         notification.is_read
           ? "bg-white border-gray-200"
           : "bg-white border-blue-200 shadow-sm"
       }`}
     >
-      <div
-        className={`absolute left-0 top-0 bottom-0 w-[3px] ${getModuleBarClass(notification)}`}
-        aria-hidden
-      />
       <input
         type="checkbox"
         className="mt-1 rounded border-gray-300"
@@ -199,16 +193,10 @@ function NotificationCard({
 }
 
 function NotificationsContent() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const fromRaw = searchParams.get(NOTIFICATIONS_FROM_PARAM);
   const { setUnreadCount: setGlobalUnreadCount, triggerRefresh, lastRefresh } =
     useNotificationStore();
-
-  const goBackToWork = () => {
-    const target = getSafeInternalReturnPath(fromRaw);
-    router.push(target ?? "/");
-  };
 
   const [tab, setTab] = useState<NotificationTab>("all");
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -292,63 +280,10 @@ function NotificationsContent() {
     triggerRefresh();
   };
 
-  const markAllRead = async () => {
-    await notificationsApi.markRead({ mark_all: true });
-    setSelected(new Set());
-    await load();
-    triggerRefresh();
-  };
-
-  const clearAll = async () => {
-    if (items.length === 0) return;
-    await notificationsApi.clear({ scope: "all" });
-    setSelected(new Set());
-    await load();
-    triggerRefresh();
-  };
-
   return (
     <DashboardLayout hideRightPanel>
       <div className="w-full px-6 lg:px-10 py-8">
-        <button
-          type="button"
-          onClick={goBackToWork}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4"
-        >
-          <ArrowLeft className="h-5 w-5" />
-          Back
-        </button>
-
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-900">Notifications</h1>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={markAllRead}
-              disabled={loading || unreadCount === 0}
-              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40"
-              title="Mark all as read"
-            >
-              <CheckCheck className="h-5 w-5" />
-            </button>
-            <button
-              type="button"
-              onClick={clearAll}
-              disabled={loading || items.length === 0}
-              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-40"
-              title="Clear all notifications"
-            >
-              <Trash2 className="h-5 w-5" />
-            </button>
-            <Link
-              href={buildPreferencesHrefFromNotificationsSearch(fromRaw)}
-              className="p-1.5 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-              title="Notification preferences"
-            >
-              <Settings className="h-5 w-5" />
-            </Link>
-          </div>
-        </div>
+        <h1 className="text-2xl font-bold text-gray-900">Notifications</h1>
         <p className="text-sm text-gray-500 mt-1">
           {tabCounts.all} total · {unreadCount} unread
         </p>
@@ -410,7 +345,7 @@ function NotificationsContent() {
           </button>
         </div>
 
-        <div className="mt-4 space-y-3">
+        <div className="mt-4 space-y-2">
           {loading ? (
             <p className="text-gray-500 text-sm">Loading...</p>
           ) : items.length === 0 ? (
