@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTaskTracking } from '@/lib/tracking/useTaskTracking';
 import toast from 'react-hot-toast';
 import { useParams, useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -22,6 +23,7 @@ import TaskAISummaryBlock from '@/components/tasks/detail/TaskAISummaryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
 import { useAuthStore } from '@/lib/authStore';
+import EngagementPanel from '@/components/tasks/detail/EngagementPanel';
 
 export default function TaskV2DetailPage() {
   const params = useParams();
@@ -29,6 +31,8 @@ export default function TaskV2DetailPage() {
   const taskId = params?.taskId ? Number(params.taskId) : null;
 
   const [task, setTask] = useState<TaskData | null>(null);
+  const projectId = task?.project?.id ?? task?.project_id ?? null;
+  const { markInteraction } = useTaskTracking(taskId ?? 0, projectId);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -177,6 +181,7 @@ export default function TaskV2DetailPage() {
                     readOnly={task?.status === 'LOCKED'}
                     refreshKey={refreshKey}
                     loading={loading}
+                    onFirstInteraction={() => markInteraction('comment_box', 'click')}
                   />
                 )}
                 </>)}
@@ -201,11 +206,18 @@ export default function TaskV2DetailPage() {
                   readOnly={Boolean(readOnly)}
                   onUpdated={onMutated}
                   loading={loading}
+                  onFirstInteraction={() => markInteraction('priority_select', 'change')}
                 />
                 {(task?.id || loading) && (
                   <ApprovalTimelinePanel
                     taskId={task?.id ?? 0}
                     refreshKey={refreshKey}
+                    loading={loading}
+                  />
+                )}
+                {(task?.id || loading) && (
+                  <EngagementPanel
+                    taskId={task?.id ?? 0}
                     loading={loading}
                   />
                 )}
