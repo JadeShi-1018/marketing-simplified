@@ -38,6 +38,7 @@ from .services import (
     create_notification,
     filter_notifications_for_user,
     mark_notifications_read,
+    repair_duplicate_chat_notifications_for_user,
 )
 
 
@@ -67,6 +68,8 @@ class NotificationViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
         return Notification.objects.filter(recipient=self.request.user).select_related("actor")
 
     def list(self, request, *args, **kwargs):
+        repair_duplicate_chat_notifications_for_user(request.user)
+
         qs = self.get_queryset()
         category = request.query_params.get("category")
         is_read_param = request.query_params.get("is_read")

@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from notifications.models import (
+    Notification,
     NotificationCategory,
     NotificationEventType,
     UserNotificationPreference,
@@ -10,6 +11,8 @@ from notifications.services import (
     apply_and_save_notification_preferences,
     coalesce_preferences,
     create_notification,
+    create_or_update_chat_notification,
+    repair_duplicate_chat_notifications_for_user,
 )
 
 User = get_user_model()
@@ -28,6 +31,103 @@ class NotificationServiceTests(TestCase):
             title="X",
         )
         self.assertIsNone(n)
+
+
+class ChatNotificationAggregationTests(TestCase):
+    def setUp(self):
+        self.recipient = User.objects.create_user(
+            username="recipient", password="p", email="recipient@e.com"
+        )
+        self.sender = User.objects.create_user(
+            username="sender", password="p", email="sender@e.com"
+        )
+        self.chat_id = 42
+        self.project_id = 7
+
+    def _create_chat_notification(self, *, is_read: bool, message_count: int = 1):
+        return Notification.objects.create(
+            recipient=self.recipient,
+            actor=self.sender,
+            category=NotificationCategory.COLLABORATION,
+            event_type=NotificationEventType.CHAT_NEW_MESSAGE,
+            related_object_type="chat",
+            related_object_id=str(self.chat_id),
+            title="New message",
+            body="hello",
+            is_read=is_read,
+            metadata={
+                "chat_id": self.chat_id,
+                "message_id": 1,
+                "project_id": self.project_id,
+                "message_count": message_count,
+            },
+        )
+
+    def test_new_message_after_read_updates_same_card(self):
+        first = self._create_chat_notification(is_read=True, message_count=3)
+        second = create_or_update_chat_notification(
+            recipient_id=self.recipient.id,
+            actor_id=self.sender.id,
+            chat_id=self.chat_id,
+            message_id=99,
+            project_id=self.project_id,
+            message_preview="follow-up",
+        )
+        self.assertEqual(second.id, first.id)
+        second.refresh_from_db()
+        self.assertFalse(second.is_read)
+        self.assertEqual(second.metadata["message_count"], 1)
+        self.assertEqual(second.metadata["message_id"], 99)
+        self.assertEqual(
+            Notification.objects.filter(
+                recipient=self.recipient,
+                event_type=NotificationEventType.CHAT_NEW_MESSAGE,
+                related_object_id=str(self.chat_id),
+            ).count(),
+            1,
+        )
+
+    def test_unread_messages_increment_count_on_same_card(self):
+        first = create_or_update_chat_notification(
+            recipient_id=self.recipient.id,
+            actor_id=self.sender.id,
+            chat_id=self.chat_id,
+            message_id=1,
+            project_id=self.project_id,
+            message_preview="one",
+        )
+        second = create_or_update_chat_notification(
+            recipient_id=self.recipient.id,
+            actor_id=self.sender.id,
+            chat_id=self.chat_id,
+            message_id=2,
+            project_id=self.project_id,
+            message_preview="two",
+        )
+        self.assertEqual(first.id, second.id)
+        second.refresh_from_db()
+        self.assertEqual(second.metadata["message_count"], 2)
+        self.assertFalse(second.is_read)
+
+    def test_repair_removes_duplicate_rows(self):
+        self._create_chat_notification(is_read=True, message_count=1)
+        self._create_chat_notification(is_read=False, message_count=2)
+        self.assertEqual(
+            Notification.objects.filter(
+                recipient=self.recipient,
+                related_object_id=str(self.chat_id),
+            ).count(),
+            2,
+        )
+        removed = repair_duplicate_chat_notifications_for_user(self.recipient)
+        self.assertEqual(removed, 1)
+        self.assertEqual(
+            Notification.objects.filter(
+                recipient=self.recipient,
+                related_object_id=str(self.chat_id),
+            ).count(),
+            1,
+        )
 
 
 class PreferenceServiceTests(TestCase):

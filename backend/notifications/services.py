@@ -340,6 +340,154 @@ def create_notifications_for_users(
     return created
 
 
+def _chat_message_notification_qs(*, recipient_id: int, chat_id: int):
+    """All chat_new_message notifications for one recipient + chat (read or unread)."""
+    return Notification.objects.filter(
+        recipient_id=recipient_id,
+        event_type=NotificationEventType.CHAT_NEW_MESSAGE,
+        related_object_type="chat",
+        related_object_id=str(chat_id),
+    )
+
+
+def _truncate_message_preview(message_preview: str) -> str:
+    return message_preview[:200] + "…" if len(message_preview) > 200 else message_preview
+
+
+def _chat_notification_title(message_count: int) -> str:
+    if message_count <= 1:
+        return "New message"
+    return f"{message_count} new messages"
+
+
+def _consolidate_duplicate_chat_notifications(
+    *,
+    recipient_id: int,
+    chat_id: int,
+    keep: Notification,
+    merge_unread_counts: bool,
+) -> int:
+    """
+    Delete extra chat_new_message rows for the same chat, keeping ``keep``.
+    When ``merge_unread_counts`` is True, add duplicate unread message_count values onto ``keep``.
+    """
+    duplicates = _chat_message_notification_qs(
+        recipient_id=recipient_id, chat_id=chat_id
+    ).exclude(id=keep.id)
+    dup_count = duplicates.count()
+    if dup_count == 0:
+        return 0
+
+    if merge_unread_counts and not keep.is_read:
+        for dup in duplicates:
+            if not dup.is_read:
+                keep.metadata["message_count"] = keep.metadata.get("message_count", 1) + dup.metadata.get(
+                    "message_count", 1
+                )
+
+    duplicates.delete()
+    logger.warning(
+        "chat_notification: CONSOLIDATED %s duplicate rows for recipient_id=%s chat_id=%s (kept=%s)",
+        dup_count,
+        recipient_id,
+        chat_id,
+        keep.id,
+    )
+    return dup_count
+
+
+def _apply_chat_message_to_notification(
+    notification: Notification,
+    *,
+    actor_id: int,
+    message_id: int,
+    project_id: int,
+    message_preview: str,
+    was_unread: bool,
+) -> Notification:
+    """Update a single chat notification row for a new message."""
+    from django.utils import timezone
+
+    body = _truncate_message_preview(message_preview)
+    metadata = dict(notification.metadata or {})
+    metadata["chat_id"] = metadata.get("chat_id") or int(notification.related_object_id or 0)
+    metadata["project_id"] = project_id
+    # Preserve first unread message_id when notification was already unread;
+    # only reset to the new message when transitioning from read -> unread.
+    if not was_unread:
+        metadata["message_id"] = message_id
+    metadata["last_message_id"] = message_id
+
+    if was_unread:
+        new_count = metadata.get("message_count", 1) + 1
+    else:
+        new_count = 1
+
+    metadata["message_count"] = new_count
+    notification.metadata = metadata
+    notification.actor_id = actor_id
+    notification.title = _chat_notification_title(new_count)
+    notification.body = body
+    notification.is_read = False
+    notification.created_at = timezone.now()
+    notification.save(
+        update_fields=["metadata", "actor_id", "title", "body", "is_read", "created_at"]
+    )
+    return notification
+
+
+@transaction.atomic
+def repair_duplicate_chat_notifications_for_user(user) -> int:
+    """
+    One card per chat: merge historical duplicate chat_new_message rows for a user.
+    Called from the notification list API so existing duplicates disappear without waiting
+    for the next message.
+    """
+    from django.db.models import Count
+
+    user_id = user.pk if hasattr(user, "pk") else user
+    chat_ids = (
+        Notification.objects.filter(
+            recipient_id=user_id,
+            event_type=NotificationEventType.CHAT_NEW_MESSAGE,
+            related_object_type="chat",
+        )
+        .values("related_object_id")
+        .annotate(c=Count("id"))
+        .filter(c__gt=1)
+        .values_list("related_object_id", flat=True)
+    )
+
+    removed = 0
+    for chat_id_str in chat_ids:
+        try:
+            chat_id = int(chat_id_str)
+        except (TypeError, ValueError):
+            continue
+        rows = list(
+            _chat_message_notification_qs(recipient_id=user_id, chat_id=chat_id).order_by(
+                "-created_at", "-id"
+            )
+        )
+        if len(rows) <= 1:
+            continue
+        keep = rows[0]
+        # Prefer an unread row as canonical when multiple exist
+        for row in rows:
+            if not row.is_read:
+                keep = row
+                break
+        removed += _consolidate_duplicate_chat_notifications(
+            recipient_id=user_id,
+            chat_id=chat_id,
+            keep=keep,
+            merge_unread_counts=not keep.is_read,
+        )
+        if not keep.is_read:
+            keep.save(update_fields=["metadata"])
+    return removed
+
+
 @transaction.atomic
 def create_or_update_chat_notification(
     *,
@@ -352,17 +500,12 @@ def create_or_update_chat_notification(
     actor_name: str = "",
 ) -> Notification | None:
     """
-    Create or update an aggregated chat notification.
+    Create or update the single in-app notification card for a chat conversation.
 
-    If an unread chat_new_message notification for the same chat already exists,
-    increment its message_count instead of creating a new notification.
-    This prevents flooding the notification panel with multiple cards for the same chat.
-
-    Uses select_for_update() to prevent race conditions when multiple messages
-    are sent rapidly for the same chat.
+    One recipient + chat always maps to at most one chat_new_message notification:
+    - New messages update that row (even if it was previously marked read).
+    - Unread batches increment message_count; after read, the next message resets count to 1.
     """
-    from django.utils import timezone
-
     if recipient_id == actor_id:
         return None
 
@@ -391,132 +534,97 @@ def create_or_update_chat_notification(
         )
         return None
 
-    # Check for existing unread notification for the same chat
-    # Use select_for_update() to lock the row and prevent race conditions
-    existing = Notification.objects.select_for_update().filter(
-        recipient_id=recipient_id,
-        event_type=event_type,
-        related_object_type="chat",
-        related_object_id=str(chat_id),
-        is_read=False,
-    ).first()
+    existing = (
+        _chat_message_notification_qs(recipient_id=recipient_id, chat_id=chat_id)
+        .select_for_update()
+        .order_by("-created_at", "-id")
+        .first()
+    )
 
     if existing:
-        # Cleanup: delete any duplicate unread notifications for same chat (keep only oldest)
-        duplicates = Notification.objects.filter(
+        _consolidate_duplicate_chat_notifications(
             recipient_id=recipient_id,
+            chat_id=chat_id,
+            keep=existing,
+            merge_unread_counts=not existing.is_read,
+        )
+        was_unread = existing.is_read is False
+        updated = _apply_chat_message_to_notification(
+            existing,
+            actor_id=actor_id,
+            message_id=message_id,
+            project_id=project_id,
+            message_preview=message_preview,
+            was_unread=was_unread,
+        )
+        _push_notification_to_redis(recipient_id, updated)
+        logger.info(
+            "create_or_update_chat_notification: UPDATED — id=%s recipient_id=%s chat_id=%s message_count=%s",
+            updated.id,
+            recipient_id,
+            chat_id,
+            updated.metadata.get("message_count", 1),
+        )
+        return updated
+
+    try:
+        n = Notification.objects.create(
+            recipient_id=recipient_id,
+            actor_id=actor_id,
+            category=NotificationCategory.COLLABORATION,
             event_type=event_type,
             related_object_type="chat",
             related_object_id=str(chat_id),
-            is_read=False,
-        ).exclude(id=existing.id)
-        dup_count = duplicates.count()
-        if dup_count > 0:
-            # Aggregate message counts from duplicates before deleting
-            for dup in duplicates:
-                dup_msg_count = dup.metadata.get("message_count", 1)
-                existing.metadata["message_count"] = existing.metadata.get("message_count", 1) + dup_msg_count
-            duplicates.delete()
-            logger.warning(
-                "create_or_update_chat_notification: CONSOLIDATED %s duplicate notifications for recipient_id=%s chat_id=%s",
-                dup_count, recipient_id, chat_id,
-            )
-
-        # Update existing notification: increment message_count
-        current_count = existing.metadata.get("message_count", 1)
-        new_count = current_count + 1
-
-        existing.metadata["message_count"] = new_count
-        existing.metadata["last_message_id"] = message_id
-        existing.actor_id = actor_id  # Update to latest sender
-        existing.title = f"{new_count} new messages"
-        existing.body = message_preview[:200] + "…" if len(message_preview) > 200 else message_preview
-        existing.created_at = timezone.now()  # Move to top of list
-        existing.save(update_fields=["metadata", "actor_id", "title", "body", "created_at"])
-
-        _push_notification_to_redis(recipient_id, existing)
-        logger.info(
-            "create_or_update_chat_notification: UPDATED — id=%s recipient_id=%s chat_id=%s message_count=%s",
-            existing.id, recipient_id, chat_id, new_count,
+            title="New message",
+            body=_truncate_message_preview(message_preview),
+            action_url=f"/messages?chatId={chat_id}&projectId={project_id}",
+            metadata={
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "project_id": project_id,
+                "message_count": 1,
+            },
         )
-        return existing
-    else:
-        # Create new notification with message_count = 1
-        # Handle potential race condition: if another transaction just created
-        # a notification between our check and create, retry the update instead
-        try:
-            n = Notification.objects.create(
-                recipient_id=recipient_id,
+        _consolidate_duplicate_chat_notifications(
+            recipient_id=recipient_id,
+            chat_id=chat_id,
+            keep=n,
+            merge_unread_counts=True,
+        )
+        maybe_dispatch_external_channels(notification=n, user=recipient, event_type=event_type)
+        _push_notification_to_redis(recipient_id, n)
+        logger.info(
+            "create_or_update_chat_notification: CREATED — id=%s recipient_id=%s chat_id=%s",
+            n.id,
+            recipient_id,
+            chat_id,
+        )
+        return n
+    except IntegrityError:
+        logger.warning(
+            "create_or_update_chat_notification: RACE DETECTED — retrying update for recipient_id=%s chat_id=%s",
+            recipient_id,
+            chat_id,
+        )
+        existing = (
+            _chat_message_notification_qs(recipient_id=recipient_id, chat_id=chat_id)
+            .select_for_update()
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        if existing:
+            was_unread = existing.is_read is False
+            updated = _apply_chat_message_to_notification(
+                existing,
                 actor_id=actor_id,
-                category=NotificationCategory.COLLABORATION,
-                event_type=event_type,
-                related_object_type="chat",
-                related_object_id=str(chat_id),
-                title="New message",
-                body=message_preview[:200] + "…" if len(message_preview) > 200 else message_preview,
-                action_url=f"/messages?chatId={chat_id}&projectId={project_id}",
-                metadata={
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "project_id": project_id,
-                    "message_count": 1,
-                },
+                message_id=message_id,
+                project_id=project_id,
+                message_preview=message_preview,
+                was_unread=was_unread,
             )
-
-            # Cleanup: delete any duplicate unread notifications for same chat
-            # (handles race conditions and pre-existing duplicates from before this fix)
-            duplicates = Notification.objects.filter(
-                recipient_id=recipient_id,
-                event_type=event_type,
-                related_object_type="chat",
-                related_object_id=str(chat_id),
-                is_read=False,
-            ).exclude(id=n.id)
-            dup_count = duplicates.count()
-            if dup_count > 0:
-                duplicates.delete()
-                logger.warning(
-                    "create_or_update_chat_notification: CLEANED UP %s duplicate notifications for recipient_id=%s chat_id=%s",
-                    dup_count, recipient_id, chat_id,
-                )
-
-            maybe_dispatch_external_channels(notification=n, user=recipient, event_type=event_type)
-            _push_notification_to_redis(recipient_id, n)
-            logger.info(
-                "create_or_update_chat_notification: CREATED — id=%s recipient_id=%s chat_id=%s",
-                n.id, recipient_id, chat_id,
-            )
-            return n
-        except IntegrityError:
-            # Another concurrent transaction created a notification - update it instead
-            logger.warning(
-                "create_or_update_chat_notification: RACE DETECTED — retrying update for recipient_id=%s chat_id=%s",
-                recipient_id, chat_id,
-            )
-            existing = Notification.objects.select_for_update().filter(
-                recipient_id=recipient_id,
-                event_type=event_type,
-                related_object_type="chat",
-                related_object_id=str(chat_id),
-                is_read=False,
-            ).first()
-            if existing:
-                current_count = existing.metadata.get("message_count", 1)
-                new_count = current_count + 1
-                existing.metadata["message_count"] = new_count
-                existing.metadata["last_message_id"] = message_id
-                existing.actor_id = actor_id
-                existing.title = f"{new_count} new messages"
-                existing.body = message_preview[:200] + "…" if len(message_preview) > 200 else message_preview
-                existing.created_at = timezone.now()
-                existing.save(update_fields=["metadata", "actor_id", "title", "body", "created_at"])
-                _push_notification_to_redis(recipient_id, existing)
-                logger.info(
-                    "create_or_update_chat_notification: UPDATED (retry) — id=%s recipient_id=%s chat_id=%s message_count=%s",
-                    existing.id, recipient_id, chat_id, new_count,
-                )
-                return existing
-            raise  # Re-raise if still can't find it
+            _push_notification_to_redis(recipient_id, updated)
+            return updated
+        raise
 
 
 def filter_notifications_for_user(
