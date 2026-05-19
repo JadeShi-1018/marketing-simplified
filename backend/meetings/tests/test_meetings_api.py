@@ -225,7 +225,7 @@ class TestMeetingAPI(TestCase):
         self.assertIn("tags", response.data)
         self.assertEqual(
             response.data["participants"],
-            [{"user_id": self.user_a.id, "role": None}],
+            [{"user_id": self.user_a.id, "role": None, "username": self.user_a.username, "avatar": None}],
         )
         self.assertEqual(response.data["tags"], [])
         links = ParticipantLink.objects.filter(meeting_id=meeting_id, user=self.user_a)
@@ -421,8 +421,8 @@ class TestMeetingAPI(TestCase):
             type_definition=self._meeting_type(self.project_a, slug="planning"),
             objective="O",
         )
-        ParticipantLink.objects.create(meeting=meeting, user=self.user_a)
-        ParticipantLink.objects.create(meeting=meeting, user=self.user_b)
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_a, is_accepted=True)
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
 
         url = f"/api/projects/{self.project_a.id}/meetings/{meeting.id}/document/"
 

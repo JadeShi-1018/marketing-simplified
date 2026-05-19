@@ -202,7 +202,7 @@ class MeetingNotificationSSETests(TestCase):
             title="Standup",
             type_definition=self._meeting_type(slug="standup"),
         )
-        ParticipantLink.objects.create(meeting=meeting, user=self.user_b)
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
 
         url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
         r = self.client.patch(
@@ -228,7 +228,7 @@ class MeetingNotificationSSETests(TestCase):
             type_definition=self._meeting_type(slug="design"),
             external_reference="Room A",
         )
-        ParticipantLink.objects.create(meeting=meeting, user=self.user_b)
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
 
         url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
         r = self.client.patch(
@@ -297,6 +297,7 @@ class TaskNotificationSSETests(TestCase):
                 "type": "execution",
                 "project_id": self.project.id,
                 "owner_id": self.owner.id,
+                "current_approver_id": self.owner.id,
             },
             format="json",
         )
@@ -319,6 +320,7 @@ class TaskNotificationSSETests(TestCase):
                 "summary": "Unassigned task",
                 "type": "execution",
                 "project_id": self.project.id,
+                "current_approver_id": self.owner.id,
             },
             format="json",
         )
@@ -333,13 +335,14 @@ class TaskNotificationSSETests(TestCase):
         PATCH /api/tasks/{pk}/ changing owner_id must call
         publish_notification_to_redis for the new owner (TASK_OWNER_CHANGED).
         """
-        # Create a task without an owner first.
+        # Create a task as draft (so owner_id can be changed later).
         r_create = self.client.post(
             "/api/tasks/",
             {
                 "summary": "Re-assignable task",
                 "type": "execution",
                 "project_id": self.project.id,
+                "create_as_draft": True,
             },
             format="json",
         )
@@ -348,7 +351,7 @@ class TaskNotificationSSETests(TestCase):
 
         mock_publish.reset_mock()  # clear any calls from create
 
-        # Reassign to owner.
+        # Reassign to owner (allowed while in DRAFT status).
         r_update = self.client.patch(
             f"/api/tasks/{task_id}/",
             {"owner_id": self.owner.id},
@@ -367,19 +370,27 @@ class TaskNotificationSSETests(TestCase):
         publish_notification_to_redis for the owner (TASK_DEADLINE_SOON)
         and include old_due_date / new_due_date metadata.
         """
-        # Create a task with an owner.
+        from task.models import Task
+
+        # Create a task as draft first, then set up owner properly.
         r_create = self.client.post(
             "/api/tasks/",
             {
                 "summary": "Deadline task",
                 "type": "execution",
                 "project_id": self.project.id,
-                "owner_id": self.owner.id,
+                "create_as_draft": True,
             },
             format="json",
         )
         self.assertEqual(r_create.status_code, status.HTTP_201_CREATED)
         task_id = r_create.data["id"]
+
+        # Set owner to self.owner (different from creator) and mark as accepted.
+        task = Task.objects.get(pk=task_id)
+        task.owner = self.owner
+        task.owner_invite_pending = False
+        task.save(update_fields=["owner", "owner_invite_pending"])
 
         mock_publish.reset_mock()
 
@@ -396,13 +407,13 @@ class TaskNotificationSSETests(TestCase):
         notif_args = [c[0][1] for c in mock_publish.call_args_list]
         deadline_notifs = [
             n for n in notif_args
-            if "new_due_date" in n.metadata
+            if n.metadata.get("change_type") == "task_due_date"
         ]
         self.assertTrue(
             len(deadline_notifs) >= 1,
-            "At least one notification must carry new_due_date metadata",
+            "At least one notification must carry task_due_date change_type",
         )
-        self.assertEqual(deadline_notifs[0].metadata["new_due_date"], "2099-06-30")
+        self.assertEqual(deadline_notifs[0].metadata["new_value"], "2099-06-30")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -438,8 +449,8 @@ class AgendaSectionNotificationTests(TestCase):
             title="Section Test Meeting",
             type_definition=self.mtd,
         )
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.organiser)
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.participant)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.organiser, is_accepted=True)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.participant, is_accepted=True)
 
         self.client.force_authenticate(user=self.organiser)
 
@@ -714,8 +725,8 @@ class AgendaItemCreateDeleteNotificationTests(TestCase):
             title="Crud Meeting",
             type_definition=self.mtd,
         )
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.actor)
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.watcher)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.actor, is_accepted=True)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.watcher, is_accepted=True)
 
         self.client.force_authenticate(user=self.actor)
         self.items_url = (
@@ -823,8 +834,8 @@ class MeetingDocumentNotificationTests(TestCase):
             title="Collab Notes Meeting",
             type_definition=self.meeting_type,
         )
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.editor)
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.reader)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.editor, is_accepted=True)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.reader, is_accepted=True)
 
         self.client.force_authenticate(user=self.editor)
 

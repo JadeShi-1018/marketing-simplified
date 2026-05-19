@@ -968,7 +968,7 @@ class MeetingDocumentAPIView(APIView):
             content=content,
             yjs_state=yjs_state,
             user_id=request.user.id,
-            notify_collaborators=False,
+            notify_collaborators=True,
         )
         serializer = MeetingDocumentSerializer(document)
         return Response(serializer.data, status=status.HTTP_200_OK)
