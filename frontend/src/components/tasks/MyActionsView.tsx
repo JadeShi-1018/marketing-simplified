@@ -123,7 +123,7 @@ function ActionSection({ icon: Icon, label, tasks, iconCls, bgCls, hint, onDismi
           {tasks.length === 0 ? (
             <p className="text-[12px] text-gray-300 py-1">All clear.</p>
           ) : (
-            <ul className="max-h-[220px] divide-y divide-gray-50 overflow-y-auto pr-1">
+            <ul className="task-tab-scrollbar max-h-[220px] divide-y divide-gray-50 overflow-y-auto pr-1">
               {tasks.map((t) => (
                 <ActionTaskRow
                   key={t.id}

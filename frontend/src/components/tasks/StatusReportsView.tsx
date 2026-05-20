@@ -235,7 +235,7 @@ function SectionCard({ icon, title, count, children }: {
           {count}
         </span>
       </div>
-      <div className="max-h-[268px] overflow-y-auto p-4">{children}</div>
+      <div className="task-tab-scrollbar max-h-[268px] overflow-y-auto p-4">{children}</div>
     </div>
   );
 }

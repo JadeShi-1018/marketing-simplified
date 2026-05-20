@@ -192,7 +192,7 @@ function SignalCard({
       {count === 0 ? (
         <p className="text-[12px] text-gray-400">All clear</p>
       ) : (
-        <ul className="flex-1 divide-y divide-gray-50 overflow-y-auto pr-1">
+        <ul className="task-tab-scrollbar flex-1 divide-y divide-gray-50 overflow-y-auto pr-1">
           {tasks.map((t) => <TaskRow key={t.id} task={t} />)}
         </ul>
       )}
@@ -308,7 +308,7 @@ function CycleSection({ label, icon: Icon, iconCls, count, children }: CycleSect
           : <ChevronDown className="h-3 w-3 shrink-0 text-gray-300" />}
       </button>
       {open && (
-        <ul className="ml-5 max-h-[200px] divide-y divide-gray-50 overflow-y-auto pr-1">
+        <ul className="task-tab-scrollbar ml-5 max-h-[200px] divide-y divide-gray-50 overflow-y-auto pr-1">
           {children}
         </ul>
       )}
