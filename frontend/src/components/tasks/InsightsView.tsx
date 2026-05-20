@@ -148,9 +148,9 @@ function InfoTip({ text }: { text: string }) {
         <Info className="h-3.5 w-3.5" />
       </button>
       {open && (
-        <div className="absolute left-1/2 top-5 z-30 w-56 -translate-x-1/2 rounded-lg bg-gray-900 px-3 py-2 text-[11px] leading-relaxed text-white shadow-lg">
-          {text}
-          <div className="absolute -top-1.5 left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 bg-gray-900" />
+        <div className="absolute left-1/2 top-5 z-30 w-56 -translate-x-1/2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-[11px] font-medium leading-relaxed text-gray-700 shadow-lg">
+          <div className="absolute -top-1.5 left-1/2 h-2.5 w-2.5 -translate-x-1/2 rotate-45 border-l border-t border-gray-200 bg-white" />
+          <p className="relative">{text}</p>
         </div>
       )}
     </div>
