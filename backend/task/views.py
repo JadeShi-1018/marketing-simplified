@@ -569,6 +569,49 @@ class TaskViewSet(viewsets.ModelViewSet):
         today = _date.today()
         return Response(intel.my_actions(user, project_ids, today, due_soon_days))
 
+    @action(detail=False, methods=['get'], url_path='status-report')
+    def status_report(self, request):
+        from datetime import date, timedelta
+        from task.status_report import generate_status_report
+
+        project_id_param = request.query_params.get('project_id')
+        if not project_id_param:
+            return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            project_id = int(project_id_param)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        has_membership = ProjectMember.objects.filter(
+            user=request.user,
+            project_id=project_id,
+            is_active=True,
+        ).exists()
+        if not has_membership:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        period = request.query_params.get('period', 'week')
+        today = date.today()
+
+        if period == 'month':
+            date_from = today - timedelta(days=30)
+            date_to = today
+        elif period == 'custom':
+            from_str = request.query_params.get('date_from')
+            to_str = request.query_params.get('date_to')
+            try:
+                date_from = date.fromisoformat(from_str)
+                date_to = date.fromisoformat(to_str)
+            except (TypeError, ValueError):
+                return Response({'error': 'Invalid date_from or date_to'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            date_from = today - timedelta(days=7)
+            date_to = today
+
+        data = generate_status_report(project_id, date_from, date_to)
+        return Response(data)
+
     def gantt(self, request, *args, **kwargs):
         """
         Return chart-ready task rows for the Gantt view (same filters as list).

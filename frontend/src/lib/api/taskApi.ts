@@ -275,4 +275,11 @@ export const TaskAPI = {
     const response = await api.post(`/api/tasks/${taskId}/ai-qa/`, { question }, { timeout: 60000 });
     return (response.data as { answer: string }).answer;
   },
+
+  getStatusReport: (params: {
+    project_id: number;
+    period: 'week' | 'month' | 'custom';
+    date_from?: string;
+    date_to?: string;
+  }) => api.get('/api/tasks/status-report/', { params }),
 };
