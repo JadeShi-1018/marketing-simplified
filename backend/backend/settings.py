@@ -97,6 +97,8 @@ INSTALLED_APPS = [
     'google_calendar_integration.apps.GoogleCalendarIntegrationConfig',
     'facebook_integration.apps.FacebookIntegrationConfig',
     'meta_ads.apps.MetaAdsConfig',
+    'experience_group',
+    'customer',
     'tracking',
 ]
 
