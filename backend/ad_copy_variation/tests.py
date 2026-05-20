@@ -1,3 +1,4 @@
+import uuid
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -6,6 +7,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from facebook_integration.models import FacebookConnection, MetaAdAccount
+from core.models import Organization, Project, ProjectMember
 from meta_ads.models import MetaAdCreative
 
 from .models import AdCopyVariation
@@ -16,7 +18,19 @@ def _make_user(username='copy_user', email='copy_user@example.com'):
     return User.objects.create_user(username=username, email=email, password='x')
 
 
-def _make_creative(user, *, meta_creative_id='cra-1', title='Headline A', body='Hook line\nDescription line', cta='SHOP_NOW'):
+def _make_project(user, *, name='Copy Project'):
+    org, _ = Organization.objects.get_or_create(
+        name=f'Org {user.id}',
+        defaults={'slug': f'org-{user.id}'},
+    )
+    project = Project.objects.create(name=name, organization=org, owner=user)
+    ProjectMember.objects.create(user=user, project=project, role='owner')
+    user.active_project = project
+    user.save(update_fields=['active_project'])
+    return project
+
+
+def _make_creative(user, *, project=None, meta_creative_id='cra-1', title='Headline A', body='Hook line\nDescription line', cta='SHOP_NOW'):
     connection = FacebookConnection.objects.create(
         user=user, fb_user_id=f'fb-{user.id}', is_active=True,
     )
@@ -25,6 +39,7 @@ def _make_creative(user, *, meta_creative_id='cra-1', title='Headline A', body='
         meta_account_id=f'acc-{user.id}',
         name='Test Account',
         currency='USD',
+        project=project,
     )
     return MetaAdCreative.objects.create(
         ad_account=ad_account,
@@ -48,7 +63,8 @@ class AdCopyVariationCRUDTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user()
-        cls.creative = _make_creative(cls.user)
+        cls.project = _make_project(cls.user)
+        cls.creative = _make_creative(cls.user, project=cls.project)
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -56,6 +72,7 @@ class AdCopyVariationCRUDTests(APITestCase):
     def _payload(self, **overrides):
         base = {
             'creative': self.creative.id,
+            'project': self.project.id,
             'source_mode': 'existing',
             'hook': 'h',
             'headline': 'hl',
@@ -80,6 +97,7 @@ class AdCopyVariationCRUDTests(APITestCase):
 
     def test_retrieve(self):
         row = AdCopyVariation.objects.create(
+            project=self.project,
             creative=self.creative,
             source_mode='custom',
             hook='retrieve hook',
@@ -93,6 +111,7 @@ class AdCopyVariationCRUDTests(APITestCase):
 
     def test_patch(self):
         row = AdCopyVariation.objects.create(
+            project=self.project,
             creative=self.creative,
             source_mode='existing',
             hook='before',
@@ -106,6 +125,7 @@ class AdCopyVariationCRUDTests(APITestCase):
 
     def test_delete(self):
         row = AdCopyVariation.objects.create(
+            project=self.project,
             creative=self.creative,
             source_mode='existing',
             created_by=self.user,
@@ -123,15 +143,18 @@ class AdCopyVariationCRUDTests(APITestCase):
         self.assertEqual(row.created_by_id, self.user.id)
 
     def test_filter_by_creative(self):
+        other_user = _make_user(username='other', email='other@example.com')
+        other_project = _make_project(other_user, name='Other Project')
         other_creative = _make_creative(
-            _make_user(username='other', email='other@example.com'),
+            other_user,
+            project=other_project,
             meta_creative_id='cra-2',
         )
         AdCopyVariation.objects.create(
-            creative=self.creative, source_mode='existing', created_by=self.user,
+            project=self.project, creative=self.creative, source_mode='existing', created_by=self.user,
         )
         AdCopyVariation.objects.create(
-            creative=other_creative, source_mode='existing',
+            project=other_project, creative=other_creative, source_mode='existing',
         )
         url = reverse('ad-copy-variation-list')
         resp = self.client.get(url, {'creative': self.creative.id})
@@ -142,11 +165,117 @@ class AdCopyVariationCRUDTests(APITestCase):
         self.assertEqual(results[0]['creative'], self.creative.id)
 
 
+class AdCopyVariationDraftLifecycleTests(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = _make_user(username='draft_lifecycle')
+        cls.project = _make_project(cls.user, name='Draft Project')
+        cls.creative = _make_creative(cls.user, project=cls.project, meta_creative_id='draft-cra')
+
+        cls.other_user = _make_user(username='draft_other', email='draft_other@example.com')
+        cls.other_project = _make_project(cls.other_user, name='Other Draft Project')
+
+    def setUp(self):
+        self.client.force_authenticate(user=self.user)
+
+    def _row(self, *, batch_id=None, status_value='draft', project=None, creative=None, position=0):
+        return AdCopyVariation.objects.create(
+            project=project or self.project,
+            creative=creative if creative is not None else self.creative,
+            source_mode='existing',
+            hook=f'hook {position}',
+            headline=f'headline {position}',
+            description='desc',
+            cta='SHOP_NOW',
+            batch_id=batch_id or uuid.uuid4(),
+            batch_position=position,
+            status=status_value,
+            created_by=self.user,
+        )
+
+    def test_list_filters_by_project_status_source_creative_and_paginates(self):
+        batch_id = uuid.uuid4()
+        wanted = self._row(batch_id=batch_id, status_value='draft', position=1)
+        self._row(batch_id=batch_id, status_value='reviewed', position=2)
+        self._row(status_value='draft', project=self.other_project, creative=None, position=3)
+
+        resp = self.client.get(reverse('ad-copy-variation-list'), {
+            'project_id': self.project.id,
+            'status': 'draft',
+            'source_mode': 'existing',
+            'creative': self.creative.id,
+            'page': 1,
+            'page_size': 1,
+        })
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['page'], 1)
+        self.assertEqual(resp.data['page_size'], 1)
+        self.assertEqual(resp.data['results'][0]['id'], wanted.id)
+
+    def test_review_batch_reviews_selected_and_leaves_unselected_current_batch_drafts(self):
+        batch_id = uuid.uuid4()
+        selected = self._row(batch_id=batch_id, position=1)
+        unselected = self._row(batch_id=batch_id, position=2)
+        already_reviewed = self._row(batch_id=batch_id, status_value='reviewed', position=3)
+        previous_batch = self._row(batch_id=uuid.uuid4(), position=4)
+        other_project_row = self._row(batch_id=batch_id, project=self.other_project, creative=None, position=5)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-review-batch'),
+            {
+                'project_id': self.project.id,
+                'batch_id': str(batch_id),
+                'selected_ids': [selected.id],
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['reviewed_count'], 1)
+        self.assertEqual(
+            set(resp.data.keys()),
+            {'batch_id', 'reviewed_count', 'results'},
+        )
+
+        selected.refresh_from_db()
+        unselected.refresh_from_db()
+        already_reviewed.refresh_from_db()
+        previous_batch.refresh_from_db()
+        other_project_row.refresh_from_db()
+
+        self.assertEqual(selected.status, 'reviewed')
+        self.assertEqual(unselected.status, 'draft')
+        self.assertEqual(already_reviewed.status, 'reviewed')
+        self.assertEqual(previous_batch.status, 'draft')
+        self.assertEqual(other_project_row.status, 'draft')
+
+    def test_review_batch_rejects_invalid_selected_ids_without_reviewing(self):
+        batch_id = uuid.uuid4()
+        draft = self._row(batch_id=batch_id, position=1)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-review-batch'),
+            {
+                'project_id': self.project.id,
+                'batch_id': str(batch_id),
+                'selected_ids': [999999],
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        draft.refresh_from_db()
+        self.assertEqual(draft.status, 'draft')
+
+
 class GenerateFromExistingTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user(username='gen_existing')
-        cls.creative = _make_creative(cls.user, meta_creative_id='gex-1')
+        cls.project = _make_project(cls.user, name='Existing Project')
+        cls.creative = _make_creative(cls.user, project=cls.project, meta_creative_id='gex-1')
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -159,34 +288,49 @@ class GenerateFromExistingTests(APITestCase):
             self.url,
             {
                 'source_mode': 'existing',
+                'project_id': self.project.id,
                 'creative_id': self.creative.id,
                 'instruction': 'shorten the hook',
             },
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
-        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})
-        self.assertEqual(resp.data['hook'], 'Generated hook line')
+        self.assertEqual(resp.data['count_succeeded'], 1)
+        self.assertEqual(len(resp.data['results']), 1)
+        self.assertEqual(resp.data['results'][0]['hook'], 'Generated hook line')
+        self.assertEqual(resp.data['results'][0]['status'], 'draft')
         self.assertEqual(mock_call.call_count, 1)
 
     @patch('ad_copy_variation.services.call_aistudio_json')
-    def test_does_not_persist(self, mock_call):
+    def test_persists_draft(self, mock_call):
         mock_call.return_value = _FAKE_GEMINI_RESPONSE
         before = AdCopyVariation.objects.count()
         resp = self.client.post(
             self.url,
-            {'source_mode': 'existing', 'creative_id': self.creative.id},
+            {
+                'source_mode': 'existing',
+                'project_id': self.project.id,
+                'creative_id': self.creative.id,
+            },
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(AdCopyVariation.objects.count(), before)
+        self.assertEqual(AdCopyVariation.objects.count(), before + 1)
+        row = AdCopyVariation.objects.latest('id')
+        self.assertEqual(row.project_id, self.project.id)
+        self.assertEqual(row.status, 'draft')
+        self.assertEqual(str(row.batch_id), resp.data['batch_id'])
 
     @patch('ad_copy_variation.services.call_aistudio_json')
     def test_template_is_built_from_creative(self, mock_call):
         mock_call.return_value = _FAKE_GEMINI_RESPONSE
         self.client.post(
             self.url,
-            {'source_mode': 'existing', 'creative_id': self.creative.id},
+            {
+                'source_mode': 'existing',
+                'project_id': self.project.id,
+                'creative_id': self.creative.id,
+            },
             format='json',
         )
         _, user_prompt = mock_call.call_args.args
@@ -199,6 +343,7 @@ class GenerateFromCustomTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user(username='gen_custom')
+        cls.project = _make_project(cls.user, name='Custom Project')
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -211,6 +356,7 @@ class GenerateFromCustomTests(APITestCase):
             self.url,
             {
                 'source_mode': 'custom',
+                'project_id': self.project.id,
                 'base_copy': {
                     'hook': 'My hook',
                     'headline': 'My headline',
@@ -222,7 +368,8 @@ class GenerateFromCustomTests(APITestCase):
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
-        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})
+        self.assertEqual(resp.data['results'][0]['status'], 'draft')
+        self.assertEqual(resp.data['results'][0]['project'], self.project.id)
         self.assertEqual(mock_call.call_count, 1)
         _, user_prompt = mock_call.call_args.args
         self.assertIn('My hook', user_prompt)
@@ -233,6 +380,7 @@ class GenerateFromExternalUrlTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user(username='gen_external')
+        cls.project = _make_project(cls.user, name='External Project')
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -247,24 +395,31 @@ class GenerateFromExternalUrlTests(APITestCase):
             self.url,
             {
                 'source_mode': 'external_url',
+                'project_id': self.project.id,
                 'url': 'https://example.com/test',
                 'instruction': 'shorter',
             },
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
-        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})
+        self.assertEqual(resp.data['results'][0]['source_ref'], 'https://example.com/test')
+        self.assertEqual(resp.data['results'][0]['status'], 'draft')
         self.assertEqual(mock_fetch.call_count, 1)
         self.assertEqual(mock_llm.call_count, 1)
-        # Generate is preview-only — no row should be persisted.
-        self.assertFalse(AdCopyVariation.objects.filter(source_mode='external_url').exists())
+        self.assertTrue(
+            AdCopyVariation.objects.filter(
+                project=self.project,
+                source_mode='external_url',
+                status='draft',
+            ).exists()
+        )
 
     @patch('ad_copy_variation.services.call_aistudio_json')
     @patch('ad_copy_variation.services.fetch_url_text')
     def test_missing_url(self, mock_fetch, mock_llm):
         resp = self.client.post(
             self.url,
-            {'source_mode': 'external_url'},
+            {'source_mode': 'external_url', 'project_id': self.project.id},
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -276,7 +431,11 @@ class GenerateFromExternalUrlTests(APITestCase):
     def test_invalid_url_scheme(self, mock_fetch, mock_llm):
         resp = self.client.post(
             self.url,
-            {'source_mode': 'external_url', 'url': 'ftp://example.com/x'},
+            {
+                'source_mode': 'external_url',
+                'project_id': self.project.id,
+                'url': 'ftp://example.com/x',
+            },
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -289,11 +448,15 @@ class GenerateFromExternalUrlTests(APITestCase):
         mock_fetch.side_effect = RuntimeError('Browserless fetch failed: status=500')
         resp = self.client.post(
             self.url,
-            {'source_mode': 'external_url', 'url': 'https://example.com/test'},
+            {
+                'source_mode': 'external_url',
+                'project_id': self.project.id,
+                'url': 'https://example.com/test',
+            },
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertIn('error', resp.data)
+        self.assertEqual(resp.data['count_succeeded'], 0)
         mock_llm.assert_not_called()
 
     @patch('ad_copy_variation.services.call_aistudio_json')
@@ -303,17 +466,22 @@ class GenerateFromExternalUrlTests(APITestCase):
         mock_llm.side_effect = RuntimeError('AI Studio call failed: status=429')
         resp = self.client.post(
             self.url,
-            {'source_mode': 'external_url', 'url': 'https://example.com/test'},
+            {
+                'source_mode': 'external_url',
+                'project_id': self.project.id,
+                'url': 'https://example.com/test',
+            },
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertIn('error', resp.data)
+        self.assertEqual(resp.data['count_succeeded'], 0)
 
 
 class GenerateBadInputTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user(username='gen_bad')
+        cls.project = _make_project(cls.user, name='Bad Input Project')
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -323,7 +491,7 @@ class GenerateBadInputTests(APITestCase):
     def test_missing_creative_id_for_existing(self, mock_call):
         resp = self.client.post(
             self.url,
-            {'source_mode': 'existing'},
+            {'source_mode': 'existing', 'project_id': self.project.id},
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -333,7 +501,7 @@ class GenerateBadInputTests(APITestCase):
     def test_unknown_source_mode(self, mock_call):
         resp = self.client.post(
             self.url,
-            {'source_mode': 'banana'},
+            {'source_mode': 'banana', 'project_id': self.project.id},
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
@@ -344,8 +512,10 @@ class PermissionTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user(username='perm_user')
-        cls.creative = _make_creative(cls.user, meta_creative_id='perm-1')
+        cls.project = _make_project(cls.user, name='Permission Project')
+        cls.creative = _make_creative(cls.user, project=cls.project, meta_creative_id='perm-1')
         cls.row = AdCopyVariation.objects.create(
+            project=cls.project,
             creative=cls.creative,
             source_mode='existing',
             created_by=cls.user,
@@ -380,6 +550,7 @@ class GenerateBatchTests(APITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.user = _make_user(username='gen_batch')
+        cls.project = _make_project(cls.user, name='Batch Project')
 
     def setUp(self):
         self.client.force_authenticate(user=self.user)
@@ -388,6 +559,7 @@ class GenerateBatchTests(APITestCase):
     def _custom_payload(self, **overrides):
         base = {
             'source_mode': 'custom',
+            'project_id': self.project.id,
             'base_copy': {
                 'hook': 'h', 'headline': 'hl',
                 'description': 'd', 'cta': 'SHOP_NOW',
@@ -414,9 +586,9 @@ class GenerateBatchTests(APITestCase):
         self.assertEqual(len(resp.data['results']), 5)
         self.assertEqual(resp.data['failed_indices'], [])
         for r in resp.data['results']:
-            self.assertEqual(set(r.keys()), {'hook', 'headline', 'description', 'cta'})
-        # Generate is preview-only — no rows persisted.
-        self.assertEqual(AdCopyVariation.objects.count(), 0)
+            self.assertEqual(r['status'], 'draft')
+            self.assertEqual(r['project'], self.project.id)
+        self.assertEqual(AdCopyVariation.objects.filter(project=self.project, status='draft').count(), 5)
 
     @patch('ad_copy_variation.services.call_aistudio_json')
     def test_batch_partial_failure(self, mock_llm):
@@ -484,7 +656,7 @@ class GenerateBatchTests(APITestCase):
         mock_llm.assert_not_called()
 
     @patch('ad_copy_variation.services.call_aistudio_json')
-    def test_count_one_returns_flat_shape_not_wrapped(self, mock_llm):
+    def test_count_one_returns_persisted_batch_shape(self, mock_llm):
         mock_llm.return_value = _FAKE_GEMINI_RESPONSE
         # Send count=1 explicitly
         resp = self.client.post(
@@ -493,13 +665,13 @@ class GenerateBatchTests(APITestCase):
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        # Must be the flat shape (no wrapper), so the legacy modal frontend keeps working.
-        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})
-        self.assertNotIn('batch_id', resp.data)
-        self.assertNotIn('results', resp.data)
+        self.assertIn('batch_id', resp.data)
+        self.assertEqual(resp.data['count_succeeded'], 1)
+        self.assertEqual(len(resp.data['results']), 1)
+        self.assertEqual(resp.data['results'][0]['status'], 'draft')
 
     @patch('ad_copy_variation.services.call_aistudio_json')
-    def test_count_omitted_returns_flat_shape_not_wrapped(self, mock_llm):
+    def test_count_omitted_returns_persisted_batch_shape(self, mock_llm):
         mock_llm.return_value = _FAKE_GEMINI_RESPONSE
         # Omit count entirely
         resp = self.client.post(
@@ -508,4 +680,6 @@ class GenerateBatchTests(APITestCase):
             format='json',
         )
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertEqual(set(resp.data.keys()), {'hook', 'headline', 'description', 'cta'})
+        self.assertIn('batch_id', resp.data)
+        self.assertEqual(resp.data['count_succeeded'], 1)
+        self.assertEqual(len(resp.data['results']), 1)

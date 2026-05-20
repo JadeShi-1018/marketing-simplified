@@ -2,6 +2,8 @@ import api from '@/lib/api';
 import type {
   AdCopyVariation,
   AdCopyVariationCopy,
+  AdCopyVariationSourceMode,
+  AdCopyVariationStatus,
   BatchGenerateResponse,
   GenerateVariationRequest,
   SaveVariationRequest,
@@ -14,20 +16,21 @@ export async function generateVariation(
 ): Promise<BatchGenerateResponse> {
   const body = { ...req, count: req.count ?? 1 };
   const { data } = await api.post(`${BASE}/generate/`, body);
-  if (data && Array.isArray((data as { results?: unknown }).results)) {
+  const results = (data as { results?: unknown }).results;
+  if (
+    data &&
+    Array.isArray(results) &&
+    results.every((row) => {
+      if (typeof row !== 'object' || row === null) return false;
+      const candidate = row as { id?: unknown; status?: unknown };
+      return typeof candidate.id === 'number' && typeof candidate.status === 'string';
+    })
+  ) {
     return data as BatchGenerateResponse;
   }
-  // Backend backward-compat path: count=1 returns flat {hook, headline, description, cta}.
-  // Wrap into BatchGenerateResponse so callers always handle one shape.
-  const flat = data as AdCopyVariationCopy;
-  return {
-    batch_id: '',
-    count_requested: 1,
-    count_succeeded: 1,
-    count_failed: 0,
-    results: [flat],
-    failed_indices: [],
-  };
+  throw new Error(
+    'Generate response did not include persisted draft IDs. Please restart the backend and ensure migrations are applied.'
+  );
 }
 
 export async function saveVariation(
@@ -60,31 +63,71 @@ export async function bulkSaveVariations(
 export interface ListVariationsResult {
   results: AdCopyVariation[];
   total: number;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ListAiVariationsParams {
+  project_id?: number;
+  creative?: number;
+  status?: AdCopyVariationStatus | AdCopyVariationStatus[] | string;
+  source_mode?: AdCopyVariationSourceMode | '';
+  page?: number;
+  page_size?: number;
 }
 
 export async function listVariations(
   creativeId: number,
   opts?: { limit?: number }
 ): Promise<ListVariationsResult> {
-  const params: Record<string, string | number> = { creative: creativeId };
-  if (opts?.limit) params.page_size = opts.limit;
-  const { data } = await api.get(`${BASE}/`, { params });
+  return listAiVariations({ creative: creativeId, page_size: opts?.limit });
+}
+
+export async function listAiVariations(
+  params: ListAiVariationsParams
+): Promise<ListVariationsResult> {
+  const normalized: Record<string, string | number> = {};
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    normalized[key] = Array.isArray(value) ? value.join(',') : value;
+  });
+  const { data } = await api.get(`${BASE}/`, { params: normalized });
   if (Array.isArray(data)) {
     return { results: data as AdCopyVariation[], total: data.length };
   }
   if (data && Array.isArray((data as { results?: unknown }).results)) {
-    const paged = data as { results: AdCopyVariation[]; count?: number };
+    const paged = data as {
+      results: AdCopyVariation[];
+      count?: number;
+      page?: number;
+      page_size?: number;
+    };
     return {
       results: paged.results,
       total: typeof paged.count === 'number' ? paged.count : paged.results.length,
+      page: paged.page,
+      pageSize: paged.page_size,
     };
   }
   return { results: [], total: 0 };
 }
 
+export async function reviewVariationBatch(req: {
+  project_id: number;
+  batch_id: string;
+  selected_ids: number[];
+}): Promise<{
+  batch_id: string;
+  reviewed_count: number;
+  results: AdCopyVariation[];
+}> {
+  const { data } = await api.post(`${BASE}/review_batch/`, req);
+  return data;
+}
+
 export async function updateVariation(
   id: number,
-  fields: Partial<AdCopyVariationCopy>
+  fields: Partial<AdCopyVariationCopy & Pick<AdCopyVariation, 'status'>>
 ): Promise<AdCopyVariation> {
   const { data } = await api.patch<AdCopyVariation>(`${BASE}/${id}/`, fields);
   return data;
