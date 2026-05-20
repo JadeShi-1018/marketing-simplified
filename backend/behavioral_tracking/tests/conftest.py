@@ -75,11 +75,3 @@ def task(project, user):
         owner=user,
         type="execution",
     )
-
-
-@pytest.fixture
-@pytest.mark.django_db
-def focus_session(task, user):
-    from behavioral_tracking.models import FocusSession
-
-    return FocusSession.objects.create(task=task, user=user)

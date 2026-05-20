@@ -47,8 +47,19 @@ export const TaskAPI = {
     return response.data as GanttChartPayload;
   },
 
-  // Get a specific task by ID
-  getTask: (taskId: number) => api.get(`/api/tasks/${taskId}/`),
+  /**
+   * Get a specific task by ID.
+   * Pass internalRefetch after in-page saves so server-side TASK_OPEN is not counted again.
+   */
+  getTask: (
+    taskId: number,
+    options?: { internalRefetch?: boolean },
+  ) =>
+    api.get(`/api/tasks/${taskId}/`, {
+      headers: options?.internalRefetch
+        ? { 'X-Internal-Refetch': '1' }
+        : undefined,
+    }),
 
   // Update a task
   updateTask: (taskId: number, data: Partial<TaskData>) =>

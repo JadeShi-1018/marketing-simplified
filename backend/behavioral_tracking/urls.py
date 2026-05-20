@@ -1,10 +1,13 @@
-from rest_framework.routers import DefaultRouter
+from django.urls import path
 
-from .views import FocusSessionViewSet
+from .views import TaskEngagementSummaryView
 
 app_name = "behavioral_tracking"
 
-router = DefaultRouter()
-router.register(r"sessions", FocusSessionViewSet, basename="focus-session")
-
-urlpatterns = router.urls
+urlpatterns = [
+    path(
+        "tasks/<int:task_id>/engagement-summary/",
+        TaskEngagementSummaryView.as_view(),
+        name="task-engagement-summary",
+    ),
+]

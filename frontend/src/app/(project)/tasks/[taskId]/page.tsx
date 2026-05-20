@@ -38,18 +38,21 @@ export default function TaskV2DetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState<'details' | 'history'>('details');
 
-  const load = useCallback(async () => {
-    if (!taskId) return;
-    try {
-      const resp = await TaskAPI.getTask(taskId);
-      setTask(resp.data as TaskData);
-      setError(null);
-    } catch (e) {
-      setError((e as any)?.response?.data?.detail || 'Failed to load task');
-    } finally {
-      setLoading(false);
-    }
-  }, [taskId]);
+  const load = useCallback(
+    async (options?: { internalRefetch?: boolean }) => {
+      if (!taskId) return;
+      try {
+        const resp = await TaskAPI.getTask(taskId, options);
+        setTask(resp.data as TaskData);
+        setError(null);
+      } catch (e) {
+        setError((e as any)?.response?.data?.detail || 'Failed to load task');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [taskId],
+  );
 
   useEffect(() => {
     void load();
@@ -71,9 +74,15 @@ export default function TaskV2DetailPage() {
     };
   }, [task?.project?.id, task?.project_id]);
 
-  const onMutated = useCallback(async () => {
+  /** Refresh side panels (Focus insights, comments list, etc.) without reloading task. */
+  const onMutated = useCallback(() => {
     setRefreshKey((k) => k + 1);
-    await load();
+  }, []);
+
+  /** Reload task shell after field/status edits; does not count as a page open. */
+  const reloadTask = useCallback(async () => {
+    setRefreshKey((k) => k + 1);
+    await load({ internalRefetch: true });
   }, [load]);
 
   const doDelete = async () => {
@@ -115,8 +124,8 @@ export default function TaskV2DetailPage() {
               task={taskShell}
               members={members}
               readOnly={Boolean(readOnly)}
-              onUpdated={onMutated}
-              onMutated={onMutated}
+              onUpdated={reloadTask}
+              onMutated={reloadTask}
               onDelete={() => setConfirmDelete(true)}
               loading={loading}
             />
@@ -145,22 +154,29 @@ export default function TaskV2DetailPage() {
                 <TaskDescriptionBlock
                   task={taskShell}
                   readOnly={Boolean(readOnly)}
-                  onUpdated={onMutated}
+                  onUpdated={reloadTask}
                   loading={loading}
                 />
-                <TaskTypeBlock task={taskShell} loading={loading} readOnly={Boolean(readOnly)} onUpdated={onMutated} />
+                <TaskTypeBlock task={taskShell} loading={loading} readOnly={Boolean(readOnly)} onUpdated={reloadTask} />
                 <TaskSubtasksBlock
                   task={taskShell}
                   readOnly={Boolean(readOnly)}
                   refreshKey={refreshKey}
                   loading={loading}
+                  onMutated={onMutated}
                 />
-                <TaskRelationsBlock task={taskShell} readOnly={Boolean(readOnly)} loading={loading} />
+                <TaskRelationsBlock
+                  task={taskShell}
+                  readOnly={Boolean(readOnly)}
+                  loading={loading}
+                  onMutated={onMutated}
+                />
                 {(task?.id || loading) && (
                   <TaskAttachmentsBlock
                     taskId={task?.id ?? 0}
                     readOnly={Boolean(readOnly)}
                     loading={loading}
+                    onMutated={onMutated}
                   />
                 )}
                 {(task?.id || loading) && (
@@ -169,6 +185,7 @@ export default function TaskV2DetailPage() {
                     readOnly={Boolean(readOnly)}
                     refreshKey={refreshKey}
                     loading={loading}
+                    onMutated={onMutated}
                     onFirstInteraction={() => markInteraction('comment_box', 'click')}
                   />
                 )}
@@ -187,7 +204,7 @@ export default function TaskV2DetailPage() {
                   task={taskShell}
                   members={members}
                   readOnly={Boolean(readOnly)}
-                  onUpdated={onMutated}
+                  onUpdated={reloadTask}
                   loading={loading}
                   onFirstInteraction={() => markInteraction('priority_select', 'change')}
                 />
@@ -201,6 +218,7 @@ export default function TaskV2DetailPage() {
                 {(task?.id || loading) && (
                   <EngagementPanel
                     taskId={task?.id ?? 0}
+                    refreshKey={refreshKey}
                     loading={loading}
                   />
                 )}

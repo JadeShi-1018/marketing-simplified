@@ -8,6 +8,6 @@
 export interface TaskEngagementSummary {
   visits: number;
   estimated_active_ms: number;
-  last_visited_at: string | null;
+  last_operated_at: string | null;
   write_operations_count: number;
 }

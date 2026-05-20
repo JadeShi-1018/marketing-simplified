@@ -1,12 +1,18 @@
+"""
+Behavioral tracking models.
+
+FocusSession / BehavioralSignal are legacy client-ingest tables (SMP-547 v1 removed
+the /api/behavioral-tracking/sessions/ API). Kept for existing DB rows; new metrics
+use server-side tracking (tracking app) via engagement-summary.
+"""
+
 from django.conf import settings
 from django.db import models
 from django.db.models import F, Q
 
 
 class FocusSession(models.Model):
-    """
-    A single-user focus session on one Task. Signals are time-window snapshots.
-    """
+    """Legacy client focus session (API removed; table retained for migrations)."""
 
     task = models.ForeignKey(
         "task.Task",
@@ -50,9 +56,7 @@ class FocusSession(models.Model):
 
 
 class BehavioralSignal(models.Model):
-    """
-    One row per reporting window (e.g. 30s). Counts are deltas for that window only.
-    """
+    """Legacy client signal window (API removed; table retained for migrations)."""
 
     session = models.ForeignKey(
         FocusSession,

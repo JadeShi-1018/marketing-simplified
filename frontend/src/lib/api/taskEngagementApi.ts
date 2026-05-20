@@ -4,14 +4,13 @@ import type { TaskEngagementSummary } from '@/types/taskEngagement';
 /**
  * Server-side task engagement summary (Track-01 / Ray-approved metrics).
  *
- * Proposed endpoint — confirm path with syz before enabling live requests:
  *   GET /api/behavioral-tracking/tasks/{taskId}/engagement-summary/
  *
  * Response body: TaskEngagementSummary (owner-only; current user + task).
  */
 
-/** Set false once syz's summary API is available in dev. */
-export const TASK_ENGAGEMENT_SUMMARY_USE_MOCK = true;
+/** Live summary API (behavioral_tracking engagement-summary). */
+export const TASK_ENGAGEMENT_SUMMARY_USE_MOCK = false;
 
 export const TASK_ENGAGEMENT_SUMMARY_PATH =
   '/api/behavioral-tracking/tasks';
@@ -24,7 +23,7 @@ export function engagementSummaryUrl(taskId: number): string {
 export const MOCK_TASK_ENGAGEMENT_SUMMARY: TaskEngagementSummary = {
   visits: 12,
   estimated_active_ms: 3_900_000,
-  last_visited_at: '2026-05-17T14:30:00.000Z',
+  last_operated_at: '2026-05-17T14:30:00.000Z',
   write_operations_count: 8,
 };
 
