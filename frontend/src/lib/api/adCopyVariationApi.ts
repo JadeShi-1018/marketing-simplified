@@ -72,6 +72,7 @@ export interface ListAiVariationsParams {
   creative?: number;
   status?: AdCopyVariationStatus | AdCopyVariationStatus[] | string;
   source_mode?: AdCopyVariationSourceMode | '';
+  batch_id?: string;
   page?: number;
   page_size?: number;
 }
@@ -110,6 +111,17 @@ export async function listAiVariations(
     };
   }
   return { results: [], total: 0 };
+}
+
+export async function getLatestVariationBatch(projectId: number): Promise<{
+  batch_id: string | null;
+  count: number;
+  results: AdCopyVariation[];
+}> {
+  const { data } = await api.get(`${BASE}/latest_batch/`, {
+    params: { project_id: projectId },
+  });
+  return data;
 }
 
 export async function reviewVariationBatch(req: {

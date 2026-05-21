@@ -142,6 +142,52 @@ class AdCopyVariationCRUDTests(APITestCase):
         row = AdCopyVariation.objects.get(pk=resp.data['id'])
         self.assertEqual(row.created_by_id, self.user.id)
 
+    def test_create_requires_membership_in_project(self):
+        other_user = _make_user(username='outside_member', email='outside_member@example.com')
+        other_project = _make_project(other_user, name='Restricted Project')
+        url = reverse('ad-copy-variation-list')
+
+        resp = self.client.post(
+            url,
+            self._payload(project=other_project.id),
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN, resp.data)
+        self.assertEqual(AdCopyVariation.objects.count(), 0)
+
+    def test_create_rejects_null_project(self):
+        url = reverse('ad-copy-variation-list')
+
+        resp = self.client.post(
+            url,
+            self._payload(project=None),
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST, resp.data)
+        self.assertEqual(AdCopyVariation.objects.count(), 0)
+
+    def test_create_rejects_cross_project_creative(self):
+        other_user = _make_user(username='creative_other', email='creative_other@example.com')
+        other_project = _make_project(other_user, name='Creative Other Project')
+        other_creative = _make_creative(
+            other_user,
+            project=other_project,
+            meta_creative_id='cross-project-creative',
+        )
+        url = reverse('ad-copy-variation-list')
+
+        resp = self.client.post(
+            url,
+            self._payload(creative=other_creative.id),
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST, resp.data)
+        self.assertEqual(resp.data['error'], 'creative does not belong to project')
+        self.assertEqual(AdCopyVariation.objects.count(), 0)
+
     def test_filter_by_creative(self):
         other_user = _make_user(username='other', email='other@example.com')
         other_project = _make_project(other_user, name='Other Project')
@@ -163,6 +209,29 @@ class AdCopyVariationCRUDTests(APITestCase):
         results = body['results'] if isinstance(body, dict) and 'results' in body else body
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['creative'], self.creative.id)
+
+    def test_patch_rejects_project_change(self):
+        other_user = _make_user(username='patch_other', email='patch_other@example.com')
+        other_project = _make_project(other_user, name='Patch Other Project')
+        row = AdCopyVariation.objects.create(
+            project=self.project,
+            creative=self.creative,
+            source_mode='existing',
+            hook='before',
+            created_by=self.user,
+        )
+        url = reverse('ad-copy-variation-detail', args=[row.id])
+
+        resp = self.client.patch(
+            url,
+            {'project': other_project.id, 'hook': 'after'},
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST, resp.data)
+        row.refresh_from_db()
+        self.assertEqual(row.project_id, self.project.id)
+        self.assertEqual(row.hook, 'before')
 
 
 class AdCopyVariationDraftLifecycleTests(APITestCase):
@@ -213,6 +282,52 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self.assertEqual(resp.data['page'], 1)
         self.assertEqual(resp.data['page_size'], 1)
         self.assertEqual(resp.data['results'][0]['id'], wanted.id)
+
+    def test_list_filters_by_batch_id(self):
+        wanted_batch = uuid.uuid4()
+        other_batch = uuid.uuid4()
+        wanted = self._row(batch_id=wanted_batch, position=1)
+        self._row(batch_id=other_batch, position=2)
+
+        resp = self.client.get(reverse('ad-copy-variation-list'), {
+            'project_id': self.project.id,
+            'batch_id': str(wanted_batch),
+        })
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['count'], 1)
+        self.assertEqual(resp.data['results'][0]['id'], wanted.id)
+
+    def test_latest_batch_returns_most_recent_batch_for_project(self):
+        older_batch = uuid.uuid4()
+        latest_batch = uuid.uuid4()
+        other_project_batch = uuid.uuid4()
+        self._row(batch_id=older_batch, position=1)
+        latest_first = self._row(batch_id=latest_batch, position=1)
+        latest_second = self._row(batch_id=latest_batch, position=2)
+        self._row(batch_id=other_project_batch, project=self.other_project, creative=None, position=1)
+
+        resp = self.client.get(reverse('ad-copy-variation-latest-batch'), {
+            'project_id': self.project.id,
+        })
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['batch_id'], str(latest_batch))
+        self.assertEqual(resp.data['count'], 2)
+        self.assertEqual(
+            [row['id'] for row in resp.data['results']],
+            [latest_first.id, latest_second.id],
+        )
+
+    def test_latest_batch_returns_empty_when_project_has_no_batches(self):
+        resp = self.client.get(reverse('ad-copy-variation-latest-batch'), {
+            'project_id': self.project.id,
+        })
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertIsNone(resp.data['batch_id'])
+        self.assertEqual(resp.data['count'], 0)
+        self.assertEqual(resp.data['results'], [])
 
     def test_review_batch_reviews_selected_and_leaves_unselected_current_batch_drafts(self):
         batch_id = uuid.uuid4()

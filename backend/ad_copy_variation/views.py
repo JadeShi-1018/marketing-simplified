@@ -90,14 +90,42 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
         if status_param:
             statuses = [value.strip() for value in status_param.split(',') if value.strip()]
             qs = qs.filter(status__in=statuses)
+        batch_id = self.request.query_params.get('batch_id')
+        if batch_id:
+            qs = qs.filter(batch_id=batch_id)
         source_mode = self.request.query_params.get('source_mode')
         if source_mode:
             qs = qs.filter(source_mode=source_mode)
         qs = qs.order_by('-created_at', '-id')
         return qs
 
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+    def create(self, request, *args, **kwargs):
+        project, project_error = self._require_project(request.data.get('project'))
+        if project_error:
+            return project_error
+        creative_id = request.data.get('creative')
+        if creative_id:
+            creative = get_object_or_404(MetaAdCreative, pk=creative_id)
+            creative_project_id = getattr(creative.ad_account, 'project_id', None)
+            if creative_project_id and creative_project_id != project.id:
+                return Response(
+                    {'error': 'creative does not belong to project'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(project=project, created_by=request.user)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def update(self, request, *args, **kwargs):
+        if 'project' in request.data:
+            return Response(
+                {'error': 'project cannot be modified'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().update(request, *args, **kwargs)
 
     @action(detail=False, methods=['post'], url_path='generate')
     def generate(self, request):
@@ -212,6 +240,43 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
         if batch['count_succeeded'] == 0:
             return Response(batch, status=status.HTTP_502_BAD_GATEWAY)
         return Response(batch, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='latest_batch')
+    def latest_batch(self, request):
+        project, project_error = self._require_project(request.query_params.get('project_id'))
+        if project_error:
+            return project_error
+
+        latest = (
+            AdCopyVariation.objects
+            .filter(project=project, batch_id__isnull=False)
+            .order_by('-created_at', '-id')
+            .first()
+        )
+        if not latest:
+            return Response(
+                {'batch_id': None, 'count': 0, 'results': []},
+                status=status.HTTP_200_OK,
+            )
+
+        rows = (
+            AdCopyVariation.objects
+            .filter(project=project, batch_id=latest.batch_id)
+            .order_by('batch_position', 'id')
+        )
+        data = AdCopyVariationSerializer(
+            rows,
+            many=True,
+            context=self.get_serializer_context(),
+        ).data
+        return Response(
+            {
+                'batch_id': str(latest.batch_id),
+                'count': len(data),
+                'results': data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     def _persist_batch(self, *, batch, project, source_mode, creative, source_ref, instruction):
         rows = []

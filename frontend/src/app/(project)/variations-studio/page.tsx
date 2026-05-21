@@ -11,6 +11,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   generateVariation,
+  getLatestVariationBatch,
   listAiVariations,
   reviewVariationBatch,
   updateVariation,
@@ -930,6 +931,8 @@ function AiDraftsTab({
   const [creativeFilter, setCreativeFilter] = useState<string>(
     initialCreativeId && Number.isFinite(initialCreativeId) ? String(initialCreativeId) : ""
   );
+  const [batchFilter, setBatchFilter] = useState<string>("");
+  const [loadingLatestBatch, setLoadingLatestBatch] = useState<boolean>(false);
   const [page, setPage] = useState<number>(1);
   const [total, setTotal] = useState<number>(0);
   const pageSize = 20;
@@ -945,6 +948,7 @@ function AiDraftsTab({
       status: statusParamForFilter(statusFilter),
       source_mode: sourceFilter === "all" ? "" : sourceFilter,
       creative: creativeIdFilter !== null && Number.isFinite(creativeIdFilter) ? creativeIdFilter : undefined,
+      batch_id: batchFilter || undefined,
       page,
       page_size: pageSize,
     })
@@ -963,9 +967,27 @@ function AiDraftsTab({
     return () => {
       active = false;
     };
-  }, [projectId, statusFilter, sourceFilter, creativeIdFilter, page]);
+  }, [projectId, statusFilter, sourceFilter, creativeIdFilter, batchFilter, page]);
 
   const resetToFirstPage = () => setPage(1);
+
+  const handleLatestBatch = async () => {
+    if (!projectId) return;
+    setLoadingLatestBatch(true);
+    try {
+      const res = await getLatestVariationBatch(projectId);
+      if (!res.batch_id) {
+        toast("No generated batches yet.");
+        return;
+      }
+      setBatchFilter(res.batch_id);
+      setPage(1);
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Failed to load latest batch."));
+    } finally {
+      setLoadingLatestBatch(false);
+    }
+  };
 
   if (!projectId) {
     return (
@@ -985,6 +1007,15 @@ function AiDraftsTab({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleLatestBatch}
+            disabled={loading || loadingLatestBatch}
+            className="inline-flex h-8 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 text-[12px] font-medium text-gray-700 transition hover:border-[#3CCED7] hover:text-[#1a9ba3] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loadingLatestBatch && <Loader2 className="h-3 w-3 animate-spin" />}
+            Latest batch
+          </button>
           <select
             value={statusFilter}
             onChange={(e) => {
@@ -1023,6 +1054,25 @@ function AiDraftsTab({
           />
         </div>
       </div>
+
+      {batchFilter && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-5 py-2">
+          <div className="min-w-0 text-[12px] text-gray-500">
+            Batch filter:{" "}
+            <span className="font-mono text-gray-700">{batchFilter}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setBatchFilter("");
+              setPage(1);
+            }}
+            className="rounded-md px-2 py-1 text-[12px] font-medium text-gray-600 transition hover:bg-white hover:text-gray-900"
+          >
+            Clear batch
+          </button>
+        </div>
+      )}
 
       <div className="divide-y divide-gray-100">
         {loading ? (

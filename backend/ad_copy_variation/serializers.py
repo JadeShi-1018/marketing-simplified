@@ -13,4 +13,4 @@ class AdCopyVariationSerializer(serializers.ModelSerializer):
             'batch_id', 'batch_position', 'status',
             'created_by', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'project', 'created_by', 'created_at', 'updated_at']
