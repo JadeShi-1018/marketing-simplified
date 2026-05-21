@@ -16,7 +16,6 @@ import {
   TaskIntelligencePayload,
   WorkCycleHistoryPayload,
   MyActionsPayload,
-  TaskAISummaryPayload,
 } from "@/types/task";
 
 export const TaskAPI = {
@@ -264,16 +263,6 @@ export const TaskAPI = {
   }): Promise<MyActionsPayload> => {
     const response = await api.get('/api/tasks/my-actions/', { params });
     return response.data as MyActionsPayload;
-  },
-
-  getAISummary: async (taskId: number): Promise<TaskAISummaryPayload> => {
-    const response = await api.post(`/api/tasks/${taskId}/ai-summary/`, {}, { timeout: 60000 });
-    return response.data as TaskAISummaryPayload;
-  },
-
-  askAIQuestion: async (taskId: number, question: string): Promise<string> => {
-    const response = await api.post(`/api/tasks/${taskId}/ai-qa/`, { question }, { timeout: 60000 });
-    return (response.data as { answer: string }).answer;
   },
 
   getStatusReport: (params: {

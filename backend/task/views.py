@@ -680,9 +680,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 'Only the task owner, current approver, or unassigned draft creator can edit this task.'
             )
 
-        instance = serializer.save()
-        from task.ai_summary import invalidate_task_ai_cache
-        invalidate_task_ai_cache(instance.id)
+        serializer.save()
 
     def pin(self, request, pk=None):
         """Pin a task for the current user."""
@@ -699,29 +697,6 @@ class TaskViewSet(viewsets.ModelViewSet):
         task._is_pinned = False
         serializer = self.get_serializer(task, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
-
-    @action(detail=True, methods=['post'], url_path='ai-summary')
-    def ai_summary(self, request, pk=None):
-        from task.ai_summary import generate_ai_summary
-        task = self.get_object()
-        try:
-            result = generate_ai_summary(task)
-            return Response(result)
-        except Exception as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-
-    @action(detail=True, methods=['post'], url_path='ai-qa')
-    def ai_qa(self, request, pk=None):
-        from task.ai_summary import answer_task_question
-        task = self.get_object()
-        question = (request.data.get('question') or '').strip()
-        if not question:
-            return Response({'detail': 'question is required'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            answer = answer_task_question(task, question)
-            return Response({'answer': answer})
-        except Exception as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
     @action(detail=True, methods=['get'], url_path='field-history')
     def field_history(self, request, pk=None):
@@ -942,9 +917,6 @@ class TaskViewSet(viewsets.ModelViewSet):
                 task.approval_records.latest('step_number')
             )
             task_serializer = TaskSerializer(task, context={'request': request})
-
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response({
                 'approval_record': approval_serializer.data,
                 'task': task_serializer.data
@@ -1003,8 +975,6 @@ class TaskViewSet(viewsets.ModelViewSet):
             
             # Return task
             task_serializer = TaskSerializer(task, context={'request': request})
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response({
                 'task': task_serializer.data,
                 'approval_record': None
@@ -1095,8 +1065,6 @@ class TaskViewSet(viewsets.ModelViewSet):
             
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
@@ -1142,8 +1110,6 @@ class TaskViewSet(viewsets.ModelViewSet):
             
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
@@ -1194,8 +1160,6 @@ class TaskViewSet(viewsets.ModelViewSet):
                     logger.error('Budget sync failed on task %s submit: %s', task.id, e, exc_info=True)
 
             task_serializer = TaskSerializer(task, context={'request': request})
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response({'task': task_serializer.data}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
@@ -1243,8 +1207,6 @@ class TaskViewSet(viewsets.ModelViewSet):
 
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
@@ -1319,8 +1281,6 @@ class TaskViewSet(viewsets.ModelViewSet):
 
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
@@ -1355,9 +1315,6 @@ class TaskViewSet(viewsets.ModelViewSet):
                         BudgetRequest.objects.filter(pk=br.pk).update(status=BudgetRequestStatus.APPROVED)
                 except Exception as e:
                     logger.error('Budget sync failed on task %s unlock: %s', task.id, e, exc_info=True)
-
-            from task.ai_summary import invalidate_task_ai_cache
-            invalidate_task_ai_cache(task.id)
             return Response(
                 {'task': TaskSerializer(task).data},
                 status=status.HTTP_200_OK
@@ -1607,8 +1564,6 @@ class TaskCommentListView(generics.ListCreateAPIView):
             raise PermissionDenied('You do not have access to comment on this task.')
 
         serializer.save(task=task, user=self.request.user)
-        from task.ai_summary import invalidate_task_ai_cache
-        invalidate_task_ai_cache(task.id)
 
 
 class TaskAttachmentListView(generics.ListCreateAPIView):
@@ -1638,8 +1593,6 @@ class TaskAttachmentListView(generics.ListCreateAPIView):
 
         set_current_user(self.request.user)
         serializer.save(task=task, uploaded_by=self.request.user)
-        from task.ai_summary import invalidate_task_ai_cache
-        invalidate_task_ai_cache(task.id)
 
 
 class TaskAttachmentDetailView(generics.RetrieveDestroyAPIView):
@@ -1662,8 +1615,6 @@ class TaskAttachmentDetailView(generics.RetrieveDestroyAPIView):
         task_id = instance.task_id
         set_current_user(self.request.user)
         instance.delete()
-        from task.ai_summary import invalidate_task_ai_cache
-        invalidate_task_ai_cache(task_id)
 
     def get_object(self):
         # Use get_queryset() to ensure permission checks are applied

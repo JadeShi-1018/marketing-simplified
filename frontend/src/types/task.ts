@@ -371,25 +371,6 @@ export interface WorkCycleHistoryPayload {
   };
 }
 
-// ── AI Summary ───────────────────────────────────────────────────────────────
-
-export interface TaskAISummaryAttachment {
-  name: string;
-  type: string;
-  truncated: boolean;
-  readable: boolean;
-}
-
-export interface TaskAISummaryPayload {
-  key_decisions: string[];
-  blockers: string[];
-  escalations: string[];
-  action_items: string[];
-  status_changes: string[];
-  unresolved_questions: string[];
-  _attachments?: TaskAISummaryAttachment[];
-}
-
 // ── My Actions ───────────────────────────────────────────────────────────────
 
 export interface MyActionsTaskStub {

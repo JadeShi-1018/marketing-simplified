@@ -19,7 +19,6 @@ import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
 import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
 import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
-import TaskAISummaryBlock from '@/components/tasks/detail/TaskAISummaryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 
 interface TaskDrawerProps {
@@ -44,7 +43,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
   const [attachmentPreviewOpen, setAttachmentPreviewOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState<'details' | 'history' | 'ai'>('details');
+  const [activeTab, setActiveTab] = useState<'details' | 'history'>('details');
 
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -258,7 +257,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
 
         {/* Tab bar */}
         <div className="sticky top-[53px] z-10 flex border-b border-gray-100 bg-white px-4">
-          {(['details', 'history', 'ai'] as const).map((tab) => (
+          {(['details', 'history'] as const).map((tab) => (
             <button
               key={tab}
               type="button"
@@ -270,7 +269,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                   : 'text-gray-400 hover:text-gray-600'
               }`}
             >
-              {tab === 'ai' ? 'AI Summary' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </div>
@@ -356,11 +355,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                 />
               )}
 
-              {task?.id && (
-                <div className={activeTab === 'ai' ? 'p-4' : 'hidden'}>
-                  <TaskAISummaryBlock taskId={task.id} updatedAt={task.updated_at} />
-                </div>
-              )}
             </>
           )}
         </div>
