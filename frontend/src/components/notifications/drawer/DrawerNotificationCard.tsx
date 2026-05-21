@@ -208,17 +208,34 @@ function MinutesPublishedSection() {
 }
 
 /** meeting_participant_removed */
-function MeetingRemovedSection({ metadata }: { metadata: Record<string, unknown> }) {
-  const meetingTitle = (metadata?.meeting_title as string) || "";
+function MeetingRemovedSection({ notification }: { notification: NotificationItem }) {
+  const meetingTitle = notification.metadata?.meeting_title as string | undefined;
+  const actorName = notification.actor_name || null;
+  const actorAvatar = notification.actor_avatar || null;
+
   return (
     <div className="flex items-start gap-2">
-      <UserMinus className="w-4 h-4 text-gray-500 mt-0.5 shrink-0" />
-      <div>
-        <p className="text-sm font-semibold text-gray-800">Removed from meeting</p>
-        {meetingTitle && (
-          <p className="text-sm text-gray-600 mt-0.5">{meetingTitle}</p>
+      <UserMinus className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+      <p className="text-sm text-gray-700 leading-relaxed">
+        {actorName ? (
+          <span className="inline-flex items-center gap-1 align-middle mr-1">
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-[10px] font-semibold text-white overflow-hidden">
+              {actorAvatar ? (
+                <img src={actorAvatar} alt={actorName} className="w-full h-full object-cover" />
+              ) : (
+                actorName.charAt(0).toUpperCase()
+              )}
+            </span>
+            <span className="font-semibold text-gray-900">{actorName}</span>
+          </span>
+        ) : null}
+        removed you from{" "}
+        {meetingTitle ? (
+          <span className="font-semibold text-gray-900">{meetingTitle}</span>
+        ) : (
+          "this meeting"
         )}
-      </div>
+      </p>
     </div>
   );
 }
@@ -494,7 +511,7 @@ export default function DrawerNotificationCard({
       case "meeting_created":
         return <MeetingCreatedSection metadata={meta} />;
       case "meeting_participant_removed":
-        return <MeetingRemovedSection metadata={meta} />;
+        return <MeetingRemovedSection notification={notification} />;
       case "meeting_starting_soon":
         return <MeetingStartingSoonSection metadata={meta} />;
       case "meeting_minutes_published":

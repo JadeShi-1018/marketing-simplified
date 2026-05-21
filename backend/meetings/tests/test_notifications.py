@@ -795,6 +795,46 @@ class AgendaItemCreateDeleteNotificationTests(TestCase):
         ).first()
         self.assertIsNone(self_notif, "Actor must not receive a notification for their own creation")
 
+    @patch(_PUBLISH_PATH)
+    def test_pending_participant_does_not_receive_agenda_update_notification(self, mock_publish):
+        """Invitees who have not accepted must not receive meeting update notifications."""
+        from notifications.models import Notification
+
+        pending_user = CustomUser.objects.create_user(
+            email="pending@example.com", password="pass12345", username="pending_user"
+        )
+        ProjectMember.objects.create(user=pending_user, project=self.project, is_active=True)
+        ParticipantLink.objects.create(
+            meeting=self.meeting,
+            user=pending_user,
+            is_accepted=False,
+        )
+
+        item = self.meeting.agenda_items.create(content="Initial", order_index=99)
+        patch_url = f"{self.items_url}{item.id}/"
+        r = self.client.patch(patch_url, {"content": "Changed by organiser"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+        pending_notif = Notification.objects.filter(
+            recipient=pending_user,
+            event_type=NotificationEventType.MEETING_UPDATED,
+            related_object_id=str(self.meeting.id),
+        ).exists()
+        self.assertFalse(
+            pending_notif,
+            "Pending (not accepted) participants must not receive meeting update notifications",
+        )
+
+        accepted_notif = Notification.objects.filter(
+            recipient=self.watcher,
+            event_type=NotificationEventType.MEETING_UPDATED,
+            related_object_id=str(self.meeting.id),
+        ).exists()
+        self.assertTrue(
+            accepted_notif,
+            "Accepted participants should still receive meeting update notifications",
+        )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Meeting document (collaborative notes) SSE integration tests

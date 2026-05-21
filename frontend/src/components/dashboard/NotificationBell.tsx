@@ -70,7 +70,7 @@ function getSVODescription(item: NotificationItem): React.ReactNode {
     case 'meeting_participant_added':
       return <>{actorChip} added you to the meeting.</>;
     case 'meeting_participant_removed':
-      return <>{actorChip} removed you from the meeting.</>;
+      return <>{actorChip} removed you from this meeting.</>;
     case 'meeting_agenda_changed':
       return <>{actorChip} updated the meeting agenda.</>;
     case 'project_invite':

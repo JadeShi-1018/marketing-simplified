@@ -71,7 +71,7 @@ function getActivityDescription(
     case "meeting_participant_added":
       return <>You were added as a participant to this meeting.</>;
     case "meeting_participant_removed":
-      return <>You were removed from this meeting.</>;
+      return <>{actor} removed you from this meeting.</>;
     case "meeting_starting_soon":
       return <>This meeting is starting soon. Be ready to join!</>;
     case "meeting_agenda_changed":

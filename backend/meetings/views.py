@@ -284,7 +284,9 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
         # Meeting minutes published notification
         if becoming_published:
-            participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+            participant_ids = list(
+                meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
+            )
             for uid in participant_ids:
                 if uid == self.request.user.id:
                     continue
@@ -602,7 +604,9 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
         # Upsert notifications for each participant (2-second dedup window prevents
         # duplicate records when the user makes several rapid edits to the same item).
         actor_id = self.request.user.id
-        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        participant_ids = list(
+            meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
+        )
         recipients = [uid for uid in participant_ids if uid != actor_id]
         logger.info(
             "AgendaItem UPDATE: meeting=%s item=%s actor=%s participants=%s recipients=%s",
@@ -628,7 +632,9 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
         # Notify participants about the deleted agenda item (dedup-aware, keyed per item).
         actor_id = self.request.user.id
         item_pk = instance.pk  # capture before instance is deleted
-        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        participant_ids = list(
+            meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
+        )
         recipients = [uid for uid in participant_ids if uid != actor_id]
         logger.info(
             "AgendaItem DELETE: meeting=%s item=%s actor=%s participants=%s recipients=%s",
@@ -800,7 +806,9 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
         artifact_title = self._resolve_artifact_title(artifact_type, artifact_id)
         type_label = artifact_type.capitalize()
 
-        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        participant_ids = list(
+            meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
+        )
         for uid in participant_ids:
             if uid == self.request.user.id:
                 continue
@@ -832,7 +840,9 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
 
         instance.delete()
 
-        participant_ids = list(meeting.participant_links.values_list("user_id", flat=True))
+        participant_ids = list(
+            meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
+        )
         for uid in participant_ids:
             if uid == self.request.user.id:
                 continue
