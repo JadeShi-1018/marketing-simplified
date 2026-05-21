@@ -42,6 +42,7 @@ urlpatterns = [
     path('budgets/', include('budget_approval.urls')),
     path('api/budgets/', include('budget_approval.urls')),  # Add API prefix for frontend compatibility
     path('api/retrospective/', include('retrospective.urls')),
+    path('api/behavioral-tracking/', include('behavioral_tracking.urls')),
     path('api/core/', include('core.urls')),
     path('api/alerting/', include('alerting.urls')),
     path('api/report/', include('report.urls')),
