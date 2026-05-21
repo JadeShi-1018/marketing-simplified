@@ -21,6 +21,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import LinearImportModal from '@/components/linear/LinearImportModal';
 
 const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt', 'insights', 'my-actions', 'planning', 'status-reports'];
+const SLIM_SCROLLBAR_TABS = new Set<TasksTab>(['insights', 'my-actions', 'planning', 'status-reports']);
 
 export default function TasksV2Page() {
   const router = useRouter();
@@ -109,7 +110,11 @@ export default function TasksV2Page() {
 
   return (
     <ProtectedRoute renderChildrenWhileLoading>
-      <DashboardLayout alerts={[]} upcomingMeetings={[]}>
+      <DashboardLayout
+        alerts={[]}
+        upcomingMeetings={[]}
+        mainClassName={SLIM_SCROLLBAR_TABS.has(tab) ? 'task-tab-scrollbar' : ''}
+      >
         <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <header className="mb-5 flex items-end justify-between gap-4">
             <div className="min-w-0">
