@@ -928,6 +928,9 @@ function AiDraftsTab({
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkAction, setBulkAction] = useState<"review" | "delete-draft" | "delete-reviewed" | null>(null);
   const [refreshKey, setRefreshKey] = useState<number>(0);
+  const [editingRowId, setEditingRowId] = useState<number | null>(null);
+  const [editingDraft, setEditingDraft] = useState<AdCopyVariationCopy>(EMPTY_COPY);
+  const [savingEditId, setSavingEditId] = useState<number | null>(null);
   const [page, setPage] = useState<number>(1);
   const [total, setTotal] = useState<number>(0);
   const pageSize = 10;
@@ -999,6 +1002,32 @@ function AiDraftsTab({
       }
       return next;
     });
+  };
+
+  const startRowEdit = (row: AdCopyVariation) => {
+    setEditingRowId(row.id);
+    setEditingDraft(copyFromVariation(row));
+  };
+
+  const cancelRowEdit = () => {
+    setEditingRowId(null);
+    setEditingDraft(EMPTY_COPY);
+  };
+
+  const saveRowEdit = async () => {
+    if (!editingRowId) return;
+    setSavingEditId(editingRowId);
+    try {
+      const updated = await updateVariation(editingRowId, editingDraft);
+      setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+      setEditingRowId(null);
+      setEditingDraft(EMPTY_COPY);
+      toast.success("Draft updated");
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Failed to update draft."));
+    } finally {
+      setSavingEditId(null);
+    }
   };
 
   const handleBulkReviewDrafts = async () => {
@@ -1203,77 +1232,147 @@ function AiDraftsTab({
             No AI drafts match these filters.
           </div>
         ) : (
-          rows.map((row) => (
-            <article key={row.id} className="p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(row.id)}
-                    onChange={() => toggleRowSelection(row.id)}
-                    className="mt-1 h-4 w-4 rounded border-gray-300 text-[#1a9ba3] focus:ring-[#3CCED7]"
-                    aria-label={`Select draft ${row.id}`}
-                  />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <VariationStatusPill status={row.status} />
-                      <span className="text-[12px] text-gray-500">
-                        {sourceModeLabel(row.source_mode)}
-                      </span>
-                      <span className="text-[12px] text-gray-300">Draft #{row.id}</span>
-                      <span className="text-[12px] text-gray-300">
-                        {relativeTime(row.created_at)}
-                      </span>
+          rows.map((row) => {
+            const isEditing = editingRowId === row.id;
+            const savingThisRow = savingEditId === row.id;
+            return (
+              <article key={row.id} className="p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(row.id)}
+                      onChange={() => toggleRowSelection(row.id)}
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-[#1a9ba3] focus:ring-[#3CCED7]"
+                      aria-label={`Select draft ${row.id}`}
+                    />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <VariationStatusPill status={row.status} />
+                        <span className="text-[12px] text-gray-500">
+                          {sourceModeLabel(row.source_mode)}
+                        </span>
+                        <span className="text-[12px] text-gray-300">Draft #{row.id}</span>
+                        <span className="text-[12px] text-gray-300">
+                          {relativeTime(row.created_at)}
+                        </span>
+                      </div>
+                      {!isEditing && (
+                        <>
+                          <h3 className="mt-2 text-[15px] font-semibold text-gray-900">
+                            {row.headline || row.hook || "Untitled variation"}
+                          </h3>
+                          <p className="mt-1 max-w-3xl whitespace-pre-wrap text-[13px] leading-5 text-gray-600">
+                            {row.description || "No description"}
+                          </p>
+                        </>
+                      )}
                     </div>
-                    <h3 className="mt-2 text-[15px] font-semibold text-gray-900">
-                      {row.headline || row.hook || "Untitled variation"}
-                    </h3>
-                    <p className="mt-1 max-w-3xl whitespace-pre-wrap text-[13px] leading-5 text-gray-600">
-                      {row.description || "No description"}
-                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {!isEditing ? (
+                      <button
+                        type="button"
+                        onClick={() => startRowEdit(row)}
+                        aria-label={`Edit draft ${row.id}`}
+                        title="Edit"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 ring-1 ring-gray-200 transition hover:text-gray-900 hover:ring-gray-300"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={cancelRowEdit}
+                          disabled={savingThisRow}
+                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-600 transition hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={saveRowEdit}
+                          disabled={savingThisRow}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-br from-[#3CCED7] to-[#A6E661] px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {savingThisRow && <Loader2 className="h-3 w-3 animate-spin" />}
+                          {savingThisRow ? "Saving…" : "Update"}
+                        </button>
+                      </>
+                    )}
+                    {row.creative ? (
+                      <>
+                        <Link
+                          href={`/meta-ads/creatives/${row.creative}`}
+                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7]"
+                        >
+                          Creative detail
+                        </Link>
+                        <Link
+                          href={`/meta-ads/creatives/${row.creative}/variations`}
+                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7]"
+                        >
+                          Saved variations
+                        </Link>
+                      </>
+                    ) : (
+                      <span className="rounded-lg bg-gray-100 px-3 py-1.5 text-[12px] text-gray-500">
+                        Project-scoped
+                      </span>
+                    )}
                   </div>
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {row.creative ? (
-                    <>
-                      <Link
-                        href={`/meta-ads/creatives/${row.creative}`}
-                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7]"
-                      >
-                        Creative detail
-                      </Link>
-                      <Link
-                        href={`/meta-ads/creatives/${row.creative}/variations`}
-                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7]"
-                      >
-                        Saved variations
-                      </Link>
-                    </>
-                  ) : (
-                    <span className="rounded-lg bg-gray-100 px-3 py-1.5 text-[12px] text-gray-500">
-                      Project-scoped
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="mt-3 grid gap-3 text-[12px] text-gray-500 md:grid-cols-2">
-                <div>
-                  <span className="font-medium text-gray-700">Hook:</span>{" "}
-                  {row.hook || "—"}
-                </div>
-                <div>
-                  <span className="font-medium text-gray-700">CTA:</span>{" "}
-                  {row.cta || "—"}
-                </div>
-                {row.source_ref && (
-                  <div className="md:col-span-2">
-                    <span className="font-medium text-gray-700">Source:</span>{" "}
-                    <span className="break-all">{row.source_ref}</span>
+                {isEditing ? (
+                  <div className="mt-4 space-y-3 rounded-lg border border-gray-100 bg-gray-50/60 p-4">
+                    <CardField
+                      label="Hook"
+                      editing
+                      value={editingDraft.hook}
+                      onChange={(v) => setEditingDraft((prev) => ({ ...prev, hook: v }))}
+                      rows={2}
+                    />
+                    <CardField
+                      label="Headline"
+                      editing
+                      value={editingDraft.headline}
+                      onChange={(v) => setEditingDraft((prev) => ({ ...prev, headline: v }))}
+                      rows={2}
+                    />
+                    <CardField
+                      label="Description"
+                      editing
+                      value={editingDraft.description}
+                      onChange={(v) => setEditingDraft((prev) => ({ ...prev, description: v }))}
+                      rows={3}
+                    />
+                    <CtaCardField
+                      editing
+                      value={editingDraft.cta}
+                      onChange={(v) => setEditingDraft((prev) => ({ ...prev, cta: v }))}
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-3 grid gap-3 text-[12px] text-gray-500 md:grid-cols-2">
+                    <div>
+                      <span className="font-medium text-gray-700">Hook:</span>{" "}
+                      {row.hook || "—"}
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">CTA:</span>{" "}
+                      {row.cta || "—"}
+                    </div>
+                    {row.source_ref && (
+                      <div className="md:col-span-2">
+                        <span className="font-medium text-gray-700">Source:</span>{" "}
+                        <span className="break-all">{row.source_ref}</span>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            </article>
-          ))
+              </article>
+            );
+          })
         )}
       </div>
 
