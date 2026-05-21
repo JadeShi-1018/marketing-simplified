@@ -218,7 +218,7 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
                 }
             except ValueError as exc:
                 return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-            except Exception:
+            except Exception as exc:
                 batch = {
                     'batch_id': batch_id,
                     'count_requested': 1,
@@ -227,14 +227,21 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
                     'results': [],
                     'failed_indices': [0],
                 }
+                if services.is_ai_quota_error(exc):
+                    batch['error'] = services.AI_QUOTA_MESSAGE
         else:
             try:
                 batch = services.generate_batch(source_mode, count, source_kwargs, instruction)
             except ValueError as exc:
                 return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
             except Exception as exc:
+                message = (
+                    services.AI_QUOTA_MESSAGE
+                    if services.is_ai_quota_error(exc)
+                    else f'Batch generation failed: {exc}'
+                )
                 return Response(
-                    {'error': f'Batch generation failed: {exc}'},
+                    {'error': message},
                     status=status.HTTP_502_BAD_GATEWAY,
                 )
 

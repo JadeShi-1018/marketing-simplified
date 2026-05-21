@@ -148,6 +148,7 @@ function VariationsStudioContent() {
     requested: number;
     succeeded: number;
     failed: number;
+    error?: string;
   } | null>(null);
   const [cards, setCards] = useState<CardState[]>([]);
   const [activeBatchId, setActiveBatchId] = useState<string>("");
@@ -247,7 +248,11 @@ function VariationsStudioContent() {
         requested: res.count_requested,
         succeeded: res.count_succeeded,
         failed: res.count_failed,
+        error: res.error,
       });
+      if (res.error) {
+        toast.error(res.error);
+      }
       setActiveBatchId(res.batch_id);
       const newCards: CardState[] = res.results.map(cardFromVariation);
       setCards((prev) =>
@@ -605,7 +610,13 @@ function VariationsStudioContent() {
           </section>
         )}
 
-        {lastBatchSummary && lastBatchSummary.failed > 0 && (
+        {lastBatchSummary?.error && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
+            {lastBatchSummary.error}
+          </div>
+        )}
+
+        {lastBatchSummary && lastBatchSummary.failed > 0 && !lastBatchSummary.error && (
           <div className="rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-[13px] text-yellow-800">
             {lastBatchSummary.succeeded} of {lastBatchSummary.requested}
             {" succeeded. "}
@@ -878,11 +889,10 @@ function CtaCardField({ editing, value, onChange }: CtaCardFieldProps) {
   );
 }
 
-type DraftStatusFilter = "active" | "all" | AdCopyVariationStatus;
+type DraftStatusFilter = "all" | AdCopyVariationStatus;
 
 function statusParamForFilter(filter: DraftStatusFilter): string | undefined {
   if (filter === "all") return undefined;
-  if (filter === "active") return "draft,reviewed";
   return filter;
 }
 
@@ -918,7 +928,7 @@ function AiDraftsTab({
 }) {
   const [rows, setRows] = useState<AdCopyVariation[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
-  const [statusFilter, setStatusFilter] = useState<DraftStatusFilter>("active");
+  const [statusFilter, setStatusFilter] = useState<DraftStatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<AdCopyVariationSourceMode | "all">("all");
   const [creativeFilter, setCreativeFilter] = useState<string>(
     initialCreativeId && Number.isFinite(initialCreativeId) ? String(initialCreativeId) : ""
@@ -1002,6 +1012,12 @@ function AiDraftsTab({
       }
       return next;
     });
+  };
+
+  const applyCreativeFilter = (creativeId: number) => {
+    setSourceFilter("existing");
+    setCreativeFilter(String(creativeId));
+    setPage(1);
   };
 
   const startRowEdit = (row: AdCopyVariation) => {
@@ -1122,10 +1138,9 @@ function AiDraftsTab({
             }}
             className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-[12px] text-gray-700 outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
           >
-            <option value="active">Draft + reviewed</option>
+            <option value="all">All statuses</option>
             <option value="draft">Draft</option>
             <option value="reviewed">Reviewed</option>
-            <option value="all">All statuses</option>
           </select>
           <select
             value={sourceFilter}
@@ -1235,6 +1250,7 @@ function AiDraftsTab({
           rows.map((row) => {
             const isEditing = editingRowId === row.id;
             const savingThisRow = savingEditId === row.id;
+            const creativeId = row.creative;
             return (
               <article key={row.id} className="p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1253,6 +1269,17 @@ function AiDraftsTab({
                           {sourceModeLabel(row.source_mode)}
                         </span>
                         <span className="text-[12px] text-gray-300">Draft #{row.id}</span>
+                        {creativeId !== null && (
+                          <button
+                            type="button"
+                            onClick={() => applyCreativeFilter(creativeId)}
+                            className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-700 transition hover:bg-[#3CCED7]/10 hover:text-[#1a9ba3]"
+                            aria-label={`Filter drafts by creative ${creativeId}`}
+                            title="Filter AI drafts by this Creative ID"
+                          >
+                            Creative ID {creativeId}
+                          </button>
+                        )}
                         <span className="text-[12px] text-gray-300">
                           {relativeTime(row.created_at)}
                         </span>
@@ -1301,21 +1328,13 @@ function AiDraftsTab({
                         </button>
                       </>
                     )}
-                    {row.creative ? (
-                      <>
-                        <Link
-                          href={`/meta-ads/creatives/${row.creative}`}
-                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7]"
-                        >
-                          Creative detail
-                        </Link>
-                        <Link
-                          href={`/meta-ads/creatives/${row.creative}/variations`}
-                          className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7]"
-                        >
-                          Saved variations
-                        </Link>
-                      </>
+                    {creativeId !== null ? (
+                      <Link
+                        href={`/meta-ads/creatives/${creativeId}`}
+                        className="rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-700 ring-1 ring-gray-200 transition hover:text-[#1a9ba3] hover:ring-[#3CCED7]"
+                      >
+                        Creative detail
+                      </Link>
                     ) : (
                       <span className="rounded-lg bg-gray-100 px-3 py-1.5 text-[12px] text-gray-500">
                         Project-scoped

@@ -1,3 +1,4 @@
+import axios from 'axios';
 import api from '@/lib/api';
 import type {
   AdCopyVariation,
@@ -11,22 +12,49 @@ import type {
 
 const BASE = '/api/ad_copy_variation/variations';
 
+function parseBatchGenerateResponse(data: unknown): BatchGenerateResponse | null {
+  if (!data || typeof data !== 'object') return null;
+  const candidate = data as {
+    batch_id?: unknown;
+    count_requested?: unknown;
+    count_succeeded?: unknown;
+    count_failed?: unknown;
+    results?: unknown;
+    failed_indices?: unknown;
+    error?: unknown;
+  };
+  if (typeof candidate.batch_id !== 'string') return null;
+  if (typeof candidate.count_requested !== 'number') return null;
+  if (typeof candidate.count_succeeded !== 'number') return null;
+  if (typeof candidate.count_failed !== 'number') return null;
+  if (!Array.isArray(candidate.results)) return null;
+  if (!Array.isArray(candidate.failed_indices)) return null;
+  if (
+    !candidate.results.every((row) => {
+      if (typeof row !== 'object' || row === null) return false;
+      const draft = row as { id?: unknown; status?: unknown };
+      return typeof draft.id === 'number' && typeof draft.status === 'string';
+    })
+  ) {
+    return null;
+  }
+  return data as BatchGenerateResponse;
+}
+
 export async function generateVariation(
   req: GenerateVariationRequest
 ): Promise<BatchGenerateResponse> {
   const body = { ...req, count: req.count ?? 1 };
-  const { data } = await api.post(`${BASE}/generate/`, body);
-  const results = (data as { results?: unknown }).results;
-  if (
-    data &&
-    Array.isArray(results) &&
-    results.every((row) => {
-      if (typeof row !== 'object' || row === null) return false;
-      const candidate = row as { id?: unknown; status?: unknown };
-      return typeof candidate.id === 'number' && typeof candidate.status === 'string';
-    })
-  ) {
-    return data as BatchGenerateResponse;
+  try {
+    const { data } = await api.post(`${BASE}/generate/`, body);
+    const parsed = parseBatchGenerateResponse(data);
+    if (parsed) return parsed;
+  } catch (err) {
+    if (axios.isAxiosError(err)) {
+      const parsed = parseBatchGenerateResponse(err.response?.data);
+      if (parsed) return parsed;
+    }
+    throw err;
   }
   throw new Error(
     'Generate response did not include persisted draft IDs. Please restart the backend and ensure migrations are applied.'
@@ -75,13 +103,6 @@ export interface ListAiVariationsParams {
   batch_id?: string;
   page?: number;
   page_size?: number;
-}
-
-export async function listVariations(
-  creativeId: number,
-  opts?: { limit?: number }
-): Promise<ListVariationsResult> {
-  return listAiVariations({ creative: creativeId, page_size: opts?.limit });
 }
 
 export async function listAiVariations(

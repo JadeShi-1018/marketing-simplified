@@ -1,6 +1,7 @@
 import uuid
 from unittest.mock import patch
 
+import requests
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
@@ -10,7 +11,15 @@ from facebook_integration.models import FacebookConnection, MetaAdAccount
 from core.models import Organization, Project, ProjectMember
 from meta_ads.models import MetaAdCreative
 
+from . import services
 from .models import AdCopyVariation
+
+
+def _http_error(status_code: int) -> requests.HTTPError:
+    response = requests.Response()
+    response.status_code = status_code
+    exc = requests.HTTPError(f'{status_code} Client Error', response=response)
+    return exc
 
 
 def _make_user(username='copy_user', email='copy_user@example.com'):
@@ -710,13 +719,14 @@ class GenerateFromExternalUrlTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertEqual(resp.data['count_succeeded'], 0)
+        self.assertNotIn('error', resp.data)
         mock_llm.assert_not_called()
 
     @patch('ad_copy_variation.services.call_aistudio_json')
     @patch('ad_copy_variation.services.fetch_url_text')
     def test_llm_failure_returns_502(self, mock_fetch, mock_llm):
         mock_fetch.return_value = 'rendered text'
-        mock_llm.side_effect = RuntimeError('AI Studio call failed: status=429')
+        mock_llm.side_effect = _http_error(429)
         resp = self.client.post(
             self.url,
             {
@@ -728,6 +738,7 @@ class GenerateFromExternalUrlTests(APITestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertEqual(resp.data['count_succeeded'], 0)
+        self.assertEqual(resp.data['error'], services.AI_QUOTA_MESSAGE)
 
 
 class GenerateBadInputTests(APITestCase):

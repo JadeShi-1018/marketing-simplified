@@ -42,6 +42,7 @@ export interface BatchGenerateResponse {
   count_failed: number;
   results: AdCopyVariation[];
   failed_indices: number[];
+  error?: string;
 }
 
 export interface SaveVariationRequest extends AdCopyVariationCopy {
