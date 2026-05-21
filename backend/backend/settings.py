@@ -83,7 +83,6 @@ INSTALLED_APPS = [
     'client_communication.apps.ClientCommunicationConfig',
     'calendars.apps.CalendarConfig',
     'miro.apps.MiroConfig',
-    'ad_variations.apps.AdVariationsConfig',
     'ad_copy_variation',
     'policy.apps.PolicyConfig',
     'campaign.apps.CampaignConfig',
