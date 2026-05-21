@@ -155,9 +155,12 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
     from notifications.models import NotificationCategory, NotificationEventType
     from notifications.services import create_notification
 
+    actor = _get_current_user_safe()
+    actor_id = actor.pk if actor else None
+
     create_notification(
         recipient_id=instance.owner_id,
-        actor_id=None,
+        actor_id=actor_id,
         category=NotificationCategory.TASKS,
         event_type=NotificationEventType.TASK_STATUS_CHANGED,
         title=f"Task status updated: {instance.summary}",

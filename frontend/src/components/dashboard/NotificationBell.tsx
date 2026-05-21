@@ -12,6 +12,10 @@ import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import type { NotificationItem, NotificationTab } from '@/types/notifications';
 import { NOTIFICATION_EVENT } from '@/types/notifications';
 import type { AlertData, AlertStatus } from '@/lib/mock/dashboardMock';
+import {
+  getTaskChangeSVODescription,
+  getTaskStatusChangeSVODescription,
+} from '@/lib/taskNotificationCopy';
 
 // ── Tab config ────────────────────────────────────────────────────────────────
 
@@ -54,13 +58,20 @@ function getSVODescription(item: NotificationItem): React.ReactNode {
 
   const actorChip = <InlineActorChip name={actorName} avatar={item.actor_avatar} />;
 
+  if (event_type === 'task_status_changed') {
+    return getTaskStatusChangeSVODescription(item, actorChip);
+  }
+
+  const taskChangeSvo = getTaskChangeSVODescription(item, actorChip);
+  if (taskChangeSvo) {
+    return taskChangeSvo;
+  }
+
   switch (event_type) {
     case 'task_assigned':
       return <>{actorChip} assigned you to this task.</>;
     case 'task_owner_changed':
       return <>Task ownership transferred by {actorChip}.</>;
-    case 'task_status_changed':
-      return <>{actorChip} changed the task status.</>;
     case 'task_comment_mention':
       return <>{actorChip} mentioned you in a comment.</>;
     case 'meeting_created':
@@ -87,6 +98,8 @@ function getSVODescription(item: NotificationItem): React.ReactNode {
       return <>{actorChip} requested your review.</>;
     case 'decision_published':
       return <>{actorChip} published a decision.</>;
+    case 'task_deadline_soon':
+      return <>This task is due soon. Don&apos;t forget to complete it!</>;
     default:
       // Fallback: show body or generic description
       return body || null;

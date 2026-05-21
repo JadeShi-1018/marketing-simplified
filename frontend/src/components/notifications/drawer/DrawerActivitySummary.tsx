@@ -2,6 +2,11 @@
 
 import React from "react";
 import type { NotificationItem } from "@/types/notifications";
+import {
+  getTaskChangeActivityDescription,
+  getTaskStatusChangeSVODescription,
+  isTaskDueDateEditNotification,
+} from "@/lib/taskNotificationCopy";
 
 interface DrawerActivitySummaryProps {
   notification: NotificationItem;
@@ -41,20 +46,30 @@ function getActivityDescription(
     // Task events
     case "task_assigned":
       return <>{actor} assigned you to this task.</>;
-    case "task_owner_changed":
+    case "task_owner_changed": {
+      const fieldChange = getTaskChangeActivityDescription(notification, actor);
+      if (fieldChange) return fieldChange;
       return <>Task ownership was transferred to you by {actor}.</>;
-    case "task_status_changed": {
-      const oldStatus = (metadata?.old_status as string) || "unknown";
-      const newStatus = (metadata?.new_status as string) || "unknown";
-      return (
-        <>
-          Task status changed from{" "}
-          <span className="font-medium">{oldStatus.replace(/_/g, " ")}</span> to{" "}
-          <span className="font-medium">{newStatus.replace(/_/g, " ")}</span>.
-        </>
-      );
     }
+    case "task_status_changed":
+      if (actor) {
+        return getTaskStatusChangeSVODescription(notification, actor);
+      }
+      {
+        const oldStatus = (metadata?.old_status as string) || "unknown";
+        const newStatus = (metadata?.new_status as string) || "unknown";
+        return (
+          <>
+            Task status changed from{" "}
+            <span className="font-medium">{oldStatus.replace(/_/g, " ")}</span> to{" "}
+            <span className="font-medium">{newStatus.replace(/_/g, " ")}</span>.
+          </>
+        );
+      }
     case "task_deadline_soon":
+      if (isTaskDueDateEditNotification(notification) && actor) {
+        return getTaskChangeActivityDescription(notification, actor);
+      }
       return <>This task is due soon. Don&apos;t forget to complete it!</>;
     case "task_overdue":
       return <>This task is now overdue. Please take action.</>;

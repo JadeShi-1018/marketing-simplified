@@ -19,6 +19,7 @@ import {
   Briefcase,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
+import { isTaskDueDateEditNotification } from "@/lib/taskNotificationCopy";
 import { isInviteNotification } from "./DrawerInviteCard";
 import DrawerSectionDivider from "./DrawerSectionDivider";
 
@@ -49,6 +50,12 @@ const NOTIFICATION_EVENT_TYPES = new Set([
 export function isNotificationCard(notification: NotificationItem): boolean {
   if (isInviteNotification(notification)) return false;
   if (notification.metadata?.is_response_feedback) return true;
+  if (
+    notification.event_type === "task_deadline_soon" &&
+    isTaskDueDateEditNotification(notification)
+  ) {
+    return false;
+  }
   return NOTIFICATION_EVENT_TYPES.has(notification.event_type);
 }
 

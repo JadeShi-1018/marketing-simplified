@@ -18,6 +18,7 @@ import {
   Bell,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
+import { isTaskDueDateEditNotification } from "@/lib/taskNotificationCopy";
 import DrawerSectionDivider from "./DrawerSectionDivider";
 
 interface DrawerWhatChangedProps {
@@ -72,6 +73,11 @@ export function hasWhatChanged(notification: NotificationItem): boolean {
       metadata?.change_type ||
       (metadata?.old_status && metadata?.new_status)
     );
+  }
+
+  // Legacy: due date edits were stored as task_deadline_soon + change_type.
+  if (event_type === "task_deadline_soon" && isTaskDueDateEditNotification(notification)) {
+    return !!(metadata?.old_value || metadata?.new_value);
   }
 
   // Meeting field changes (title, time, location, agenda, artifacts)
@@ -407,7 +413,13 @@ function resolveTaskCardProps(metadata: Record<string, unknown>): {
     case "task_approver":
       return { icon: User, label: "Approver", beforeValue: before, afterValue: after, afterDanger: false };
     case "task_due_date":
-      return { icon: Calendar, label: "Due Date", beforeValue: before, afterValue: after, afterDanger: false };
+      return {
+        icon: Calendar,
+        label: "Due Date",
+        beforeValue: before ? formatDateTime(before) : undefined,
+        afterValue: after ? formatDateTime(after) : before ? "Not set" : undefined,
+        afterDanger: false,
+      };
     case "task_title":
       return { icon: Type, label: "Title", beforeValue: before, afterValue: after, afterDanger: false };
     case "task_priority":
@@ -780,6 +792,10 @@ export default function DrawerWhatChanged({ notification }: DrawerWhatChangedPro
       <div className="rounded-lg border border-[#3CCED7]/25 bg-gradient-to-r from-[#3CCED7]/8 to-[#A6E661]/8 p-4">
         {/* Task changes (status, assignee, due date, title, priority …) */}
         {TASK_EVENT_TYPES.has(event_type) && metadata && (
+          <TaskChangesSection metadata={metadata} />
+        )}
+
+        {event_type === "task_deadline_soon" && isTaskDueDateEditNotification(notification) && metadata && (
           <TaskChangesSection metadata={metadata} />
         )}
 

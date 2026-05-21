@@ -13,6 +13,7 @@ import {
 import toast from "react-hot-toast";
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import type { NotificationItem } from "@/types/notifications";
+import { isTaskOwnershipInviteNotification } from "@/lib/taskNotificationCopy";
 import DrawerSectionDivider from "./DrawerSectionDivider";
 
 // ── Which event_types are invite-type ─────────────────────────────────────────
@@ -20,7 +21,6 @@ import DrawerSectionDivider from "./DrawerSectionDivider";
 const INVITE_EVENT_TYPES = new Set([
   "project_invite",
   "meeting_participant_added",
-  "task_owner_changed",
 ]);
 
 export function isInviteNotification(notification: NotificationItem): boolean {
@@ -28,6 +28,7 @@ export function isInviteNotification(notification: NotificationItem): boolean {
   if (notification.metadata?.is_response_feedback) return false;
   const et = notification.event_type;
   if (INVITE_EVENT_TYPES.has(et)) return true;
+  if (isTaskOwnershipInviteNotification(notification)) return true;
   // task_assigned is an invite only when change_type explicitly marks it so
   if (et === "task_assigned") {
     const ct = notification.metadata?.change_type as string | undefined;

@@ -546,7 +546,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 recipient_id=task.owner_id,
                 actor_id=actor_id,
                 category=NotificationCategory.TASKS,
-                event_type=NotificationEventType.TASK_DEADLINE_SOON,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
                 title=f"Task deadline updated: {task.summary}",
                 body="The deadline for this task has been changed.",
                 related_object_type="task",
