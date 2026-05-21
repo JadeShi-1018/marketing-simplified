@@ -1,16 +1,23 @@
 'use client';
 
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
 import type { Message } from '@/types/chat';
 import MessageItem from '@/components/chat/MessageItem';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Loader2 } from 'lucide-react';
+
+const SCROLL_THRESHOLD = 100; // Distance from bottom to consider "at bottom"
+const LOAD_MORE_THRESHOLD = 50; // Distance from top to trigger load more
 
 interface DrawerChatMessagesProps {
   messages: Message[];
   currentUserId: number;
   highlightMessageId: number | null;
   isLoading?: boolean;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }
 
 /**
@@ -76,6 +83,9 @@ export default function DrawerChatMessages({
   currentUserId,
   highlightMessageId,
   isLoading = false,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
 }: DrawerChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageCountRef = useRef(messages.length);
@@ -84,6 +94,14 @@ export default function DrawerChatMessages({
   // Store the initial highlight message ID for the session
   // This ensures the divider stays visible even if highlightMessageId is later cleared by parent
   const sessionHighlightIdRef = useRef<number | null>(null);
+
+  // Smart scroll: track if user is near bottom
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  // Track scroll height before loading more to maintain position
+  const prevScrollHeightRef = useRef(0);
+  const wasLoadingMoreRef = useRef(false);
+  // Track if initial scroll has been done (to prevent re-scrolling on load more)
+  const hasInitiallyScrolledRef = useRef(false);
 
   // Lock in the highlightMessageId when it first becomes non-null
   // This ensures the divider persists even if highlightMessageId is cleared (e.g., when notification is marked as read)
@@ -133,21 +151,77 @@ export default function DrawerChatMessages({
     return format(date, 'MMMM d, yyyy');
   };
 
-  // Auto-scroll to bottom on new messages
+  // Handle scroll events for smart scroll and load more
+  const handleScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
+
+    // Check if user is near bottom
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    setIsNearBottom(distanceFromBottom < SCROLL_THRESHOLD);
+
+    // Check if user scrolled to top - trigger load more
+    if (scrollTop < LOAD_MORE_THRESHOLD && hasMore && !isLoadingMore) {
+      onLoadMore?.();
+    }
+  }, [hasMore, isLoadingMore, onLoadMore]);
+
+  // Attach scroll listener
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (container) {
+      container.addEventListener('scroll', handleScroll);
+      return () => container.removeEventListener('scroll', handleScroll);
+    }
+  }, [handleScroll]);
+
+  // Preserve scroll position when loading older messages
+  useEffect(() => {
+    if (isLoadingMore && scrollRef.current) {
+      // Store current scroll height before loading
+      prevScrollHeightRef.current = scrollRef.current.scrollHeight;
+      wasLoadingMoreRef.current = true;
+    }
+  }, [isLoadingMore]);
+
+  // Restore scroll position after older messages are loaded
+  useEffect(() => {
+    if (!isLoadingMore && wasLoadingMoreRef.current && scrollRef.current && prevScrollHeightRef.current > 0) {
+      // Use requestAnimationFrame to ensure DOM has updated
+      requestAnimationFrame(() => {
+        if (scrollRef.current && prevScrollHeightRef.current > 0) {
+          const newScrollHeight = scrollRef.current.scrollHeight;
+          const addedHeight = newScrollHeight - prevScrollHeightRef.current;
+          if (addedHeight > 0) {
+            scrollRef.current.scrollTop = addedHeight;
+          }
+          prevScrollHeightRef.current = 0;
+          wasLoadingMoreRef.current = false;
+        }
+      });
+    }
+  }, [isLoadingMore, messages]);
+
+  // Auto-scroll to bottom on new messages (only if user is near bottom)
+  // Skip if we're loading older messages (wasLoadingMoreRef is true)
   useEffect(() => {
     if (messages.length > lastMessageCountRef.current && scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      // Only auto-scroll if user is near the bottom AND not loading older messages
+      if (isNearBottom && !wasLoadingMoreRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
     }
     lastMessageCountRef.current = messages.length;
-  }, [messages.length]);
+  }, [messages.length, isNearBottom]);
 
-  // Scroll to bottom on initial load
+  // Scroll to bottom on initial load only (not on load more)
   useEffect(() => {
-    if (!isLoading && messages.length > 0 && scrollRef.current) {
+    if (!isLoading && messages.length > 0 && scrollRef.current && !hasInitiallyScrolledRef.current) {
       // Use setTimeout to ensure DOM has updated
       setTimeout(() => {
-        if (scrollRef.current) {
+        if (scrollRef.current && !hasInitiallyScrolledRef.current) {
           scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+          hasInitiallyScrolledRef.current = true;
         }
       }, 100);
     }
@@ -221,6 +295,13 @@ export default function DrawerChatMessages({
         ref={scrollRef}
         className="flex-1 overflow-y-auto p-3 space-y-4"
       >
+        {/* Loading indicator for older messages */}
+        {isLoadingMore && (
+          <div className="flex justify-center py-2">
+            <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+          </div>
+        )}
+
         {messageGroups.map((group) => (
           <div key={group.date}>
             {/* Date Header */}

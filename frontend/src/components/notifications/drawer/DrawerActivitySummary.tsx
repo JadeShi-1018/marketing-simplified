@@ -142,6 +142,12 @@ function getActivityDescription(
     case "workflow_node":
       return <>Workflow automation update.</>;
     case "account_permission":
+      if (metadata?.action === "removed_from_project") {
+        return <>You were removed from this project.</>;
+      }
+      if (metadata?.action === "project_owner_transferred") {
+        return <>{actor} transferred project ownership to you.</>;
+      }
       return <>Your account permissions have changed.</>;
     case "billing_anomaly":
       return <>A billing anomaly was detected.</>;

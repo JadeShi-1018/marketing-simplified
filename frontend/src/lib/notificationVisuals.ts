@@ -93,7 +93,9 @@ export function deriveModule(notification: NotificationItem): NotificationModule
 
   if (et === "account_permission") {
     const action = notification.metadata?.action as string | undefined;
-    if (action === "removed_from_project") return "project";
+    if (action === "removed_from_project" || action === "project_owner_transferred") {
+      return "project";
+    }
     return "system";
   }
 
@@ -117,6 +119,9 @@ export function deriveTypeKey(notification: NotificationItem): NotificationTypeK
   if (et === "meeting_participant_removed") return "removal";
   if (et === "account_permission" && meta.action === "removed_from_project") {
     return "removal";
+  }
+  if (et === "account_permission" && meta.action === "project_owner_transferred") {
+    return "default";
   }
 
   if (et === "task_comment_mention") return "mention";

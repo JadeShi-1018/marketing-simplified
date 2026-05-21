@@ -1,9 +1,13 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from core.models import Organization, Project, ProjectInvitation, ProjectMember
 from notifications.models import (
     Notification,
     NotificationCategory,
@@ -11,7 +15,6 @@ from notifications.models import (
     UserNotificationPreference,
 )
 from notifications.services import create_notification
-
 User = get_user_model()
 
 
@@ -194,6 +197,113 @@ class NotificationAPITests(TestCase):
             r1.data["preferences"]["integrations"]["slack_webhook"],
             r2.data["preferences"]["integrations"]["slack_webhook"],
         )
+
+    def test_respond_accept_project_invite_with_existing_accepted_invitation(self):
+        """Drawer accept should succeed when a prior accepted invite row exists."""
+        organization = Organization.objects.create(name="Org", email_domain="example.com")
+        inviter = User.objects.create_user(
+            username="inviter",
+            password="pass12345",
+            email="inviter@example.com",
+            organization=organization,
+        )
+        invitee = User.objects.create_user(
+            username="invitee",
+            password="pass12345",
+            email="invitee@example.com",
+            organization=organization,
+        )
+        project = Project.objects.create(
+            name="Reinvite Project",
+            organization=organization,
+            owner=inviter,
+            objectives=["awareness"],
+            kpis={"ctr": {"target": 0.02}},
+        )
+        ProjectMember.objects.create(user=inviter, project=project, role="owner", is_active=True)
+        ProjectMember.objects.create(
+            user=invitee,
+            project=project,
+            role="member",
+            is_active=False,
+        )
+
+        ProjectInvitation.objects.create(
+            email=invitee.email,
+            project=project,
+            role="member",
+            invited_by=inviter,
+            token="old-accepted-token",
+            expires_at=timezone.now() + timedelta(days=7),
+            approved=True,
+            approved_by=inviter,
+            approved_at=timezone.now(),
+            accepted=True,
+            accepted_at=timezone.now(),
+        )
+
+        new_invitation = ProjectInvitation.objects.create(
+            email=invitee.email,
+            project=project,
+            role="member",
+            invited_by=inviter,
+            token="new-pending-token",
+            expires_at=timezone.now() + timedelta(days=7),
+            approved=True,
+            approved_by=inviter,
+            approved_at=timezone.now(),
+            accepted=False,
+        )
+
+        notification = create_notification(
+            recipient_id=invitee.id,
+            actor_id=inviter.id,
+            category=NotificationCategory.COLLABORATION,
+            event_type=NotificationEventType.PROJECT_INVITE,
+            title=f"You've been invited to project: {project.name}",
+            body="Please join.",
+            related_object_type="project",
+            related_object_id=str(project.id),
+            action_url=f"/projects/{project.id}",
+            metadata={
+                "project_name": project.name,
+                "invitation_id": new_invitation.pk,
+            },
+        )
+
+        client = APIClient()
+        client.force_authenticate(user=invitee)
+        url = reverse("notifications-respond", kwargs={"pk": notification.id})
+        response = client.post(url, {"action": "accept"}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        membership = ProjectMember.objects.get(user=invitee, project=project)
+        self.assertTrue(membership.is_active)
+        self.assertEqual(membership.role, "member")
+
+        new_invitation.refresh_from_db()
+        self.assertTrue(new_invitation.accepted)
+
+        self.assertEqual(
+            ProjectInvitation.objects.filter(
+                email=invitee.email,
+                project=project,
+                accepted=True,
+            ).count(),
+            1,
+        )
+
+        notification.refresh_from_db()
+        self.assertTrue(notification.responded)
+        self.assertEqual(notification.response, "accept")
+
+        feedback = Notification.objects.filter(
+            recipient=inviter,
+            metadata__is_response_feedback=True,
+        )
+        self.assertTrue(feedback.exists())
+        self.assertIn("accepted", feedback.first().title.lower())
 
     def test_preferences_patch_invalid_payload_missing_preferences(self):
         """Test that PATCH fails when preferences key is missing."""

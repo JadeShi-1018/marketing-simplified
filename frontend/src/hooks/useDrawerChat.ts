@@ -32,6 +32,11 @@ interface UseDrawerChatReturn {
   // State
   highlightMessageId: number | null;
   currentUserId: number;
+
+  // Pagination
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMoreMessages: () => Promise<void>;
 }
 
 /**
@@ -57,6 +62,10 @@ export function useDrawerChat({
   const [highlightMessageId, setHighlightMessageId] = useState<number | null>(
     initialHighlightId ?? null
   );
+
+  // Pagination state
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Listen to chatStore messages for real-time updates
   // Use a stable empty array reference to prevent infinite re-renders
@@ -120,6 +129,8 @@ export function useDrawerChat({
       });
 
       setLocalMessages(response.results);
+      // Check if there are more messages to load
+      setHasMore(response.results.length === DEFAULT_MESSAGE_LIMIT);
 
       // Also update the store so WebSocket can track this chat
       const { setMessages } = useChatStore.getState();
@@ -144,6 +155,34 @@ export function useDrawerChat({
       // Don't show toast for read errors (not critical)
     }
   }, [chatId]);
+
+  // Load more (older) messages
+  const loadMoreMessages = useCallback(async () => {
+    if (!chatId || isLoadingMore || !hasMore || localMessages.length === 0) return;
+
+    try {
+      setIsLoadingMore(true);
+      const oldestMessage = localMessages[0];
+
+      const response = await getMessages({
+        chat_id: chatId,
+        before: oldestMessage.created_at,
+        limit: DEFAULT_MESSAGE_LIMIT,
+      });
+
+      if (response.results.length > 0) {
+        // Prepend older messages to the list
+        setLocalMessages((prev) => [...response.results, ...prev]);
+      }
+      // Check if there are more messages to load
+      setHasMore(response.results.length === DEFAULT_MESSAGE_LIMIT);
+    } catch (err: any) {
+      console.error('Error loading more messages:', err);
+      // Don't show toast for load more errors
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [chatId, isLoadingMore, hasMore, localMessages]);
 
   // Send message
   const handleSendMessage = useCallback(
@@ -276,5 +315,8 @@ export function useDrawerChat({
     isSending,
     highlightMessageId,
     currentUserId,
+    hasMore,
+    isLoadingMore,
+    loadMoreMessages,
   };
 }

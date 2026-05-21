@@ -288,8 +288,10 @@ def _handle_project_invite(notification, action, user):
     """Accept → activate/create ProjectMember; reject → no structural change."""
     if action != "accept":
         return
+    from django.db import transaction  # noqa: PLC0415
     from django.utils import timezone as tz  # noqa: PLC0415
     from core.models import ProjectMember, ProjectInvitation  # noqa: PLC0415
+    from core.utils.project_calendars import ensure_project_calendar  # noqa: PLC0415
 
     invitation_id = notification.metadata.get("invitation_id")
     if not invitation_id:
@@ -302,16 +304,25 @@ def _handle_project_invite(notification, action, user):
         logger.warning("ProjectInvitation %s not found", invitation_id)
         return
 
-    ProjectMember.objects.update_or_create(
-        user=user,
-        project=inv.project,
-        defaults={"role": inv.role or "member", "is_active": True},
-    )
-    # Mark invitation as accepted
-    if not inv.accepted:
-        inv.accepted = True
-        inv.accepted_at = tz.now()
-        inv.save(update_fields=["accepted", "accepted_at"])
+    with transaction.atomic():
+        ProjectMember.objects.update_or_create(
+            user=user,
+            project=inv.project,
+            defaults={"role": inv.role or "member", "is_active": True},
+        )
+        ensure_project_calendar(inv.project)
+
+        # Align with token accept path: drop stale accepted rows before unique constraint.
+        ProjectInvitation.objects.filter(
+            email=inv.email,
+            project=inv.project,
+            accepted=True,
+        ).exclude(id=inv.id).delete()
+
+        if not inv.accepted:
+            inv.accepted = True
+            inv.accepted_at = tz.now()
+            inv.save(update_fields=["accepted", "accepted_at"])
 
 
 def _handle_meeting_participant(notification, action, user):

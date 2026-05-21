@@ -75,6 +75,14 @@ function getSVODescription(item: NotificationItem): React.ReactNode {
       return <>{actorChip} updated the meeting agenda.</>;
     case 'project_invite':
       return <>{actorChip} invited you to join.</>;
+    case 'account_permission':
+      if (metadata?.action === 'project_owner_transferred') {
+        return <>{actorChip} transferred project ownership to you.</>;
+      }
+      if (metadata?.action === 'removed_from_project') {
+        return <>{actorChip} removed you from this project.</>;
+      }
+      return body || null;
     case 'decision_review_needed':
       return <>{actorChip} requested your review.</>;
     case 'decision_published':

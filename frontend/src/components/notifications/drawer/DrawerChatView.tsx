@@ -40,6 +40,9 @@ export default function DrawerChatView({
     isSending,
     highlightMessageId,
     currentUserId,
+    hasMore,
+    isLoadingMore,
+    loadMoreMessages,
   } = useDrawerChat({
     chatId: chatId ?? null,
     highlightMessageId: shouldHighlight ? messageId : null,
@@ -114,6 +117,9 @@ export default function DrawerChatView({
         currentUserId={currentUserId}
         highlightMessageId={highlightMessageId}
         isLoading={isLoadingMessages}
+        hasMore={hasMore}
+        isLoadingMore={isLoadingMore}
+        onLoadMore={loadMoreMessages}
       />
 
       {/* Input area */}

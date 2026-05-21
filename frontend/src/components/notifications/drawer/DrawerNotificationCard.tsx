@@ -16,6 +16,7 @@ import {
   ShieldAlert,
   Zap,
   UserMinus,
+  Briefcase,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 import { isInviteNotification } from "./DrawerInviteCard";
@@ -361,6 +362,46 @@ function ChatMessageSection({ notification }: { notification: NotificationItem }
   );
 }
 
+/** account_permission — project_owner_transferred */
+function ProjectOwnerTransferredSection({ notification }: { notification: NotificationItem }) {
+  const projectName = notification.metadata?.project_name as string | undefined;
+  const previousOwner = notification.metadata?.previous_owner as string | undefined;
+  const actorName = notification.actor_name || null;
+  const actorAvatar = notification.actor_avatar || null;
+
+  return (
+    <div className="flex items-start gap-2">
+      <Briefcase className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+      <div className="space-y-2">
+        <p className="text-sm text-gray-700 leading-relaxed">
+          {actorName ? (
+            <span className="inline-flex items-center gap-1 align-middle mr-1">
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-[10px] font-semibold text-white overflow-hidden">
+                {actorAvatar ? (
+                  <img src={actorAvatar} alt={actorName} className="w-full h-full object-cover" />
+                ) : (
+                  actorName.charAt(0).toUpperCase()
+                )}
+              </span>
+              <span className="font-semibold text-gray-900">{actorName}</span>
+            </span>
+          ) : null}
+          transferred ownership of{" "}
+          {projectName ? (
+            <span className="font-semibold text-gray-900">{projectName}</span>
+          ) : (
+            "this project"
+          )}{" "}
+          to you. You are now the project owner.
+        </p>
+        {previousOwner ? (
+          <InfoRow label="Previous owner" value={previousOwner} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /** account_permission — removed_from_project */
 function ProjectMemberRemovedSection({ notification }: { notification: NotificationItem }) {
   const projectName = notification.metadata?.project_name as string | undefined;
@@ -471,6 +512,9 @@ export default function DrawerNotificationCard({
       case "account_permission":
         if (meta?.action === "removed_from_project") {
           return <ProjectMemberRemovedSection notification={notification} />;
+        }
+        if (meta?.action === "project_owner_transferred") {
+          return <ProjectOwnerTransferredSection notification={notification} />;
         }
         return <GenericNotificationSection notification={notification} />;
       default:

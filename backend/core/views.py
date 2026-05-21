@@ -430,9 +430,10 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         # inside the endpoints (create is owner-only).
         return [IsAuthenticated()]
 
-    def _transfer_project_owner(self, instance):
+    def _transfer_project_owner(self, instance, actor):
         project = instance.project
         previous_owner = project.owner
+        new_owner = instance.user
 
         with transaction.atomic():
             if previous_owner and previous_owner.id != instance.user_id:
@@ -454,12 +455,52 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
 
             ensure_project_calendar(project)
 
+        self._notify_new_project_owner(project, new_owner, actor, previous_owner)
+
+    def _notify_new_project_owner(self, project, new_owner, actor, previous_owner):
+        if not new_owner or not actor:
+            return
+        try:
+            from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
+            from notifications.services import create_notification  # noqa: PLC0415
+
+            actor_display = actor.get_full_name() or actor.username
+            previous_owner_display = None
+            if previous_owner and previous_owner.id != new_owner.id:
+                previous_owner_display = previous_owner.get_full_name() or previous_owner.username
+
+            create_notification(
+                recipient_id=new_owner.id,
+                actor_id=actor.id,
+                category=NotificationCategory.COLLABORATION,
+                event_type=NotificationEventType.ACCOUNT_PERMISSION,
+                title=f"You are now the owner of project: {project.name}",
+                body=(
+                    f"{actor_display} transferred project ownership of "
+                    f"\"{project.name}\" to you."
+                ),
+                related_object_type="project",
+                related_object_id=str(project.id),
+                action_url=f"/projects/{project.id}",
+                metadata={
+                    "project_name": project.name,
+                    "project_id": project.id,
+                    "action": "project_owner_transferred",
+                    "previous_owner": previous_owner_display,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Failed to send project owner transfer notification for user %s",
+                getattr(new_owner, "id", None),
+            )
+
     def update(self, request, *args, **kwargs):
         partial = kwargs.get('partial', False)
         instance = self.get_object()
         requested_role = request.data.get('role')
         if requested_role == 'owner':
-            self._transfer_project_owner(instance)
+            self._transfer_project_owner(instance, request.user)
             instance.refresh_from_db()
             return Response(self.get_serializer(instance).data)
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
@@ -467,7 +508,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
 
         desired_role = serializer.validated_data.get('role')
         if desired_role == 'owner':
-            self._transfer_project_owner(instance)
+            self._transfer_project_owner(instance, request.user)
             instance.refresh_from_db()
             return Response(self.get_serializer(instance).data)
 
