@@ -71,6 +71,21 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
             )
         return project, None
 
+    def _parse_selected_ids(self, raw_selected_ids):
+        if not isinstance(raw_selected_ids, list) or len(raw_selected_ids) == 0:
+            return None, Response(
+                {'error': 'selected_ids must be a non-empty list'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            selected_ids = [int(item) for item in raw_selected_ids]
+        except (TypeError, ValueError):
+            return None, Response(
+                {'error': 'selected_ids must contain integers'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return selected_ids, None
+
     def get_queryset(self):
         qs = super().get_queryset().select_related('project', 'creative')
         project_id = self.request.query_params.get('project_id')
@@ -317,29 +332,26 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        selected_ids = request.data.get('selected_ids')
-        if not isinstance(selected_ids, list) or len(selected_ids) == 0:
-            return Response(
-                {'error': 'selected_ids must be a non-empty list'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            selected_ids = [int(item) for item in selected_ids]
-        except (TypeError, ValueError):
-            return Response(
-                {'error': 'selected_ids must contain integers'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        selected_ids, selected_error = self._parse_selected_ids(request.data.get('selected_ids'))
+        if selected_error:
+            return selected_error
+        selected_id_set = set(selected_ids)
 
         with transaction.atomic():
-            selected_in_batch = set(AdCopyVariation.objects.filter(
+            selected_rows = list(AdCopyVariation.objects.select_for_update().filter(
                 project=project,
                 batch_id=batch_id,
                 id__in=selected_ids,
-            ).values_list('id', flat=True))
-            if selected_in_batch != set(selected_ids):
+            ))
+            selected_in_batch = {row.id for row in selected_rows}
+            if selected_in_batch != selected_id_set:
                 return Response(
                     {'error': 'selected_ids must all belong to the current project and batch'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if any(row.status != AdCopyVariation.STATUS_DRAFT for row in selected_rows):
+                return Response(
+                    {'error': 'selected_ids must all be draft rows'},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -348,15 +360,10 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
                 batch_id=batch_id,
                 status=AdCopyVariation.STATUS_DRAFT,
             )
-            selected_draft_ids = set(batch_drafts.filter(id__in=selected_ids).values_list('id', flat=True))
-            if not selected_draft_ids:
-                return Response(
-                    {'error': 'selected_ids must include at least one draft from this batch'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
             reviewed_count = batch_drafts.filter(id__in=selected_ids).update(
                 status=AdCopyVariation.STATUS_REVIEWED,
             )
+            deleted_count, _ = batch_drafts.exclude(id__in=selected_ids).delete()
 
         rows = AdCopyVariation.objects.filter(
             project=project,
@@ -367,11 +374,108 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
             {
                 'batch_id': batch_id,
                 'reviewed_count': reviewed_count,
+                'deleted_count': deleted_count,
                 'results': AdCopyVariationSerializer(
                     rows,
                     many=True,
                     context=self.get_serializer_context(),
                 ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=['post'], url_path='bulk_review')
+    def bulk_review(self, request):
+        project, project_error = self._require_project(request.data.get('project_id'))
+        if project_error:
+            return project_error
+        selected_ids, selected_error = self._parse_selected_ids(request.data.get('selected_ids'))
+        if selected_error:
+            return selected_error
+        selected_id_set = set(selected_ids)
+
+        with transaction.atomic():
+            rows = list(AdCopyVariation.objects.select_for_update().filter(
+                project=project,
+                id__in=selected_ids,
+            ))
+            found_ids = {row.id for row in rows}
+            if found_ids != selected_id_set:
+                return Response(
+                    {'error': 'selected_ids must all belong to the current project'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if any(row.status != AdCopyVariation.STATUS_DRAFT for row in rows):
+                return Response(
+                    {'error': 'selected_ids must all be draft rows'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            reviewed_count = AdCopyVariation.objects.filter(
+                project=project,
+                id__in=selected_ids,
+            ).update(status=AdCopyVariation.STATUS_REVIEWED)
+            updated_rows = list(AdCopyVariation.objects.filter(
+                project=project,
+                id__in=selected_ids,
+            ).order_by('-created_at', '-id'))
+
+        return Response(
+            {
+                'reviewed_count': reviewed_count,
+                'results': AdCopyVariationSerializer(
+                    updated_rows,
+                    many=True,
+                    context=self.get_serializer_context(),
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(detail=False, methods=['post'], url_path='bulk_delete')
+    def bulk_delete(self, request):
+        project, project_error = self._require_project(request.data.get('project_id'))
+        if project_error:
+            return project_error
+        selected_ids, selected_error = self._parse_selected_ids(request.data.get('selected_ids'))
+        if selected_error:
+            return selected_error
+        selected_id_set = set(selected_ids)
+
+        expected_status = request.data.get('status')
+        if expected_status not in (AdCopyVariation.STATUS_DRAFT, AdCopyVariation.STATUS_REVIEWED):
+            return Response(
+                {'error': 'status must be draft or reviewed'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            rows = list(AdCopyVariation.objects.select_for_update().filter(
+                project=project,
+                id__in=selected_ids,
+            ))
+            found_ids = {row.id for row in rows}
+            if found_ids != selected_id_set:
+                return Response(
+                    {'error': 'selected_ids must all belong to the current project'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if any(row.status != expected_status for row in rows):
+                return Response(
+                    {'error': f'selected_ids must all be {expected_status} rows'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            deleted_ids = [row.id for row in rows]
+            deleted_count, _ = AdCopyVariation.objects.filter(
+                project=project,
+                id__in=deleted_ids,
+            ).delete()
+
+        return Response(
+            {
+                'deleted_count': deleted_count,
+                'deleted_ids': deleted_ids,
             },
             status=status.HTTP_200_OK,
         )

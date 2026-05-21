@@ -131,9 +131,33 @@ export async function reviewVariationBatch(req: {
 }): Promise<{
   batch_id: string;
   reviewed_count: number;
+  deleted_count: number;
   results: AdCopyVariation[];
 }> {
   const { data } = await api.post(`${BASE}/review_batch/`, req);
+  return data;
+}
+
+export async function bulkReviewVariations(req: {
+  project_id: number;
+  selected_ids: number[];
+}): Promise<{
+  reviewed_count: number;
+  results: AdCopyVariation[];
+}> {
+  const { data } = await api.post(`${BASE}/bulk_review/`, req);
+  return data;
+}
+
+export async function bulkDeleteVariations(req: {
+  project_id: number;
+  selected_ids: number[];
+  status: AdCopyVariationStatus;
+}): Promise<{
+  deleted_count: number;
+  deleted_ids: number[];
+}> {
+  const { data } = await api.post(`${BASE}/bulk_delete/`, req);
   return data;
 }
 

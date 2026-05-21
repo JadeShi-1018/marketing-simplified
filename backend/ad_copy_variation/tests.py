@@ -329,7 +329,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self.assertEqual(resp.data['count'], 0)
         self.assertEqual(resp.data['results'], [])
 
-    def test_review_batch_reviews_selected_and_leaves_unselected_current_batch_drafts(self):
+    def test_review_batch_reviews_selected_and_deletes_unselected_current_batch_drafts(self):
         batch_id = uuid.uuid4()
         selected = self._row(batch_id=batch_id, position=1)
         unselected = self._row(batch_id=batch_id, position=2)
@@ -349,26 +349,52 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
         self.assertEqual(resp.data['reviewed_count'], 1)
+        self.assertEqual(resp.data['deleted_count'], 1)
         self.assertEqual(
             set(resp.data.keys()),
-            {'batch_id', 'reviewed_count', 'results'},
+            {'batch_id', 'reviewed_count', 'deleted_count', 'results'},
+        )
+        self.assertEqual(
+            {row['id'] for row in resp.data['results']},
+            {selected.id, already_reviewed.id},
         )
 
         selected.refresh_from_db()
-        unselected.refresh_from_db()
         already_reviewed.refresh_from_db()
         previous_batch.refresh_from_db()
         other_project_row.refresh_from_db()
 
         self.assertEqual(selected.status, 'reviewed')
-        self.assertEqual(unselected.status, 'draft')
+        self.assertFalse(AdCopyVariation.objects.filter(pk=unselected.id).exists())
         self.assertEqual(already_reviewed.status, 'reviewed')
         self.assertEqual(previous_batch.status, 'draft')
         self.assertEqual(other_project_row.status, 'draft')
 
+    def test_review_batch_rejects_reviewed_selected_id_without_changing_data(self):
+        batch_id = uuid.uuid4()
+        draft = self._row(batch_id=batch_id, position=1)
+        reviewed = self._row(batch_id=batch_id, status_value='reviewed', position=2)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-review-batch'),
+            {
+                'project_id': self.project.id,
+                'batch_id': str(batch_id),
+                'selected_ids': [reviewed.id],
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        draft.refresh_from_db()
+        reviewed.refresh_from_db()
+        self.assertEqual(draft.status, 'draft')
+        self.assertEqual(reviewed.status, 'reviewed')
+
     def test_review_batch_rejects_invalid_selected_ids_without_reviewing(self):
         batch_id = uuid.uuid4()
         draft = self._row(batch_id=batch_id, position=1)
+        unselected = self._row(batch_id=batch_id, position=2)
 
         resp = self.client.post(
             reverse('ad-copy-variation-review-batch'),
@@ -382,7 +408,119 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
 
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         draft.refresh_from_db()
+        unselected.refresh_from_db()
         self.assertEqual(draft.status, 'draft')
+        self.assertEqual(unselected.status, 'draft')
+
+    def test_bulk_review_updates_draft_rows(self):
+        first = self._row(position=1)
+        second = self._row(position=2)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-bulk-review'),
+            {
+                'project_id': self.project.id,
+                'selected_ids': [first.id, second.id],
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['reviewed_count'], 2)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, 'reviewed')
+        self.assertEqual(second.status, 'reviewed')
+
+    def test_bulk_review_rejects_reviewed_rows_without_changing_data(self):
+        draft = self._row(position=1)
+        reviewed = self._row(status_value='reviewed', position=2)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-bulk-review'),
+            {
+                'project_id': self.project.id,
+                'selected_ids': [draft.id, reviewed.id],
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        draft.refresh_from_db()
+        reviewed.refresh_from_db()
+        self.assertEqual(draft.status, 'draft')
+        self.assertEqual(reviewed.status, 'reviewed')
+
+    def test_bulk_delete_deletes_draft_rows(self):
+        first = self._row(position=1)
+        second = self._row(position=2)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-bulk-delete'),
+            {
+                'project_id': self.project.id,
+                'selected_ids': [first.id, second.id],
+                'status': 'draft',
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['deleted_count'], 2)
+        self.assertFalse(AdCopyVariation.objects.filter(pk__in=[first.id, second.id]).exists())
+
+    def test_bulk_delete_deletes_reviewed_rows(self):
+        reviewed = self._row(status_value='reviewed', position=1)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-bulk-delete'),
+            {
+                'project_id': self.project.id,
+                'selected_ids': [reviewed.id],
+                'status': 'reviewed',
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+        self.assertEqual(resp.data['deleted_count'], 1)
+        self.assertFalse(AdCopyVariation.objects.filter(pk=reviewed.id).exists())
+
+    def test_bulk_delete_rejects_cross_project_ids_without_deleting(self):
+        local = self._row(position=1)
+        other_project_row = self._row(project=self.other_project, creative=None, position=2)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-bulk-delete'),
+            {
+                'project_id': self.project.id,
+                'selected_ids': [local.id, other_project_row.id],
+                'status': 'draft',
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(AdCopyVariation.objects.filter(pk=local.id).exists())
+        self.assertTrue(AdCopyVariation.objects.filter(pk=other_project_row.id).exists())
+
+    def test_bulk_delete_rejects_mixed_status_when_status_requested(self):
+        draft = self._row(position=1)
+        reviewed = self._row(status_value='reviewed', position=2)
+
+        resp = self.client.post(
+            reverse('ad-copy-variation-bulk-delete'),
+            {
+                'project_id': self.project.id,
+                'selected_ids': [draft.id, reviewed.id],
+                'status': 'draft',
+            },
+            format='json',
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(AdCopyVariation.objects.filter(pk=draft.id).exists())
+        self.assertTrue(AdCopyVariation.objects.filter(pk=reviewed.id).exists())
 
 
 class GenerateFromExistingTests(APITestCase):

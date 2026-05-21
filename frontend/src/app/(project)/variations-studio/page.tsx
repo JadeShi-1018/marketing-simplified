@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
@@ -10,6 +10,8 @@ import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
+  bulkDeleteVariations,
+  bulkReviewVariations,
   generateVariation,
   getLatestVariationBatch,
   listAiVariations,
@@ -325,21 +327,11 @@ function VariationsStudioContent() {
         batch_id: currentBatchId,
         selected_ids: selectedDraftCards.map((c) => c.id),
       });
-      const updatedById = new Map(result.results.map((row) => [row.id, row]));
+      const survivingCurrentBatch = result.results.map(cardFromVariation);
       setCards((prev) =>
-        prev.map((c) => {
-          const updated = updatedById.get(c.id);
-          if (!updated) return c;
-          const copy = copyFromVariation(updated);
-          return {
-            ...c,
-            copy,
-            draft: { ...copy },
-            status: updated.status,
-            selected: false,
-            editing: false,
-          };
-        })
+        prev
+          .filter((c) => c.batch_id !== currentBatchId)
+          .concat(survivingCurrentBatch)
       );
       toast.success(
         `Reviewed ${result.reviewed_count} draft${result.reviewed_count === 1 ? "" : "s"}.`
@@ -933,11 +925,26 @@ function AiDraftsTab({
   );
   const [batchFilter, setBatchFilter] = useState<string>("");
   const [loadingLatestBatch, setLoadingLatestBatch] = useState<boolean>(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkAction, setBulkAction] = useState<"review" | "delete-draft" | "delete-reviewed" | null>(null);
+  const [refreshKey, setRefreshKey] = useState<number>(0);
   const [page, setPage] = useState<number>(1);
   const [total, setTotal] = useState<number>(0);
-  const pageSize = 20;
+  const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const creativeIdFilter = creativeFilter.trim() ? Number(creativeFilter.trim()) : null;
+  const selectedRows = rows.filter((row) => selectedIds.has(row.id));
+  const selectedDraftRows = selectedRows.filter((row) => row.status === "draft");
+  const selectedReviewedRows = selectedRows.filter((row) => row.status === "reviewed");
+  const selectedCount = selectedRows.length;
+  const canReviewSelectedDrafts = selectedCount > 0 && selectedCount === selectedDraftRows.length;
+  const canDeleteSelectedDrafts = selectedCount > 0 && selectedCount === selectedDraftRows.length;
+  const canDeleteSelectedReviewed = selectedCount > 0 && selectedCount === selectedReviewedRows.length;
+  const allVisibleSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
+
+  const refreshList = useCallback(() => {
+    setRefreshKey((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
     if (!projectId) return;
@@ -956,6 +963,8 @@ function AiDraftsTab({
         if (!active) return;
         setRows(res.results);
         setTotal(res.total);
+        const visibleIds = new Set(res.results.map((row) => row.id));
+        setSelectedIds((prev) => new Set([...prev].filter((id) => visibleIds.has(id))));
       })
       .catch((err) => {
         if (!active) return;
@@ -967,9 +976,69 @@ function AiDraftsTab({
     return () => {
       active = false;
     };
-  }, [projectId, statusFilter, sourceFilter, creativeIdFilter, batchFilter, page]);
+  }, [projectId, statusFilter, sourceFilter, creativeIdFilter, batchFilter, page, refreshKey]);
 
   const resetToFirstPage = () => setPage(1);
+
+  const toggleRowSelection = (id: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllVisible = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        rows.forEach((row) => next.delete(row.id));
+      } else {
+        rows.forEach((row) => next.add(row.id));
+      }
+      return next;
+    });
+  };
+
+  const handleBulkReviewDrafts = async () => {
+    if (!projectId || !canReviewSelectedDrafts) return;
+    setBulkAction("review");
+    try {
+      const res = await bulkReviewVariations({
+        project_id: projectId,
+        selected_ids: selectedDraftRows.map((row) => row.id),
+      });
+      setSelectedIds(new Set());
+      toast.success(`Reviewed ${res.reviewed_count} draft${res.reviewed_count === 1 ? "" : "s"}.`);
+      refreshList();
+    } catch (err) {
+      toast.error(extractErrorMessage(err, "Failed to review selected drafts."));
+    } finally {
+      setBulkAction(null);
+    }
+  };
+
+  const handleBulkDelete = async (targetStatus: AdCopyVariationStatus) => {
+    const targetRows = targetStatus === "draft" ? selectedDraftRows : selectedReviewedRows;
+    const enabled = targetStatus === "draft" ? canDeleteSelectedDrafts : canDeleteSelectedReviewed;
+    if (!projectId || !enabled) return;
+    setBulkAction(targetStatus === "draft" ? "delete-draft" : "delete-reviewed");
+    try {
+      const res = await bulkDeleteVariations({
+        project_id: projectId,
+        selected_ids: targetRows.map((row) => row.id),
+        status: targetStatus,
+      });
+      setSelectedIds(new Set());
+      toast.success(`Deleted ${res.deleted_count} ${targetStatus} draft${res.deleted_count === 1 ? "" : "s"}.`);
+      refreshList();
+    } catch (err) {
+      toast.error(extractErrorMessage(err, `Failed to delete selected ${targetStatus} drafts.`));
+    } finally {
+      setBulkAction(null);
+    }
+  };
 
   const handleLatestBatch = async () => {
     if (!projectId) return;
@@ -1074,6 +1143,58 @@ function AiDraftsTab({
         </div>
       )}
 
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 bg-white px-5 py-3">
+        <div className="flex items-center gap-3">
+          <label className="inline-flex items-center gap-2 text-[12px] font-medium text-gray-700">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={toggleAllVisible}
+              disabled={rows.length === 0 || loading}
+              className="h-4 w-4 rounded border-gray-300 text-[#1a9ba3] focus:ring-[#3CCED7]"
+            />
+            Select visible
+          </label>
+          <span className="text-[12px] text-gray-500">
+            {selectedCount} selected
+          </span>
+        </div>
+        {selectedCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleBulkReviewDrafts}
+              disabled={!canReviewSelectedDrafts || bulkAction !== null}
+              title={!canReviewSelectedDrafts ? "Only draft rows can be reviewed." : undefined}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#1a9ba3] px-2.5 text-[12px] font-semibold text-white transition hover:bg-[#168992] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkAction === "review" && <Loader2 className="h-3 w-3 animate-spin" />}
+              Review selected drafts
+            </button>
+            <button
+              type="button"
+              onClick={() => handleBulkDelete("draft")}
+              disabled={!canDeleteSelectedDrafts || bulkAction !== null}
+              title={!canDeleteSelectedDrafts ? "Select only draft rows to delete drafts." : undefined}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 text-[12px] font-medium text-gray-700 transition hover:border-red-200 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkAction === "delete-draft" && <Loader2 className="h-3 w-3 animate-spin" />}
+              Delete selected drafts
+            </button>
+            <button
+              type="button"
+              onClick={() => handleBulkDelete("reviewed")}
+              disabled={!canDeleteSelectedReviewed || bulkAction !== null}
+              title={!canDeleteSelectedReviewed ? "Select only reviewed rows to delete reviewed drafts." : undefined}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 text-[12px] font-medium text-gray-700 transition hover:border-red-200 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkAction === "delete-reviewed" && <Loader2 className="h-3 w-3 animate-spin" />}
+              Delete selected reviewed
+            </button>
+          </div>
+        )}
+      </div>
+
       <div className="divide-y divide-gray-100">
         {loading ? (
           <div className="p-5 text-[14px] text-gray-500">Loading drafts…</div>
@@ -1085,23 +1206,32 @@ function AiDraftsTab({
           rows.map((row) => (
             <article key={row.id} className="p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <VariationStatusPill status={row.status} />
-                    <span className="text-[12px] text-gray-500">
-                      {sourceModeLabel(row.source_mode)}
-                    </span>
-                    <span className="text-[12px] text-gray-300">Draft #{row.id}</span>
-                    <span className="text-[12px] text-gray-300">
-                      {relativeTime(row.created_at)}
-                    </span>
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(row.id)}
+                    onChange={() => toggleRowSelection(row.id)}
+                    className="mt-1 h-4 w-4 rounded border-gray-300 text-[#1a9ba3] focus:ring-[#3CCED7]"
+                    aria-label={`Select draft ${row.id}`}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <VariationStatusPill status={row.status} />
+                      <span className="text-[12px] text-gray-500">
+                        {sourceModeLabel(row.source_mode)}
+                      </span>
+                      <span className="text-[12px] text-gray-300">Draft #{row.id}</span>
+                      <span className="text-[12px] text-gray-300">
+                        {relativeTime(row.created_at)}
+                      </span>
+                    </div>
+                    <h3 className="mt-2 text-[15px] font-semibold text-gray-900">
+                      {row.headline || row.hook || "Untitled variation"}
+                    </h3>
+                    <p className="mt-1 max-w-3xl whitespace-pre-wrap text-[13px] leading-5 text-gray-600">
+                      {row.description || "No description"}
+                    </p>
                   </div>
-                  <h3 className="mt-2 text-[15px] font-semibold text-gray-900">
-                    {row.headline || row.hook || "Untitled variation"}
-                  </h3>
-                  <p className="mt-1 max-w-3xl whitespace-pre-wrap text-[13px] leading-5 text-gray-600">
-                    {row.description || "No description"}
-                  </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {row.creative ? (
