@@ -13,6 +13,10 @@ import type { NotificationItem, NotificationTab } from '@/types/notifications';
 import { NOTIFICATION_EVENT } from '@/types/notifications';
 import type { AlertData, AlertStatus } from '@/lib/mock/dashboardMock';
 import {
+  getDecisionPublishedSVODescription,
+  getDecisionReviewSVODescription,
+} from '@/lib/decisionNotificationCopy';
+import {
   getTaskChangeSVODescription,
   getTaskStatusChangeSVODescription,
 } from '@/lib/taskNotificationCopy';
@@ -95,9 +99,9 @@ function getSVODescription(item: NotificationItem): React.ReactNode {
       }
       return body || null;
     case 'decision_review_needed':
-      return <>{actorChip} requested your review.</>;
+      return getDecisionReviewSVODescription(item, actorChip);
     case 'decision_published':
-      return <>{actorChip} published a decision.</>;
+      return getDecisionPublishedSVODescription(item, actorChip);
     case 'task_deadline_soon':
       return <>This task is due soon. Don&apos;t forget to complete it!</>;
     default:

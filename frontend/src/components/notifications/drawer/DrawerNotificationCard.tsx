@@ -19,6 +19,11 @@ import {
   Briefcase,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
+import {
+  DecisionActorInline,
+  getDecisionPublishedSVODescription,
+  getDecisionReviewSVODescription,
+} from "@/lib/decisionNotificationCopy";
 import { isTaskDueDateEditNotification } from "@/lib/taskNotificationCopy";
 import { isInviteNotification } from "./DrawerInviteCard";
 import DrawerSectionDivider from "./DrawerSectionDivider";
@@ -286,18 +291,46 @@ function DecisionDeadlineSection({ metadata }: { metadata: Record<string, unknow
   );
 }
 
-/** decision_published */
-function DecisionPublishedSection({ metadata }: { metadata: Record<string, unknown> }) {
-  const decisionTitle = (metadata?.decision_title as string) || "";
+/** decision_review_needed — commit submitted for approval */
+function DecisionReviewNeededSection({ notification }: { notification: NotificationItem }) {
+  const actorName = notification.actor_name || null;
+  const actorAvatar = notification.actor_avatar || null;
+
+  return (
+    <div className="flex items-start gap-2">
+      <Bell className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" />
+      <p className="text-sm text-gray-700 leading-relaxed">
+        {actorName ? (
+          getDecisionReviewSVODescription(
+            notification,
+            <DecisionActorInline name={actorName} avatar={actorAvatar} />
+          )
+        ) : (
+          notification.body || "A decision has been submitted and is waiting for your approval."
+        )}
+      </p>
+    </div>
+  );
+}
+
+/** decision_published — decision approved */
+function DecisionPublishedSection({ notification }: { notification: NotificationItem }) {
+  const actorName = notification.actor_name || null;
+  const actorAvatar = notification.actor_avatar || null;
+
   return (
     <div className="flex items-start gap-2">
       <FileText className="w-4 h-4 text-green-500 mt-0.5 shrink-0" />
-      <div>
-        <p className="text-sm font-semibold text-gray-800">Decision published</p>
-        {decisionTitle && (
-          <p className="text-sm text-gray-600 mt-0.5">{decisionTitle}</p>
+      <p className="text-sm text-gray-700 leading-relaxed">
+        {actorName ? (
+          getDecisionPublishedSVODescription(
+            notification,
+            <DecisionActorInline name={actorName} avatar={actorAvatar} />
+          )
+        ) : (
+          notification.body || "A decision has been published."
         )}
-      </div>
+      </p>
     </div>
   );
 }
@@ -525,8 +558,10 @@ export default function DrawerNotificationCard({
         return <MinutesPublishedSection />;
       case "decision_deadline":
         return <DecisionDeadlineSection metadata={meta} />;
+      case "decision_review_needed":
+        return <DecisionReviewNeededSection notification={notification} />;
       case "decision_published":
-        return <DecisionPublishedSection metadata={meta} />;
+        return <DecisionPublishedSection notification={notification} />;
       case "chat_new_conversation":
         return <ChatNewConversationSection notification={notification} />;
       case "chat_new_message":

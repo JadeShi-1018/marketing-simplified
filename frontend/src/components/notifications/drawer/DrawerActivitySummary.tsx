@@ -3,6 +3,10 @@
 import React from "react";
 import type { NotificationItem } from "@/types/notifications";
 import {
+  getDecisionPublishedSVODescription,
+  getDecisionReviewSVODescription,
+} from "@/lib/decisionNotificationCopy";
+import {
   getTaskChangeActivityDescription,
   getTaskStatusChangeSVODescription,
   isTaskDueDateEditNotification,
@@ -96,11 +100,15 @@ function getActivityDescription(
 
     // Decision events
     case "decision_review_needed":
-      return <>A decision requires your review.</>;
+      return actor
+        ? getDecisionReviewSVODescription(notification, actor)
+        : <>A decision requires your review.</>;
     case "decision_deadline":
       return <>Decision deadline is approaching.</>;
     case "decision_published":
-      return <>A decision has been published.</>;
+      return actor
+        ? getDecisionPublishedSVODescription(notification, actor)
+        : <>A decision has been published.</>;
 
     // Chat events
     case "chat_new_message":
