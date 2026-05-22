@@ -357,6 +357,10 @@ export interface MessageItemProps {
   onToggleSelect?: (messageId: number) => void;
   /** When true, visually emphasize this message (e.g. jump target). */
   isHighlighted?: boolean;
+  /** When true, show hover actions (e.g. more button) */
+  isHovered?: boolean;
+  /** Render prop for actions to show in timestamp row when hovered */
+  renderActions?: () => React.ReactNode;
 }
 
 export interface MessageInputProps {

@@ -1,6 +1,6 @@
 'use client';
 
-import { X, MessageCircle, Users, ExternalLink } from 'lucide-react';
+import { X, MessageCircle, Users, ExternalLink, Forward } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { Chat } from '@/types/chat';
 import { useAuthStore } from '@/lib/authStore';
@@ -10,6 +10,11 @@ interface DrawerChatHeaderProps {
   projectId?: number | null;
   onClose: () => void;
   isLoading?: boolean;
+  // Selection mode
+  isSelectMode?: boolean;
+  selectedCount?: number;
+  onCancelSelect?: () => void;
+  onBulkForward?: () => void;
 }
 
 export default function DrawerChatHeader({
@@ -17,6 +22,10 @@ export default function DrawerChatHeader({
   projectId,
   onClose,
   isLoading = false,
+  isSelectMode = false,
+  selectedCount = 0,
+  onCancelSelect,
+  onBulkForward,
 }: DrawerChatHeaderProps) {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -71,6 +80,42 @@ export default function DrawerChatHeader({
     onClose();
   };
 
+  // Selection mode header
+  if (isSelectMode) {
+    return (
+      <div className="flex-shrink-0 border-b border-gray-200 bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 py-3">
+        <div className="flex items-center justify-between">
+          {/* Left side: Cancel button and count */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onCancelSelect}
+              className="p-2 rounded-full hover:bg-white/20 transition-colors"
+              aria-label="Cancel selection"
+            >
+              <X className="w-5 h-5 text-white" />
+            </button>
+            <span className="text-white font-medium">
+              {selectedCount} selected
+            </span>
+          </div>
+
+          {/* Right side: Bulk actions */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onBulkForward}
+              disabled={selectedCount === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/20 hover:bg-white/30 disabled:opacity-50 disabled:cursor-not-allowed rounded-md text-white text-sm font-medium transition-colors"
+            >
+              <Forward className="w-4 h-4" />
+              Forward
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Normal header
   return (
     <div className="flex-shrink-0 border-b border-gray-200 bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 py-3">
       {/* Top row: Icon, Title, Close button */}

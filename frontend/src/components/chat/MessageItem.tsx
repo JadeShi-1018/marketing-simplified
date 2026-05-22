@@ -25,6 +25,8 @@ export default function MessageItem({
   isSelected = false,
   onToggleSelect,
   isHighlighted = false,
+  isHovered = false,
+  renderActions,
 }: MessageItemProps) {
   const formatTime = (dateString: string) => {
     try {
@@ -136,6 +138,7 @@ export default function MessageItem({
                 
                 {/* Timestamp and status */}
                 <div className="flex items-center justify-end gap-1 mt-1 px-1">
+                  {isHovered && !isSelectMode && renderActions?.()}
                   <span className="text-xs text-gray-500">{formatTime(message.created_at)}</span>
                   <MessageStatus message={message} />
                 </div>
@@ -232,6 +235,7 @@ export default function MessageItem({
               {/* Timestamp */}
               <div className="flex items-center gap-1 mt-1 px-1">
                 <span className="text-xs text-gray-500">{formatTime(message.created_at)}</span>
+                {isHovered && !isSelectMode && renderActions?.()}
               </div>
             </div>
           </div>

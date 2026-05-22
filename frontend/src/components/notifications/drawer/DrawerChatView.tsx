@@ -1,7 +1,10 @@
 'use client';
 
-import { AlertCircle } from 'lucide-react';
+import { useState } from 'react';
+import { AlertCircle, X } from 'lucide-react';
+import toast from 'react-hot-toast';
 import type { NotificationItem } from '@/types/notifications';
+import type { Message } from '@/types/chat';
 import { useDrawerChat } from '@/hooks/useDrawerChat';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages from './DrawerChatMessages';
@@ -48,6 +51,74 @@ export default function DrawerChatView({
     highlightMessageId: shouldHighlight ? messageId : null,
     enabled: !!chatId,
   });
+
+  // Selection mode state
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedMessageIds, setSelectedMessageIds] = useState<number[]>([]);
+
+  // Quote reply state
+  const [quoteMessage, setQuoteMessage] = useState<Message | null>(null);
+
+  // Selection mode handlers
+  const handleEnterSelectMode = (initialMessageId?: number) => {
+    setIsSelectMode(true);
+    if (initialMessageId) {
+      setSelectedMessageIds([initialMessageId]);
+    }
+  };
+
+  const handleCancelSelectMode = () => {
+    setIsSelectMode(false);
+    setSelectedMessageIds([]);
+  };
+
+  const handleToggleSelect = (messageId: number) => {
+    setSelectedMessageIds((prev) =>
+      prev.includes(messageId)
+        ? prev.filter((id) => id !== messageId)
+        : [...prev, messageId]
+    );
+  };
+
+  // Message action handlers
+  const handleEmojiReaction = (messageId: number, emoji: string) => {
+    // TODO: Implement when backend API is available
+    toast('Reactions coming soon!', { icon: emoji });
+  };
+
+  const handleQuoteReply = (message: Message) => {
+    setQuoteMessage(message);
+  };
+
+  const handleClearQuote = () => {
+    setQuoteMessage(null);
+  };
+
+  const handleForward = (messageId: number) => {
+    // TODO: Implement forward dialog
+    toast('Forward feature coming soon!', { icon: '↪️' });
+  };
+
+  const handleBulkForward = () => {
+    if (selectedMessageIds.length === 0) return;
+    // TODO: Implement forward dialog
+    toast(`Forward ${selectedMessageIds.length} messages - coming soon!`, { icon: '↪️' });
+  };
+
+  const handleRemind = (messageId: number) => {
+    // TODO: Implement reminder scheduling
+    toast('Reminder feature coming soon!', { icon: '🔔' });
+  };
+
+  const handleRevoke = (messageId: number) => {
+    // TODO: Implement when backend API is available
+    toast('Revoke feature coming soon!', { icon: '↩️' });
+  };
+
+  const handleDelete = (messageId: number) => {
+    // TODO: Implement when backend API is available
+    toast('Delete feature coming soon!', { icon: '🗑️' });
+  };
 
   // Handle send message
   const handleSendMessage = async (content: string) => {
@@ -109,6 +180,10 @@ export default function DrawerChatView({
         projectId={projectId}
         onClose={onClose}
         isLoading={isLoading}
+        isSelectMode={isSelectMode}
+        selectedCount={selectedMessageIds.length}
+        onCancelSelect={handleCancelSelectMode}
+        onBulkForward={handleBulkForward}
       />
 
       {/* Messages area */}
@@ -120,7 +195,38 @@ export default function DrawerChatView({
         hasMore={hasMore}
         isLoadingMore={isLoadingMore}
         onLoadMore={loadMoreMessages}
+        isSelectMode={isSelectMode}
+        selectedMessageIds={selectedMessageIds}
+        onToggleSelect={handleToggleSelect}
+        onEmojiReaction={handleEmojiReaction}
+        onQuoteReply={handleQuoteReply}
+        onForward={handleForward}
+        onRemind={handleRemind}
+        onRevoke={handleRevoke}
+        onDelete={handleDelete}
+        onEnterSelectMode={handleEnterSelectMode}
       />
+
+      {/* Quote reply preview */}
+      {quoteMessage && (
+        <div className="flex-shrink-0 flex items-start gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
+          <div className="flex-shrink-0 w-1 self-stretch bg-[#3CCED7] rounded" />
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-medium text-gray-600 truncate">
+              {quoteMessage.sender.username}
+            </p>
+            <p className="text-sm text-gray-500 truncate">
+              {quoteMessage.content || '[Attachment]'}
+            </p>
+          </div>
+          <button
+            onClick={handleClearQuote}
+            className="flex-shrink-0 p-1 hover:bg-gray-200 rounded transition-colors"
+          >
+            <X className="w-4 h-4 text-gray-400" />
+          </button>
+        </div>
+      )}
 
       {/* Input area */}
       <div className="flex-shrink-0 border-t border-[#3CCED7]/25 bg-white">
@@ -128,7 +234,7 @@ export default function DrawerChatView({
           variant="drawer"
           onSend={handleSendMessage}
           onSendWithAttachments={handleSendWithAttachments}
-          disabled={isSending || isLoading}
+          disabled={isSending || isLoading || isSelectMode}
         />
       </div>
     </div>

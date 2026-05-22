@@ -4,6 +4,7 @@ import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
 import type { Message } from '@/types/chat';
 import MessageItem from '@/components/chat/MessageItem';
+import MessageActionsMenu from '@/components/chat/MessageActionsMenu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Loader2 } from 'lucide-react';
 
@@ -18,6 +19,18 @@ interface DrawerChatMessagesProps {
   hasMore?: boolean;
   isLoadingMore?: boolean;
   onLoadMore?: () => void;
+  // Selection mode
+  isSelectMode?: boolean;
+  selectedMessageIds?: number[];
+  onToggleSelect?: (messageId: number) => void;
+  // Message actions
+  onEmojiReaction?: (messageId: number, emoji: string) => void;
+  onQuoteReply?: (message: Message) => void;
+  onForward?: (messageId: number) => void;
+  onRemind?: (messageId: number) => void;
+  onRevoke?: (messageId: number) => void;
+  onDelete?: (messageId: number) => void;
+  onEnterSelectMode?: (messageId?: number) => void;
 }
 
 /**
@@ -86,6 +99,16 @@ export default function DrawerChatMessages({
   hasMore = false,
   isLoadingMore = false,
   onLoadMore,
+  isSelectMode = false,
+  selectedMessageIds = [],
+  onToggleSelect,
+  onEmojiReaction,
+  onQuoteReply,
+  onForward,
+  onRemind,
+  onRevoke,
+  onDelete,
+  onEnterSelectMode,
 }: DrawerChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageCountRef = useRef(messages.length);
@@ -97,6 +120,23 @@ export default function DrawerChatMessages({
 
   // Smart scroll: track if user is near bottom
   const [isNearBottom, setIsNearBottom] = useState(true);
+  // Track which message is being hovered (for showing action bar)
+  const [hoveredMessageId, setHoveredMessageId] = useState<number | null>(null);
+  // Track if a menu (emoji picker or dropdown) is open - prevents hiding on mouse leave
+  const isMenuOpenRef = useRef(false);
+  // Track if mouse left while menu was open
+  const pendingMouseLeaveRef = useRef(false);
+
+  // Handle menu open/close state
+  const handleMenuOpenChange = useCallback((isOpen: boolean) => {
+    isMenuOpenRef.current = isOpen;
+    // If menu just closed and mouse had left, clear the hover
+    if (!isOpen && pendingMouseLeaveRef.current) {
+      setHoveredMessageId(null);
+      pendingMouseLeaveRef.current = false;
+    }
+  }, []);
+
   // Track scroll height before loading more to maintain position
   const prevScrollHeightRef = useRef(0);
   const wasLoadingMoreRef = useRef(false);
@@ -293,7 +333,7 @@ export default function DrawerChatMessages({
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-3 space-y-4"
+        className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-4"
       >
         {/* Loading indicator for older messages */}
         {isLoadingMore && (
@@ -322,24 +362,54 @@ export default function DrawerChatMessages({
                 const showDivider = isTargetMessage && shouldShowDivider;
                 // Animation fades out after 1.8s
                 const showHighlightAnimation = isTargetMessage && shouldShowHighlightAnimation;
+                const isOwnMessage = message.sender.id === currentUserId;
+                const isSelected = selectedMessageIds.includes(message.id);
 
                 return (
                   <div key={message.id}>
                     {/* New Messages Divider - shown above the target message */}
                     {showDivider && <NewMessagesDivider />}
 
-                    {/* Message with optional highlight animation */}
+                    {/* Message with hover detection */}
                     <div
                       id={`drawer-message-${message.id}`}
-                      className={showHighlightAnimation ? 'animate-message-highlight' : ''}
+                      className={`relative ${showHighlightAnimation ? 'animate-message-highlight' : ''}`}
+                      onMouseEnter={() => {
+                        setHoveredMessageId(message.id);
+                        pendingMouseLeaveRef.current = false;
+                      }}
+                      onMouseLeave={() => {
+                        // If menu is open, mark as pending and don't clear yet
+                        if (isMenuOpenRef.current) {
+                          pendingMouseLeaveRef.current = true;
+                        } else {
+                          setHoveredMessageId(null);
+                        }
+                      }}
                     >
                       <MessageItem
                         message={message}
-                        isOwnMessage={message.sender.id === currentUserId}
+                        isOwnMessage={isOwnMessage}
                         showSender={showSender}
-                        isSelectMode={false}
-                        isSelected={false}
+                        isSelectMode={isSelectMode}
+                        isSelected={isSelected}
+                        onToggleSelect={onToggleSelect}
                         isHighlighted={false}
+                        isHovered={hoveredMessageId === message.id}
+                        renderActions={() => (
+                          <MessageActionsMenu
+                            message={message}
+                            isOwnMessage={isOwnMessage}
+                            onEmojiReaction={(emoji) => onEmojiReaction?.(message.id, emoji)}
+                            onQuoteReply={() => onQuoteReply?.(message)}
+                            onForward={() => onForward?.(message.id)}
+                            onRemind={() => onRemind?.(message.id)}
+                            onMultiSelect={() => onEnterSelectMode?.(message.id)}
+                            onRevoke={() => onRevoke?.(message.id)}
+                            onDelete={() => onDelete?.(message.id)}
+                            onMenuOpenChange={handleMenuOpenChange}
+                          />
+                        )}
                       />
                     </div>
                   </div>
