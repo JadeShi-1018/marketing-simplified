@@ -21,6 +21,7 @@ import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
 import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
+import { useAuthStore } from '@/lib/authStore';
 import EngagementPanel from '@/components/tasks/detail/EngagementPanel';
 
 export default function TaskV2DetailPage() {
@@ -95,7 +96,17 @@ export default function TaskV2DetailPage() {
     }
   };
 
-  const readOnly = task?.status === 'LOCKED';
+  const currentUser = useAuthStore((s) => s.user);
+  const isOwner = currentUser?.id != null && task?.owner?.id != null &&
+    Number(currentUser.id) === Number(task.owner.id);
+  const isApprover = currentUser?.id != null && task?.current_approver?.id != null &&
+    Number(currentUser.id) === Number(task.current_approver.id);
+  const isCreator = currentUser?.id != null && task?.created_by?.id != null &&
+    Number(currentUser.id) === Number(task.created_by.id);
+  const creatorCanEditUnassignedDraft = Boolean(
+    task?.status === 'DRAFT' && !task.owner && !task.current_approver && isCreator
+  );
+  const readOnly = task?.status === 'LOCKED' || (!isOwner && !isApprover && !creatorCanEditUnassignedDraft);
   const taskShell = (task ?? {
     id: taskId ?? undefined,
     summary: '',
@@ -182,7 +193,7 @@ export default function TaskV2DetailPage() {
                 {(task?.id || loading) && (
                   <TaskActivityBlock
                     taskId={task?.id ?? 0}
-                    readOnly={Boolean(readOnly)}
+                    readOnly={task?.status === 'LOCKED'}
                     refreshKey={refreshKey}
                     loading={loading}
                     onMutated={onMutated}
