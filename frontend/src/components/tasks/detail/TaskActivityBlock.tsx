@@ -36,11 +36,15 @@ export default function TaskActivityBlock({
   readOnly,
   refreshKey,
   loading = false,
+  onFirstInteraction,
+  onMutated,
 }: {
   taskId: number;
   readOnly: boolean;
   refreshKey: number;
   loading?: boolean;
+  onFirstInteraction?: () => void;
+  onMutated?: () => void;
 }) {
   const [items, setItems] = useState<TaskComment[] | null>(null);
   const [body, setBody] = useState('');
@@ -73,6 +77,7 @@ export default function TaskActivityBlock({
       await TaskAPI.createComment(taskId, { body: text });
       setBody('');
       setLocalKey((k) => k + 1);
+      onMutated?.();
     } catch (e) {
       toast.error((e as any)?.response?.data?.detail || 'Comment failed');
     } finally {
@@ -81,8 +86,8 @@ export default function TaskActivityBlock({
   };
 
   return (
-    <section className="rounded-xl bg-white p-5 shadow-sm ring-1 ring-gray-100">
-      <h2 className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-gray-900">
+    <section className="min-w-0 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">
+      <h2 data-testid="task-comments-heading" className="mb-3 text-[13px] font-semibold uppercase tracking-wide text-gray-900">
         Activity
       </h2>
 
@@ -135,6 +140,7 @@ export default function TaskActivityBlock({
             rows={1}
             placeholder="Add a comment…"
             value={body}
+            onClick={onFirstInteraction}
             onChange={(e) => {
               setBody(e.target.value);
               resizeTextarea();
@@ -148,11 +154,11 @@ export default function TaskActivityBlock({
             }}
             disabled={posting}
           />
-          <div className="mt-2 flex items-center justify-end gap-2">
+          <div className="mt-2 flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
             <span className="text-[11px] text-gray-400">⌘ + Enter to send</span>
             <button
               type="button"
-              className="inline-flex h-8 items-center rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 text-xs font-semibold text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-8 items-center justify-center rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 py-2 text-xs font-semibold leading-none text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
               onClick={submit}
               disabled={posting || !body.trim()}
             >

@@ -13,10 +13,15 @@ import SummaryView from '@/components/tasks/SummaryView';
 import ListView from '@/components/tasks/ListView';
 import BoardView from '@/components/tasks/BoardView';
 import GanttView from '@/components/tasks/GanttView';
+import InsightsView from '@/components/tasks/InsightsView';
+import MyActionsView from '@/components/tasks/MyActionsView';
+import PlanningView from '@/components/tasks/PlanningView';
+import StatusReportsView from '@/components/tasks/StatusReportsView';
 import { Skeleton } from '@/components/ui/skeleton';
 import LinearImportModal from '@/components/linear/LinearImportModal';
 
-const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt'];
+const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt', 'insights', 'my-actions', 'planning', 'status-reports'];
+const SLIM_SCROLLBAR_TABS = new Set<TasksTab>(['insights', 'my-actions', 'planning', 'status-reports']);
 
 export default function TasksV2Page() {
   const router = useRouter();
@@ -37,6 +42,7 @@ export default function TasksV2Page() {
   const { tasks, loading, error, fetchTasks } = useTaskData();
   const [linearImportOpen, setLinearImportOpen] = useState(false);
   const [hasLoadedTaskListOnce, setHasLoadedTaskListOnce] = useState(false);
+  const [myActionsRefreshKey, setMyActionsRefreshKey] = useState(0);
   const projectContextLoading = !projectIdParam && !hasProjectStoreHydrated;
 
   useEffect(() => {
@@ -88,6 +94,7 @@ export default function TasksV2Page() {
     if (projectId) {
       void fetchTasks({ project_id: projectId, page: 1 });
     }
+    setMyActionsRefreshKey((k) => k + 1);
   };
 
   const headerActions = (
@@ -103,19 +110,25 @@ export default function TasksV2Page() {
 
   return (
     <ProtectedRoute renderChildrenWhileLoading>
-      <DashboardLayout alerts={[]} upcomingMeetings={[]}>
-        <div className="mx-auto w-full max-w-7xl px-6 py-8">
+      <DashboardLayout
+        alerts={[]}
+        upcomingMeetings={[]}
+        mainClassName={SLIM_SCROLLBAR_TABS.has(tab) ? 'task-tab-scrollbar' : ''}
+      >
+        <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
           <header className="mb-5 flex items-end justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <h1 className="text-2xl font-semibold text-gray-900">Tasks</h1>
-              <div className="mt-1 flex items-center gap-2 text-sm text-gray-500">
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-gray-500">
                 {projectContextLoading ? (
-                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-4 w-40 max-w-full" />
                 ) : (
-                  <span>{activeProject?.name ?? (projectId ? '' : 'No project selected')}</span>
+                  <span className="min-w-0 truncate">
+                    {activeProject?.name ?? (projectId ? '' : 'No project selected')}
+                  </span>
                 )}
                 {projectId && !activeProject?.name && !projectContextLoading ? (
-                  <Skeleton className="h-4 w-36" />
+                  <Skeleton className="h-4 w-36 max-w-full" />
                 ) : null}
                 <span aria-hidden="true">·</span>
                 <span className="text-gray-400">
@@ -142,12 +155,24 @@ export default function TasksV2Page() {
               projectId={projectId}
               onOpenLinearImport={() => setLinearImportOpen(true)}
               onLinearBulkSynced={refreshTasks}
+              onRefresh={refreshTasks}
             />
           )}
           {tab === 'board' && <BoardView tasks={tasks} loading={taskListLoading} error={error} />}
           {tab === 'gantt' && (
             <GanttView projectId={projectId} projectContextLoading={projectContextLoading} />
           )}
+          {tab === 'insights' && <InsightsView projectId={projectId} />}
+          {tab === 'my-actions' && <MyActionsView projectId={projectId} refreshKey={myActionsRefreshKey} />}
+          {tab === 'planning' && (
+            <PlanningView
+              projectId={projectId}
+              tasks={tasks}
+              loading={taskListLoading}
+              error={error}
+            />
+          )}
+          {tab === 'status-reports' && <StatusReportsView projectId={projectId} />}
         </div>
         <LinearImportModal
           isOpen={linearImportOpen}

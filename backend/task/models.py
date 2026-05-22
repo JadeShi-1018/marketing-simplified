@@ -45,6 +45,14 @@ class Task(models.Model):
       null=True,
       help_text="The user who is currently reviewing the task"
     )
+    created_by = models.ForeignKey(
+      User,
+      related_name='created_tasks',
+      on_delete=models.SET_NULL,
+      null=True,
+      blank=True,
+      help_text="The user who originally created the task"
+    )
     approval_chain = models.ForeignKey(
       'ApprovalChain',
       on_delete=models.SET_NULL,
@@ -415,6 +423,38 @@ class Task(models.Model):
             parent_task=self,
             child_task=child_task
         ).delete()
+
+
+class TaskPin(models.Model):
+    """Personal pinned-task marker."""
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        related_name='pins',
+        help_text="Task pinned by the user",
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='task_pins',
+        help_text="User who pinned the task",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['task', 'user'],
+                name='taskpin_unique_task_user',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', 'task'], name='taskpin_user_task_idx'),
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"TaskPin task={self.task_id} user={self.user_id}"
 
 
 
@@ -828,3 +868,39 @@ class TaskHierarchy(models.Model):
         """Override save to run validation"""
         self.clean()
         super().save(*args, **kwargs)
+
+
+class TaskFieldHistory(models.Model):
+    """Records every time a tracked field on a Task changes."""
+
+    TRACKED_FIELDS = [
+        'summary', 'status', 'priority', 'type', 'owner',
+        'due_date', 'planned_start_date', 'description',
+    ]
+
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        related_name='field_history',
+    )
+    field_name = models.CharField(max_length=64)
+    old_value = models.TextField(null=True, blank=True)
+    new_value = models.TextField(null=True, blank=True)
+    changed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='task_field_changes',
+    )
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'task_field_history'
+        ordering = ['-changed_at']
+        indexes = [
+            models.Index(fields=['task', '-changed_at'], name='task_field_history_task_idx'),
+        ]
+
+    def __str__(self):
+        return f"Task {self.task_id} — {self.field_name} @ {self.changed_at}"

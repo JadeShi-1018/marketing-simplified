@@ -1,4 +1,7 @@
+import logging
 from rest_framework import viewsets, status, generics, permissions
+
+logger = logging.getLogger(__name__)
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -7,14 +10,17 @@ from django.core.cache import cache
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError
-from django.db.models import Q
+from django.db.models import Count, Exists, OuterRef, Q
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
-from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskHierarchy, TaskRelation, ApprovalChain
-from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer
-from task.services import bulk_update_tasks
+from django.utils import timezone
+from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, ApprovalChain, TaskPin
+from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer, TaskFieldHistorySerializer
+from task.signals import set_current_user
+from task.services import bulk_update_tasks, user_can_edit_task
 from task.gantt_service import build_gantt_payload, resolve_sprint_label_from_tasks
+from task import intelligence as intel
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -50,11 +56,17 @@ class TaskViewSet(viewsets.ModelViewSet):
     queryset = Task.objects.select_related(
         'project',
         'owner',
+        'created_by',
         'current_approver',
         'meeting_origin__meeting__type_definition',
     )
     serializer_class = TaskSerializer
     permission_classes = [IsAuthenticated]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if request.user and request.user.is_authenticated:
+            set_current_user(request.user)
 
     def get_serializer_class(self):
         if getattr(self, "action", None) == "list":
@@ -121,8 +133,14 @@ class TaskViewSet(viewsets.ModelViewSet):
         queryset = Task.objects.select_related(
             'project',
             'owner',
+            'created_by',
             'current_approver',
             'meeting_origin__meeting__type_definition',
+        ).annotate(
+            subtask_count=Count('subtasks', distinct=True),
+            _is_pinned=Exists(
+                TaskPin.objects.filter(task_id=OuterRef('pk'), user=user)
+            ),
         )
         accessible_project_ids = set(
             ProjectMember.objects.filter(
@@ -335,8 +353,8 @@ class TaskViewSet(viewsets.ModelViewSet):
             else:
                 raise DRFValidationError({'has_parent': 'has_parent must be true or false'})
 
-        # Order by order_in_project, then by creation date (newest first)
-        queryset = queryset.order_by('order_in_project', '-id')
+        # Personal pins should float to the top without changing the project order.
+        queryset = queryset.order_by('-_is_pinned', 'order_in_project', '-id')
         # List response does not include draft_payload; defer it so list works if migration adding the column is not yet applied.
         if getattr(self, 'action', None) in ('list', 'gantt'):
             queryset = queryset.defer('draft_payload')
@@ -364,6 +382,235 @@ class TaskViewSet(viewsets.ModelViewSet):
             }, "H2_H3_H5")
             # endregion
             raise
+
+    @action(detail=False, methods=['get'], url_path='intelligence')
+    def intelligence(self, request):
+        """
+        GET /api/task/tasks/intelligence/?project_id=<id>[&stall_days=7][&due_soon_days=7][&activity_limit=20][&velocity_weeks=8]
+
+        Returns a single payload with all task-intelligence signals for the
+        given project (or the user's active project when project_id is omitted).
+        """
+        from datetime import date as _date
+
+        user = request.user
+        accessible_ids = set(
+            ProjectMember.objects.filter(user=user, is_active=True)
+            .values_list('project_id', flat=True)
+        )
+
+        project_id_param = request.query_params.get('project_id')
+        if project_id_param:
+            try:
+                pid = int(project_id_param)
+            except ValueError:
+                return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
+            if pid not in accessible_ids:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            project_ids = [pid]
+        else:
+            active = getattr(user, 'active_project', None)
+            project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
+
+        if not project_ids:
+            return Response({'detail': 'No accessible projects.'}, status=status.HTTP_404_NOT_FOUND)
+
+        stall_days = max(1, int(request.query_params.get('stall_days', 7)))
+        due_soon_days = max(1, int(request.query_params.get('due_soon_days', 7)))
+        activity_limit = min(100, max(1, int(request.query_params.get('activity_limit', 20))))
+        velocity_weeks = max(1, int(request.query_params.get('velocity_weeks', 8)))
+        today = _date.today()
+
+        def _task_stub(t):
+            return {
+                'id': t.id,
+                'summary': t.summary,
+                'status': t.status,
+                'priority': getattr(t, 'priority', None),
+                'type': t.type,
+                'due_date': t.due_date.isoformat() if t.due_date else None,
+                'project_id': t.project_id,
+                'owner': {'id': t.owner_id, 'username': t.owner.username} if t.owner_id else None,
+                'current_approver': {'id': t.current_approver_id, 'username': t.current_approver.username}
+                    if t.current_approver_id else None,
+            }
+
+        def _qs_to_stubs(qs):
+            return [_task_stub(t) for t in qs]
+
+        def _activity_entry(h):
+            return {
+                'task_id': h.task_id,
+                'task_summary': h.task.summary,
+                'field': h.field_name,
+                'old_value': h.old_value,
+                'new_value': h.new_value,
+                'changed_by': h.changed_by.username if h.changed_by else None,
+                'changed_at': h.changed_at.isoformat(),
+            }
+
+        overdue_qs = intel.overdue_tasks(project_ids, today)
+        due_soon_qs = intel.due_soon_tasks(project_ids, due_soon_days, today)
+        blocked_qs = intel.blocked_tasks(project_ids)
+        high_priority_qs = intel.high_priority_incomplete_tasks(project_ids)
+        awaiting_qs = intel.awaiting_approval_tasks(project_ids)
+        stalled_qs = intel.stalled_tasks(project_ids, stall_days, today)
+
+        return Response({
+            'overdue': {
+                'count': overdue_qs.count(),
+                'tasks': _qs_to_stubs(overdue_qs),
+            },
+            'due_soon': {
+                'count': due_soon_qs.count(),
+                'tasks': _qs_to_stubs(due_soon_qs),
+                'days_window': due_soon_days,
+            },
+            'blocked': {
+                'count': blocked_qs.count(),
+                'tasks': _qs_to_stubs(blocked_qs),
+            },
+            'high_priority': {
+                'count': high_priority_qs.count(),
+                'tasks': _qs_to_stubs(high_priority_qs),
+            },
+            'awaiting_approval': {
+                'count': awaiting_qs.count(),
+                'tasks': _qs_to_stubs(awaiting_qs),
+            },
+            'stalled': {
+                'count': stalled_qs.count(),
+                'tasks': _qs_to_stubs(stalled_qs),
+                'stall_days': stall_days,
+            },
+            'progress': intel.progress_counts(project_ids),
+            'recent_activity': [_activity_entry(h) for h in intel.recent_activity(project_ids, activity_limit)],
+            'velocity': intel.velocity_trend(project_ids, velocity_weeks, today),
+            'risk': intel.risk_summary(project_ids, today, stall_days),
+        })
+
+    @action(detail=False, methods=['get'], url_path='work-cycle')
+    def work_cycle(self, request):
+        """
+        GET /api/tasks/work-cycle/?project_id=<id>&from=YYYY-MM-DD&to=YYYY-MM-DD
+
+        Returns grouped task changes (added, completed, field changes) within
+        the requested date window.
+        """
+        from datetime import date as _date
+
+        user = request.user
+        accessible_ids = set(
+            ProjectMember.objects.filter(user=user, is_active=True)
+            .values_list('project_id', flat=True)
+        )
+
+        project_id_param = request.query_params.get('project_id')
+        if project_id_param:
+            try:
+                pid = int(project_id_param)
+            except ValueError:
+                return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
+            if pid not in accessible_ids:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            project_ids = [pid]
+        else:
+            active = getattr(user, 'active_project', None)
+            project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
+
+        if not project_ids:
+            return Response({'detail': 'No accessible projects.'}, status=status.HTTP_404_NOT_FOUND)
+
+        today = _date.today()
+        try:
+            date_to = _date.fromisoformat(request.query_params.get('to', today.isoformat()))
+        except ValueError:
+            return Response({'detail': 'Invalid to date.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            default_from = (date_to.replace(day=1)).isoformat()
+            date_from = _date.fromisoformat(request.query_params.get('from', default_from))
+        except ValueError:
+            return Response({'detail': 'Invalid from date.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(intel.work_cycle_history(project_ids, date_from, date_to))
+
+    @action(detail=False, methods=['get'], url_path='my-actions')
+    def my_actions(self, request):
+        """GET /api/tasks/my-actions/?project_id=<id>&due_soon_days=7"""
+        from datetime import date as _date
+
+        user = request.user
+        accessible_ids = set(
+            ProjectMember.objects.filter(user=user, is_active=True)
+            .values_list('project_id', flat=True)
+        )
+
+        project_id_param = request.query_params.get('project_id')
+        if project_id_param:
+            try:
+                pid = int(project_id_param)
+            except ValueError:
+                return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
+            if pid not in accessible_ids:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            project_ids = [pid]
+        else:
+            active = getattr(user, 'active_project', None)
+            project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
+
+        if not project_ids:
+            return Response({'detail': 'No accessible projects.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            due_soon_days = max(1, int(request.query_params.get('due_soon_days', 7)))
+        except (ValueError, TypeError):
+            due_soon_days = 7
+
+        today = _date.today()
+        return Response(intel.my_actions(user, project_ids, today, due_soon_days))
+
+    @action(detail=False, methods=['get'], url_path='status-report')
+    def status_report(self, request):
+        from datetime import date, timedelta
+        from task.status_report import generate_status_report
+
+        project_id_param = request.query_params.get('project_id')
+        if not project_id_param:
+            return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            project_id = int(project_id_param)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        has_membership = ProjectMember.objects.filter(
+            user=request.user,
+            project_id=project_id,
+            is_active=True,
+        ).exists()
+        if not has_membership:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        period = request.query_params.get('period', 'week')
+        today = date.today()
+
+        if period == 'month':
+            date_from = today - timedelta(days=30)
+            date_to = today
+        elif period == 'custom':
+            from_str = request.query_params.get('date_from')
+            to_str = request.query_params.get('date_to')
+            try:
+                date_from = date.fromisoformat(from_str)
+                date_to = date.fromisoformat(to_str)
+            except (TypeError, ValueError):
+                return Response({'error': 'Invalid date_from or date_to'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            date_from = today - timedelta(days=7)
+            date_to = today
+
+        data = generate_status_report(project_id, date_from, date_to)
+        return Response(data)
 
     def gantt(self, request, *args, **kwargs):
         """
@@ -393,6 +640,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         base_qs = Task.objects.select_related(
             'project',
             'owner',
+            'created_by',
             'current_approver',
             'meeting_origin__meeting__type_definition',
         )
@@ -426,7 +674,49 @@ class TaskViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         """Update a task"""
+        task = serializer.instance
+        if not user_can_edit_task(self.request.user, task):
+            raise PermissionDenied(
+                'Only the task owner, current approver, or unassigned draft creator can edit this task.'
+            )
+
         serializer.save()
+
+    def pin(self, request, pk=None):
+        """Pin a task for the current user."""
+        task = self.get_object()
+        TaskPin.objects.get_or_create(task=task, user=request.user)
+        task._is_pinned = True
+        serializer = self.get_serializer(task, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def unpin(self, request, pk=None):
+        """Remove the current user's pin from a task."""
+        task = self.get_object()
+        TaskPin.objects.filter(task=task, user=request.user).delete()
+        task._is_pinned = False
+        serializer = self.get_serializer(task, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'], url_path='field-history')
+    def field_history(self, request, pk=None):
+        task = self.get_object()
+        qs = TaskFieldHistory.objects.filter(task=task).select_related('changed_by').order_by('-changed_at')
+        try:
+            page_size = max(1, min(int(request.query_params.get('page_size', 20)), 100))
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (ValueError, TypeError):
+            page_size, page = 20, 1
+        total = qs.count()
+        offset = (page - 1) * page_size
+        serializer = TaskFieldHistorySerializer(qs[offset:offset + page_size], many=True)
+        return Response({
+            'count': total,
+            'page': page,
+            'page_size': page_size,
+            'has_more': offset + page_size < total,
+            'results': serializer.data,
+        })
     
     def perform_destroy(self, instance):
         """
@@ -600,12 +890,33 @@ class TaskViewSet(viewsets.ModelViewSet):
             # Save all changes
             task.save()
 
+            # Sync budget request status when a budget task is approved or rejected
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest):
+                        if is_approved:
+                            # Advance up to APPROVED only — pool deduction happens at task LOCKED.
+                            # submitted_at is set at task submission time, so we skip DRAFT→SUBMITTED here.
+                            if br.status == BudgetRequestStatus.SUBMITTED:
+                                br.send_for_review()
+                                br.save()
+                            if br.status == BudgetRequestStatus.UNDER_REVIEW:
+                                br.approve()
+                                br.save()
+                        else:
+                            if br.status in (BudgetRequestStatus.SUBMITTED, BudgetRequestStatus.UNDER_REVIEW):
+                                br.reject()
+                                br.save()
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s approval: %s', task.id, e, exc_info=True)
+
             # Return both the approval record and updated task data
             approval_serializer = ApprovalRecordSerializer(
                 task.approval_records.latest('step_number')
             )
             task_serializer = TaskSerializer(task, context={'request': request})
-
             return Response({
                 'approval_record': approval_serializer.data,
                 'task': task_serializer.data
@@ -616,13 +927,13 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """Cancel a task"""
         task = self.get_object()
-        
-        # Validate task can be cancelled
+
+        # Validate task can be cancelled (status check first)
         cancellable_statuses = [
             Task.Status.SUBMITTED,
             Task.Status.UNDER_REVIEW,
@@ -634,11 +945,30 @@ class TaskViewSet(viewsets.ModelViewSet):
                 {'error': 'Task cannot be cancelled in current status'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        is_approver = task.current_approver_id and task.current_approver_id == request.user.id
+        is_owner = task.owner_id and task.owner_id == request.user.id
+        if task.status == Task.Status.SUBMITTED:
+            if not is_approver and not is_owner:
+                return Response({'error': 'Only the task owner or approver can cancel this task.'}, status=status.HTTP_403_FORBIDDEN)
+        elif task.current_approver_id and not is_approver:
+            return Response({'error': 'Only the task approver can cancel this task.'}, status=status.HTTP_403_FORBIDDEN)
         
         try:
             # Cancel the task
             task.cancel()
             task.save()
+
+            # If this is a budget task, cancel the linked budget request (reverses pool if locked)
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest):
+                        br.cancel()
+                        br.save()
+                except Exception as e:
+                    logger.error('Budget cancel sync failed on task %s: %s', task.id, e, exc_info=True)
 
             # Delete all approval records
             task.approval_records.all().delete()
@@ -649,13 +979,13 @@ class TaskViewSet(viewsets.ModelViewSet):
                 'task': task_serializer.data,
                 'approval_record': None
             }, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @action(detail=True, methods=['get'])
     def approval_history(self, request, pk=None):
         """Get approval history for a task"""
@@ -719,19 +1049,32 @@ class TaskViewSet(viewsets.ModelViewSet):
 
             # Save the task to persist the state change
             task.save()
+
+            # If this is a budget task, reset the BR back to DRAFT so it can flow through approval again
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    br = task.linked_object
+                    if isinstance(br, BudgetRequest) and br.status in (
+                        BudgetRequestStatus.CANCELLED, BudgetRequestStatus.REJECTED
+                    ):
+                        br.revise()
+                        br.save()
+                except Exception as e:
+                    logger.error('Budget revise sync failed on task %s: %s', task.id, e, exc_info=True)
             
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @action(detail=True, methods=['post'])
     def forward(self, request, pk=None):
         """Forward a task to next approver (update current_approver)"""
@@ -770,7 +1113,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
-            
+
         except User.DoesNotExist:
             return Response(
                 {'error': 'User with this ID does not exist'},
@@ -786,6 +1129,8 @@ class TaskViewSet(viewsets.ModelViewSet):
     def submit_task(self, request, pk=None):
         """Submit a task (change status from DRAFT to SUBMITTED)"""
         task = self.get_object()
+        if task.owner_id and task.owner_id != request.user.id:
+            return Response({'error': 'Only the task owner can submit this task.'}, status=status.HTTP_403_FORBIDDEN)
         if task.status != Task.Status.DRAFT:
             return Response(
                 {'error': 'Task must be in DRAFT status to submit'},
@@ -794,6 +1139,26 @@ class TaskViewSet(viewsets.ModelViewSet):
         try:
             task.submit()
             task.save()
+
+            # Sync BR submitted_at to match the task submission moment.
+            # Budget details can be saved while the task is still DRAFT; that
+            # may auto-submit the BudgetRequest earlier. When the user finally
+            # submits the task, the visible "Submitted at" should reflect this
+            # task transition, not the earlier detail-save time.
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest):
+                        if br.status == BudgetRequestStatus.DRAFT:
+                            br.submit()
+                            br.save()
+                        elif br.status == BudgetRequestStatus.SUBMITTED:
+                            br.submitted_at = timezone.now()
+                            br.save(update_fields=['submitted_at'])
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s submit: %s', task.id, e, exc_info=True)
+
             task_serializer = TaskSerializer(task, context={'request': request})
             return Response({'task': task_serializer.data}, status=status.HTTP_200_OK)
         except Exception as e:
@@ -812,12 +1177,16 @@ class TaskViewSet(viewsets.ModelViewSet):
         """
         task = self.get_object()
 
-        # Validate task can start review
+        # Validate task can start review (status check first)
         if task.status != Task.Status.SUBMITTED:
             return Response(
                 {'error': 'Task must be in SUBMITTED status to start review'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if task.current_approver_id and task.current_approver_id != request.user.id:
+            return Response({'error': 'Only the task approver can start review.'}, status=status.HTTP_403_FORBIDDEN)
+
 
         try:
             # Transition status: SUBMITTED → UNDER_REVIEW
@@ -831,7 +1200,8 @@ class TaskViewSet(viewsets.ModelViewSet):
                     if first_step:
                         task.approval_chain = chain
                         task.current_approval_step = 1
-                        task.current_approver = first_step.approver
+                        if not task.current_approver:
+                            task.current_approver = first_step.approver
 
             task.save()
 
@@ -852,13 +1222,16 @@ class TaskViewSet(viewsets.ModelViewSet):
         """Lock a task (change status to LOCKED)"""
         task = self.get_object()
 
-        # Validate task can be locked
+        # Validate task can be locked (status check first)
         lockable_statuses = [Task.Status.APPROVED]
         if task.status not in lockable_statuses:
             return Response(
                 {'error': 'Task must be in APPROVED status to be locked'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        if task.current_approver_id and task.current_approver_id != request.user.id:
+            return Response({'error': 'Only the task approver can lock this task.'}, status=status.HTTP_403_FORBIDDEN)
 
         # Enforce minimum approval count when an approval chain is assigned
         if task.approval_chain:
@@ -875,17 +1248,43 @@ class TaskViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+        # Budget tasks require an approved BudgetRequest before locking
+        if task.type == 'budget':
+            from budget_approval.models import BudgetRequest, BudgetRequestStatus
+            br = task.linked_object or task.budget_requests.first()
+            if not isinstance(br, BudgetRequest):
+                return Response(
+                    {'error': 'Budget details must be filled in before this task can be locked.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if br.status != BudgetRequestStatus.APPROVED:
+                return Response(
+                    {'error': f'Budget request must be in APPROVED status to lock this task (current: {br.status}).'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         try:
             # Lock the task
             task.lock()
             task.save()  # Save the state change
-            
+
+            # Sync budget request to LOCKED so the pool deduction happens here
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest) and br.status == BudgetRequestStatus.APPROVED:
+                        br.lock()
+                        br.save()
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s lock: %s', task.id, e, exc_info=True)
+
             # Return updated task
             task_serializer = TaskSerializer(task, context={'request': request})
             return Response({
                 'task': task_serializer.data
             }, status=status.HTTP_200_OK)
-            
+
         except Exception as e:
             return Response(
                 {'error': str(e)},
@@ -895,9 +1294,27 @@ class TaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='unlock')
     def unlock(self, request, pk=None):
         task = self.get_object()
+
+        if task.current_approver_id and task.current_approver_id != request.user.id:
+            return Response({'error': 'Only the task approver can unlock this task.'}, status=status.HTTP_403_FORBIDDEN)
+
         try:
             task.unlock()
             task.save()
+
+            # Reverse the pool deduction: reset the linked BudgetRequest from LOCKED → APPROVED
+            if task.type == 'budget':
+                try:
+                    from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from decimal import Decimal
+                    br = task.linked_object or task.budget_requests.first()
+                    if isinstance(br, BudgetRequest) and br.status == BudgetRequestStatus.LOCKED:
+                        pool = br.budget_pool
+                        pool.used_amount = max(Decimal('0'), pool.used_amount - br.amount)
+                        pool.save()
+                        BudgetRequest.objects.filter(pk=br.pk).update(status=BudgetRequestStatus.APPROVED)
+                except Exception as e:
+                    logger.error('Budget sync failed on task %s unlock: %s', task.id, e, exc_info=True)
             return Response(
                 {'task': TaskSerializer(task).data},
                 status=status.HTTP_200_OK
@@ -953,11 +1370,20 @@ class TaskViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['delete'], url_path='subtasks/(?P<subtask_id>[^/.]+)')
     def subtask_detail(self, request, pk=None, subtask_id=None):
-        """Remove a subtask relationship - DISABLED: Subtask relationships cannot be removed"""
-        return Response(
-            {'error': 'Subtask relationships cannot be removed. Subtasks are automatically deleted when all parent tasks are deleted.'},
-            status=status.HTTP_403_FORBIDDEN
-        )
+        """Remove a subtask relationship (unlink only — does not delete the task)."""
+        parent_task = self.get_object()
+        child_task = get_object_or_404(Task, pk=subtask_id)
+        qs = TaskHierarchy.objects.filter(parent_task=parent_task, child_task=child_task)
+        if not qs.exists():
+            return Response({'error': 'Subtask relationship not found.'}, status=status.HTTP_404_NOT_FOUND)
+        # Clear is_subtask before deleting so the post_delete signal knows this
+        # is a deliberate unlink (not a cascade) and leaves the task intact.
+        has_other_parents = TaskHierarchy.objects.filter(child_task=child_task).exclude(parent_task=parent_task).exists()
+        if not has_other_parents:
+            child_task.is_subtask = False
+            child_task.save(update_fields=['is_subtask'])
+        qs.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
     
     @action(detail=True, methods=['post'], url_path='subtasks/(?P<subtask_id>[^/.]+)/move')
     def move_subtask(self, request, pk=None, subtask_id=None):
@@ -1165,6 +1591,7 @@ class TaskAttachmentListView(generics.ListCreateAPIView):
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to upload attachments to this task.')
 
+        set_current_user(self.request.user)
         serializer.save(task=task, uploaded_by=self.request.user)
 
 
@@ -1183,6 +1610,11 @@ class TaskAttachmentDetailView(generics.RetrieveDestroyAPIView):
             raise PermissionDenied('You do not have access to this task.')
 
         return TaskAttachment.objects.filter(task_id=task_id)
+
+    def perform_destroy(self, instance):
+        task_id = instance.task_id
+        set_current_user(self.request.user)
+        instance.delete()
 
     def get_object(self):
         # Use get_queryset() to ensure permission checks are applied

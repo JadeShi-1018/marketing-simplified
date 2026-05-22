@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useTaskTracking } from '@/lib/tracking/useTaskTracking';
 import toast from 'react-hot-toast';
 import { useParams, useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -17,8 +18,11 @@ import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
 import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
 import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
+import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
+import { useAuthStore } from '@/lib/authStore';
+import EngagementPanel from '@/components/tasks/detail/EngagementPanel';
 
 export default function TaskV2DetailPage() {
   const params = useParams();
@@ -26,24 +30,30 @@ export default function TaskV2DetailPage() {
   const taskId = params?.taskId ? Number(params.taskId) : null;
 
   const [task, setTask] = useState<TaskData | null>(null);
+  const projectId = task?.project?.id ?? task?.project_id ?? null;
+  const { markInteraction } = useTaskTracking(taskId ?? 0, projectId);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [activeTab, setActiveTab] = useState<'details' | 'history'>('details');
 
-  const load = useCallback(async () => {
-    if (!taskId) return;
-    try {
-      const resp = await TaskAPI.getTask(taskId);
-      setTask(resp.data as TaskData);
-      setError(null);
-    } catch (e) {
-      setError((e as any)?.response?.data?.detail || 'Failed to load task');
-    } finally {
-      setLoading(false);
-    }
-  }, [taskId]);
+  const load = useCallback(
+    async (options?: { internalRefetch?: boolean }) => {
+      if (!taskId) return;
+      try {
+        const resp = await TaskAPI.getTask(taskId, options);
+        setTask(resp.data as TaskData);
+        setError(null);
+      } catch (e) {
+        setError((e as any)?.response?.data?.detail || 'Failed to load task');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [taskId],
+  );
 
   useEffect(() => {
     void load();
@@ -65,9 +75,15 @@ export default function TaskV2DetailPage() {
     };
   }, [task?.project?.id, task?.project_id]);
 
-  const onMutated = useCallback(async () => {
+  /** Refresh side panels (Focus insights, comments list, etc.) without reloading task. */
+  const onMutated = useCallback(() => {
     setRefreshKey((k) => k + 1);
-    await load();
+  }, []);
+
+  /** Reload task shell after field/status edits; does not count as a page open. */
+  const reloadTask = useCallback(async () => {
+    setRefreshKey((k) => k + 1);
+    await load({ internalRefetch: true });
   }, [load]);
 
   const doDelete = async () => {
@@ -80,7 +96,17 @@ export default function TaskV2DetailPage() {
     }
   };
 
-  const readOnly = task?.status === 'LOCKED';
+  const currentUser = useAuthStore((s) => s.user);
+  const isOwner = currentUser?.id != null && task?.owner?.id != null &&
+    Number(currentUser.id) === Number(task.owner.id);
+  const isApprover = currentUser?.id != null && task?.current_approver?.id != null &&
+    Number(currentUser.id) === Number(task.current_approver.id);
+  const isCreator = currentUser?.id != null && task?.created_by?.id != null &&
+    Number(currentUser.id) === Number(task.created_by.id);
+  const creatorCanEditUnassignedDraft = Boolean(
+    task?.status === 'DRAFT' && !task.owner && !task.current_approver && isCreator
+  );
+  const readOnly = task?.status === 'LOCKED' || (!isOwner && !isApprover && !creatorCanEditUnassignedDraft);
   const taskShell = (task ?? {
     id: taskId ?? undefined,
     summary: '',
@@ -101,63 +127,107 @@ export default function TaskV2DetailPage() {
       <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="bg-gray-50">
           {error && !loading && (
-          <div className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>
+          <div data-testid="task-detail-error" className="px-6 py-12 text-center text-sm text-rose-600">{error}</div>
         )}
           {(!error && (task || loading)) && (
-          <div className="mx-auto max-w-[1440px] px-6 py-4">
+          <div className="mx-auto max-w-[1440px] px-0 py-3 sm:px-6 sm:py-4">
             <TaskDetailHeader
               task={taskShell}
               members={members}
               readOnly={Boolean(readOnly)}
-              onUpdated={onMutated}
-              onMutated={onMutated}
+              onUpdated={reloadTask}
+              onMutated={reloadTask}
               onDelete={() => setConfirmDelete(true)}
               loading={loading}
             />
 
-            <div className="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-[1fr_360px]">
+            {/* Tab bar */}
+            <div className="mt-4 flex border-b border-gray-100">
+              {(['details', 'history'] as const).map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`relative mr-4 py-2.5 text-xs font-medium transition-colors ${
+                    activeTab === tab
+                      ? 'text-gray-900 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-full after:bg-[#3CCED7]'
+                      : 'text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 sm:gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
               <div className="min-w-0 space-y-5">
+                {activeTab === 'details' && (<>
                 <TaskDescriptionBlock
                   task={taskShell}
                   readOnly={Boolean(readOnly)}
-                  onUpdated={onMutated}
+                  onUpdated={reloadTask}
                   loading={loading}
                 />
-                <TaskTypeBlock task={taskShell} loading={loading} />
+                <TaskTypeBlock task={taskShell} loading={loading} readOnly={Boolean(readOnly)} onUpdated={reloadTask} />
                 <TaskSubtasksBlock
                   task={taskShell}
                   readOnly={Boolean(readOnly)}
                   refreshKey={refreshKey}
                   loading={loading}
+                  onMutated={onMutated}
                 />
-                <TaskRelationsBlock task={taskShell} readOnly={Boolean(readOnly)} loading={loading} />
+                <TaskRelationsBlock
+                  task={taskShell}
+                  readOnly={Boolean(readOnly)}
+                  loading={loading}
+                  onMutated={onMutated}
+                />
                 {(task?.id || loading) && (
                   <TaskAttachmentsBlock
                     taskId={task?.id ?? 0}
                     readOnly={Boolean(readOnly)}
                     loading={loading}
+                    onMutated={onMutated}
                   />
                 )}
                 {(task?.id || loading) && (
                   <TaskActivityBlock
                     taskId={task?.id ?? 0}
-                    readOnly={Boolean(readOnly)}
+                    readOnly={task?.status === 'LOCKED'}
+                    refreshKey={refreshKey}
+                    loading={loading}
+                    onMutated={onMutated}
+                    onFirstInteraction={() => markInteraction('comment_box', 'click')}
+                  />
+                )}
+                </>)}
+                {activeTab === 'history' && (task?.id || loading) && (
+                  <TaskFieldHistoryBlock
+                    taskId={task?.id ?? 0}
                     refreshKey={refreshKey}
                     loading={loading}
                   />
                 )}
               </div>
 
-              <aside className="space-y-5">
+              <aside className="min-w-0 space-y-5">
                 <PropertiesPanel
                   task={taskShell}
                   members={members}
                   readOnly={Boolean(readOnly)}
-                  onUpdated={onMutated}
+                  onUpdated={reloadTask}
                   loading={loading}
+                  onFirstInteraction={() => markInteraction('priority_select', 'change')}
                 />
                 {(task?.id || loading) && (
                   <ApprovalTimelinePanel
+                    taskId={task?.id ?? 0}
+                    refreshKey={refreshKey}
+                    loading={loading}
+                  />
+                )}
+                {(task?.id || loading) && (
+                  <EngagementPanel
                     taskId={task?.id ?? 0}
                     refreshKey={refreshKey}
                     loading={loading}
@@ -177,7 +247,7 @@ export default function TaskV2DetailPage() {
                 <p className="mt-2 text-sm text-gray-600">
                   &quot;{task.summary}&quot; will be permanently removed. This cannot be undone.
                 </p>
-                <div className="mt-5 flex justify-end gap-2">
+                <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                   <button
                     type="button"
                     onClick={() => setConfirmDelete(false)}

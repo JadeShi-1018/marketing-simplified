@@ -5,7 +5,7 @@ from rest_framework import serializers
 from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
 from meetings.services import validate_meeting_for_origin_link
-from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskHierarchy, TaskRelation
+from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, TaskPin
 from core.models import Project, ProjectMember
 from core.utils.project import get_user_active_project
 from django.contrib.auth import get_user_model
@@ -22,9 +22,15 @@ User = get_user_model()
 
 class UserSummarySerializer(serializers.ModelSerializer):
     """Serializer for user summary information"""
+    name = serializers.SerializerMethodField()
+
+    def get_name(self, obj):
+        full_name = obj.get_full_name().strip()
+        return full_name or obj.username or obj.email
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email']
+        fields = ['id', 'username', 'email', 'name']
 
 
 class ProjectSummarySerializer(serializers.ModelSerializer):
@@ -38,6 +44,7 @@ class TaskSerializer(serializers.ModelSerializer):
     """Serializer for Task model"""
     owner = UserSummarySerializer(read_only=True)
     owner_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    created_by = serializers.SerializerMethodField()
     project = ProjectSummarySerializer(read_only=True)
     project_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     current_approver = UserSummarySerializer(read_only=True)
@@ -45,11 +52,13 @@ class TaskSerializer(serializers.ModelSerializer):
     create_as_draft = serializers.BooleanField(write_only=True, required=False, default=False)
     draft_payload = serializers.JSONField(required=False, allow_null=True)
     is_subtask = serializers.BooleanField(read_only=True)
+    subtask_count = serializers.IntegerField(read_only=True, default=0)
     parent_relationship = serializers.SerializerMethodField()
     order_in_project = serializers.IntegerField(required=False)
     approval_chain_progress = serializers.SerializerMethodField()
     can_lock = serializers.SerializerMethodField()
     approvals_summary = serializers.SerializerMethodField()
+    is_pinned = serializers.SerializerMethodField()
     content_type = serializers.SerializerMethodField()
     # Revision tracking fields for SMP-501
     revision_round = serializers.IntegerField(read_only=True)
@@ -61,34 +70,51 @@ class TaskSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
     origin_action_item = serializers.SerializerMethodField()
+    linked_object = serializers.SerializerMethodField()
 
     class Meta:
         model = Task
         fields = [
             'id', 'summary', 'description', 'status', 'type', 'priority',
-            'owner', 'owner_id', 'project', 'project_id',
+            'owner', 'owner_id', 'created_by', 'project', 'project_id',
             'current_approver', 'current_approver_id',
-            'content_type', 'object_id', 'start_date', 'due_date', 'planned_start_date',
-            'is_subtask', 'parent_relationship', 'order_in_project',
+            'content_type', 'object_id', 'linked_object',
+            'start_date', 'due_date', 'planned_start_date',
+            'is_subtask', 'subtask_count', 'parent_relationship', 'order_in_project',
             'anomaly_status', 'approval_chain_progress',
             # Revision tracking fields for SMP-501
             'revision_round', 'revision_label',
-            'can_lock', 'approvals_summary',
+            'can_lock', 'approvals_summary', 'is_pinned',
             'create_as_draft', 'draft_payload',
             'origin_meeting',
             'origin_meeting_id',
             'origin_action_item',
             'linear_issue_id',
+            'created_at',
+            'updated_at',
         ]
         read_only_fields = [
-            'id', 'status', 'owner', 'content_type', 'object_id',
+            'id', 'status', 'owner', 'created_by', 'content_type', 'object_id', 'linked_object',
             'is_subtask', 'parent_relationship', 'anomaly_status',
-            'approval_chain_progress', 'can_lock', 'approvals_summary',
+            'approval_chain_progress', 'can_lock', 'approvals_summary', 'is_pinned',
             'revision_round', 'revision_label', # SMP-501
             'origin_meeting',
             'origin_action_item',
             'linear_issue_id',
+            'created_at',
+            'updated_at',
         ]
+
+    def get_is_pinned(self, obj):
+        annotated = getattr(obj, "_is_pinned", None)
+        if annotated is not None:
+            return bool(annotated)
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated or obj.pk is None:
+            return False
+        return TaskPin.objects.filter(task=obj, user=user).exists()
 
     def get_content_type(self, obj):
         """
@@ -100,6 +126,83 @@ class TaskSerializer(serializers.ModelSerializer):
         if not obj.content_type:
             return None
         return obj.content_type.model
+
+    def get_created_by(self, obj):
+        user = obj.created_by
+        if user is None:
+            history = (
+                obj.field_history.filter(
+                    field_name="task_created",
+                    changed_by__isnull=False,
+                )
+                .select_related("changed_by")
+                .order_by("changed_at")
+                .first()
+            )
+            user = history.changed_by if history else None
+        return UserSummarySerializer(user).data if user else None
+
+    _LINKED_SERIALIZERS = {
+        'budgetrequest':       ('budget_approval.serializers', 'BudgetRequestSerializer'),
+        'asset':               ('asset.serializers',           'AssetSerializer'),
+        'retrospectivetask':   ('retrospective.serializers',   'RetrospectiveTaskDetailSerializer'),
+        'scalingplan':         ('optimization.serializers',    'ScalingPlanSerializer'),
+        'alerttask':           ('alerting.serializers',        'AlertTaskSerializer'),
+        'clientcommunication': ('client_communication.serializers', 'ClientCommunicationSerializer'),
+        'experiment':          ('experiment.serializers',      'ExperimentSerializer'),
+        'optimization':        ('optimization.serializers',    'OptimizationSerializer'),
+        'reporttask':          ('report.serializers',          'ReportTaskSerializer'),
+        'platformpolicyupdate':('policy.serializers',          'PlatformPolicyUpdateSerializer'),
+    }
+
+    # Maps task.type → (reverse_accessor_or_None, is_manager, ct_model_name)
+    # reverse_accessor=None means no direct reverse FK exists on Task
+    _REVERSE_ACCESSORS = {
+        'budget':                 ('budget_requests',        True,  'budgetrequest'),
+        'experiment':             ('experiment',              False, 'experiment'),
+        'platform_policy_update': ('platform_policy_update', False, 'platformpolicyupdate'),
+        'alert':                  ('alert_task',             False, 'alerttask'),
+        'communication':          ('client_communications',  True,  'clientcommunication'),
+        'scaling':                ('scaling_plan',           False, 'scalingplan'),
+        'optimization':           ('optimization',           False, 'optimization'),
+    }
+
+    def get_linked_object(self, obj):
+        import importlib
+
+        def _serialize(instance, ct_model):
+            entry = self._LINKED_SERIALIZERS.get(ct_model)
+            if not entry:
+                return None
+            try:
+                module = importlib.import_module(entry[0])
+                serializer_cls = getattr(module, entry[1])
+                return serializer_cls(instance).data
+            except Exception:
+                return None
+
+        # Primary path: GenericFK already set
+        linked = obj.linked_object
+        if linked is not None:
+            ct = obj.content_type.model if obj.content_type else None
+            return _serialize(linked, ct)
+
+        # Fallback: GenericFK not set — resolve via reverse accessor by task.type
+        # (self-heals tasks created before link_to_object was wired in perform_create)
+        accessor_info = self._REVERSE_ACCESSORS.get(obj.type)
+        if not accessor_info:
+            return None
+        accessor, is_manager, ct_model = accessor_info
+        try:
+            rel = getattr(obj, accessor, None)
+            if rel is None:
+                return None
+            linked = rel.first() if is_manager else rel
+            if linked is None:
+                return None
+            return _serialize(linked, ct_model)
+        except Exception:
+            return None
 
     def get_origin_meeting(self, obj):
         try:
@@ -299,6 +402,7 @@ class TaskSerializer(serializers.ModelSerializer):
         try:
             user = self.context['request'].user
             validated_data['owner'] = user
+            validated_data['created_by'] = user
 
             project = self._resolve_project(user, validated_data.pop('project_id', None))
             self._ensure_project_membership(user, project)
@@ -443,6 +547,35 @@ class TaskSerializer(serializers.ModelSerializer):
     
     def validate(self, attrs):
         """Validate the data"""
+        # Lock owner, approver, planned_start_date, start_date after submit
+        if self.instance and self.instance.status != 'DRAFT':
+            locked_fields = {
+                'owner_id': 'Owner',
+                'current_approver_id': 'Approver',
+                'planned_start_date': 'Planned date',
+                'start_date': 'Start date',
+            }
+            for field, label in locked_fields.items():
+                if field in attrs:
+                    raise serializers.ValidationError({
+                        field: f'{label} cannot be changed after the task has been submitted.'
+                    })
+
+        # Approver requirement
+        if not self.instance:
+            if not attrs.get('create_as_draft'):
+                if not attrs.get('current_approver_id'):
+                    raise serializers.ValidationError({
+                        'current_approver_id': 'Approver is required.'
+                    })
+        else:
+            # Allow clearing the approver while in DRAFT; submission is blocked on the frontend
+            if 'current_approver_id' in attrs and attrs['current_approver_id'] is None:
+                if self.instance and self.instance.status != 'DRAFT':
+                    raise serializers.ValidationError({
+                        'current_approver_id': 'Approver is required.'
+                    })
+
         if self.instance is not None and attrs.get('origin_meeting_id') is not None:
             try:
                 self.instance.meeting_origin
@@ -493,6 +626,7 @@ class TaskListSerializer(TaskSerializer):
                 'origin_meeting',
                 'origin_meeting_id',
                 'origin_action_item',
+                'linked_object',
             )
         ]
     
@@ -739,3 +873,23 @@ class TaskBulkActionSerializer(serializers.Serializer):
                 }
             )
         return attrs
+
+
+class TaskFieldHistorySerializer(serializers.ModelSerializer):
+    changed_by_name = serializers.SerializerMethodField()
+    changed_by_avatar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskFieldHistory
+        fields = ['id', 'field_name', 'old_value', 'new_value', 'changed_by_name', 'changed_by_avatar', 'changed_at']
+
+    def get_changed_by_name(self, obj):
+        if obj.changed_by:
+            return obj.changed_by.get_full_name() or obj.changed_by.username
+        return None
+
+    def get_changed_by_avatar(self, obj):
+        if obj.changed_by and hasattr(obj.changed_by, 'profile'):
+            avatar = getattr(obj.changed_by.profile, 'avatar', None)
+            return avatar.url if avatar else None
+        return None
