@@ -48,6 +48,9 @@ const SECTIONS: {
       { key: "decision_review", label: "Decisions: review required" },
       { key: "decision_deadline", label: "Decisions: deadline reminders" },
       { key: "decision_published", label: "Decisions: outcome published" },
+      { key: "budget_review", label: "Budget: review required" },
+      { key: "budget_pool_low", label: "Budget: pool insufficient" },
+      { key: "budget_escalation", label: "Budget: escalation alerts" },
     ],
   },
   {

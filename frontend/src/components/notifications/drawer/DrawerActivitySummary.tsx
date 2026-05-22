@@ -7,6 +7,10 @@ import {
   getDecisionReviewSVODescription,
 } from "@/lib/decisionNotificationCopy";
 import {
+  getBudgetSVODescription,
+  isBudgetNotification,
+} from "@/lib/budgetNotificationCopy";
+import {
   getTaskChangeActivityDescription,
   getTaskStatusChangeSVODescription,
   isTaskDueDateEditNotification,
@@ -110,6 +114,16 @@ function getActivityDescription(
         ? getDecisionPublishedSVODescription(notification, actor)
         : <>A decision has been published.</>;
 
+    // Budget events
+    case "budget_review_needed":
+    case "budget_approval_result":
+    case "budget_pool_low":
+    case "budget_escalation":
+      if (isBudgetNotification(notification)) {
+        return getBudgetSVODescription(notification, actor);
+      }
+      return <>Budget approval decision has been made.</>;
+
     // Chat events
     case "chat_new_message":
       return <>{actor} sent you a message.</>;
@@ -160,8 +174,6 @@ function getActivityDescription(
     }
 
     // Approval / system events
-    case "budget_approval_result":
-      return <>Budget approval decision has been made.</>;
     case "workflow_node":
       return <>Workflow automation update.</>;
     case "account_permission":

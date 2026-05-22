@@ -24,6 +24,12 @@ import {
   getDecisionPublishedSVODescription,
   getDecisionReviewSVODescription,
 } from "@/lib/decisionNotificationCopy";
+import {
+  BudgetActorInline,
+  budgetChangeType,
+  getBudgetSVODescription,
+  isBudgetNotification,
+} from "@/lib/budgetNotificationCopy";
 import { isTaskDueDateEditNotification } from "@/lib/taskNotificationCopy";
 import { isInviteNotification } from "./DrawerInviteCard";
 import DrawerSectionDivider from "./DrawerSectionDivider";
@@ -42,7 +48,10 @@ const NOTIFICATION_EVENT_TYPES = new Set([
   "decision_deadline",
   "decision_published",
   "decision_review_needed",
+  "budget_review_needed",
   "budget_approval_result",
+  "budget_pool_low",
+  "budget_escalation",
   "chat_new_message",
   "chat_new_conversation",
   "calendar_reminder",
@@ -335,6 +344,49 @@ function DecisionPublishedSection({ notification }: { notification: Notification
   );
 }
 
+/** Budget lifecycle details */
+function BudgetNotificationSection({ notification }: { notification: NotificationItem }) {
+  const meta = (notification.metadata || {}) as Record<string, unknown>;
+  const actorName = notification.actor_name || null;
+  const actorAvatar = notification.actor_avatar || null;
+  const changeType = budgetChangeType(notification);
+  const comment = (meta.comment as string) || "";
+  const amount = meta.amount as string | undefined;
+  const currency = meta.currency as string | undefined;
+  const poolAvailable = meta.pool_available_amount as string | undefined;
+  const poolUsed = meta.pool_used_amount as string | undefined;
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start gap-2">
+        <Briefcase className="w-4 h-4 text-teal-500 mt-0.5 shrink-0" />
+        <div className="space-y-2">
+          <p className="text-sm text-gray-700 leading-relaxed">
+            {actorName ? (
+              getBudgetSVODescription(
+                notification,
+                <BudgetActorInline name={actorName} avatar={actorAvatar} />
+              )
+            ) : (
+              getBudgetSVODescription(notification, null)
+            )}
+          </p>
+          {amount && currency && (
+            <InfoRow label="Amount" value={`${amount} ${currency}`} />
+          )}
+          {changeType === "budget_pool_insufficient" && poolAvailable && (
+            <InfoRow label="Pool available" value={poolAvailable} />
+          )}
+          {changeType === "budget_locked" && poolUsed && (
+            <InfoRow label="Pool used" value={poolUsed} />
+          )}
+          {comment.trim() && <InfoRow label="Comment" value={comment} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** calendar_reminder */
 function CalendarReminderSection({ metadata }: { metadata: Record<string, unknown> }) {
   const eventTitle = (metadata?.event_title as string) || "Upcoming event";
@@ -562,6 +614,14 @@ export default function DrawerNotificationCard({
         return <DecisionReviewNeededSection notification={notification} />;
       case "decision_published":
         return <DecisionPublishedSection notification={notification} />;
+      case "budget_review_needed":
+      case "budget_approval_result":
+      case "budget_pool_low":
+      case "budget_escalation":
+        if (isBudgetNotification(notification)) {
+          return <BudgetNotificationSection notification={notification} />;
+        }
+        return <GenericNotificationSection notification={notification} />;
       case "chat_new_conversation":
         return <ChatNewConversationSection notification={notification} />;
       case "chat_new_message":

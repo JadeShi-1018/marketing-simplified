@@ -42,8 +42,12 @@ class NotificationEventType(models.TextChoices):
     DECISION_REVIEW_NEEDED = "decision_review_needed", "Decision needs review"
     DECISION_DEADLINE = "decision_deadline", "Decision deadline"
     DECISION_PUBLISHED = "decision_published", "Decision published"
-    # Automation & system
+    # Budget
+    BUDGET_REVIEW_NEEDED = "budget_review_needed", "Budget needs review"
     BUDGET_APPROVAL_RESULT = "budget_approval_result", "Budget approval result"
+    BUDGET_POOL_LOW = "budget_pool_low", "Budget pool insufficient"
+    BUDGET_ESCALATION = "budget_escalation", "Budget escalation"
+    # Automation & system
     WORKFLOW_NODE = "workflow_node", "Workflow node update"
     ACCOUNT_PERMISSION = "account_permission", "Account permission changed"
     BILLING_ANOMALY = "billing_anomaly", "Billing anomaly"
@@ -97,6 +101,9 @@ def default_notification_preferences() -> dict:
             "decision_review": r(),
             "decision_deadline": r(),
             "decision_published": r(),
+            "budget_review": r(),
+            "budget_pool_low": r(),
+            "budget_escalation": r(),
         },
         "automation_system": {
             "approval_budget_member": r(),

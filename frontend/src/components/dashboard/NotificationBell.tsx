@@ -17,6 +17,10 @@ import {
   getDecisionReviewSVODescription,
 } from '@/lib/decisionNotificationCopy';
 import {
+  getBudgetSVODescription,
+  isBudgetNotification,
+} from '@/lib/budgetNotificationCopy';
+import {
   getTaskChangeSVODescription,
   getTaskStatusChangeSVODescription,
 } from '@/lib/taskNotificationCopy';
@@ -102,6 +106,11 @@ function getSVODescription(item: NotificationItem): React.ReactNode {
       return getDecisionReviewSVODescription(item, actorChip);
     case 'decision_published':
       return getDecisionPublishedSVODescription(item, actorChip);
+    case 'budget_review_needed':
+    case 'budget_approval_result':
+    case 'budget_pool_low':
+    case 'budget_escalation':
+      return getBudgetSVODescription(item, actorChip);
     case 'task_deadline_soon':
       return <>This task is due soon. Don&apos;t forget to complete it!</>;
     default:

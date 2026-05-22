@@ -6,6 +6,7 @@ import { Check, X, Send, ExternalLink, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { NotificationItem } from "@/types/notifications";
 import { TaskAPI } from "@/lib/api/taskApi";
+import { budgetChangeType, isBudgetNotification } from "@/lib/budgetNotificationCopy";
 
 interface DrawerActionBarProps {
   notification: NotificationItem;
@@ -19,6 +20,16 @@ const INVITE_EVENT_TYPES = new Set([
   "project_invite",
   "meeting_participant_added",
 ]);
+
+function isBudgetReviewNotification(notification: NotificationItem): boolean {
+  if (!isBudgetNotification(notification)) return false;
+  const changeType = budgetChangeType(notification);
+  return (
+    notification.event_type === "budget_review_needed" ||
+    changeType === "budget_submitted" ||
+    changeType === "budget_forwarded"
+  );
+}
 
 /**
  * Determine the action type for a notification.
@@ -38,12 +49,12 @@ function getActionType(notification: NotificationItem): ActionType {
     return "default";
   }
 
+  if (isBudgetReviewNotification(notification)) {
+    return "approval";
+  }
+
   // Existing task-approval workflow (legacy paths)
-  if (
-    et === "task_assigned" ||
-    et === "decision_review_needed" ||
-    et === "budget_approval_result"
-  ) {
+  if (et === "task_assigned" || et === "decision_review_needed") {
     return "approval";
   }
 
@@ -83,6 +94,67 @@ function ApprovalActions({
     } catch (error) {
       console.error("Approval action failed:", error);
       toast.error(`Failed to ${action} task`);
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  return (
+    <div className="flex gap-3">
+      <button
+        type="button"
+        onClick={() => handleApproval("approve")}
+        disabled={loading !== null}
+        className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white font-medium shadow-sm transition hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {loading === "approve" ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <Check className="w-4 h-4" />
+        )}
+        Approve
+      </button>
+      <button
+        type="button"
+        onClick={() => handleApproval("reject")}
+        disabled={loading !== null}
+        className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {loading === "reject" ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <X className="w-4 h-4" />
+        )}
+        Reject
+      </button>
+    </div>
+  );
+}
+
+function BudgetApprovalActions({
+  notification,
+  onComplete,
+}: {
+  notification: NotificationItem;
+  onComplete: () => void;
+}) {
+  const [loading, setLoading] = useState<"approve" | "reject" | null>(null);
+  const taskId = Number(notification.metadata?.task_id);
+
+  const handleApproval = async (action: "approve" | "reject") => {
+    if (!Number.isFinite(taskId)) {
+      toast.error("Invalid budget task ID");
+      return;
+    }
+
+    setLoading(action);
+    try {
+      await TaskAPI.makeApproval(taskId, { action, comment: "" });
+      toast.success(action === "approve" ? "Budget approved!" : "Budget rejected");
+      onComplete();
+    } catch (error) {
+      console.error("Budget approval action failed:", error);
+      toast.error(`Failed to ${action} budget request`);
     } finally {
       setLoading(null);
     }
@@ -249,6 +321,17 @@ function buildFullPageUrl(notification: NotificationItem): string | null {
     }
   }
 
+  // Budget task page via metadata.task_id or action_url
+  if (objectType === "budget_request") {
+    const taskId = metadata?.task_id as number | string | undefined;
+    if (projectId && taskId) {
+      return `/projects/${projectId}/tasks/${taskId}`;
+    }
+    if (action_url) {
+      return action_url;
+    }
+  }
+
   // Default fallback to action_url
   return action_url || null;
 }
@@ -293,8 +376,15 @@ export default function DrawerActionBar({
   return (
     <div className="px-5 py-4 border-t border-gray-200 bg-gray-50 space-y-3 shrink-0">
 
+      {/* ── Budget approval ── */}
+      {actionType === "approval" && isBudgetReviewNotification(notification) && (
+        <BudgetApprovalActions notification={notification} onComplete={onActionComplete} />
+      )}
+
       {/* ── Existing task-workflow approval ── */}
-      {actionType === "approval" && notification.related_object_type === "task" && (
+      {actionType === "approval" &&
+        notification.related_object_type === "task" &&
+        !isBudgetReviewNotification(notification) && (
         <ApprovalActions notification={notification} onComplete={onActionComplete} />
       )}
 

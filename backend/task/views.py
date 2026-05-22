@@ -797,21 +797,33 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from budget_approval.services import BudgetRequestService
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
-                        if is_approved:
-                            # Advance up to APPROVED only — pool deduction happens at task LOCKED.
-                            # submitted_at is set at task submission time, so we skip DRAFT→SUBMITTED here.
-                            if br.status == BudgetRequestStatus.SUBMITTED:
-                                br.send_for_review()
-                                br.save()
-                            if br.status == BudgetRequestStatus.UNDER_REVIEW:
-                                br.approve()
-                                br.save()
-                        else:
-                            if br.status in (BudgetRequestStatus.SUBMITTED, BudgetRequestStatus.UNDER_REVIEW):
-                                br.reject()
-                                br.save()
+                        next_approver = None
+                        if is_approved and task.status == Task.Status.UNDER_REVIEW:
+                            next_approver = task.current_approver
+                        if br.status == BudgetRequestStatus.SUBMITTED:
+                            br = BudgetRequestService.start_review(br)
+                        if br.status == BudgetRequestStatus.UNDER_REVIEW:
+                            br = BudgetRequestService.process_approval(
+                                budget_request=br,
+                                approver=request.user,
+                                is_approved=is_approved,
+                                comment=comment,
+                                next_approver=next_approver,
+                            )
+                        elif (
+                            not is_approved
+                            and br.status == BudgetRequestStatus.SUBMITTED
+                        ):
+                            br = BudgetRequestService.start_review(br)
+                            br = BudgetRequestService.process_approval(
+                                budget_request=br,
+                                approver=request.user,
+                                is_approved=False,
+                                comment=comment,
+                            )
                 except Exception as e:
                     logger.error('Budget sync failed on task %s approval: %s', task.id, e, exc_info=True)
 
@@ -859,10 +871,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest
+                    from budget_approval.services import BudgetRequestService
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
-                        br.cancel()
-                        br.save()
+                        BudgetRequestService.cancel_budget_request(
+                            br,
+                            actor_id=request.user.id,
+                        )
                 except Exception as e:
                     logger.error('Budget cancel sync failed on task %s: %s', task.id, e, exc_info=True)
 
@@ -1042,11 +1057,16 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from budget_approval import notifications as budget_notifications
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
                         if br.status == BudgetRequestStatus.DRAFT:
                             br.submit()
                             br.save()
+                            budget_notifications.notify_budget_submitted(
+                                br,
+                                actor_id=request.user.id,
+                            )
                         elif br.status == BudgetRequestStatus.SUBMITTED:
                             br.submitted_at = timezone.now()
                             br.save(update_fields=['submitted_at'])
@@ -1159,10 +1179,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from budget_approval.services import BudgetRequestService
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest) and br.status == BudgetRequestStatus.APPROVED:
-                        br.lock()
-                        br.save()
+                        BudgetRequestService.lock_budget_request(
+                            br,
+                            actor_id=request.user.id,
+                        )
                 except Exception as e:
                     logger.error('Budget sync failed on task %s lock: %s', task.id, e, exc_info=True)
 

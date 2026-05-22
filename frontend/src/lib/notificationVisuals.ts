@@ -19,6 +19,7 @@ import {
   ThumbsUp,
   UserMinus,
   UserPlus,
+  Wallet,
   Zap,
   PencilLine,
 } from "lucide-react";
@@ -30,6 +31,7 @@ export type NotificationModuleKey =
   | "meeting"
   | "task"
   | "decision"
+  | "budget"
   | "collaboration"
   | "approval"
   | "automation"
@@ -77,6 +79,7 @@ export function deriveModule(notification: NotificationItem): NotificationModule
   if (rot === "meeting") return "meeting";
   if (rot === "task") return "task";
   if (rot === "decision") return "decision";
+  if (rot === "budget_request") return "budget";
 
   if (et.startsWith("chat_")) return "collaboration";
   if (et === "calendar_reminder" || et === "doc_asset_update") return "collaboration";
@@ -130,12 +133,21 @@ export function deriveTypeKey(notification: NotificationItem): NotificationTypeK
   if (et === "task_anomaly" || et === "billing_anomaly") return "alert";
   if (et === "calendar_reminder") return "reminder";
 
-  if (et === "decision_review_needed" || et === "budget_approval_result") {
+  if (et === "budget_review_needed" || et === "budget_approval_result") {
     return "approval";
   }
+  if (et === "budget_pool_low") return "alert";
+  if (et === "budget_escalation") return "alert";
   if (et === "workflow_node") return "workflow";
 
   if (et === "meeting_minutes_published" || et === "decision_published") {
+    return "publish";
+  }
+  if (
+    et === "budget_approval_result" &&
+    (notification.metadata?.change_type === "budget_approved" ||
+      notification.metadata?.change_type === "budget_locked")
+  ) {
     return "publish";
   }
 
@@ -188,6 +200,13 @@ export const MODULE_VISUALS: Record<NotificationModuleKey, ModuleVisual> = {
     tagBg: "bg-violet-50",
     tagText: "text-violet-900",
     icon: Scale,
+  },
+  budget: {
+    label: "Budget",
+    barClass: "bg-teal-500",
+    tagBg: "bg-teal-50",
+    tagText: "text-teal-900",
+    icon: Wallet,
   },
   collaboration: {
     label: "Collaboration",

@@ -98,6 +98,9 @@ export interface NotificationPreferencesData {
     decision_review: PrefRow;
     decision_deadline: PrefRow;
     decision_published: PrefRow;
+    budget_review: PrefRow;
+    budget_pool_low: PrefRow;
+    budget_escalation: PrefRow;
   };
   automation_system: {
     approval_budget_member: PrefRow;

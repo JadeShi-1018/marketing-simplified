@@ -9,12 +9,16 @@ import {
   AlertCircle,
   Briefcase,
   Scale,
+  Wallet,
 } from "lucide-react";
 import type { NotificationItem } from "@/types/notifications";
 import { TaskAPI } from "@/lib/api/taskApi";
 import { MeetingsAPI } from "@/lib/api/meetingsApi";
 import { ProjectAPI } from "@/lib/api/projectApi";
 import { DecisionAPI } from "@/lib/api/decisionApi";
+import { BudgetAPI } from "@/lib/api/budgetApi";
+import api from "@/lib/api";
+import { budgetLabelFromNotification } from "@/lib/budgetNotificationCopy";
 import DrawerSectionDivider from "./DrawerSectionDivider";
 
 interface DrawerObjectCardProps {
@@ -56,6 +60,18 @@ interface DecisionCardData {
   title?: string | null;
   riskLevel?: string | null;
   createdAt?: string;
+}
+
+interface BudgetCardData {
+  id: number;
+  summary: string;
+  amount: string;
+  currency: string;
+  status: string;
+  poolName?: string;
+  requesterName?: string;
+  requesterAvatar?: string | null;
+  approverName?: string;
 }
 
 // ── Colour helpers ────────────────────────────────────────────────────────────
@@ -405,6 +421,52 @@ function DecisionCard({
   );
 }
 
+function BudgetCard({ budget }: { budget: BudgetCardData }) {
+  const statusKey = budget.status?.toUpperCase() || "DRAFT";
+  const statusStyle = STATUS_COLORS[statusKey] || STATUS_COLORS.DRAFT;
+
+  return (
+    <div className={MODULE_CARD_SHELL}>
+      <div className="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
+        <Wallet className="w-3.5 h-3.5 text-brand-teal" />
+        <span>BUD-{budget.id}</span>
+      </div>
+      <h4 className="text-base font-medium text-gray-900 mb-3">{budget.summary}</h4>
+      <div className="flex flex-wrap gap-2 mb-3">
+        <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusStyle.bg} ${statusStyle.text}`}>
+          {budget.status.replace(/_/g, " ").toLowerCase()}
+        </span>
+      </div>
+      <div className="space-y-2 text-sm text-gray-600">
+        <div>
+          <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Amount</span>
+          <p className="font-medium text-gray-800 mt-0.5">
+            {budget.amount} {budget.currency}
+          </p>
+        </div>
+        {budget.poolName && (
+          <div>
+            <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Budget Pool</span>
+            <p className="font-medium text-gray-800 mt-0.5">{budget.poolName}</p>
+          </div>
+        )}
+        {budget.requesterName && (
+          <div className="flex items-center gap-1.5">
+            <Users className="w-4 h-4 text-gray-400" />
+            <OwnerChip name={budget.requesterName} avatar={budget.requesterAvatar} />
+          </div>
+        )}
+        {budget.approverName && (
+          <div>
+            <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Approver</span>
+            <p className="font-medium text-gray-800 mt-0.5">{budget.approverName}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function GenericCard({ notification }: { notification: NotificationItem }) {
   return (
     <div className={MODULE_CARD_SHELL}>
@@ -446,6 +508,7 @@ const SECTION_TITLES: Record<string, string> = {
   meeting: "Meeting Details",
   project: "Project Details",
   decision: "Decision Details",
+  budget_request: "Budget Details",
 };
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -457,6 +520,7 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
   const [meetingData, setMeetingData] = useState<MeetingData | null>(null);
   const [projectData, setProjectData] = useState<ProjectCardData | null>(null);
   const [decisionData, setDecisionData] = useState<DecisionCardData | null>(null);
+  const [budgetData, setBudgetData] = useState<BudgetCardData | null>(null);
 
   const objectType = notification.related_object_type?.toLowerCase();
   const objectId = notification.related_object_id;
@@ -535,6 +599,53 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
             riskLevel: data.riskLevel,
             createdAt: data.createdAt,
           });
+        } else if (objectType === "budget_request") {
+          const meta = notification.metadata || {};
+          const fallback: BudgetCardData = {
+            id: parseInt(objectId, 10),
+            summary: budgetLabelFromNotification(notification),
+            amount: String(meta.amount ?? "—"),
+            currency: String(meta.currency ?? ""),
+            status: String(meta.status ?? "SUBMITTED"),
+            poolName: meta.budget_pool_name as string | undefined,
+          };
+          const taskId = meta.task_id as number | undefined;
+          try {
+            if (taskId) {
+              const response = await BudgetAPI.getBudgetRequest(taskId);
+              const data = response.data as Record<string, unknown>;
+              setBudgetData({
+                id: (data.id as number) ?? parseInt(objectId, 10),
+                summary:
+                  (data.task as { summary?: string })?.summary ||
+                  budgetLabelFromNotification(notification),
+                amount: String(
+                  data.requested_amount ?? data.amount ?? meta.amount ?? "—"
+                ),
+                currency: String(data.currency ?? meta.currency ?? ""),
+                status: String(data.status ?? meta.status ?? "SUBMITTED"),
+                poolName:
+                  (data.budget_pool as { name?: string })?.name ||
+                  (meta.budget_pool_name as string | undefined),
+                requesterName:
+                  (data.owner as { username?: string })?.username ||
+                  undefined,
+                approverName:
+                  (data.current_approver as { username?: string })?.username ||
+                  undefined,
+              });
+            } else {
+              const response = await api.get(`/api/budgets/requests/${objectId}/`);
+              const data = response.data as Record<string, unknown>;
+              setBudgetData({
+                ...fallback,
+                amount: String(data.amount ?? fallback.amount),
+                status: String(data.status ?? fallback.status),
+              });
+            }
+          } catch {
+            setBudgetData(fallback);
+          }
         }
       } catch (err) {
         console.error("Failed to fetch related object:", err);
@@ -574,7 +685,8 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
       {!loading && !error && decisionData && (
         <DecisionCard decision={decisionData} notification={notification} />
       )}
-      {!loading && !error && !taskData && !meetingData && !projectData && !decisionData && objectType && (
+      {!loading && !error && budgetData && <BudgetCard budget={budgetData} />}
+      {!loading && !error && !taskData && !meetingData && !projectData && !decisionData && !budgetData && objectType && (
         <GenericCard notification={notification} />
       )}
     </div>
