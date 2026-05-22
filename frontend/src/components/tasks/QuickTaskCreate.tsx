@@ -18,7 +18,7 @@ interface QuickTaskCreateProps {
 export default function QuickTaskCreate({ projectId, open, onClose, onCreated }: QuickTaskCreateProps) {
   const addTask = useTaskStore((s) => s.addTask);
 
-  const [type, setType] = useState(TASK_TYPES[0].value);
+  const [type, setType] = useState<string>(TASK_TYPES[0].value);
   const [summary, setSummary] = useState('');
   const [priority, setPriority] = useState('');
   const [dueDate, setDueDate] = useState('');

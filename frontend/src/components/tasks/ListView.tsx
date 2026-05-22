@@ -31,6 +31,7 @@ import LinearBulkOutputModal from '@/components/linear/LinearBulkOutputModal';
 import { TaskFilterPanel } from './TaskFilterPanel';
 import TaskDrawer from './TaskDrawer';
 import QuickTaskCreate from './QuickTaskCreate';
+import type { TaskTag } from '@/types/task';
 
 interface ListViewProps {
   tasks: TaskData[];
@@ -143,6 +144,7 @@ export default function ListView({
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [linearBulkOpen, setLinearBulkOpen] = useState(false);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
+  const [tagCatalog, setTagCatalog] = useState<TaskTag[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [editingSummaryId, setEditingSummaryId] = useState<number | null>(null);
   const [summaryDraft, setSummaryDraft] = useState('');
@@ -432,6 +434,22 @@ export default function ListView({
       mounted = false;
     };
   }, [projectId]);
+
+  useEffect(() => {
+    let mounted = true;
+    if (!projectId) {
+      setTagCatalog([]);
+      return;
+    }
+    TaskAPI.getTagCatalog(projectId)
+      .then((rows) => {
+        if (mounted) setTagCatalog(rows);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, [projectId]);
   const [drawerRefreshKey, setDrawerRefreshKey] = useState(0);
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(() => {
     const param = searchParams?.get('drawerTaskId');
@@ -544,7 +562,7 @@ export default function ListView({
     const q = search.trim().toLowerCase();
     if (q) {
       result = result.filter((t) =>
-        `${t.summary ?? ''} ${t.type ?? ''} ${t.owner?.username ?? ''} ${t.current_approver?.username ?? ''}`
+        `${t.summary ?? ''} ${(t.tags ?? []).map((tag) => tag.name).join(' ')} ${t.type ?? ''} ${t.owner?.username ?? ''} ${t.current_approver?.username ?? ''}`
           .toLowerCase()
           .includes(q)
       );
@@ -580,6 +598,10 @@ export default function ListView({
       result = result.filter((t) => (t.subtask_count ?? 0) > 0);
     } else if (filters.has_subtasks === false) {
       result = result.filter((t) => (t.subtask_count ?? 0) === 0);
+    }
+    if (filters.tag_names?.length) {
+      const required = new Set(filters.tag_names);
+      result = result.filter((t) => (t.tags ?? []).some((tag) => required.has(tag.name)));
     }
     return result;
   }, [search, tasks, filters]);
@@ -713,6 +735,21 @@ export default function ListView({
     () => memberOptions.map((m) => ({ id: m.id, name: m.label })),
     [memberOptions]
   );
+
+  const tagOptions = useMemo(() => {
+    const seen = new Map<string, string>(); // name -> color
+    for (const tag of tagCatalog) {
+      if (tag.name) seen.set(tag.name, tag.color);
+    }
+    // Tasks loaded into the list may have tags created since the catalog was fetched;
+    // surface them too so the filter stays in sync without an extra refetch.
+    for (const t of tasks) {
+      for (const tag of t.tags ?? []) {
+        if (tag.name && !seen.has(tag.name)) seen.set(tag.name, tag.color);
+      }
+    }
+    return [...seen.entries()].map(([name, color]) => ({ name, color })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [tasks, tagCatalog]);
 
   const toggleSelection = (taskId: number, checked: boolean) => {
     setSelectedIds((prev) => {
@@ -1059,7 +1096,7 @@ export default function ListView({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search summary, type or owner…"
+            placeholder="Search summary, tags, type or owner…"
             className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-8 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
           />
           {search && (
@@ -1082,6 +1119,7 @@ export default function ListView({
           ownerOptions={filterMemberOptions}
           approverOptions={filterMemberOptions}
           typeOptions={TASK_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+          tagOptions={tagOptions}
         />
 
         {/* Saved Views */}
@@ -1539,10 +1577,32 @@ export default function ListView({
                               if (task.id) openDrawer(task.id);
                             }}
                           >
-                            <span
-                              className="block min-w-0 flex-1 truncate text-sm font-medium leading-5 text-gray-900"
-                            >
-                              {highlight(task.summary || `Task #${task.id}`, search)}
+                            <span className="block min-w-0 flex-1 leading-5">
+                              <span className="block truncate text-sm font-medium text-gray-900">
+                                {highlight(task.summary || `Task #${task.id}`, search)}
+                              </span>
+                              {task.tags && task.tags.length > 0 ? (
+                                <span className="mt-1 flex min-w-0 flex-wrap gap-1">
+                                  {task.tags.slice(0, 3).map((tag) => (
+                                    <span
+                                      key={`${tag.name.toLowerCase()}:${tag.color}`}
+                                      className="inline-flex max-w-[8rem] items-center gap-1 rounded-full bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 ring-1 ring-gray-200/80"
+                                    >
+                                      <span
+                                        className="h-1.5 w-1.5 shrink-0 rounded-full"
+                                        style={{ backgroundColor: tag.color }}
+                                        aria-hidden
+                                      />
+                                      <span className="truncate">{tag.name}</span>
+                                    </span>
+                                  ))}
+                                  {task.tags.length > 3 ? (
+                                    <span className="rounded-full bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-400">
+                                      +{task.tags.length - 3}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              ) : null}
                             </span>
                             <button
                               type="button"
@@ -2024,11 +2084,12 @@ export default function ListView({
           onCreated={(task) => {
             setCurrentPage(1);
             const q = search.trim().toLowerCase();
-            const hiddenBySearch = !!q && !`${task.summary ?? ''} ${task.type ?? ''} ${task.owner?.username ?? ''}`.toLowerCase().includes(q);
+            const hiddenBySearch = !!q && !`${task.summary ?? ''} ${(task.tags ?? []).map((tag) => tag.name).join(' ')} ${task.type ?? ''} ${task.owner?.username ?? ''}`.toLowerCase().includes(q);
             const hiddenByStatus = !!filters.status && !(Array.isArray(filters.status) ? filters.status : [filters.status]).includes(task.status ?? '');
             const hiddenByPriority = !!filters.priority && !(Array.isArray(filters.priority) ? filters.priority : [filters.priority]).includes(task.priority ?? '');
             const hiddenByType = !!filters.type && !(Array.isArray(filters.type) ? filters.type : [filters.type]).includes(task.type ?? '');
-            if (hiddenBySearch || hiddenByStatus || hiddenByPriority || hiddenByType) {
+            const hiddenByTags = !!filters.tag_names?.length && !(task.tags ?? []).some((tag) => filters.tag_names?.includes(tag.name));
+            if (hiddenBySearch || hiddenByStatus || hiddenByPriority || hiddenByType || hiddenByTags) {
               toast('Task created but hidden by your active filters — clear them to see it.', { icon: '⚠️', duration: 5000 });
             }
             if (task.id) openDrawer(task.id);
@@ -2038,7 +2099,7 @@ export default function ListView({
       <TaskDrawer
         taskId={drawerTaskId}
         onClose={() => openDrawer(null)}
-        onTaskUpdate={() => { onRefresh?.(); }}
+        onTaskUpdate={async () => { await onRefresh?.(); }}
         externalRefreshKey={drawerRefreshKey}
         taskIds={paginatedVisible.map((t) => t.id).filter(Boolean) as number[]}
         onNavigate={(dir) => {

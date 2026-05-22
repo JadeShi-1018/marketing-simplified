@@ -151,6 +151,64 @@ class TaskAPITest(TestCase):
         self.assertEqual(task.project, self.project)
         self.assertFalse(task.is_linked)  # Newly created task should not be linked to any object
 
+    def test_create_task_normalizes_tags(self):
+        """Task creation accepts and normalizes task labels."""
+        url = reverse('task-list')
+        data = {
+            'summary': 'Tagged Task',
+            'description': 'Test task description',
+            'type': 'asset',
+            'project_id': self.project.id,
+            'current_approver_id': self.approver.id,
+            'tags': [
+                {'name': '#Launch', 'color': '#5e6ad2'},
+                {'name': 'Paid social', 'color': '#26b5ce'},
+                {'name': 'launch', 'color': '#EB5757'},
+                {'name': '  ', 'color': '#6B7280'},
+            ],
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.data['tags'],
+            [
+                {'name': 'Launch', 'color': '#5E6AD2'},
+                {'name': 'Paid social', 'color': '#26B5CE'},
+            ],
+        )
+        task = Task.objects.get(pk=response.data['id'])
+        self.assertEqual(task.tags, response.data['tags'])
+
+    def test_update_task_tags_accepts_legacy_strings_and_clears(self):
+        """Task updates can set labels from simple strings and clear them with null."""
+        task = Task.objects.create(
+            summary='Editable Tagged Task',
+            type='asset',
+            project=self.project,
+            owner=self.user,
+            current_approver=self.approver,
+        )
+        url = reverse('task-detail', kwargs={'pk': task.id})
+
+        response = self.client.patch(url, {'tags': 'One, #Two, one'}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data['tags'],
+            [{'name': 'One', 'color': '#6B7280'}, {'name': 'Two', 'color': '#6B7280'}],
+        )
+        task = Task.objects.get(pk=task.pk)
+        self.assertEqual(task.tags, response.data['tags'])
+
+        response = self.client.patch(url, {'tags': None}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['tags'], [])
+        task = Task.objects.get(pk=task.pk)
+        self.assertEqual(task.tags, [])
+
     def test_create_task_as_draft_persists_payload_and_stays_draft(self):
         """Creating with create_as_draft keeps status=DRAFT and persists draft_payload."""
         url = reverse('task-list')

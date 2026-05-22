@@ -1,5 +1,7 @@
 import type { TaskData, TaskTag } from '@/types/task';
 
+const DEFAULT_TASK_LABEL_COLOR = '#6B7280';
+
 function coerceTags(raw: unknown): TaskTag[] {
   if (raw == null) return [];
   if (typeof raw === 'string') {
@@ -7,18 +9,29 @@ function coerceTags(raw: unknown): TaskTag[] {
       const p = JSON.parse(raw) as unknown;
       return coerceTags(p);
     } catch {
-      return [];
+      return coerceTags(raw.split(','));
     }
   }
   if (!Array.isArray(raw)) return [];
 
   const out: TaskTag[] = [];
+  const seen = new Set<string>();
   for (const item of raw) {
-    if (!item || typeof item !== 'object') continue;
-    const o = item as Record<string, unknown>;
-    const name = typeof o.name === 'string' ? o.name.trim() : '';
-    const colorRaw = typeof o.color === 'string' ? o.color.trim() : '';
-    if (!name || !colorRaw) continue;
+    const source =
+      typeof item === 'string'
+        ? { name: item, color: DEFAULT_TASK_LABEL_COLOR }
+        : item && typeof item === 'object'
+        ? (item as Record<string, unknown>)
+        : null;
+    if (!source) continue;
+    const name = typeof source.name === 'string' ? source.name.trim().replace(/^#+/, '') : '';
+    if (!name) continue;
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const colorRaw = typeof source.color === 'string' && source.color.trim()
+      ? source.color.trim()
+      : DEFAULT_TASK_LABEL_COLOR;
     out.push({ name, color: colorRaw.toUpperCase() });
   }
   return out;

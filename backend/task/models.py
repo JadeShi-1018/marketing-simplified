@@ -881,7 +881,7 @@ class TaskFieldHistory(models.Model):
 
     TRACKED_FIELDS = [
         'summary', 'status', 'priority', 'type', 'owner',
-        'due_date', 'planned_start_date', 'description',
+        'due_date', 'planned_start_date', 'description', 'tags',
     ]
 
     task = models.ForeignKey(

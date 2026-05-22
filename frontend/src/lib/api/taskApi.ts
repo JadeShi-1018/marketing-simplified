@@ -68,6 +68,17 @@ export const TaskAPI = {
   updateTask: (taskId: number, data: Partial<TaskData>) =>
     api.patch(`/api/tasks/${taskId}/`, data),
 
+  // Project-scoped tag catalog (aggregated from all tasks in the project)
+  getTagCatalog: async (projectId: number): Promise<{ name: string; color: string }[]> => {
+    const response = await api.get('/api/tasks/tag-catalog/', { params: { project_id: projectId } });
+    const list = response.data?.tags;
+    return Array.isArray(list) ? list : [];
+  },
+
+  deleteTag: async (projectId: number, name: string): Promise<void> => {
+    await api.delete('/api/tasks/tag-catalog/', { params: { project_id: projectId, name } });
+  },
+
   pinTask: (taskId: number) => api.post(`/api/tasks/${taskId}/pin/`),
 
   unpinTask: (taskId: number) => api.delete(`/api/tasks/${taskId}/pin/`),

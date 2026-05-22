@@ -50,10 +50,25 @@ class TestTaskTags:
         detail = reverse('task-detail', kwargs={'pk': task.pk})
         bad = authenticated_client.patch(
             detail,
-            {'tags': [{'name': 'x', 'color': '#000000'}]},
+            {'tags': [{'name': 'x', 'color': '#00000G'}]},
             format='json',
         )
         assert bad.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_custom_tag_color_allowed(self, authenticated_client, project, user):
+        user.active_project = project
+        user.save(update_fields=['active_project'])
+
+        task = Task.objects.create(summary='Custom color', type='asset', project=project, owner=user)
+        detail = reverse('task-detail', kwargs={'pk': task.pk})
+        patched = authenticated_client.patch(
+            detail,
+            {'tags': [{'name': 'Custom', 'color': '#123abc'}]},
+            format='json',
+        )
+
+        assert patched.status_code == status.HTTP_200_OK
+        assert patched.data['tags'] == [{'name': 'Custom', 'color': '#123ABC'}]
 
     def test_get_detail_returns_tags_for_ui_echo(self, authenticated_client, project, user):
         """GET /api/tasks/:id/ must expose tags so the detail page can render them."""
@@ -90,6 +105,42 @@ class TestTaskTags:
         rows = r.data['results'] if isinstance(r.data, dict) and 'results' in r.data else r.data
         tagged = next(item for item in rows if item['summary'] == 'Listed')
         assert tagged['tags'] == [{'name': 'Beta', 'color': '#26B5CE'}]
+
+    def test_delete_tag_catalog_removes_tag_from_project_tasks(self, authenticated_client, project, user):
+        user.active_project = project
+        user.save(update_fields=['active_project'])
+
+        first = Task.objects.create(
+            summary='First tagged',
+            type='asset',
+            project=project,
+            owner=user,
+            tags=[
+                {'name': 'Launch', 'color': '#123ABC'},
+                {'name': 'Keep', 'color': '#26B5CE'},
+            ],
+        )
+        second = Task.objects.create(
+            summary='Second tagged',
+            type='asset',
+            project=project,
+            owner=user,
+            tags=[{'name': 'launch', 'color': '#EB5757'}],
+        )
+
+        url = reverse('task-tag-catalog')
+        deleted = authenticated_client.delete(
+            f'{url}?project_id={project.id}&name=Launch',
+            format='json',
+        )
+
+        assert deleted.status_code == status.HTTP_200_OK
+        assert deleted.data['updated_tasks'] == 2
+
+        first = Task.objects.get(pk=first.pk)
+        second = Task.objects.get(pk=second.pk)
+        assert first.tags == [{'name': 'Keep', 'color': '#26B5CE'}]
+        assert second.tags == []
 
     def test_reject_more_than_ten_tags(self, authenticated_client, project, user):
         user.active_project = project

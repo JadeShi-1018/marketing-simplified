@@ -15,6 +15,7 @@ from django.db.utils import OperationalError, ProgrammingError
 import logging
 import mimetypes
 import json
+import re
 import traceback
 
 logger = logging.getLogger(__name__)
@@ -22,20 +23,17 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-TASK_TAG_ALLOWED_HEX_COLORS = frozenset(
-    {
-        '#5E6AD2',
-        '#26B5CE',
-        '#4CB782',
-        '#F2C94C',
-        '#F2994A',
-        '#EB5757',
-        '#9B51E0',
-        '#6B7280',
-    }
-)
+DEFAULT_TASK_TAG_COLOR = '#6B7280'
+TASK_TAG_HEX_COLOR_RE = re.compile(r'^#[0-9A-F]{6}$')
 TASK_TAG_MAX_COUNT = 10
 TASK_TAG_MAX_NAME_LENGTH = 15
+
+
+def _normalize_task_tag_color(value):
+    color = str(value or DEFAULT_TASK_TAG_COLOR).strip().upper()
+    if not color.startswith('#'):
+        color = f'#{color}'
+    return color if TASK_TAG_HEX_COLOR_RE.fullmatch(color) else None
 
 
 class UserSummarySerializer(serializers.ModelSerializer):
@@ -98,7 +96,7 @@ class TaskSerializer(serializers.ModelSerializer):
     origin_action_item = serializers.SerializerMethodField()
     linked_object = serializers.SerializerMethodField()
 
-    tags = serializers.JSONField(required=False, default=list)
+    tags = serializers.JSONField(required=False, allow_null=True, default=list)
 
     class Meta:
         model = Task
@@ -150,17 +148,29 @@ class TaskSerializer(serializers.ModelSerializer):
             try:
                 raw = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                return []
+                raw = raw.split(',')
         if not isinstance(raw, list):
             return []
         out = []
+        seen = set()
         for item in raw:
-            if not isinstance(item, dict):
+            if isinstance(item, str):
+                name = item.strip().lstrip('#').strip()
+                color = DEFAULT_TASK_TAG_COLOR
+            elif isinstance(item, dict):
+                name = str(item.get('name', '') or '').strip().lstrip('#').strip()
+                color = _normalize_task_tag_color(item.get('color', DEFAULT_TASK_TAG_COLOR))
+                if color is None:
+                    color = DEFAULT_TASK_TAG_COLOR
+            else:
                 continue
-            name = str(item.get('name', '') or '').strip()
-            color = str(item.get('color', '') or '').strip()
-            if name and color:
-                out.append({'name': name, 'color': color.upper()})
+            if not name:
+                continue
+            key = name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({'name': name[:TASK_TAG_MAX_NAME_LENGTH], 'color': color})
         return out
 
     def get_is_pinned(self, obj):
@@ -286,31 +296,40 @@ class TaskSerializer(serializers.ModelSerializer):
         return serialize_origin_action_item(ai)
 
     def validate_tags(self, value):
-        if value is None:
+        if value is None or value == '':
             return []
-        if not isinstance(value, list):
+        if isinstance(value, str):
+            raw_tags = value.split(',')
+        elif isinstance(value, list):
+            raw_tags = value
+        else:
             raise serializers.ValidationError('tags must be a JSON array')
-        if len(value) > TASK_TAG_MAX_COUNT:
+
+        if len(raw_tags) > TASK_TAG_MAX_COUNT:
             raise serializers.ValidationError(f'At most {TASK_TAG_MAX_COUNT} tags')
 
         out = []
         seen = set()
-        for idx, item in enumerate(value):
-            if not isinstance(item, dict):
-                raise serializers.ValidationError({'tags': f'Item {idx} must be an object'})
-            name = str(item.get('name', '')).strip()
+        for idx, item in enumerate(raw_tags):
+            if isinstance(item, str):
+                name = item.strip().lstrip('#').strip()
+                color = DEFAULT_TASK_TAG_COLOR
+            elif isinstance(item, dict):
+                name = str(item.get('name', '')).strip().lstrip('#').strip()
+                color = _normalize_task_tag_color(item.get('color', DEFAULT_TASK_TAG_COLOR))
+            else:
+                raise serializers.ValidationError({'tags': f'Item {idx} must be an object or string'})
             if not name:
-                raise serializers.ValidationError({'tags': f'Invalid name at index {idx}'})
+                continue
             if len(name) > TASK_TAG_MAX_NAME_LENGTH:
                 raise serializers.ValidationError({'tags': f'Tag name too long at index {idx}'})
-            color = str(item.get('color', '')).strip().upper()
-            if color not in TASK_TAG_ALLOWED_HEX_COLORS:
+            if color is None:
                 raise serializers.ValidationError({'tags': f'Unsupported color at index {idx}'})
-            key = name.lower()
+            key = name.casefold()
             if key in seen:
                 continue
             seen.add(key)
-            out.append({'name': name[:TASK_TAG_MAX_NAME_LENGTH], 'color': color})
+            out.append({'name': name, 'color': color})
         return out
 
     def get_approval_chain_progress(self, obj):
@@ -568,7 +587,7 @@ class TaskSerializer(serializers.ModelSerializer):
                 )
                 self._ensure_project_membership(self.context['request'].user, project)
                 validated_data['project'] = project
-        
+
         # Determine project for owner and approver validation (updated or existing)
         project = validated_data.get('project', getattr(self.instance, 'project', None))
 
@@ -599,7 +618,7 @@ class TaskSerializer(serializers.ModelSerializer):
                 validated_data['owner'] = owner
             else:
                 validated_data['owner'] = None
-        
+
         # Handle current_approver_id if provided
         if 'current_approver_id' in validated_data:
             current_approver_id = validated_data.pop('current_approver_id')
@@ -628,7 +647,7 @@ class TaskSerializer(serializers.ModelSerializer):
                 validated_data['current_approver'] = current_approver
             else:
                 validated_data['current_approver'] = None
-        
+
         instance = super().update(instance, validated_data)
         return instance
     

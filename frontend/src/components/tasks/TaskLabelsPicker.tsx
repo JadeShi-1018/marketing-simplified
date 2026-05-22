@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { ChevronDown, Plus, Tag, X } from 'lucide-react';
+import { Check, ChevronDown, Pencil, Plus, Tag, Trash2, X } from 'lucide-react';
 
 import type { TaskTag } from '@/types/task';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { TaskAPI } from '@/lib/api/taskApi';
 
-/** Preset colors — must stay in sync with backend `TASK_TAG_ALLOWED_HEX_COLORS`. */
+/** Preset colors shown first; users can also pick any valid hex color. */
 export const TASK_LABEL_PRESET_COLORS = [
   '#5E6AD2',
   '#26B5CE',
@@ -25,58 +26,78 @@ const PRESET_COLOR_SET = new Set<string>(TASK_LABEL_PRESET_COLORS);
 const TASK_TAG_MAX_COUNT = 10;
 const TASK_TAG_MAX_NAME_LENGTH = 15;
 
-const STORAGE_PREFIX = 'marketing-simplified:task-tag-catalog:';
+const HEX_COLOR_RE = /^#[0-9A-F]{6}$/;
 
 function tagKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function loadCatalog(projectId: number): TaskTag[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(`${STORAGE_PREFIX}${projectId}`);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (item): item is TaskTag =>
-          Boolean(item) &&
-          typeof item === 'object' &&
-          typeof (item as TaskTag).name === 'string' &&
-          typeof (item as TaskTag).color === 'string',
-      )
-      .map((t) => ({ name: t.name.trim(), color: t.color.trim().toUpperCase() }))
-      .filter((t) => t.name.length > 0 && PRESET_COLOR_SET.has(t.color));
-  } catch {
-    return [];
-  }
+function parseHexColor(value: string): string | null {
+  const raw = value.trim().toUpperCase();
+  if (!raw) return null;
+  const color = raw.startsWith('#') ? raw : `#${raw}`;
+  return HEX_COLOR_RE.test(color) ? color : null;
 }
 
-function saveCatalog(projectId: number, catalog: TaskTag[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(`${STORAGE_PREFIX}${projectId}`, JSON.stringify(catalog));
-  } catch {
-    // Ignore quota / privacy mode
-  }
+function normalizeHexColor(value: string): string {
+  return parseHexColor(value) ?? TASK_LABEL_PRESET_COLORS[0];
 }
 
-type TaskTagColor = (typeof TASK_LABEL_PRESET_COLORS)[number];
+function isPresetColor(value: string): boolean {
+  const color = parseHexColor(value);
+  return Boolean(color && PRESET_COLOR_SET.has(color));
+}
 
 function mergeCatalog(existing: TaskTag[], extra: TaskTag[]): TaskTag[] {
   const byKey = new Map<string, TaskTag>();
   for (const t of existing) {
     const k = tagKey(t.name);
-    if (!k) continue;
-    byKey.set(k, { name: t.name.trim(), color: t.color.trim().toUpperCase() });
+    const color = parseHexColor(t.color);
+    if (!k || !color) continue;
+    byKey.set(k, { name: t.name.trim(), color });
   }
   for (const t of extra) {
     const k = tagKey(t.name);
-    if (!k) continue;
-    byKey.set(k, { name: t.name.trim(), color: t.color.trim().toUpperCase() });
+    const color = parseHexColor(t.color);
+    if (!k || !color) continue;
+    byKey.set(k, { name: t.name.trim(), color });
   }
   return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+interface CustomColorSwatchProps {
+  value: string;
+  onChange: (color: string) => void;
+  sizeClassName: string;
+  label: string;
+}
+
+function CustomColorSwatch({ value, onChange, sizeClassName, label }: CustomColorSwatchProps) {
+  const selected = !isPresetColor(value);
+  const visibleColor = selected
+    ? normalizeHexColor(value)
+    : 'conic-gradient(from 90deg, #EB5757, #F2994A, #F2C94C, #4CB782, #26B5CE, #5E6AD2, #9B51E0, #EB5757)';
+
+  return (
+    <label
+      title={label}
+      className={cn(
+        'relative inline-flex cursor-pointer overflow-hidden rounded-full ring-2 ring-offset-1 transition',
+        sizeClassName,
+        selected ? 'ring-gray-900' : 'ring-transparent hover:ring-gray-300',
+      )}
+      style={{ background: visibleColor }}
+    >
+      <input
+        type="color"
+        value={normalizeHexColor(value)}
+        onChange={(e) => onChange(normalizeHexColor(e.target.value))}
+        aria-label={label}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+      />
+      <span className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-black/10" />
+    </label>
+  );
 }
 
 export interface TaskLabelsPickerProps {
@@ -95,16 +116,36 @@ export default function TaskLabelsPicker({
   const [open, setOpen] = useState(false);
   const [catalog, setCatalog] = useState<TaskTag[]>([]);
   const [newName, setNewName] = useState('');
-  const [pickedColor, setPickedColor] = useState<TaskTagColor>(TASK_LABEL_PRESET_COLORS[0]);
+  const [pickedColor, setPickedColor] = useState<string>(TASK_LABEL_PRESET_COLORS[0]);
   const lengthToastShownRef = useRef(false);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editColor, setEditColor] = useState<string>(TASK_LABEL_PRESET_COLORS[0]);
 
   useEffect(() => {
     if (!projectId) {
       setCatalog([]);
       return;
     }
-    setCatalog(mergeCatalog(loadCatalog(projectId), value));
-  }, [projectId, value]);
+    let cancelled = false;
+    TaskAPI.getTagCatalog(projectId)
+      .then((rows) => {
+        if (cancelled) return;
+        // Merge with current catalog (not the stale closure value) so any tags
+        // the user added before this fetch resolved are preserved.
+        setCatalog((prev) => mergeCatalog(rows, prev));
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  // Keep the catalog in sync with the applied tags on the current task so freshly
+  // picked tags appear in the picker without waiting for a refetch.
+  useEffect(() => {
+    setCatalog((prev) => mergeCatalog(prev, value));
+  }, [value]);
 
   const selectedKeys = useMemo(() => new Set(value.map((t) => tagKey(t.name))), [value]);
   const isNameTooLong = newName.trim().length > TASK_TAG_MAX_NAME_LENGTH;
@@ -119,7 +160,7 @@ export default function TaskLabelsPicker({
           toast.error(`You can add up to ${TASK_TAG_MAX_COUNT} labels`);
           return;
         }
-        onChange([...value, { name: t.name.trim(), color: t.color.trim().toUpperCase() }]);
+        onChange([...value, { name: t.name.trim(), color: normalizeHexColor(t.color) }]);
       }
     },
     [onChange, selectedKeys, value],
@@ -148,11 +189,12 @@ export default function TaskLabelsPicker({
       toast.error(`You can add up to ${TASK_TAG_MAX_COUNT} labels`);
       return;
     }
-    if (!PRESET_COLOR_SET.has(pickedColor)) {
-      toast.error('Pick a preset color');
+    const color = parseHexColor(pickedColor);
+    if (!color) {
+      toast.error('Pick a valid color');
       return;
     }
-    const tag: TaskTag = { name, color: pickedColor };
+    const tag: TaskTag = { name, color };
     const k = tagKey(name);
     if (value.some((x) => tagKey(x.name) === k)) {
       toast.error('That label is already applied');
@@ -161,11 +203,67 @@ export default function TaskLabelsPicker({
 
     const nextCatalog = mergeCatalog(catalog, [tag]);
     setCatalog(nextCatalog);
-    saveCatalog(projectId, nextCatalog);
     onChange([...value, tag]);
     setNewName('');
     toast.success(`Added “${name}”`);
   }, [catalog, newName, onChange, pickedColor, projectId, value]);
+
+  const deleteCatalogTag = useCallback(
+    async (tag: TaskTag) => {
+      if (!projectId) return;
+      const key = tagKey(tag.name);
+      try {
+        await TaskAPI.deleteTag(projectId, tag.name);
+        const nextCatalog = catalog.filter((t) => tagKey(t.name) !== key);
+        setCatalog(nextCatalog);
+
+        if (editingKey === key) {
+          setEditingKey(null);
+        }
+        if (selectedKeys.has(key)) {
+          onChange(value.filter((t) => tagKey(t.name) !== key));
+        }
+        toast.success('Label deleted');
+      } catch (error) {
+        toast.error((error as any)?.response?.data?.detail || 'Delete failed');
+      }
+    },
+    [catalog, editingKey, onChange, projectId, selectedKeys, value],
+  );
+
+  const startEdit = useCallback((tag: TaskTag) => {
+    setEditingKey(tagKey(tag.name));
+    setEditName(tag.name);
+    setEditColor(normalizeHexColor(tag.color));
+  }, []);
+
+  const saveEdit = useCallback(() => {
+    if (!projectId || !editingKey) return;
+    const name = editName.trim();
+    if (!name) { toast.error('Enter a label name'); return; }
+    if (name.length > TASK_TAG_MAX_NAME_LENGTH) {
+      toast.error(`Label name must be ${TASK_TAG_MAX_NAME_LENGTH} characters or less`);
+      return;
+    }
+    const color = parseHexColor(editColor);
+    if (!color) { toast.error('Pick a valid color'); return; }
+
+    const nextCatalog = catalog.map((t) =>
+      tagKey(t.name) === editingKey ? { name, color } : t,
+    );
+    setCatalog(nextCatalog);
+
+    // Update the applied value if this tag was selected
+    const nextValue = value.map((t) =>
+      tagKey(t.name) === editingKey ? { name, color } : t,
+    );
+    if (JSON.stringify(nextValue) !== JSON.stringify(value)) onChange(nextValue);
+
+    setEditingKey(null);
+    toast.success('Label updated');
+  }, [catalog, editColor, editName, editingKey, onChange, projectId, value]);
+
+  const cancelEdit = useCallback(() => setEditingKey(null), []);
 
   if (!projectId) {
     return <span className="text-sm text-gray-400">Pick a project to manage labels.</span>;
@@ -215,40 +313,130 @@ export default function TaskLabelsPicker({
                 <p className="px-2 py-3 text-center text-xs text-gray-400">No saved labels yet</p>
               ) : (
                 catalog.map((row) => {
-                  const on = selectedKeys.has(tagKey(row.name));
+                  const k = tagKey(row.name);
+                  const on = selectedKeys.has(k);
                   const cannotAddMore = !on && value.length >= TASK_TAG_MAX_COUNT;
+
+                  if (editingKey === k) {
+                    return (
+                      <div key={k} className="space-y-1 rounded-md bg-gray-50 p-2">
+                        <div className="flex flex-wrap gap-0.5">
+                          {TASK_LABEL_PRESET_COLORS.map((c) => (
+                            <button
+                              key={c}
+                              type="button"
+                              title={c}
+                              onClick={() => setEditColor(c)}
+                              className={cn(
+                                'h-4 w-4 rounded-full ring-2 ring-offset-1 transition',
+                                editColor === c ? 'ring-gray-900' : 'ring-transparent hover:ring-gray-300',
+                              )}
+                              style={{ backgroundColor: c }}
+                            />
+                          ))}
+                          <CustomColorSwatch
+                            value={editColor}
+                            onChange={setEditColor}
+                            sizeClassName="h-4 w-4"
+                            label="Custom label color"
+                          />
+                        </div>
+                        <div className="flex gap-1">
+                          <input
+                            autoFocus
+                            value={editName}
+                            onChange={(e) => setEditName(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') { e.preventDefault(); saveEdit(); }
+                              if (e.key === 'Escape') cancelEdit();
+                            }}
+                            className="h-7 flex-1 rounded border border-gray-200 px-2 text-xs outline-none focus:border-[#3CCED7]"
+                          />
+                          <button
+                            type="button"
+                            onClick={saveEdit}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded bg-[#3CCED7] text-white hover:opacity-90"
+                          >
+                            <Check className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelEdit}
+                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
-                    <button
-                      key={tagKey(row.name)}
-                      type="button"
-                      disabled={cannotAddMore}
-                      onClick={() => toggleTag(row)}
+                    <div
+                      key={k}
                       className={cn(
-                        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition hover:bg-gray-50',
+                        'group relative flex items-center gap-1 rounded-md pr-7 transition hover:bg-gray-50',
                         on && 'bg-gray-50',
-                        cannotAddMore && 'cursor-not-allowed opacity-50',
+                        cannotAddMore && 'opacity-50',
                       )}
                     >
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
-                        style={{ backgroundColor: row.color }}
-                        aria-hidden
-                      />
-                      <span className="min-w-0 flex-1 truncate font-medium text-gray-800">
-                        {row.name}
-                      </span>
-                      <span
+                      <button
+                        type="button"
+                        disabled={cannotAddMore}
+                        onClick={() => toggleTag(row)}
                         className={cn(
-                          'flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px]',
-                          on
-                            ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
-                            : 'border-gray-200 bg-white text-transparent',
+                          'flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition',
+                          cannotAddMore && 'cursor-not-allowed',
                         )}
-                        aria-hidden
                       >
-                        ✓
-                      </span>
-                    </button>
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
+                          style={{ backgroundColor: row.color }}
+                          aria-hidden
+                        />
+                        <span className="min-w-0 flex-1 truncate font-medium text-gray-800">
+                          {row.name}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startEdit(row)}
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-gray-400 transition hover:bg-gray-200 hover:text-gray-700"
+                        title="Edit label"
+                        aria-label={`Edit ${row.name} label`}
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        disabled={cannotAddMore}
+                        onClick={() => toggleTag(row)}
+                        className="shrink-0 disabled:cursor-not-allowed"
+                        title={on ? 'Remove label from task' : 'Add label to task'}
+                        aria-label={on ? `Remove ${row.name} label from task` : `Add ${row.name} label to task`}
+                      >
+                        <span
+                          className={cn(
+                            'flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px]',
+                            on
+                              ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
+                              : 'border-gray-200 bg-white text-transparent',
+                          )}
+                          aria-hidden
+                        >
+                          ✓
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteCatalogTag(row)}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-0.5 text-gray-400 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100"
+                        title="Delete label"
+                        aria-label={`Delete ${row.name} label`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
                   );
                 })
               )}
@@ -271,6 +459,12 @@ export default function TaskLabelsPicker({
                     style={{ backgroundColor: c }}
                   />
                 ))}
+                <CustomColorSwatch
+                  value={pickedColor}
+                  onChange={setPickedColor}
+                  sizeClassName="h-5 w-5"
+                  label="Custom label color"
+                />
               </div>
               <div className="flex gap-1.5">
                 <Input

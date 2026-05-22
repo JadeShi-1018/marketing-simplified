@@ -211,6 +211,7 @@ export interface TaskListFilters {
   created_before?: string;
   include_subtasks?: boolean;
   all_projects?: boolean;
+  tag_names?: string[];
 }
 
 /** GET /api/tasks/gantt/ — chart payload derived server-side from tasks + dates */

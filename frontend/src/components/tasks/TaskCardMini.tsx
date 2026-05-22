@@ -63,15 +63,14 @@ export default function TaskCardMini({ task, columnAccentHex }: TaskCardMiniProp
           ) : null}
         </div>
 
-        <p
-          className={
-            description
-              ? 'w-full min-w-0 text-left text-sm font-semibold leading-snug text-gray-900 line-clamp-3'
-              : 'w-full min-w-0 text-left text-sm font-normal leading-snug text-gray-400 line-clamp-3'
-          }
-        >
-          {description || 'No description'}
+        <p className="w-full min-w-0 text-left text-sm font-semibold leading-snug text-gray-900 line-clamp-3">
+          {task.summary || 'Untitled'}
         </p>
+        {description ? (
+          <p className="w-full min-w-0 text-left text-xs leading-snug text-gray-500 line-clamp-2">
+            {description}
+          </p>
+        ) : null}
 
         {task.tags && task.tags.length > 0 ? (
           <div className="flex w-full flex-wrap gap-1.5" aria-label="Task labels">

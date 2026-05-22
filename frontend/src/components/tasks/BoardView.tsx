@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Tag, X } from 'lucide-react';
 import type { TaskData } from '@/types/task';
 import { TASK_TYPE_ORDER_INDEX, TASK_TYPES } from './TYPE_META';
 import TaskCardMini from './TaskCardMini';
 import { Skeleton } from '@/components/ui/skeleton';
+import { cn } from '@/lib/utils';
 
 interface BoardViewProps {
   tasks: TaskData[];
@@ -18,16 +19,37 @@ const COLUMN_PAGE_SIZE = 10;
 
 export default function BoardView({ tasks, loading, error }: BoardViewProps) {
   const router = useRouter();
-  const [tagSearch, setTagSearch] = useState('');
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const tagPickerRef = useRef<HTMLDivElement>(null);
   const [pageByType, setPageByType] = useState<Record<string, number>>({});
 
+  const allTags = useMemo(() => {
+    const seen = new Map<string, string>(); // name -> color
+    for (const t of tasks) {
+      for (const tag of t.tags ?? []) {
+        if (tag.name && !seen.has(tag.name)) seen.set(tag.name, tag.color);
+      }
+    }
+    return [...seen.entries()].map(([name, color]) => ({ name, color })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [tasks]);
+
   const filteredTasks = useMemo(() => {
-    const q = tagSearch.trim().toLowerCase();
-    if (!q) return tasks;
-    return tasks.filter((task) =>
-      (task.tags ?? []).some((tag) => tag.name.toLowerCase().includes(q))
-    );
-  }, [tasks, tagSearch]);
+    if (!selectedTags.length) return tasks;
+    const required = new Set(selectedTags);
+    return tasks.filter((task) => (task.tags ?? []).some((tag) => required.has(tag.name)));
+  }, [tasks, selectedTags]);
+
+  useEffect(() => {
+    if (!tagPickerOpen) return;
+    const handle = (e: MouseEvent) => {
+      if (tagPickerRef.current && !tagPickerRef.current.contains(e.target as Node)) {
+        setTagPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [tagPickerOpen]);
 
   const grouped = useMemo(() => {
     const map: Record<string, TaskData[]> = {};
@@ -80,16 +102,99 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
 
   return (
     <div className="min-w-0">
-      <div className="mb-3 flex items-center gap-2">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-          <input
-            value={tagSearch}
-            onChange={(e) => setTagSearch(e.target.value)}
-            placeholder="Search by tag…"
-            className="h-9 w-full rounded-lg border border-gray-200 bg-white pl-9 pr-3 text-sm outline-none transition placeholder:text-gray-400 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
-          />
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        {/* Tag filter */}
+        <div className="relative" ref={tagPickerRef}>
+          <button
+            type="button"
+            onClick={() => setTagPickerOpen((o) => !o)}
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition',
+              selectedTags.length
+                ? 'border-[#3CCED7] bg-[#3CCED7]/10 text-[#2ab5bd]'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50',
+            )}
+          >
+            <Tag className="h-3.5 w-3.5" />
+            Tags
+            {selectedTags.length > 0 && (
+              <span className="ml-0.5 rounded-full bg-[#3CCED7] px-1.5 py-0 text-[10px] font-semibold text-white">
+                {selectedTags.length}
+              </span>
+            )}
+          </button>
+          {tagPickerOpen && (
+            <div className="absolute z-50 mt-1 w-52 rounded-md border bg-white shadow-md">
+              <div className="max-h-52 overflow-y-auto p-1">
+                {allTags.length === 0 ? (
+                  <p className="px-2 py-3 text-center text-xs text-gray-400">No tags in this project yet.</p>
+                ) : (
+                  allTags.map((opt) => {
+                    const active = selectedTags.includes(opt.name);
+                    return (
+                      <button
+                        key={opt.name}
+                        type="button"
+                        onClick={() =>
+                          setSelectedTags((prev) =>
+                            active ? prev.filter((n) => n !== opt.name) : [...prev, opt.name],
+                          )
+                        }
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition hover:bg-gray-50',
+                          active && 'bg-gray-50',
+                        )}
+                      >
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
+                          style={{ backgroundColor: opt.color }}
+                        />
+                        <span className="flex-1 truncate font-medium text-gray-800">{opt.name}</span>
+                        <span
+                          className={cn(
+                            'flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px]',
+                            active
+                              ? 'border-[#3CCED7] bg-[#3CCED7] text-white'
+                              : 'border-gray-200 bg-white text-transparent',
+                          )}
+                        >
+                          ✓
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+              {selectedTags.length > 0 && (
+                <div className="border-t p-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTags([])}
+                    className="w-full rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-50"
+                  >
+                    Clear filter
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+        {/* Active tag chips */}
+        {selectedTags.map((name) => {
+          const color = allTags.find((l) => l.name === name)?.color ?? '#6B7280';
+          return (
+            <span
+              key={name}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium text-white shadow-sm"
+              style={{ backgroundColor: color }}
+            >
+              {name}
+              <button type="button" onClick={() => setSelectedTags((prev) => prev.filter((n) => n !== name))}>
+                <X className="h-3 w-3 opacity-80 hover:opacity-100" />
+              </button>
+            </span>
+          );
+        })}
       </div>
       <div className="max-w-full overflow-x-auto pb-3">
         <div data-testid="board-columns" className="flex min-w-full gap-3 sm:gap-4">

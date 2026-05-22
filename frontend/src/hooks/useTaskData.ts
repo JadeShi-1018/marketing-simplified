@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { TaskAPI } from "@/lib/api/taskApi";
 import api from "@/lib/api";
-import { normalizeTaskFromApi } from "@/lib/tasks-v2/normalizeTaskFromApi";
+import { normalizeTaskFromApi } from "@/lib/tasks/normalizeTaskFromApi";
 import { TaskData, CreateTaskData, TaskListFilters } from "@/types/task";
 import { useTaskStore } from "@/lib/taskStore";
 

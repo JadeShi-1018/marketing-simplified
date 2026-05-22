@@ -9,7 +9,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError as DRFVa
 from django.core.cache import cache
 from datetime import datetime
 from django.core.exceptions import ValidationError
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.db.models import Count, Exists, OuterRef, Q
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -353,6 +353,17 @@ class TaskViewSet(viewsets.ModelViewSet):
             else:
                 raise DRFValidationError({'has_parent': 'has_parent must be true or false'})
 
+        # Tag names filter — matches tasks that have at least one of the given tag names.
+        tag_names = _get_multi_values("tag_names")
+        if tag_names:
+            from django.db.models import Q as _Q
+            tag_q = _Q()
+            for name in tag_names:
+                name = name.strip()
+                if name:
+                    tag_q |= _Q(tags__contains=[{'name': name}])
+            queryset = queryset.filter(tag_q)
+
         # Personal pins should float to the top without changing the project order.
         queryset = queryset.order_by('-_is_pinned', 'order_in_project', '-id')
         # List response does not include draft_payload; defer it so list works if migration adding the column is not yet applied.
@@ -382,6 +393,104 @@ class TaskViewSet(viewsets.ModelViewSet):
             }, "H2_H3_H5")
             # endregion
             raise
+
+    def _resolve_tag_catalog_project_id(self, request):
+        user = request.user
+        accessible_ids = set(
+            ProjectMember.objects.filter(user=user, is_active=True)
+            .values_list('project_id', flat=True)
+        )
+
+        project_id_param = request.query_params.get('project_id')
+        if project_id_param:
+            try:
+                pid = int(project_id_param)
+            except ValueError:
+                raise DRFValidationError({'project_id': 'project_id must be an integer'})
+            if pid not in accessible_ids:
+                raise PermissionDenied('You do not have access to this project.')
+            return pid
+
+        active = getattr(user, 'active_project', None)
+        if not active or active.id not in accessible_ids:
+            return None
+        return active.id
+
+    @action(detail=False, methods=['get'], url_path='tag-catalog')
+    def tag_catalog(self, request):
+        """
+        GET /api/tasks/tag-catalog/?project_id=<id>
+
+        Returns the deduplicated set of tags currently applied to any task in the
+        project, so all members of a project share the same label library.
+        Falls back to the user's active project when project_id is omitted.
+        """
+        pid = self._resolve_tag_catalog_project_id(request)
+        if pid is None:
+            return Response({'tags': []})
+
+        seen = {}
+        for raw in Task.objects.filter(project_id=pid).values_list('tags', flat=True):
+            if not isinstance(raw, list):
+                continue
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get('name') or '').strip()
+                if not name:
+                    continue
+                key = name.casefold()
+                if key in seen:
+                    continue
+                color = str(item.get('color') or '').strip().upper() or '#6B7280'
+                seen[key] = {'name': name, 'color': color}
+
+        tags = sorted(seen.values(), key=lambda t: t['name'].lower())
+        return Response({'tags': tags})
+
+    @action(detail=False, methods=['delete'], url_path='tag-catalog')
+    def delete_tag(self, request):
+        """
+        DELETE /api/tasks/tag-catalog/?project_id=<id>&name=<tag>
+
+        Removes the tag from all tasks in the project. The catalog is derived
+        from task tags, so this is the persistent delete operation for a tag.
+        """
+        pid = self._resolve_tag_catalog_project_id(request)
+        if pid is None:
+            return Response({'name': '', 'updated_tasks': 0})
+
+        name = str(
+            request.query_params.get('name')
+            or getattr(request, 'data', {}).get('name', '')
+            or ''
+        ).strip()
+        if not name:
+            raise DRFValidationError({'name': 'Tag name is required'})
+        key = name.casefold()
+
+        updated_count = 0
+        with transaction.atomic():
+            for task in Task.objects.select_for_update().filter(project_id=pid):
+                raw_tags = task.tags if isinstance(task.tags, list) else []
+                next_tags = []
+                removed = False
+                for item in raw_tags:
+                    item_name = ''
+                    if isinstance(item, dict):
+                        item_name = str(item.get('name') or '').strip()
+                    elif isinstance(item, str):
+                        item_name = item.strip().lstrip('#').strip()
+                    if item_name and item_name.casefold() == key:
+                        removed = True
+                        continue
+                    next_tags.append(item)
+                if removed:
+                    task.tags = next_tags
+                    task.save(update_fields=['tags', 'updated_at'])
+                    updated_count += 1
+
+        return Response({'name': name, 'updated_tasks': updated_count})
 
     @action(detail=False, methods=['get'], url_path='intelligence')
     def intelligence(self, request):

@@ -37,7 +37,7 @@ export default function AlertPanel({ alerts: initialAlerts, isOpen }: AlertPanel
         isOpen ? 'w-[320px]' : 'w-0'
       }`}
     >
-      <div className="w-[320px] h-full flex flex-col BBB">
+      <div className="w-[320px] h-full flex flex-col">
         <Tabs defaultValue="alerts" className="flex-1 flex flex-col">
           <div className="px-3 pt-3 pb-0">
             <TabsList className="w-full bg-gray-100 h-8">

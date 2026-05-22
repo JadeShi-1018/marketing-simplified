@@ -24,13 +24,13 @@ interface TaskStore {
   removeTask: (taskId: number) => void;
 }
 
-export const useTaskStore = create<TaskStore>((set, get) => ({
+export const useTaskStore = create<TaskStore>((set) => ({
   tasks: [],
   currentTask: null,
   loading: false,
   error: null,
   
-  setTasks: (tasks) => set({ tasks }),
+  setTasks: (newTasks) => set({ tasks: newTasks }),
   setCurrentTask: (currentTask) => set({ currentTask }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
