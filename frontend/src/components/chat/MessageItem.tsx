@@ -138,7 +138,11 @@ export default function MessageItem({
                 
                 {/* Timestamp and status */}
                 <div className="flex items-center justify-end gap-1 mt-1 px-1">
-                  {isHovered && !isSelectMode && renderActions?.()}
+                  {renderActions && !isSelectMode && (
+                    <span className={isHovered ? 'opacity-100' : 'opacity-0'}>
+                      {renderActions()}
+                    </span>
+                  )}
                   <span className="text-xs text-gray-500">{formatTime(message.created_at)}</span>
                   <MessageStatus message={message} />
                 </div>
@@ -235,7 +239,11 @@ export default function MessageItem({
               {/* Timestamp */}
               <div className="flex items-center gap-1 mt-1 px-1">
                 <span className="text-xs text-gray-500">{formatTime(message.created_at)}</span>
-                {isHovered && !isSelectMode && renderActions?.()}
+                {renderActions && !isSelectMode && (
+                  <span className={isHovered ? 'opacity-100' : 'opacity-0'}>
+                    {renderActions()}
+                  </span>
+                )}
               </div>
             </div>
           </div>
