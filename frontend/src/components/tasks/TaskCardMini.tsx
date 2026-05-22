@@ -3,19 +3,19 @@
 import { useRouter } from 'next/navigation';
 import type { TaskData } from '@/types/task';
 import UserAvatar from '@/people/UserAvatar';
-import { getStatusMeta } from './TYPE_META';
+import { getTaskStatusDefinition } from '@/lib/tasks/taskStatuses';
 import { getTaskStatusLucideIcon } from './taskStatusIcons';
 
 interface TaskCardMiniProps {
   task: TaskData;
-  /** Kanban column accent — same as `TASK_TYPES[].hex` / board header dot. */
+  /** Kanban column accent — same as `TASK_TYPE_DEFINITIONS[].hex` / board header dot. */
   columnAccentHex?: string;
 }
 
 export default function TaskCardMini({ task, columnAccentHex }: TaskCardMiniProps) {
   const router = useRouter();
   const status = task.status ?? 'DRAFT';
-  const statusMeta = getStatusMeta(status);
+  const statusMeta = getTaskStatusDefinition(status);
   const statusLabel = statusMeta.label || status;
   const description = task.description?.trim() ?? '';
   const StatusIcon = getTaskStatusLucideIcon(status);

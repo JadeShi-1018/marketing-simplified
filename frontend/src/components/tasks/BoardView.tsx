@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight, Plus, Tag, X } from 'lucide-react';
 import type { TaskData } from '@/types/task';
-import { TASK_TYPE_ORDER_INDEX, TASK_TYPES } from './TYPE_META';
+import { TASK_TYPE_DEFINITIONS, TASK_TYPE_ORDER_INDEX } from '@/lib/tasks/taskTypes';
 import TaskCardMini from './TaskCardMini';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -53,7 +53,7 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
 
   const grouped = useMemo(() => {
     const map: Record<string, TaskData[]> = {};
-    for (const t of TASK_TYPES) map[t.value] = [];
+    for (const t of TASK_TYPE_DEFINITIONS) map[t.value] = [];
     for (const task of filteredTasks) {
       if (map[task.type]) map[task.type].push(task);
     }
@@ -62,7 +62,7 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
 
   const sortedTypes = useMemo(
     () =>
-      [...TASK_TYPES].sort((a, b) => {
+      [...TASK_TYPE_DEFINITIONS].sort((a, b) => {
         const countDiff = (grouped[b.value]?.length ?? 0) - (grouped[a.value]?.length ?? 0);
         if (countDiff !== 0) return countDiff;
         return TASK_TYPE_ORDER_INDEX[a.value] - TASK_TYPE_ORDER_INDEX[b.value];
@@ -75,7 +75,7 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
       let changed = false;
       const next: Record<string, number> = {};
 
-      for (const meta of TASK_TYPES) {
+      for (const meta of TASK_TYPE_DEFINITIONS) {
         const totalPages = Math.max(1, Math.ceil((grouped[meta.value]?.length ?? 0) / COLUMN_PAGE_SIZE));
         const currentPage = prev[meta.value] ?? 1;
         const clampedPage = Math.min(Math.max(currentPage, 1), totalPages);

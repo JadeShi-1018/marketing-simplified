@@ -6,15 +6,10 @@ import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, Che
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
 import { userDisplayName } from '@/types/task';
-import {
-  PRIORITY_META,
-  PRIORITY_OPTIONS,
-  STATUS_META,
-  STATUS_OPTIONS,
-  getTaskTypeShortLabel,
-  TASK_TYPES,
-  formatDateShort,
-} from './TYPE_META';
+import { TASK_PRIORITY_BY_VALUE, TASK_PRIORITY_OPTIONS } from '@/lib/tasks/taskPriorities';
+import { TASK_STATUS_BY_VALUE, TASK_STATUS_OPTIONS } from '@/lib/tasks/taskStatuses';
+import { TASK_TYPE_DEFINITIONS, getTaskTypeShortLabel } from '@/lib/tasks/taskTypes';
+import { formatTaskDateShort } from '@/lib/tasks/taskDates';
 import {
   START_MUST_BE_ON_OR_BEFORE_DUE,
   violatesStartBeforeDue,
@@ -649,13 +644,13 @@ export default function ListView({
       let label = '';
       if (groupBy === 'status') {
         key = `status-${task.status ?? 'DRAFT'}`;
-        label = STATUS_META[task.status ?? 'DRAFT']?.label ?? (task.status ?? 'Draft');
+        label = TASK_STATUS_BY_VALUE[task.status ?? 'DRAFT']?.label ?? (task.status ?? 'Draft');
       } else if (groupBy === 'priority') {
         key = `priority-${task.priority ?? 'MEDIUM'}`;
-        label = PRIORITY_META[task.priority ?? 'MEDIUM']?.label ?? (task.priority ?? 'Medium');
+        label = TASK_PRIORITY_BY_VALUE[task.priority ?? 'MEDIUM']?.label ?? (task.priority ?? 'Medium');
       } else if (groupBy === 'type') {
         key = `type-${task.type ?? 'none'}`;
-        label = TASK_TYPES.find((t) => t.value === task.type)?.label ?? task.type ?? 'No type';
+        label = TASK_TYPE_DEFINITIONS.find((t) => t.value === task.type)?.label ?? task.type ?? 'No type';
       } else if (groupBy === 'owner') {
         const ownerName = task.owner ? userDisplayName(task.owner) : null;
         key = `owner-${ownerName ?? 'unassigned'}`;
@@ -962,7 +957,7 @@ export default function ListView({
   };
 
   const bulkAllowedStatusOptions = useMemo(() => {
-    if (!bulkMode || selectedIds.length === 0) return STATUS_OPTIONS;
+    if (!bulkMode || selectedIds.length === 0) return TASK_STATUS_OPTIONS;
     const selectedTasks = tasks.filter((task) => task.id && selectedIds.includes(task.id));
     if (selectedTasks.length === 0) return [];
 
@@ -1118,7 +1113,7 @@ export default function ListView({
           onClearAll={() => setFilters({})}
           ownerOptions={filterMemberOptions}
           approverOptions={filterMemberOptions}
-          typeOptions={TASK_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+          typeOptions={TASK_TYPE_DEFINITIONS.map((t) => ({ value: t.value, label: t.label }))}
           tagOptions={tagOptions}
         />
 
@@ -1467,7 +1462,7 @@ export default function ListView({
 
                 const priority = task.priority ?? 'MEDIUM';
                 const status = task.status ?? 'DRAFT';
-                const statusMeta = STATUS_META[status] ?? STATUS_META.DRAFT;
+                const statusMeta = TASK_STATUS_BY_VALUE[status] ?? TASK_STATUS_BY_VALUE.DRAFT;
                 const isSaving = !!task.id && savingIds.includes(task.id);
                 const isSelected = !!task.id && selectedIds.includes(task.id);
                 const openPriorityUpward = index >= Math.max(paginatedVisible.length - 3, 0);
@@ -1505,15 +1500,15 @@ export default function ListView({
                             setOpenDuePickerTaskId(null);
                             setOpenPriorityTaskId((prev) => (prev === task.id ? null : task.id ?? null));
                           }}
-                          className={`inline-block h-2.5 w-2.5 rounded-full ${PRIORITY_META[priority]?.dot ?? 'bg-gray-300'} ring-2 ring-white transition hover:scale-110`}
-                          title={`Priority: ${PRIORITY_META[priority]?.label ?? priority}`}
+                          className={`inline-block h-2.5 w-2.5 rounded-full ${TASK_PRIORITY_BY_VALUE[priority]?.dot ?? 'bg-gray-300'} ring-2 ring-white transition hover:scale-110`}
+                          title={`Priority: ${TASK_PRIORITY_BY_VALUE[priority]?.label ?? priority}`}
                         />
                         {openPriorityTaskId === task.id ? (
                           <div
                             className={`absolute left-0 z-20 min-w-[136px] rounded-lg border border-gray-200 bg-white p-1.5 shadow-lg ${openPriorityUpward ? 'bottom-5' : 'top-5'
                               }`}
                           >
-                            {PRIORITY_OPTIONS.map((opt) => (
+                            {TASK_PRIORITY_OPTIONS.map((opt) => (
                               <button
                                 key={opt}
                                 type="button"
@@ -1524,8 +1519,8 @@ export default function ListView({
                                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition ${opt === priority ? 'bg-gray-100 text-gray-900' : 'text-gray-600 hover:bg-gray-50'
                                   }`}
                               >
-                                <span className={`h-2 w-2 rounded-full ${PRIORITY_META[opt]?.dot ?? 'bg-gray-300'}`} />
-                                <span>{PRIORITY_META[opt]?.label ?? opt}</span>
+                                <span className={`h-2 w-2 rounded-full ${TASK_PRIORITY_BY_VALUE[opt]?.dot ?? 'bg-gray-300'}`} />
+                                <span>{TASK_PRIORITY_BY_VALUE[opt]?.label ?? opt}</span>
                               </button>
                             ))}
                           </div>
@@ -1695,7 +1690,7 @@ export default function ListView({
                           }}
                           className={`inline-flex h-8 w-full items-center rounded-[6px] border border-transparent px-3 text-xs font-medium ${statusMeta.classes} outline-none transition hover:ring-1 hover:ring-gray-200`}
                         >
-                          <span className="truncate">{STATUS_META[status]?.label ?? status}</span>
+                          <span className="truncate">{TASK_STATUS_BY_VALUE[status]?.label ?? status}</span>
                         </button>
                         {openStatusTaskId === task.id ? (
                           <div
@@ -1714,7 +1709,7 @@ export default function ListView({
                               >
                                 <span className="inline-flex items-center gap-2">
                                   <span className={`h-2 w-2 rounded-full ${STATUS_DOT_CLASS[opt] ?? 'bg-gray-300'}`} />
-                                  <span>{STATUS_META[opt]?.label ?? opt}</span>
+                                  <span>{TASK_STATUS_BY_VALUE[opt]?.label ?? opt}</span>
                                 </span>
                               </button>
                             ))}
@@ -1881,7 +1876,7 @@ export default function ListView({
                         }}
                         className="inline-flex h-7 w-full items-center justify-start rounded-md border border-transparent px-2 text-left text-xs tabular-nums text-gray-700 transition hover:border-[#2fc6d6]/70 hover:bg-[#2fc6d6]/5"
                       >
-                        {task.start_date ? formatDateShort(task.start_date) : '—'}
+                        {task.start_date ? formatTaskDateShort(task.start_date) : '—'}
                       </button>
                       {openStartPickerTaskId === task.id ? (
                         <div
@@ -1943,7 +1938,7 @@ export default function ListView({
                         }}
                         className={`inline-flex h-7 w-full items-center justify-start rounded-md border border-transparent px-2 text-left text-xs tabular-nums transition hover:border-[#2fc6d6]/70 hover:bg-[#2fc6d6]/5 ${getDueDateTone(task.due_date)}`}
                       >
-                        {task.due_date ? formatDateShort(task.due_date) : '—'}
+                        {task.due_date ? formatTaskDateShort(task.due_date) : '—'}
                       </button>
                       {openDuePickerTaskId === task.id ? (
                         <div

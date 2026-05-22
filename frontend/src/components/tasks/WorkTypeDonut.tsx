@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { TASK_TYPES, type TypeMeta } from './TYPE_META';
+import { TASK_TYPE_DEFINITIONS, type TaskTypeDefinition } from '@/lib/tasks/taskTypes';
 
 interface WorkTypeDonutProps {
   // Map type value → count.
@@ -11,7 +11,7 @@ interface WorkTypeDonutProps {
 }
 
 interface Segment {
-  meta: TypeMeta;
+  meta: TaskTypeDefinition;
   count: number;
   startDeg: number;
   endDeg: number;
@@ -52,14 +52,14 @@ export default function WorkTypeDonut({
   thickness = 26,
 }: WorkTypeDonutProps) {
   const total = useMemo(
-    () => TASK_TYPES.reduce((acc, t) => acc + (counts[t.value] || 0), 0),
+    () => TASK_TYPE_DEFINITIONS.reduce((acc, t) => acc + (counts[t.value] || 0), 0),
     [counts]
   );
 
   const segments: Segment[] = useMemo(() => {
     if (total === 0) return [];
     let cursor = 0;
-    return TASK_TYPES.filter((t) => (counts[t.value] || 0) > 0).map((meta) => {
+    return TASK_TYPE_DEFINITIONS.filter((t) => (counts[t.value] || 0) > 0).map((meta) => {
       const count = counts[meta.value] || 0;
       const sweep = (count / total) * 360;
       const seg = {
