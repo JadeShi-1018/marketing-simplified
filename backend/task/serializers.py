@@ -6,7 +6,7 @@ from rest_framework.serializers import empty
 from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
 from meetings.services import validate_meeting_for_origin_link
-from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation
+from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, TaskPin
 from core.models import Project, ProjectMember
 from core.utils.project import get_user_active_project
 from django.contrib.auth import get_user_model
@@ -70,6 +70,7 @@ class TaskSerializer(serializers.ModelSerializer):
     """Serializer for Task model"""
     owner = UserSummarySerializer(read_only=True)
     owner_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    created_by = serializers.SerializerMethodField()
     project = ProjectSummarySerializer(read_only=True)
     project_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     current_approver = UserSummarySerializer(read_only=True)
@@ -83,6 +84,7 @@ class TaskSerializer(serializers.ModelSerializer):
     approval_chain_progress = serializers.SerializerMethodField()
     can_lock = serializers.SerializerMethodField()
     approvals_summary = serializers.SerializerMethodField()
+    is_pinned = serializers.SerializerMethodField()
     content_type = serializers.SerializerMethodField()
     # Revision tracking fields for SMP-501
     revision_round = serializers.IntegerField(read_only=True)
@@ -102,7 +104,7 @@ class TaskSerializer(serializers.ModelSerializer):
         model = Task
         fields = [
             'id', 'summary', 'description', 'status', 'type', 'priority',
-            'owner', 'owner_id', 'project', 'project_id',
+            'owner', 'owner_id', 'created_by', 'project', 'project_id',
             'current_approver', 'current_approver_id',
             'content_type', 'object_id', 'linked_object',
             'start_date', 'due_date', 'planned_start_date',
@@ -110,22 +112,26 @@ class TaskSerializer(serializers.ModelSerializer):
             'anomaly_status', 'approval_chain_progress',
             # Revision tracking fields for SMP-501
             'revision_round', 'revision_label',
-            'can_lock', 'approvals_summary',
+            'can_lock', 'approvals_summary', 'is_pinned',
             'create_as_draft', 'draft_payload',
             'origin_meeting',
             'origin_meeting_id',
             'origin_action_item',
             'tags',
             'linear_issue_id',
+            'created_at',
+            'updated_at',
         ]
         read_only_fields = [
-            'id', 'status', 'owner', 'content_type', 'object_id', 'linked_object',
+            'id', 'status', 'owner', 'created_by', 'content_type', 'object_id', 'linked_object',
             'is_subtask', 'parent_relationship', 'anomaly_status',
-            'approval_chain_progress', 'can_lock', 'approvals_summary',
+            'approval_chain_progress', 'can_lock', 'approvals_summary', 'is_pinned',
             'revision_round', 'revision_label', # SMP-501
             'origin_meeting',
             'origin_action_item',
             'linear_issue_id',
+            'created_at',
+            'updated_at',
         ]
 
     def to_representation(self, instance):
@@ -157,6 +163,17 @@ class TaskSerializer(serializers.ModelSerializer):
                 out.append({'name': name, 'color': color.upper()})
         return out
 
+    def get_is_pinned(self, obj):
+        annotated = getattr(obj, "_is_pinned", None)
+        if annotated is not None:
+            return bool(annotated)
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated or obj.pk is None:
+            return False
+        return TaskPin.objects.filter(task=obj, user=user).exists()
+
     def get_content_type(self, obj):
         """
         Represent the linked object's content type as its model name string.
@@ -167,6 +184,21 @@ class TaskSerializer(serializers.ModelSerializer):
         if not obj.content_type:
             return None
         return obj.content_type.model
+
+    def get_created_by(self, obj):
+        user = obj.created_by
+        if user is None:
+            history = (
+                obj.field_history.filter(
+                    field_name="task_created",
+                    changed_by__isnull=False,
+                )
+                .select_related("changed_by")
+                .order_by("changed_at")
+                .first()
+            )
+            user = history.changed_by if history else None
+        return UserSummarySerializer(user).data if user else None
 
     _LINKED_SERIALIZERS = {
         'budgetrequest':       ('budget_approval.serializers', 'BudgetRequestSerializer'),
@@ -456,6 +488,7 @@ class TaskSerializer(serializers.ModelSerializer):
         try:
             user = self.context['request'].user
             validated_data['owner'] = user
+            validated_data['created_by'] = user
 
             project = self._resolve_project(user, validated_data.pop('project_id', None))
             self._ensure_project_membership(user, project)
@@ -623,10 +656,12 @@ class TaskSerializer(serializers.ModelSerializer):
                         'current_approver_id': 'Approver is required.'
                     })
         else:
+            # Allow clearing the approver while in DRAFT; submission is blocked on the frontend
             if 'current_approver_id' in attrs and attrs['current_approver_id'] is None:
-                raise serializers.ValidationError({
-                    'current_approver_id': 'Approver is required.'
-                })
+                if self.instance and self.instance.status != 'DRAFT':
+                    raise serializers.ValidationError({
+                        'current_approver_id': 'Approver is required.'
+                    })
 
         if self.instance is not None and attrs.get('origin_meeting_id') is not None:
             try:
