@@ -12,6 +12,7 @@ urlpatterns = [
     path('tasks/gantt/', TaskViewSet.as_view({'get': 'gantt'}), name='task-gantt'),
     path('tasks/intelligence/', TaskViewSet.as_view({'get': 'intelligence'}), name='task-intelligence'),
     path('tasks/tag-catalog/', TaskViewSet.as_view({'get': 'tag_catalog', 'delete': 'delete_tag'}), name='task-tag-catalog'),
+    path('tasks/tag-catalog/delete/', TaskViewSet.as_view({'post': 'delete_tag'}), name='task-tag-catalog-delete'),
     path('tasks/work-cycle/', TaskViewSet.as_view({'get': 'work_cycle'}), name='task-work-cycle'),
     path('tasks/my-actions/', TaskViewSet.as_view({'get': 'my_actions'}), name='task-my-actions'),
     path('tasks/status-report/', TaskViewSet.as_view({'get': 'status_report'}), name='task-status-report'),

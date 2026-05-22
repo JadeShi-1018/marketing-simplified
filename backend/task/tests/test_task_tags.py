@@ -142,6 +142,34 @@ class TestTaskTags:
         assert first.tags == [{'name': 'Keep', 'color': '#26B5CE'}]
         assert second.tags == []
 
+    def test_post_tag_catalog_delete_removes_tag_from_project_tasks(self, authenticated_client, project, user):
+        user.active_project = project
+        user.save(update_fields=['active_project'])
+
+        task = Task.objects.create(
+            summary='Tagged through fallback',
+            type='asset',
+            project=project,
+            owner=user,
+            tags=[
+                {'name': 'Launch', 'color': '#123ABC'},
+                {'name': 'Keep', 'color': '#26B5CE'},
+            ],
+        )
+
+        url = reverse('task-tag-catalog-delete')
+        deleted = authenticated_client.post(
+            f'{url}?project_id={project.id}',
+            {'name': 'Launch'},
+            format='json',
+        )
+
+        assert deleted.status_code == status.HTTP_200_OK
+        assert deleted.data['updated_tasks'] == 1
+
+        task = Task.objects.get(pk=task.pk)
+        assert task.tags == [{'name': 'Keep', 'color': '#26B5CE'}]
+
     def test_reject_more_than_ten_tags(self, authenticated_client, project, user):
         user.active_project = project
         user.save(update_fields=['active_project'])

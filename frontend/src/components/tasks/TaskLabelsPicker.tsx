@@ -65,6 +65,16 @@ function mergeCatalog(existing: TaskTag[], extra: TaskTag[]): TaskTag[] {
   return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function apiErrorMessage(error: unknown, fallback: string): string {
+  const response = (error as any)?.response;
+  const data = response?.data;
+  if (typeof data?.detail === 'string') return data.detail;
+  if (typeof data?.error === 'string') return data.error;
+  if (typeof data === 'string' && data.trim()) return data.trim();
+  if (response?.status) return `${fallback} (${response.status})`;
+  return fallback;
+}
+
 interface CustomColorSwatchProps {
   value: string;
   onChange: (color: string) => void;
@@ -225,7 +235,7 @@ export default function TaskLabelsPicker({
         }
         toast.success('Label deleted');
       } catch (error) {
-        toast.error((error as any)?.response?.data?.detail || 'Delete failed');
+        toast.error(apiErrorMessage(error, 'Delete failed'));
       }
     },
     [catalog, editingKey, onChange, projectId, selectedKeys, value],

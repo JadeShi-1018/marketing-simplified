@@ -29,57 +29,17 @@ function apiPathFromRequest(request, params) {
   return Array.isArray(params?.path) ? params.path.join('/') : '';
 }
 
-export async function GET(request, { params }) {
+async function proxyRequest(request, params, method) {
   const path = apiPathFromRequest(request, params);
   const url = new URL(request.url);
   const searchParams = url.searchParams.toString();
-
+  const contentType = request.headers.get('content-type') || '';
   const backendUrl = resolveBackendOrigin();
   const targetUrl = `${backendUrl}/api/${path}${searchParams ? `?${searchParams}` : ''}`;
 
   try {
-    const response = await fetch(targetUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(request.headers.get('authorization') && {
-          'Authorization': request.headers.get('authorization')
-        }),
-        ...(request.headers.get('cookie') && {
-          'Cookie': request.headers.get('cookie')
-        })
-      },
-    });
-
-    const data = await response.json();
-
-    // Print sucess log
-    logger.info({ route: path, method: 'GET', status: response.status }, 'Proxy GET request');
-
-    return Response.json(data, {
-      status: response.status,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-  } catch (error) {
-    // Print error log
-    logger.error({ route: path, method: 'GET', error: String(error) }, 'API proxy error');
-    return Response.json(
-      { error: 'Failed to fetch data from backend' },
-      { status: 500 }
-    );
-  }
-}
-
-export async function POST(request, { params }) {
-  const path = apiPathFromRequest(request, params);
-  const contentType = request.headers.get('content-type') || '';
-
-  const backendUrl = resolveBackendOrigin();
-  const targetUrl = `${backendUrl}/api/${path}`;
-
-  try {
+    const hasBody = !['GET', 'HEAD'].includes(method);
+    const body = hasBody ? await request.arrayBuffer() : undefined;
     const outgoingHeaders = {
       ...(request.headers.get('authorization') && {
         'Authorization': request.headers.get('authorization')
@@ -90,19 +50,31 @@ export async function POST(request, { params }) {
       ...(contentType && { 'Content-Type': contentType }),
     };
 
-    // Stream the original body to preserve multipart boundaries and binary data
     const response = await fetch(targetUrl, {
-      method: 'POST',
+      method,
       headers: outgoingHeaders,
-      body: request.body,
+      body,
     });
 
-    const data = await response.json();
+    const text = await response.text();
+    const contentResponseType = response.headers.get('content-type') || '';
+    const data = text && contentResponseType.includes('application/json')
+      ? JSON.parse(text)
+      : text;
 
     // Print sucess log
-    logger.info({ route: path, method: 'POST', status: response.status }, 'Proxy POST request');
+    logger.info({ route: path, method, status: response.status }, `Proxy ${method} request`);
 
-    return Response.json(data, {
+    if (typeof data === 'string') {
+      return new Response(data, {
+        status: response.status,
+        headers: {
+          'Content-Type': contentResponseType || 'text/plain',
+        },
+      });
+    }
+
+    return Response.json(data ?? {}, {
       status: response.status,
       headers: {
         'Content-Type': 'application/json',
@@ -110,10 +82,30 @@ export async function POST(request, { params }) {
     });
   } catch (error) {
     // Print error log
-    logger.error({ route: path, method: 'POST', error: String(error) }, 'API proxy error');
+    logger.error({ route: path, method, error: String(error) }, 'API proxy error');
     return Response.json(
-      { error: 'Failed to send data to backend' },
+      { error: 'Failed to fetch data from backend' },
       { status: 500 }
     );
   }
+}
+
+export async function GET(request, { params }) {
+  return proxyRequest(request, params, 'GET');
+}
+
+export async function POST(request, { params }) {
+  return proxyRequest(request, params, 'POST');
+}
+
+export async function PUT(request, { params }) {
+  return proxyRequest(request, params, 'PUT');
+}
+
+export async function PATCH(request, { params }) {
+  return proxyRequest(request, params, 'PATCH');
+}
+
+export async function DELETE(request, { params }) {
+  return proxyRequest(request, params, 'DELETE');
 }

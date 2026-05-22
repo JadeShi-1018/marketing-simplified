@@ -76,7 +76,15 @@ export const TaskAPI = {
   },
 
   deleteTag: async (projectId: number, name: string): Promise<void> => {
-    await api.delete('/api/tasks/tag-catalog/', { params: { project_id: projectId, name } });
+    try {
+      await api.post('/api/tasks/tag-catalog/delete/', { name }, { params: { project_id: projectId } });
+    } catch (error) {
+      const statusCode = (error as any)?.response?.status;
+      if (![404, 405, 500].includes(statusCode)) {
+        throw error;
+      }
+      await api.delete('/api/tasks/tag-catalog/', { params: { project_id: projectId, name } });
+    }
   },
 
   pinTask: (taskId: number) => api.post(`/api/tasks/${taskId}/pin/`),
