@@ -37,6 +37,9 @@ interface UseDrawerChatReturn {
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMoreMessages: () => Promise<void>;
+
+  // Message management
+  removeLocalMessage: (messageId: number) => void;
 }
 
 /**
@@ -184,6 +187,11 @@ export function useDrawerChat({
     }
   }, [chatId, isLoadingMore, hasMore, localMessages]);
 
+  // Remove a message from local state (for delete/hide operations)
+  const removeLocalMessage = useCallback((messageId: number) => {
+    setLocalMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+  }, []);
+
   // Send message
   const handleSendMessage = useCallback(
     async (content: string, replyToId?: number | null): Promise<Message | null> => {
@@ -320,5 +328,6 @@ export function useDrawerChat({
     hasMore,
     isLoadingMore,
     loadMoreMessages,
+    removeLocalMessage,
   };
 }

@@ -143,14 +143,17 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     forwarded_from = serializers.SerializerMethodField()
     reply_to = serializers.SerializerMethodField()
     reactions = serializers.SerializerMethodField()
+    can_revoke = serializers.SerializerMethodField()
+    is_hidden_by_me = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
         fields = [
             'id', 'chat', 'sender', 'content', 'status', 'statuses',
-            'created_at', 'updated_at', 'is_deleted',
+            'created_at', 'updated_at', 'is_deleted', 'is_revoked', 'revoked_at',
             'has_attachments', 'attachment_count',
-            'is_forwarded', 'forwarded_from', 'reply_to', 'reactions'
+            'is_forwarded', 'forwarded_from', 'reply_to', 'reactions', 'can_revoke',
+            'is_hidden_by_me'
         ]
         read_only_fields = ['id', 'sender', 'created_at', 'updated_at']
     
@@ -253,6 +256,40 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
         return list(emoji_groups.values())
 
+    def get_can_revoke(self, obj):
+        """
+        Check if the current user can revoke this message.
+        Rules: Must be sender, message must be within 2 minutes, and not already revoked.
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+
+        # Check if user is sender
+        if obj.sender != request.user:
+            return False
+
+        # Check if message is already revoked
+        if obj.is_revoked:
+            return False
+
+        # Check if message is within 2 minutes
+        time_limit = timezone.now() - timedelta(minutes=2)
+        return obj.created_at > time_limit
+
+    def get_is_hidden_by_me(self, obj):
+        """
+        Check if the current user has hidden this message.
+        """
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+
+        return obj.hidden_by_users.filter(id=request.user.id).exists()
+
 
 class MessageCreateSerializer(MessageContentValidationMixin, ChatParticipantValidationMixin, serializers.ModelSerializer):
     """Serializer for creating messages"""
@@ -287,9 +324,10 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
         """Get the last message in the chat"""
         last_msg = Message.objects.filter(
             chat=obj,
-            is_deleted=False
+            is_deleted=False,
+            is_revoked=False
         ).order_by('-created_at').first()
-        
+
         if last_msg:
             return MessageSerializer(last_msg, context=self.context).data
         return None
@@ -343,7 +381,8 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
         """Get the last message in the chat (full message object for consistency with WebSocket)"""
         last_msg = Message.objects.filter(
             chat=obj,
-            is_deleted=False
+            is_deleted=False,
+            is_revoked=False
         ).select_related('sender', 'reply_to', 'reply_to__sender').order_by('-created_at').first()
 
         if last_msg:
@@ -398,9 +437,10 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
         """Get timestamp of last message"""
         last_msg = Message.objects.filter(
             chat=obj,
-            is_deleted=False
+            is_deleted=False,
+            is_revoked=False
         ).order_by('-created_at').first()
-        
+
         return last_msg.created_at if last_msg else obj.updated_at
 
 

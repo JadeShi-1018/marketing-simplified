@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import type { NotificationItem } from '@/types/notifications';
 import type { Message } from '@/types/chat';
 import { useDrawerChat } from '@/hooks/useDrawerChat';
-import { addReaction, setMessageReminder } from '@/lib/api/chatApi';
+import { addReaction, setMessageReminder, revokeMessage, deleteMessage, hideMessage } from '@/lib/api/chatApi';
 import { useChatStore } from '@/lib/chatStore';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages from './DrawerChatMessages';
@@ -50,6 +50,7 @@ export default function DrawerChatView({
     hasMore,
     isLoadingMore,
     loadMoreMessages,
+    removeLocalMessage,
   } = useDrawerChat({
     chatId: chatId ?? null,
     highlightMessageId: shouldHighlight ? messageId : null,
@@ -151,14 +152,55 @@ export default function DrawerChatView({
     }
   };
 
-  const handleRevoke = (messageId: number) => {
-    // TODO: Implement when backend API is available
-    toast('Revoke feature coming soon!', { icon: '↩️' });
+  const handleRevoke = async (messageId: number) => {
+    try {
+      const result = await revokeMessage(messageId);
+      // Update message in store with revoke status
+      if (result.message) {
+        const { updateMessage } = useChatStore.getState();
+        updateMessage(messageId, {
+          is_revoked: result.message.is_revoked,
+          revoked_at: result.message.revoked_at,
+        });
+      }
+      toast.success('Message revoked', { icon: '↩️' });
+    } catch (error: any) {
+      console.error('Failed to revoke message:', error);
+      const errorMsg = error?.response?.data?.error || 'Failed to revoke message';
+      toast.error(errorMsg);
+    }
   };
 
-  const handleDelete = (messageId: number) => {
-    // TODO: Implement when backend API is available
-    toast('Delete feature coming soon!', { icon: '🗑️' });
+  const handleDelete = async (messageId: number) => {
+    try {
+      const message = messages.find(m => m.id === messageId);
+      if (!message) return;
+
+      const isOwnMessage = message.sender.id === currentUserId;
+
+      if (isOwnMessage) {
+        // Hard delete (sender deleting their own message)
+        await deleteMessage(messageId);
+        toast.success('Message deleted', { icon: '🗑️' });
+      } else {
+        // Hide (receiver hiding someone else's message)
+        await hideMessage(messageId);
+        toast.success('Message deleted', { icon: '🗑️' });
+      }
+
+      // Remove from local state (both hook and store)
+      removeLocalMessage(messageId);
+      if (chatId) {
+        const { messages } = useChatStore.getState();
+        const chatMessages = messages[chatId] || [];
+        const updatedMessages = chatMessages.filter((msg) => msg.id !== messageId);
+        useChatStore.getState().setMessages(chatId, updatedMessages);
+      }
+    } catch (error: any) {
+      console.error('Failed to delete message:', error);
+      const errorMsg = error?.response?.data?.error || 'Failed to delete message';
+      toast.error(errorMsg);
+    }
   };
 
   // Handle send message

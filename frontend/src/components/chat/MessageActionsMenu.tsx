@@ -268,8 +268,8 @@ export default function MessageActionsMenu({
 
         <DropdownMenuSeparator />
 
-        {/* Revoke - only for own messages */}
-        {isOwnMessage && (
+        {/* Revoke - only for own messages within 2 minutes */}
+        {isOwnMessage && message.can_revoke && (
           <DropdownMenuItem
             onSelect={() => handleAction(onRevoke)}
             className="text-amber-600 focus:text-amber-600"
@@ -279,6 +279,7 @@ export default function MessageActionsMenu({
           </DropdownMenuItem>
         )}
 
+        {/* Delete - for all messages (own = hard delete, others = hide) */}
         <DropdownMenuItem
           onSelect={() => handleAction(onDelete)}
           className="text-red-600 focus:text-red-600"

@@ -373,51 +373,63 @@ export default function DrawerChatMessages({
                     {/* New Messages Divider - shown above the target message */}
                     {showDivider && <NewMessagesDivider />}
 
-                    {/* Message with hover detection */}
-                    <div
-                      id={`drawer-message-${message.id}`}
-                      className={`relative ${showHighlightAnimation ? 'animate-message-highlight' : ''}`}
-                      onMouseEnter={() => {
-                        setHoveredMessageId(message.id);
-                        pendingMouseLeaveRef.current = false;
-                      }}
-                      onMouseLeave={() => {
-                        // If menu is open, mark as pending and don't clear yet
-                        if (isMenuOpenRef.current) {
-                          pendingMouseLeaveRef.current = true;
-                        } else {
-                          setHoveredMessageId(null);
-                        }
-                      }}
-                    >
-                      <MessageItem
-                        message={message}
-                        isOwnMessage={isOwnMessage}
-                        showSender={showSender}
-                        isSelectMode={isSelectMode}
-                        isSelected={isSelected}
-                        onToggleSelect={onToggleSelect}
-                        isHighlighted={false}
-                        isHovered={hoveredMessageId === message.id}
-                        onReactionClick={(emoji, isReactedByMe) =>
-                          onReactionClick?.(message.id, emoji, isReactedByMe)
-                        }
-                        renderActions={() => (
-                          <MessageActionsMenu
-                            message={message}
-                            isOwnMessage={isOwnMessage}
-                            onEmojiReaction={(emoji) => onEmojiReaction?.(message.id, emoji)}
-                            onQuoteReply={() => onQuoteReply?.(message)}
-                            onForward={() => onForward?.(message.id)}
-                            onRemind={() => onRemind?.(message.id)}
-                            onMultiSelect={() => onEnterSelectMode?.(message.id)}
-                            onRevoke={() => onRevoke?.(message.id)}
-                            onDelete={() => onDelete?.(message.id)}
-                            onMenuOpenChange={handleMenuOpenChange}
-                          />
-                        )}
-                      />
-                    </div>
+                    {/* Revoked message notice */}
+                    {message.is_revoked ? (
+                      <div
+                        id={`drawer-message-${message.id}`}
+                        className="text-center text-xs text-gray-400 my-2 py-1"
+                      >
+                        {isOwnMessage
+                          ? 'You recalled a message'
+                          : 'The other party recalled a message'}
+                      </div>
+                    ) : (
+                      /* Message with hover detection */
+                      <div
+                        id={`drawer-message-${message.id}`}
+                        className={`relative ${showHighlightAnimation ? 'animate-message-highlight' : ''}`}
+                        onMouseEnter={() => {
+                          setHoveredMessageId(message.id);
+                          pendingMouseLeaveRef.current = false;
+                        }}
+                        onMouseLeave={() => {
+                          // If menu is open, mark as pending and don't clear yet
+                          if (isMenuOpenRef.current) {
+                            pendingMouseLeaveRef.current = true;
+                          } else {
+                            setHoveredMessageId(null);
+                          }
+                        }}
+                      >
+                        <MessageItem
+                          message={message}
+                          isOwnMessage={isOwnMessage}
+                          showSender={showSender}
+                          isSelectMode={isSelectMode}
+                          isSelected={isSelected}
+                          onToggleSelect={onToggleSelect}
+                          isHighlighted={false}
+                          isHovered={hoveredMessageId === message.id}
+                          onReactionClick={(emoji, isReactedByMe) =>
+                            onReactionClick?.(message.id, emoji, isReactedByMe)
+                          }
+                          renderActions={() => (
+                            <MessageActionsMenu
+                              message={message}
+                              isOwnMessage={isOwnMessage}
+                              onEmojiReaction={(emoji) => onEmojiReaction?.(message.id, emoji)}
+                              onQuoteReply={() => onQuoteReply?.(message)}
+                              onForward={() => onForward?.(message.id)}
+                              onRemind={() => onRemind?.(message.id)}
+                              onMultiSelect={() => onEnterSelectMode?.(message.id)}
+                              onRevoke={() => onRevoke?.(message.id)}
+                              onDelete={() => onDelete?.(message.id)}
+                              onMenuOpenChange={handleMenuOpenChange}
+                            />
+                          )}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}

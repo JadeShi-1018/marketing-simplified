@@ -296,6 +296,41 @@ export const cancelMessageReminder = async (
   return response.data;
 };
 
+// ==================== Revoke/Delete Endpoints ====================
+
+/**
+ * Revoke a message (within 2 minutes of sending)
+ * The message will be marked as revoked and show a notice to all users
+ */
+export const revokeMessage = async (
+  messageId: number
+): Promise<{ status: 'revoked'; message: Message }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/revoke/`);
+  return response.data;
+};
+
+/**
+ * Delete a message (hard delete from database)
+ * The message will be completely removed
+ */
+export const deleteMessage = async (
+  messageId: number
+): Promise<{ status: 'deleted' }> => {
+  const response = await api.delete(`/api/chat/messages/${messageId}/`);
+  return response.data;
+};
+
+/**
+ * Hide a message for the current user only (personal hide, does not affect others).
+ * POST /api/chat/messages/{messageId}/hide/
+ */
+export const hideMessage = async (
+  messageId: number
+): Promise<{ status: 'hidden'; message: Message }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/hide/`);
+  return response.data;
+};
+
 // Export all functions as a single API object (optional alternative style)
 const chatApi = {
   getChats,
@@ -320,6 +355,8 @@ const chatApi = {
   removeReaction,
   setMessageReminder,
   cancelMessageReminder,
+  revokeMessage,
+  deleteMessage,
 };
 
 export default chatApi;

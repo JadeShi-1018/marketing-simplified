@@ -115,9 +115,13 @@ export interface Message {
   updated_at: string;
   statuses?: MessageStatus[];
   is_read?: boolean;
+  is_revoked?: boolean;
+  revoked_at?: string | null;
+  can_revoke?: boolean;
   has_attachments?: boolean;
   attachment_count?: number;
   attachments?: MessageAttachment[];
+  is_hidden_by_me?: boolean;
 }
 
 // ==================== API Request/Response Types ====================

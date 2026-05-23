@@ -192,19 +192,21 @@ class ChatParticipant(TimeStampedModel):
         """
         Get count of unread messages for this participant.
         Uses last_read_at for quick calculation.
-        
+
         NOTE: This is the SINGLE SOURCE OF TRUTH for unread count calculation.
         All serializers and services should delegate to this method.
         """
         if not self.last_read_at:
             # Never read, count all messages except own
             return self.chat.messages.filter(
-                is_deleted=False
+                is_deleted=False,
+                is_revoked=False
             ).exclude(sender=self.user).count()
-        
+
         return self.chat.messages.filter(
             created_at__gt=self.last_read_at,
-            is_deleted=False
+            is_deleted=False,
+            is_revoked=False
         ).exclude(sender=self.user).count()
 
 
@@ -284,6 +286,14 @@ class Message(TimeStampedModel):
     )
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag")
     deleted_at = models.DateTimeField(null=True, blank=True, help_text="When the message was soft deleted")
+    is_revoked = models.BooleanField(default=False, help_text="Whether the message has been revoked by sender")
+    revoked_at = models.DateTimeField(null=True, blank=True, help_text="When the message was revoked")
+    hidden_by_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name='hidden_messages',
+        blank=True,
+        help_text="Users who have hidden this message (personal hide, not affecting others)"
+    )
 
     class Meta:
         ordering = ['created_at']
@@ -292,6 +302,7 @@ class Message(TimeStampedModel):
             models.Index(fields=['sender', 'created_at']),
             models.Index(fields=['chat', '-created_at']),  # For latest messages
             models.Index(fields=['chat', 'is_deleted']),
+            models.Index(fields=['chat', 'is_revoked']),
         ]
     
     def __str__(self):
