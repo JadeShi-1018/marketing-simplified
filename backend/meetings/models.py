@@ -471,3 +471,93 @@ class MeetingDocument(models.Model):
 
     def __str__(self) -> str:
         return f"MeetingDocument meeting={self.meeting_id}"
+
+
+class MeetingAuditLog(models.Model):
+    """
+    Immutable append-only audit log for Meeting and direct-child mutations.
+    Enforced immutable via Postgres BEFORE UPDATE OR DELETE trigger.
+    """
+
+    # Event type constants
+    EVENT_STATUS_CHANGED = 'meeting.status_changed'
+    EVENT_TITLE_CHANGED = 'meeting.title_changed'
+    EVENT_OBJECTIVE_CHANGED = 'meeting.objective_changed'
+    EVENT_SUMMARY_CHANGED = 'meeting.summary_changed'
+    EVENT_TYPE_CHANGED = 'meeting.type_changed'
+    EVENT_DATETIME_CHANGED = 'meeting.datetime_changed'
+    EVENT_PARTICIPANT_ADDED = 'meeting.participant_added'
+    EVENT_PARTICIPANT_REMOVED = 'meeting.participant_removed'
+    EVENT_AGENDA_ITEM_ADDED = 'meeting.agenda_item_added'
+    EVENT_AGENDA_ITEM_EDITED = 'meeting.agenda_item_edited'
+    EVENT_AGENDA_ITEM_DELETED = 'meeting.agenda_item_deleted'
+    EVENT_DOCUMENT_EDITED = 'meeting.document_edited'
+    EVENT_ACTION_ITEM_ADDED = 'meeting.action_item_added'
+    EVENT_ACTION_ITEM_EDITED = 'meeting.action_item_edited'
+    EVENT_ACTION_ITEM_RESOLVED = 'meeting.action_item_resolved'
+    EVENT_DECISION_CREATED = 'meeting.decision_created'
+    EVENT_TASK_CREATED = 'meeting.task_created'
+    EVENT_TEMPLATE_APPLIED = 'meeting.template_applied'
+    EVENT_TAGS_CHANGED = 'meeting.tags_changed'
+
+    EVENT_TYPE_CHOICES = [
+        (EVENT_STATUS_CHANGED, 'Status Changed'),
+        (EVENT_TITLE_CHANGED, 'Title Changed'),
+        (EVENT_OBJECTIVE_CHANGED, 'Objective Changed'),
+        (EVENT_SUMMARY_CHANGED, 'Summary Changed'),
+        (EVENT_TYPE_CHANGED, 'Type Changed'),
+        (EVENT_DATETIME_CHANGED, 'Date/Time Changed'),
+        (EVENT_PARTICIPANT_ADDED, 'Participant Added'),
+        (EVENT_PARTICIPANT_REMOVED, 'Participant Removed'),
+        (EVENT_AGENDA_ITEM_ADDED, 'Agenda Item Added'),
+        (EVENT_AGENDA_ITEM_EDITED, 'Agenda Item Edited'),
+        (EVENT_AGENDA_ITEM_DELETED, 'Agenda Item Deleted'),
+        (EVENT_DOCUMENT_EDITED, 'Document Edited'),
+        (EVENT_ACTION_ITEM_ADDED, 'Action Item Added'),
+        (EVENT_ACTION_ITEM_EDITED, 'Action Item Edited'),
+        (EVENT_ACTION_ITEM_RESOLVED, 'Action Item Resolved'),
+        (EVENT_DECISION_CREATED, 'Decision Created'),
+        (EVENT_TASK_CREATED, 'Task Created'),
+        (EVENT_TEMPLATE_APPLIED, 'Template Applied'),
+        (EVENT_TAGS_CHANGED, 'Tags Changed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    meeting = models.ForeignKey(
+        Meeting,
+        on_delete=models.PROTECT,
+        related_name='audit_log',
+        db_index=True,
+    )
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='meeting_audit_entries',
+        db_index=True,
+    )
+    event_type = models.CharField(
+        max_length=64,
+        choices=EVENT_TYPE_CHOICES,
+        db_index=True,
+    )
+    timestamp = models.DateTimeField(auto_now_add=True)
+    before = models.JSONField(null=True, blank=True)
+    after = models.JSONField(null=True, blank=True)
+    context = models.JSONField(default=dict)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['meeting', '-timestamp'], name='audit_mtg_ts_idx'),
+            models.Index(fields=['meeting', 'event_type', '-timestamp'], name='audit_mtg_type_ts_idx'),
+            models.Index(fields=['meeting', 'actor', '-timestamp'], name='audit_mtg_actor_ts_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(id__isnull=False), name='audit_log_has_id'),
+        ]
+        ordering = ['-timestamp']
+
+    def __str__(self):
+        actor_name = self.actor.display_name if self.actor else 'System'
+        return f"AuditLog({self.meeting_id}, {self.event_type}, {actor_name}, {self.timestamp})"
