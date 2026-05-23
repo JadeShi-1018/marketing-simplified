@@ -149,12 +149,17 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
     chat: data.chat_id, // Backend expects 'chat' not 'chat_id'
     content: data.content,
   };
-  
+
   // Include attachment_ids if present
   if (data.attachment_ids && data.attachment_ids.length > 0) {
     payload.attachment_ids = data.attachment_ids;
   }
-  
+
+  // Include reply_to_id if present (quote reply)
+  if (data.reply_to_id) {
+    payload.reply_to_id = data.reply_to_id;
+  }
+
   const response = await api.post('/api/chat/messages/', payload);
   return response.data;
 };
@@ -235,6 +240,35 @@ export const getUnreadCount = async (chatId?: number): Promise<number> => {
   }
 };
 
+// ==================== Reaction Endpoints ====================
+
+/**
+ * Add or toggle a reaction on a message
+ * If the user already has this reaction, it will be removed (toggle behavior)
+ */
+export const addReaction = async (
+  messageId: number,
+  emoji: string
+): Promise<{ status: 'added' | 'removed'; message: Message }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/react/`, {
+    emoji,
+  });
+  return response.data;
+};
+
+/**
+ * Remove a specific reaction from a message
+ */
+export const removeReaction = async (
+  messageId: number,
+  emoji: string
+): Promise<{ status: 'removed'; message: Message }> => {
+  const response = await api.delete(
+    `/api/chat/messages/${messageId}/react/${encodeURIComponent(emoji)}/`
+  );
+  return response.data;
+};
+
 // Export all functions as a single API object (optional alternative style)
 const chatApi = {
   getChats,
@@ -255,6 +289,8 @@ const chatApi = {
   markChatAsRead,
   findPrivateChat,
   getUnreadCount,
+  addReaction,
+  removeReaction,
 };
 
 export default chatApi;

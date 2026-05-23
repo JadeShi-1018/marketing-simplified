@@ -25,8 +25,8 @@ interface UseDrawerChatReturn {
   error: string | null;
 
   // Sending
-  sendMessage: (content: string) => Promise<Message | null>;
-  sendWithAttachments: (content: string, attachmentIds: number[]) => Promise<Message | null>;
+  sendMessage: (content: string, replyToId?: number | null) => Promise<Message | null>;
+  sendWithAttachments: (content: string, attachmentIds: number[], replyToId?: number | null) => Promise<Message | null>;
   isSending: boolean;
 
   // State
@@ -186,7 +186,7 @@ export function useDrawerChat({
 
   // Send message
   const handleSendMessage = useCallback(
-    async (content: string): Promise<Message | null> => {
+    async (content: string, replyToId?: number | null): Promise<Message | null> => {
       if (!chatId || !content.trim()) return null;
 
       try {
@@ -196,6 +196,7 @@ export function useDrawerChat({
         const data: SendMessageRequest = {
           chat_id: chatId,
           content: content.trim(),
+          reply_to_id: replyToId ?? undefined,
         };
 
         const newMessage = await sendMessage(data);
@@ -227,7 +228,7 @@ export function useDrawerChat({
 
   // Send message with attachments
   const handleSendWithAttachments = useCallback(
-    async (content: string, attachmentIds: number[]): Promise<Message | null> => {
+    async (content: string, attachmentIds: number[], replyToId?: number | null): Promise<Message | null> => {
       if (!chatId) return null;
       if (!content.trim() && attachmentIds.length === 0) return null;
 
@@ -239,6 +240,7 @@ export function useDrawerChat({
           chat_id: chatId,
           content: content.trim() || '',
           attachment_ids: attachmentIds,
+          reply_to_id: replyToId ?? undefined,
         };
 
         const newMessage = await sendMessage(data);

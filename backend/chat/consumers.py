@@ -322,6 +322,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'notification': event['notification'],
         }))
 
+    async def reaction_update(self, event):
+        """Send reaction update to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'reaction_update',
+            'reaction': event['reaction'],
+        }))
+
     async def send_error(self, message):
         """Send error message to client"""
         await self.send(text_data=json.dumps({

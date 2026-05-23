@@ -31,6 +31,8 @@ interface DrawerChatMessagesProps {
   onRevoke?: (messageId: number) => void;
   onDelete?: (messageId: number) => void;
   onEnterSelectMode?: (messageId?: number) => void;
+  // Reaction click (toggle reaction from reaction display)
+  onReactionClick?: (messageId: number, emoji: string, isReactedByMe: boolean) => void;
 }
 
 /**
@@ -109,6 +111,7 @@ export default function DrawerChatMessages({
   onRevoke,
   onDelete,
   onEnterSelectMode,
+  onReactionClick,
 }: DrawerChatMessagesProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageCountRef = useRef(messages.length);
@@ -396,6 +399,9 @@ export default function DrawerChatMessages({
                         onToggleSelect={onToggleSelect}
                         isHighlighted={false}
                         isHovered={hoveredMessageId === message.id}
+                        onReactionClick={(emoji, isReactedByMe) =>
+                          onReactionClick?.(message.id, emoji, isReactedByMe)
+                        }
                         renderActions={() => (
                           <MessageActionsMenu
                             message={message}

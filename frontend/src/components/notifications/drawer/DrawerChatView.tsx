@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { NotificationItem } from '@/types/notifications';
 import type { Message } from '@/types/chat';
 import { useDrawerChat } from '@/hooks/useDrawerChat';
+import { addReaction } from '@/lib/api/chatApi';
+import { useChatStore } from '@/lib/chatStore';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages from './DrawerChatMessages';
 import MessageInput from '@/components/chat/MessageInput';
@@ -81,10 +83,30 @@ export default function DrawerChatView({
   };
 
   // Message action handlers
-  const handleEmojiReaction = (messageId: number, emoji: string) => {
-    // TODO: Implement when backend API is available
-    toast('Reactions coming soon!', { icon: emoji });
-  };
+  const handleEmojiReaction = useCallback(async (messageId: number, emoji: string) => {
+    if (!chatId) return;
+    try {
+      const result = await addReaction(messageId, emoji);
+      // Update message in store with new reactions
+      if (result.message) {
+        const { updateMessage } = useChatStore.getState();
+        updateMessage(messageId, { reactions: result.message.reactions });
+      }
+    } catch (err: any) {
+      console.error('Failed to add reaction:', err);
+      toast.error('Failed to add reaction');
+    }
+  }, [chatId]);
+
+  // Handle clicking on existing reaction (toggle)
+  const handleReactionClick = useCallback(async (
+    messageId: number,
+    emoji: string,
+    isReactedByMe: boolean
+  ) => {
+    // Same logic as handleEmojiReaction - toggle behavior is handled by backend
+    await handleEmojiReaction(messageId, emoji);
+  }, [handleEmojiReaction]);
 
   const handleQuoteReply = (message: Message) => {
     setQuoteMessage(message);
@@ -122,7 +144,12 @@ export default function DrawerChatView({
 
   // Handle send message
   const handleSendMessage = async (content: string) => {
-    await sendMessage(content);
+    const replyToId = quoteMessage?.id ?? null;
+    await sendMessage(content, replyToId);
+    // Clear quote after sending
+    if (quoteMessage) {
+      setQuoteMessage(null);
+    }
   };
 
   // Handle send with attachments
@@ -130,7 +157,12 @@ export default function DrawerChatView({
     content: string,
     attachmentIds: number[]
   ) => {
-    await sendWithAttachments(content, attachmentIds);
+    const replyToId = quoteMessage?.id ?? null;
+    await sendWithAttachments(content, attachmentIds, replyToId);
+    // Clear quote after sending
+    if (quoteMessage) {
+      setQuoteMessage(null);
+    }
   };
 
   // Error state - no chat ID in notification
@@ -205,6 +237,7 @@ export default function DrawerChatView({
         onRevoke={handleRevoke}
         onDelete={handleDelete}
         onEnterSelectMode={handleEnterSelectMode}
+        onReactionClick={handleReactionClick}
       />
 
       {/* Quote reply preview */}

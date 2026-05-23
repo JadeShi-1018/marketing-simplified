@@ -80,6 +80,18 @@ export interface ChatFileListItem extends MessageAttachment {
   message_id: number | null;
 }
 
+export interface ReactionUser {
+  id: number;
+  username: string;
+}
+
+export interface Reaction {
+  emoji: string;
+  count: number;
+  users: ReactionUser[];
+  reacted_by_me: boolean;
+}
+
 export interface Message {
   id: number;
   chat_id: number;
@@ -92,6 +104,13 @@ export interface Message {
     sender_display: string;
     created_at: string | null;
   } | null;
+  reply_to?: {
+    id: number;
+    sender: User;
+    content: string;
+    created_at: string | null;
+  } | null;
+  reactions?: Reaction[];
   created_at: string;
   updated_at: string;
   statuses?: MessageStatus[];
@@ -116,6 +135,7 @@ export interface SendMessageRequest {
   chat_id: number;
   content: string;
   attachment_ids?: number[];
+  reply_to_id?: number | null;
 }
 
 export interface SendMessageResponse extends Message {}
@@ -196,6 +216,7 @@ export type WebSocketMessageType =
   | 'typing_stop'
   | 'chat_created'
   | 'in_app_notification'
+  | 'reaction_update'
   | 'pong'
   | 'error';
 
@@ -214,6 +235,14 @@ export interface WebSocketInAppNotificationPayload {
   created_at: string;
 }
 
+export interface WebSocketReactionPayload {
+  message_id: number;
+  chat_id: number;
+  user: ReactionUser;
+  emoji: string;
+  action: 'added' | 'removed';
+}
+
 export interface WebSocketMessage {
   type: WebSocketMessageType;
   message?: Message;
@@ -225,6 +254,7 @@ export interface WebSocketMessage {
   user_id?: number;
   error?: string;
   notification?: WebSocketInAppNotificationPayload;
+  reaction?: WebSocketReactionPayload;
 }
 
 // ==================== Store Types ====================
@@ -361,6 +391,8 @@ export interface MessageItemProps {
   isHovered?: boolean;
   /** Render prop for actions to show in timestamp row when hovered */
   renderActions?: () => React.ReactNode;
+  /** Callback when a reaction is clicked (toggle reaction) */
+  onReactionClick?: (emoji: string, isReactedByMe: boolean) => void;
 }
 
 export interface MessageInputProps {

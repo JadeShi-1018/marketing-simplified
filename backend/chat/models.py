@@ -253,6 +253,15 @@ class Message(TimeStampedModel):
         default=False,
         help_text="Whether this message has attachments (for optimization)"
     )
+    reply_to = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        related_name='replies',
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Message being replied to (quote reply)"
+    )
     forwarded_from_message = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -379,6 +388,40 @@ class MessageStatus(TimeStampedModel):
             if not self.delivered_at:
                 self.delivered_at = self.read_at
             self.save(update_fields=['status', 'delivered_at', 'read_at', 'updated_at'])
+
+
+class MessageReaction(TimeStampedModel):
+    """
+    Emoji reactions on messages.
+    Each user can add one reaction per emoji per message.
+    """
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='reactions',
+        help_text="The message this reaction is on"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='message_reactions',
+        help_text="User who reacted"
+    )
+    emoji = models.CharField(
+        max_length=10,
+        help_text="Emoji character (e.g., 😊, 👍)"
+    )
+
+    class Meta:
+        unique_together = ['message', 'user', 'emoji']
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['message', 'emoji']),
+            models.Index(fields=['user', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} reacted {self.emoji} on message {self.message_id}"
 
 
 def temp_attachment_upload_path(instance, filename):

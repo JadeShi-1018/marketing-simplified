@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.core.cache import cache
 from datetime import datetime
-from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, MessageAttachment
+from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, MessageAttachment, MessageReaction
 from .serializers import (
     ChatSerializer,
     ChatListSerializer,
@@ -31,6 +31,7 @@ from .serializers import (
     MessageAttachmentSerializer,
     AttachmentUploadSerializer,
     AttachmentFileListRowSerializer,
+    AddReactionSerializer,
 )
 from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
 from .tasks import notify_new_message
@@ -589,7 +590,12 @@ class MessageViewSet(viewsets.ModelViewSet):
 
             # Trigger async notification task (for WebSocket delivery)
             notify_new_message.delay(message.id)
-            
+
+            # Refresh message with all relationships for response
+            message = Message.objects.select_related(
+                'sender', 'reply_to', 'reply_to__sender'
+            ).prefetch_related('attachments').get(id=message.id)
+
             # Return message with attachments
             response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
             logger.info(f"Message {message.id} created successfully with {message.attachments.count()} attachments")
@@ -684,6 +690,117 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def react(self, request, pk=None):
+        """
+        Add or toggle a reaction on a message.
+
+        If the user already has this reaction, it will be removed (toggle behavior).
+
+        Body:
+        - emoji: The emoji character to react with
+        """
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = AddReactionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        emoji = serializer.validated_data['emoji']
+
+        # Check if reaction already exists
+        existing = MessageReaction.objects.filter(
+            message=message,
+            user=request.user,
+            emoji=emoji
+        ).first()
+
+        if existing:
+            # Toggle off - remove reaction
+            existing.delete()
+            action_taken = 'removed'
+        else:
+            # Add new reaction
+            MessageReaction.objects.create(
+                message=message,
+                user=request.user,
+                emoji=emoji
+            )
+            action_taken = 'added'
+
+        # Notify via WebSocket
+        from .tasks import notify_reaction_update
+        notify_reaction_update.delay(message.id, request.user.id, emoji, action_taken)
+
+        # Return updated reactions
+        message.refresh_from_db()
+        response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+        return Response({
+            'status': action_taken,
+            'message': response_serializer.data
+        })
+
+    @action(detail=True, methods=['delete'], url_path='react/(?P<emoji>[^/.]+)')
+    def remove_reaction(self, request, pk=None, emoji=None):
+        """
+        Remove a specific reaction from a message.
+
+        URL params:
+        - emoji: The emoji character to remove (URL encoded)
+        """
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if not emoji:
+            return Response(
+                {'error': 'Emoji is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find and delete the reaction
+        deleted_count, _ = MessageReaction.objects.filter(
+            message=message,
+            user=request.user,
+            emoji=emoji
+        ).delete()
+
+        if deleted_count == 0:
+            return Response(
+                {'error': 'Reaction not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Notify via WebSocket
+        from .tasks import notify_reaction_update
+        notify_reaction_update.delay(message.id, request.user.id, emoji, 'removed')
+
+        # Return updated reactions
+        message.refresh_from_db()
+        response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+        return Response({
+            'status': 'removed',
+            'message': response_serializer.data
+        })
 
 
 class AttachmentViewSet(viewsets.GenericViewSet):

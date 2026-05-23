@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageStatus, ChatType, MessageAttachment
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageStatus, ChatType, MessageAttachment, MessageReaction
 from core.models import ProjectMember
 
 User = get_user_model()
@@ -100,14 +100,36 @@ class ChatParticipantSerializer(serializers.ModelSerializer):
 class MessageStatusSerializer(serializers.ModelSerializer):
     """Serializer for message status"""
     user = UserSimpleSerializer(read_only=True)
-    
+
     class Meta:
         model = MessageStatus
         fields = [
-            'id', 'message', 'user', 'status', 
+            'id', 'message', 'user', 'status',
             'delivered_at', 'read_at', 'created_at'
         ]
         read_only_fields = fields
+
+
+class ReactionSerializer(serializers.Serializer):
+    """
+    Serializer for aggregated emoji reactions on a message.
+    Groups reactions by emoji and includes count and user list.
+    """
+    emoji = serializers.CharField()
+    count = serializers.IntegerField()
+    users = serializers.ListField(child=serializers.DictField())
+    reacted_by_me = serializers.BooleanField()
+
+
+class AddReactionSerializer(serializers.Serializer):
+    """Serializer for adding a reaction to a message"""
+    emoji = serializers.CharField(max_length=10, required=True)
+
+    def validate_emoji(self, value):
+        """Validate emoji is not empty"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Emoji cannot be empty")
+        return value.strip()
 
 
 class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializer):
@@ -119,14 +141,16 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     attachment_count = serializers.SerializerMethodField()
     is_forwarded = serializers.SerializerMethodField()
     forwarded_from = serializers.SerializerMethodField()
-    
+    reply_to = serializers.SerializerMethodField()
+    reactions = serializers.SerializerMethodField()
+
     class Meta:
         model = Message
         fields = [
             'id', 'chat', 'sender', 'content', 'status', 'statuses',
             'created_at', 'updated_at', 'is_deleted',
             'has_attachments', 'attachment_count',
-            'is_forwarded', 'forwarded_from'
+            'is_forwarded', 'forwarded_from', 'reply_to', 'reactions'
         ]
         read_only_fields = ['id', 'sender', 'created_at', 'updated_at']
     
@@ -176,6 +200,58 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             'sender_display': obj.forwarded_from_sender_display or '',
             'created_at': obj.forwarded_from_created_at,
         }
+
+    def get_reply_to(self, obj):
+        """Quote reply source metadata."""
+        if not obj.reply_to_id:
+            return None
+
+        reply_msg = obj.reply_to
+        if not reply_msg:
+            return None
+
+        return {
+            'id': reply_msg.id,
+            'sender': {
+                'id': reply_msg.sender.id,
+                'username': reply_msg.sender.username,
+                'email': reply_msg.sender.email,
+            },
+            'content': reply_msg.content,
+            'created_at': reply_msg.created_at.isoformat() if reply_msg.created_at else None,
+        }
+
+    def get_reactions(self, obj):
+        """
+        Get aggregated reactions for this message.
+        Groups by emoji and includes count, users list, and whether current user reacted.
+        """
+        request = self.context.get('request')
+        current_user_id = request.user.id if request and request.user.is_authenticated else None
+
+        # Get all reactions for this message
+        reactions = MessageReaction.objects.filter(message=obj).select_related('user')
+
+        # Group by emoji
+        emoji_groups = {}
+        for reaction in reactions:
+            emoji = reaction.emoji
+            if emoji not in emoji_groups:
+                emoji_groups[emoji] = {
+                    'emoji': emoji,
+                    'count': 0,
+                    'users': [],
+                    'reacted_by_me': False,
+                }
+            emoji_groups[emoji]['count'] += 1
+            emoji_groups[emoji]['users'].append({
+                'id': reaction.user.id,
+                'username': reaction.user.username,
+            })
+            if current_user_id and reaction.user.id == current_user_id:
+                emoji_groups[emoji]['reacted_by_me'] = True
+
+        return list(emoji_groups.values())
 
 
 class MessageCreateSerializer(MessageContentValidationMixin, ChatParticipantValidationMixin, serializers.ModelSerializer):
@@ -268,8 +344,8 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
         last_msg = Message.objects.filter(
             chat=obj,
             is_deleted=False
-        ).select_related('sender').order_by('-created_at').first()
-        
+        ).select_related('sender', 'reply_to', 'reply_to__sender').order_by('-created_at').first()
+
         if last_msg:
             attachment_count = last_msg.attachments.count()
             has_attachments = bool(last_msg.has_attachments or attachment_count > 0)
@@ -278,6 +354,19 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
                 or last_msg.forwarded_from_sender_display
                 or last_msg.forwarded_from_created_at
             )
+            # Build reply_to payload
+            reply_to_data = None
+            if last_msg.reply_to_id and last_msg.reply_to:
+                reply_to_data = {
+                    'id': last_msg.reply_to.id,
+                    'sender': {
+                        'id': last_msg.reply_to.sender.id,
+                        'username': last_msg.reply_to.sender.username,
+                        'email': last_msg.reply_to.sender.email,
+                    },
+                    'content': last_msg.reply_to.content,
+                    'created_at': last_msg.reply_to.created_at.isoformat() if last_msg.reply_to.created_at else None,
+                }
             return {
                 'id': last_msg.id,
                 'chat_id': last_msg.chat_id,
@@ -297,6 +386,7 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
                     if is_forwarded
                     else None
                 ),
+                'reply_to': reply_to_data,
                 'has_attachments': has_attachments,
                 'attachment_count': attachment_count,
                 'created_at': last_msg.created_at.isoformat(),
@@ -695,11 +785,17 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         write_only=True,
         default=list
     )
+    reply_to_id = serializers.IntegerField(
+        required=False,
+        write_only=True,
+        allow_null=True,
+        help_text="ID of the message being replied to (quote reply)"
+    )
     attachments = MessageAttachmentSerializer(many=True, read_only=True)
-    
+
     class Meta:
         model = Message
-        fields = ['id', 'chat', 'content', 'attachment_ids', 'attachments', 'created_at']
+        fields = ['id', 'chat', 'content', 'attachment_ids', 'reply_to_id', 'attachments', 'created_at']
         read_only_fields = ['id', 'attachments', 'created_at']
     
     def validate_content(self, value):
@@ -719,11 +815,26 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         
         return data
     
+    def validate_reply_to_id(self, value):
+        """Validate reply_to message exists and is in the same chat"""
+        if value is None:
+            return None
+        try:
+            Message.objects.get(id=value)
+        except Message.DoesNotExist:
+            raise serializers.ValidationError("Reply target message not found")
+        return value
+
     def create(self, validated_data):
         # Set sender from request context
         request = self.context.get('request')
         validated_data['sender'] = request.user
-        
+
+        # Handle reply_to_id
+        reply_to_id = validated_data.pop('reply_to_id', None)
+        if reply_to_id:
+            validated_data['reply_to_id'] = reply_to_id
+
         attachment_ids = validated_data.pop('attachment_ids', [])
         message = super().create(validated_data)
         

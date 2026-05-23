@@ -29,6 +29,24 @@ def _build_forwarded_from_payload(message: Message) -> Optional[Dict[str, Any]]:
     }
 
 
+def _build_reply_to_payload(message: Message) -> Optional[Dict[str, Any]]:
+    """Build structured reply_to payload for realtime message events."""
+    if not message.reply_to_id or not message.reply_to:
+        return None
+
+    reply_msg = message.reply_to
+    return {
+        'id': reply_msg.id,
+        'sender': {
+            'id': reply_msg.sender.id,
+            'username': reply_msg.sender.username,
+            'email': reply_msg.sender.email,
+        },
+        'content': reply_msg.content,
+        'created_at': reply_msg.created_at.isoformat() if reply_msg.created_at else None,
+    }
+
+
 def build_realtime_message_payload(message: Message) -> Dict[str, Any]:
     """Serialize message payload for websocket/celery delivery with attachments and forward metadata."""
     attachments = []
@@ -47,6 +65,7 @@ def build_realtime_message_payload(message: Message) -> Dict[str, Any]:
         })
 
     forwarded_from = _build_forwarded_from_payload(message)
+    reply_to = _build_reply_to_payload(message)
     return {
         'id': message.id,
         'chat_id': message.chat.id,
@@ -63,6 +82,7 @@ def build_realtime_message_payload(message: Message) -> Dict[str, Any]:
         'attachments': attachments,
         'is_forwarded': forwarded_from is not None,
         'forwarded_from': forwarded_from,
+        'reply_to': reply_to,
     }
 
 
@@ -78,9 +98,11 @@ def deliver_message_task(self, message_id: int):
         message_id: ID of the message to deliver
     """
     try:
-        message = Message.objects.select_related('chat', 'sender').prefetch_related('attachments').get(id=message_id)
+        message = Message.objects.select_related(
+            'chat', 'sender', 'reply_to', 'reply_to__sender'
+        ).prefetch_related('attachments').get(id=message_id)
         message_payload = build_realtime_message_payload(message)
-        
+
         # Get all recipients who haven't received the message
         pending_statuses = MessageStatus.objects.filter(
             message=message,
@@ -252,7 +274,9 @@ def notify_new_message(message_id: int):
         message_id: ID of the newly created message
     """
     try:
-        message = Message.objects.select_related('chat', 'sender').prefetch_related('attachments').get(id=message_id)
+        message = Message.objects.select_related(
+            'chat', 'sender', 'reply_to', 'reply_to__sender'
+        ).prefetch_related('attachments').get(id=message_id)
         message_payload = build_realtime_message_payload(message)
 
         # Get all active participants except sender
@@ -313,3 +337,62 @@ def notify_new_message(message_id: int):
         logger.error(f"Message {message_id} not found")
     except Exception as e:
         logger.error(f"Error notifying new message {message_id}: {e}")
+
+
+@shared_task
+def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: str):
+    """
+    Celery task to notify all chat participants of a reaction update.
+
+    Args:
+        message_id: ID of the message that was reacted to
+        user_id: ID of the user who added/removed the reaction
+        emoji: The emoji that was added/removed
+        action: 'added' or 'removed'
+    """
+    try:
+        message = Message.objects.select_related('chat', 'sender').get(id=message_id)
+        user = User.objects.get(id=user_id)
+
+        # Build reaction update payload
+        reaction_payload = {
+            'message_id': message_id,
+            'chat_id': message.chat.id,
+            'user': {
+                'id': user.id,
+                'username': user.username,
+            },
+            'emoji': emoji,
+            'action': action,
+        }
+
+        # Get all active participants
+        participants = ChatParticipant.objects.filter(
+            chat=message.chat,
+            is_active=True
+        ).select_related('user')
+
+        channel_layer = get_channel_layer()
+
+        # Broadcast to all participants (including the reactor, for multi-device sync)
+        for participant in participants:
+            if OnlineStatusService.is_online(participant.user.id):
+                try:
+                    async_to_sync(channel_layer.group_send)(
+                        f'chat_user_{participant.user.id}',
+                        {
+                            'type': 'reaction_update',
+                            'reaction': reaction_payload
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send reaction update to user {participant.user.id}: {e}")
+
+        logger.info(f"Reaction update sent for message {message_id}: {emoji} {action} by user {user_id}")
+
+    except Message.DoesNotExist:
+        logger.error(f"Message {message_id} not found for reaction update")
+    except User.DoesNotExist:
+        logger.error(f"User {user_id} not found for reaction update")
+    except Exception as e:
+        logger.error(f"Error notifying reaction update for message {message_id}: {e}")
