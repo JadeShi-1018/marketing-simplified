@@ -14,7 +14,7 @@ import { useProjectMembers } from '@/hooks/useProjectMembers';
 import { useChatWebSocket } from '@/hooks/useChatWebSocket';
 import { useAuthStore } from '@/lib/authStore';
 import DrawerChatHeader from './DrawerChatHeader';
-import DrawerChatMessages from './DrawerChatMessages';
+import DrawerChatMessages, { type DrawerChatMessagesHandle } from './DrawerChatMessages';
 import MessageInput from '@/components/chat/MessageInput';
 import ReminderPickerSheet from '@/components/chat/ReminderPickerSheet';
 import ForwardMessageSheet from '@/components/chat/ForwardMessageSheet';
@@ -87,6 +87,9 @@ export default function DrawerChatView({
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const user = useAuthStore((state) => state.user);
   const userId = user?.id ? Number(user.id) : null;
+
+  // Ref for scrolling messages to bottom
+  const messagesRef = useRef<DrawerChatMessagesHandle>(null);
 
   // WebSocket connection for real-time events
   const { connected, sendTypingStart, sendTypingStop } = useChatWebSocket(userId, {
@@ -320,6 +323,10 @@ export default function DrawerChatView({
     if (quoteMessage) {
       setQuoteMessage(null);
     }
+    // Scroll to bottom after sending message
+    setTimeout(() => {
+      messagesRef.current?.scrollToBottom('smooth');
+    }, 100);
   };
 
   // Handle send with attachments
@@ -333,6 +340,10 @@ export default function DrawerChatView({
     if (quoteMessage) {
       setQuoteMessage(null);
     }
+    // Scroll to bottom after sending message
+    setTimeout(() => {
+      messagesRef.current?.scrollToBottom('smooth');
+    }, 100);
   };
 
   // Error state - no chat ID in notification
@@ -391,6 +402,7 @@ export default function DrawerChatView({
 
       {/* Messages area */}
       <DrawerChatMessages
+        ref={messagesRef}
         messages={messages}
         currentUserId={currentUserId}
         highlightMessageId={highlightMessageId}

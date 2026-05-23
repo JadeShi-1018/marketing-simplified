@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useMemo, useState, useCallback } from 'react';
+import { useEffect, useRef, useMemo, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { format, isSameDay } from 'date-fns';
 import type { Message } from '@/types/chat';
 import MessageItem from '@/components/chat/MessageItem';
@@ -10,6 +10,10 @@ import { Loader2 } from 'lucide-react';
 
 const SCROLL_THRESHOLD = 100; // Distance from bottom to consider "at bottom"
 const LOAD_MORE_THRESHOLD = 50; // Distance from top to trigger load more
+
+export interface DrawerChatMessagesHandle {
+  scrollToBottom: (behavior?: 'smooth' | 'auto') => void;
+}
 
 interface DrawerChatMessagesProps {
   messages: Message[];
@@ -93,7 +97,7 @@ function EmptyState() {
   );
 }
 
-export default function DrawerChatMessages({
+const DrawerChatMessages = forwardRef<DrawerChatMessagesHandle, DrawerChatMessagesProps>(function DrawerChatMessages({
   messages,
   currentUserId,
   highlightMessageId,
@@ -112,7 +116,7 @@ export default function DrawerChatMessages({
   onDelete,
   onEnterSelectMode,
   onReactionClick,
-}: DrawerChatMessagesProps) {
+}, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastMessageCountRef = useRef(messages.length);
   // Track whether animation has played to prevent re-triggering
@@ -193,6 +197,15 @@ export default function DrawerChatMessages({
 
     return format(date, 'MMMM d, yyyy');
   };
+
+  // Expose scrollToBottom method to parent component
+  useImperativeHandle(ref, () => ({
+    scrollToBottom: (behavior: 'smooth' | 'auto' = 'smooth') => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    },
+  }), []);
 
   // Handle scroll events for smart scroll and load more
   const handleScroll = useCallback(() => {
@@ -439,4 +452,6 @@ export default function DrawerChatMessages({
       </div>
     </>
   );
-}
+});
+
+export default DrawerChatMessages;
