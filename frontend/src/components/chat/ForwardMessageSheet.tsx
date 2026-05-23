@@ -3,6 +3,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { X, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+const BRAND_BUTTON_CLASS =
+  'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white shadow-sm hover:opacity-95';
 import type { Chat } from '@/types/chat';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
 import ForwardTargetList from './ForwardTargetList';
@@ -191,9 +194,9 @@ export default function ForwardMessageSheet({
               onClick={handleConfirm}
               disabled={totalSelected === 0}
               className={cn(
-                'flex-1 py-3 px-4 rounded-lg font-medium transition-colors',
+                'flex-1 py-3 px-4 rounded-lg font-medium transition-all',
                 totalSelected > 0
-                  ? 'bg-[#3CCED7] text-white hover:bg-[#35b8c1]'
+                  ? BRAND_BUTTON_CLASS
                   : 'bg-gray-300 text-gray-500 cursor-not-allowed'
               )}
             >

@@ -155,6 +155,7 @@ export default function MessagePageContent() {
     selectedProjectId === null && (!hasProjectStoreHydrated || hasProjectCandidate);
   
   const handleSelectChat = (chatId: number) => {
+    console.log('[MessagePageContent] User selected chatId:', chatId, 'projectId:', selectedProjectId);
     setCurrentChat(chatId);
     replaceMessagesQuery({
       projectId: selectedProjectId,

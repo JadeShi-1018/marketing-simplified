@@ -11,6 +11,9 @@ interface ReminderPickerSheetProps {
   onConfirm: (time: Date) => void;
 }
 
+const BRAND_BUTTON_CLASS =
+  'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white border-transparent shadow-sm hover:opacity-95';
+
 const quickOptions = [
   { label: 'In 30 min', minutes: 30 },
   { label: 'In 1 hour', minutes: 60 },
@@ -142,7 +145,7 @@ export default function ReminderPickerSheet({
               type="datetime-local"
               value={format(selectedTime, "yyyy-MM-dd'T'HH:mm")}
               onChange={handleCustomTimeChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/40"
               min={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
             />
           </div>
@@ -157,8 +160,8 @@ export default function ReminderPickerSheet({
               className={cn(
                 'py-3 px-2 rounded-lg border text-sm font-medium transition-all',
                 activeButton === option.label
-                  ? 'bg-green-500 text-white border-green-500'
-                  : 'bg-white text-gray-700 border-gray-300 hover:border-green-500'
+                  ? BRAND_BUTTON_CLASS
+                  : 'bg-white text-gray-700 border-gray-300 hover:border-[#3CCED7]'
               )}
             >
               {option.label}
@@ -176,7 +179,10 @@ export default function ReminderPickerSheet({
           </button>
           <button
             onClick={handleConfirm}
-            className="flex-1 py-3 px-4 rounded-lg bg-green-500 text-white font-medium hover:bg-green-600 transition-colors"
+            className={cn(
+              'flex-1 py-3 px-4 rounded-lg font-medium transition-all',
+              BRAND_BUTTON_CLASS
+            )}
           >
             Set
           </button>

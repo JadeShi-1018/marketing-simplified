@@ -414,7 +414,7 @@ export default function DrawerChatView({
       {/* Quote reply preview */}
       {quoteMessage && (
         <div className="flex-shrink-0 flex items-start gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
-          <div className="flex-shrink-0 w-1 self-stretch bg-[#3CCED7] rounded" />
+          <div className="flex-shrink-0 w-1 self-stretch rounded bg-gradient-to-b from-[#3CCED7] to-[#A6E661]" />
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium text-gray-600 truncate">
               {quoteMessage.sender.username}

@@ -12,6 +12,8 @@ import { extractUrls } from '@/lib/api/linkPreviewApi';
 
 const AGENT_BOT_EMAIL = 'agent-bot@system.local';
 const AGENT_BOT_USERNAME = 'agent-bot';
+const SELECT_MODE_CHECKBOX_SELECTED =
+  'bg-gradient-to-br from-[#3CCED7] to-[#A6E661] border-transparent shadow-sm';
 
 function isAgentBot(sender: { email?: string; username?: string }): boolean {
   return sender.email === AGENT_BOT_EMAIL || sender.username === AGENT_BOT_USERNAME;
@@ -102,9 +104,7 @@ export default function MessageItem({
           <div
             onClick={handleToggleSelect}
             className={`absolute left-0 top-2 w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all ${
-              isSelected
-                ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] border-transparent'
-                : 'border-gray-300 bg-white'
+              isSelected ? SELECT_MODE_CHECKBOX_SELECTED : 'border-gray-300 bg-white'
             }`}
           >
             {isSelected && (
@@ -206,9 +206,7 @@ export default function MessageItem({
         <div
           onClick={handleToggleSelect}
           className={`absolute left-0 top-2 w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all ${
-            isSelected
-              ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] border-transparent'
-              : 'border-gray-300 bg-white'
+            isSelected ? SELECT_MODE_CHECKBOX_SELECTED : 'border-gray-300 bg-white'
           }`}
         >
           {isSelected && (
