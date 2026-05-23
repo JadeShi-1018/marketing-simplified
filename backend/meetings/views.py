@@ -53,6 +53,7 @@ from meetings.services import (
 )
 from notifications.models import NotificationCategory, NotificationEventType
 from notifications.services import create_notification
+from notifications.action_urls import meeting_action_url
 
 
 logger = logging.getLogger(__name__)
@@ -220,7 +221,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     body="You were added as a participant.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=f"/projects/{project.id}/meetings/{meeting.id}",
+                    action_url=meeting_action_url(meeting.id, project.id),
                     metadata={"project_id": project.id},
                 )
 
@@ -299,7 +300,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     body="The meeting minutes have been published.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                    action_url=meeting_action_url(meeting.id, meeting.project_id),
                     metadata={
                         "project_id": meeting.project_id,
                         "meeting_title": meeting.title,
@@ -466,7 +467,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 body="Meeting details were changed.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{project.id}/meetings/{meeting.id}",
+                action_url=meeting_action_url(meeting.id, project.id),
                 metadata={"project_id": project.id, **changes},
             )
 
@@ -726,7 +727,7 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
                 body="You were added as a participant.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                action_url=meeting_action_url(meeting.id, meeting.project_id),
                 metadata={
                     "project_id": meeting.project_id,
                     "meeting_title": meeting.title,
@@ -749,7 +750,7 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
                 body="You were removed from this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                action_url=meeting_action_url(meeting.id, meeting.project_id),
                 metadata={
                     "meeting_title": meeting.title,
                     "project_name": meeting.project.name,
@@ -821,7 +822,7 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
                 body=f"{type_label} \"{artifact_title}\" was linked to this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                action_url=meeting_action_url(meeting.id, meeting.project_id),
                 metadata={
                     "project_id": meeting.project_id,
                     "change_type": "artifact_linked",
@@ -855,7 +856,7 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
                 body=f"{type_label} \"{artifact_title}\" was removed from this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                action_url=meeting_action_url(meeting.id, meeting.project_id),
                 metadata={
                     "project_id": meeting.project_id,
                     "change_type": "artifact_unlinked",

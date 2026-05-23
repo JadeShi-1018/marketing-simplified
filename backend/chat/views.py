@@ -416,7 +416,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get messages for a specific chat"""
         # For retrieve/detail actions, return all messages (permission checked in retrieve method)
-        if self.action in ['retrieve', 'mark_as_read']:
+        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction']:
             return Message.objects.all()
         
         # For list action, require chat_id

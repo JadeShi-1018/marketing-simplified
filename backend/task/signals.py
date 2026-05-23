@@ -154,6 +154,7 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
         return
     from notifications.models import NotificationCategory, NotificationEventType
     from notifications.services import create_notification
+    from notifications.action_urls import task_action_url
 
     actor = _get_current_user_safe()
     actor_id = actor.pk if actor else None
@@ -167,7 +168,7 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
         body=f"Status changed from {old} to {instance.status}.",
         related_object_type="task",
         related_object_id=str(instance.id),
-        action_url=f"/projects/{instance.project_id}/tasks/{instance.id}",
+        action_url=task_action_url(instance.id),
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,
@@ -197,6 +198,7 @@ def notify_on_anomaly_status_change(sender, instance, created, **kwargs):
 
     from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
     from notifications.services import create_notification  # noqa: PLC0415
+    from notifications.action_urls import task_action_url  # noqa: PLC0415
 
     create_notification(
         recipient_id=instance.owner_id,
@@ -207,7 +209,7 @@ def notify_on_anomaly_status_change(sender, instance, created, **kwargs):
         body=f"Task anomaly status changed to {instance.anomaly_status}.",
         related_object_type="task",
         related_object_id=str(instance.id),
-        action_url=f"/tasks/{instance.id}",
+        action_url=task_action_url(instance.id),
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,

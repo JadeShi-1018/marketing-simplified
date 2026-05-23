@@ -27,6 +27,7 @@ from core.models import ProjectMember, Project
 from core.utils.project import get_user_active_project
 from notifications.models import NotificationCategory, NotificationEventType
 from notifications.services import create_notification
+from notifications.action_urls import task_action_url
 import json
 import traceback
 
@@ -463,7 +464,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 body="You have been assigned to a new task.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=f"/projects/{task.project_id}/tasks/{task.id}",
+                action_url=task_action_url(task.id),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -489,7 +490,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         actor_id   = self.request.user.id
         project_id = task.project_id
-        action_url = f"/projects/{project_id}/tasks/{task.id}"
+        action_url = task_action_url(task.id)
         task_meta  = {"task_id": task.id, "project_id": project_id}
 
         # ── Owner reassigned ──────────────────────────────────────────────────
@@ -1495,7 +1496,7 @@ class TaskCommentListView(generics.ListCreateAPIView):
                     body=body[:200] + ("…" if len(body) > 200 else ""),
                     related_object_type="task",
                     related_object_id=str(task.id),
-                    action_url=f"/tasks/{task.id}",
+                    action_url=task_action_url(task.id),
                     metadata={
                         "task_id": task.id,
                         "project_id": task.project_id,

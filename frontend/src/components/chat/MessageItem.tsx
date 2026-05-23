@@ -157,10 +157,12 @@ export default function MessageItem({
 
                 {/* Quote Reply Block */}
                 {hasReplyTo && (
-                  <div className="mt-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded max-w-full">
-                    <span className="text-xs text-gray-500 truncate block">
-                      {replyToContent}
-                    </span>
+                  <div className="flex justify-end">
+                    <div className="mt-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded">
+                      <span className="text-xs text-gray-500 truncate block max-w-[240px] sm:max-w-[280px]">
+                        {replyToContent}
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -283,10 +285,12 @@ export default function MessageItem({
 
               {/* Quote Reply Block */}
               {hasReplyTo && (
-                <div className="mt-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded max-w-full">
-                  <span className="text-xs text-gray-500 truncate block">
-                    {replyToContent}
-                  </span>
+                <div className="flex">
+                  <div className="mt-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded">
+                    <span className="text-xs text-gray-500 truncate block max-w-[240px] sm:max-w-[280px]">
+                      {replyToContent}
+                    </span>
+                  </div>
                 </div>
               )}
 

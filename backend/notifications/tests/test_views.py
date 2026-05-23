@@ -15,6 +15,7 @@ from notifications.models import (
     UserNotificationPreference,
 )
 from notifications.services import create_notification
+from notifications.action_urls import overview_action_url
 User = get_user_model()
 
 
@@ -264,7 +265,7 @@ class NotificationAPITests(TestCase):
             body="Please join.",
             related_object_type="project",
             related_object_id=str(project.id),
-            action_url=f"/projects/{project.id}",
+            action_url=overview_action_url(),
             metadata={
                 "project_name": project.name,
                 "invitation_id": new_invitation.pk,

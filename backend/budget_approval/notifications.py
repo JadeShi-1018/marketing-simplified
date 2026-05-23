@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 
 from notifications.models import NotificationCategory, NotificationEventType
 from notifications.services import create_notification, create_notifications_for_users
+from notifications.action_urls import task_action_url
 
 User = get_user_model()
 
@@ -29,11 +30,9 @@ def _budget_summary(budget_request) -> str:
 
 
 def _action_url(budget_request) -> str:
-    pool = getattr(budget_request, "budget_pool", None)
-    project_id = pool.project_id if pool else None
     task_id = budget_request.task_id
-    if project_id and task_id:
-        return f"/projects/{project_id}/tasks/{task_id}"
+    if task_id:
+        return task_action_url(task_id)
     return ""
 
 

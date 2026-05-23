@@ -7,6 +7,10 @@ import toast from "react-hot-toast";
 import type { NotificationItem } from "@/types/notifications";
 import { TaskAPI } from "@/lib/api/taskApi";
 import { budgetChangeType, isBudgetNotification } from "@/lib/budgetNotificationCopy";
+import {
+  activateProjectForNavigation,
+  buildNotificationFullPageTarget,
+} from "@/lib/notificationRoutes";
 
 interface DrawerActionBarProps {
   notification: NotificationItem;
@@ -209,14 +213,17 @@ function QuickReplyAction({
 
     setLoading(true);
     try {
-      // For now, navigate to the chat/comment thread with the message
-      // A full implementation would call the chat API directly
-      const actionUrl = notification.action_url;
-      if (actionUrl) {
-        // Navigate to the action URL where user can continue the conversation
-        router.push(actionUrl);
-        onComplete();
+      const target = buildNotificationFullPageTarget(notification);
+      if (!target) {
+        toast.error("Unable to open conversation");
+        return;
       }
+
+      onComplete();
+      if (target.requiresProjectSwitch && target.projectId) {
+        await activateProjectForNavigation(target.projectId);
+      }
+      router.push(target.href);
       toast.success("Redirecting to conversation...");
     } catch (error) {
       console.error("Reply failed:", error);
@@ -257,85 +264,6 @@ function QuickReplyAction({
   );
 }
 
-// Build the correct full page URL based on notification type
-function buildFullPageUrl(notification: NotificationItem): string | null {
-  const { related_object_type, related_object_id, metadata, action_url } = notification;
-  const objectType = related_object_type?.toLowerCase();
-
-  // Try multiple sources for project_id
-  const taskMeta = metadata?.task as Record<string, unknown> | undefined;
-  const meetingMeta = metadata?.meeting as Record<string, unknown> | undefined;
-  const projectId =
-    (metadata?.project_id as number | string | undefined) ||
-    (metadata?.project as number | string | undefined) ||
-    (taskMeta?.project_id as number | string | undefined) ||
-    (meetingMeta?.project_id as number | string | undefined);
-
-  // Task detail page: /projects/[project_id]/tasks/[task_id]
-  if (objectType === "task" && related_object_id) {
-    if (projectId) {
-      return `/projects/${projectId}/tasks/${related_object_id}`;
-    }
-    // Try to extract project_id from action_url
-    const projectMatch = action_url?.match(/\/projects\/(\d+)/);
-    if (projectMatch) {
-      return `/projects/${projectMatch[1]}/tasks/${related_object_id}`;
-    }
-    // Try extracting from task-related patterns in action_url
-    const taskMatch = action_url?.match(/\/tasks\/(\d+)/);
-    if (taskMatch && action_url) {
-      return action_url;
-    }
-    // Fallback to tasks list with task filter
-    return `/tasks?task_id=${related_object_id}`;
-  }
-
-  // Meeting workspace page: /projects/[project_id]/meetings/[meeting_id]
-  if (objectType === "meeting" && related_object_id) {
-    if (projectId) {
-      return `/projects/${projectId}/meetings/${related_object_id}`;
-    }
-    // Try to extract project_id from action_url
-    const projectMatch = action_url?.match(/\/projects\/(\d+)/);
-    if (projectMatch) {
-      return `/projects/${projectMatch[1]}/meetings/${related_object_id}`;
-    }
-    // Fallback to action_url if provided
-    if (action_url) {
-      return action_url;
-    }
-  }
-
-  // Decision page
-  if (objectType === "decision" && related_object_id) {
-    if (projectId) {
-      return `/projects/${projectId}/decisions/${related_object_id}`;
-    }
-    const projectMatch = action_url?.match(/\/projects\/(\d+)/);
-    if (projectMatch) {
-      return `/projects/${projectMatch[1]}/decisions/${related_object_id}`;
-    }
-    // Fallback to action_url if provided
-    if (action_url) {
-      return action_url;
-    }
-  }
-
-  // Budget task page via metadata.task_id or action_url
-  if (objectType === "budget_request") {
-    const taskId = metadata?.task_id as number | string | undefined;
-    if (projectId && taskId) {
-      return `/projects/${projectId}/tasks/${taskId}`;
-    }
-    if (action_url) {
-      return action_url;
-    }
-  }
-
-  // Default fallback to action_url
-  return action_url || null;
-}
-
 // Go to Full Page Link
 function GoToFullPageLink({
   notification,
@@ -345,14 +273,16 @@ function GoToFullPageLink({
   onNavigate: () => void;
 }) {
   const router = useRouter();
-  const fullPageUrl = buildFullPageUrl(notification);
+  const target = buildNotificationFullPageTarget(notification);
 
-  if (!fullPageUrl) return null;
+  if (!target) return null;
 
-  const handleClick = () => {
-    // Close the drawer first, then navigate
+  const handleClick = async () => {
     onNavigate();
-    router.push(fullPageUrl);
+    if (target.requiresProjectSwitch && target.projectId) {
+      await activateProjectForNavigation(target.projectId);
+    }
+    router.push(target.href);
   };
 
   return (

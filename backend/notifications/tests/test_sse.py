@@ -359,7 +359,7 @@ class SSEGeneratorReplayTests(TestCase):
             "category": "TASKS",
             "body": "",
             "is_read": False,
-            "action_url": "/projects/1/tasks/42",
+            "action_url": "/tasks/42",
             "metadata": {},
             "related_object_type": "task",
             "related_object_id": "42",

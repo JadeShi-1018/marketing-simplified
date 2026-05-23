@@ -262,6 +262,7 @@ def accept_invitation(token, user=None, password=None, username=None):
         try:
             from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
             from notifications.services import create_notification  # noqa: PLC0415
+            from notifications.action_urls import overview_action_url  # noqa: PLC0415
             project = invitation.project
             create_notification(
                 recipient_id=user.id,
@@ -272,7 +273,7 @@ def accept_invitation(token, user=None, password=None, username=None):
                 body=f"You were added to the project \"{project.name}\".",
                 related_object_type="project",
                 related_object_id=str(project.id),
-                action_url=f"/projects/{project.id}",
+                action_url=overview_action_url(),
                 metadata={"project_name": project.name},
             )
         except Exception:

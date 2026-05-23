@@ -325,6 +325,7 @@ def upsert_agenda_item_notification(
     """
     from notifications.models import Notification, NotificationCategory, NotificationEventType
     from notifications.services import create_notification
+    from notifications.action_urls import meeting_action_url
     from notifications.sse import publish_notification_to_redis
 
     data_key = f"notif_debounce:{item_id}:{recipient_id}"
@@ -374,7 +375,7 @@ def upsert_agenda_item_notification(
         body="Meeting details were changed.",
         related_object_type="meeting",
         related_object_id=str(meeting.id),
-        action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+        action_url=meeting_action_url(meeting.id, meeting.project_id),
         metadata={
             "project_id": meeting.project_id,
             "item_id": item_id,
@@ -423,6 +424,7 @@ def notify_agenda_event(
     """
     from notifications.models import NotificationCategory, NotificationEventType
     from notifications.services import create_notification
+    from notifications.action_urls import meeting_action_url
 
     scope = str(item_id) if item_id is not None else "meeting"
     data_key = f"notif_debounce:{meeting.id}:{change_type}:{scope}:{recipient_id}"
@@ -466,7 +468,7 @@ def notify_agenda_event(
             body="Meeting details were changed.",
             related_object_type="meeting",
             related_object_id=str(meeting.id),
-            action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+            action_url=meeting_action_url(meeting.id, meeting.project_id),
             metadata=metadata,
         )
         if notif:
@@ -508,6 +510,7 @@ def notify_participants_meeting_document_updated(
 
     from notifications.models import NotificationCategory, NotificationEventType
     from notifications.services import create_notification
+    from notifications.action_urls import meeting_action_url
 
     title_label = meeting.title
     meta = {
@@ -535,7 +538,7 @@ def notify_participants_meeting_document_updated(
             body="The collaborative document for this meeting was edited.",
             related_object_type="meeting",
             related_object_id=str(meeting.id),
-            action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+            action_url=meeting_action_url(meeting.id, meeting.project_id),
             metadata=meta,
         )
 

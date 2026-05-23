@@ -124,6 +124,7 @@ def fire_task_overdue_notifications() -> int:
         Notification,
     )
     from notifications.services import create_notification
+    from notifications.action_urls import task_action_url
 
     today = timezone.now().date()
     dedup_cutoff = timezone.now() - timedelta(hours=_TASK_OVERDUE_DEDUP_HOURS)
@@ -160,7 +161,7 @@ def fire_task_overdue_notifications() -> int:
                 body=f"This task was due on {task.due_date}.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=f"/projects/{task.project_id}/tasks/{task.id}",
+                action_url=task_action_url(task.id),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -195,8 +196,7 @@ def fire_decision_deadline_notifications() -> int:
         Notification,
     )
     from notifications.services import create_notification
-
-    stale_cutoff = timezone.now() - timedelta(hours=_DECISION_STALE_HOURS)
+    from notifications.action_urls import decision_action_url
     dedup_cutoff = timezone.now() - timedelta(hours=_DECISION_DEDUP_HOURS)
 
     stale_decisions = Decision.objects.filter(
@@ -224,7 +224,7 @@ def fire_decision_deadline_notifications() -> int:
         )
         label = decision.title or f"Decision #{decision.project_seq}"
         action_url = (
-            f"/projects/{decision.project_id}/decisions/{decision.id}"
+            decision_action_url(decision.id, decision.project_id)
             if decision.project_id
             else ""
         )
@@ -275,6 +275,7 @@ def fire_meeting_starting_soon_notifications() -> int:
         Notification,
     )
     from notifications.services import create_notification
+    from notifications.action_urls import meeting_action_url
 
     now = timezone.now()
     lookahead = now + timedelta(minutes=_MEETING_SOON_LOOKAHEAD_MINUTES)
@@ -328,7 +329,7 @@ def fire_meeting_starting_soon_notifications() -> int:
                     body=f"Your meeting starts in {start_label}.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=f"/projects/{meeting.project_id}/meetings/{meeting.id}",
+                    action_url=meeting_action_url(meeting.id, meeting.project_id),
                     metadata={
                         "change_type": "meeting_start",
                         "start_time": start_label,

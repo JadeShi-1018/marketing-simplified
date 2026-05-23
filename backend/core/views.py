@@ -38,6 +38,7 @@ from core.utils.project_calendars import (
     ensure_project_calendar,
     soft_delete_project_calendars,
 )
+from notifications.action_urls import overview_action_url
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -195,7 +196,7 @@ class ProjectOnboardingView(APIView):
                         body=f"You were added to the project \"{project.name}\".",
                         related_object_type="project",
                         related_object_id=str(project.id),
-                        action_url=f"/projects/{project.id}",
+                        action_url=overview_action_url(),
                         metadata={"project_name": project.name},
                     )
                 except Exception:
@@ -481,7 +482,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
                 ),
                 related_object_type="project",
                 related_object_id=str(project.id),
-                action_url=f"/projects/{project.id}",
+                action_url=overview_action_url(),
                 metadata={
                     "project_name": project.name,
                     "project_id": project.id,
@@ -594,7 +595,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
                         body=f"{user.get_full_name() or user.username} invited you to join \"{project.name}\".",
                         related_object_type="project",
                         related_object_id=str(project.id),
-                        action_url=f"/projects/{project.id}",
+                        action_url=overview_action_url(),
                         metadata={
                             "project_name": project.name,
                             "invitation_id": invitation.pk,
@@ -651,7 +652,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
                     body=f"You have been removed from the project \"{project.name}\".",
                     related_object_type="project",
                     related_object_id=str(project.id),
-                    action_url=f"/projects/{project.id}",
+                    action_url=overview_action_url(),
                     metadata={
                         "project_name": project.name,
                         "action": "removed_from_project",

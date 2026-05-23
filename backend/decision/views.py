@@ -11,6 +11,7 @@ from core.models import Project, ProjectMember
 from meetings.models import MeetingDecisionOrigin
 from notifications.models import NotificationCategory, NotificationEventType
 from notifications.services import create_notification
+from notifications.action_urls import decision_action_url
 from .models import CommitRecord, Decision, DecisionEdge, Review, Signal
 from calendars.models import CalendarEvent
 from .permissions import DecisionPermission
@@ -655,7 +656,7 @@ class DecisionViewSet(
                     body="A decision has been submitted and is waiting for your approval.",
                     related_object_type="decision",
                     related_object_id=str(decision.id),
-                    action_url=f"/projects/{decision.project_id}/decisions/{decision.id}",
+                    action_url=decision_action_url(decision.id, decision.project_id),
                     metadata={"project_id": decision.project_id},
                 )
 
@@ -788,7 +789,7 @@ class DecisionViewSet(
                 body="Your decision has been approved and committed.",
                 related_object_type="decision",
                 related_object_id=str(decision.id),
-                action_url=f"/projects/{decision.project_id}/decisions/{decision.id}",
+                action_url=decision_action_url(decision.id, decision.project_id),
                 metadata={"project_id": decision.project_id},
             )
 
