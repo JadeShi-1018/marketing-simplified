@@ -50,6 +50,8 @@ from meetings.services import (
     update_meeting_title,
     update_meeting_objective,
     update_meeting_summary,
+    add_participant,
+    remove_participant,
 )
 
 
@@ -413,7 +415,23 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
-        serializer.save(meeting=meeting)
+        user = serializer.validated_data.get("user")
+        role = serializer.validated_data.get("role")
+        add_participant(
+            meeting=meeting,
+            user=user,
+            role=role,
+            actor=self.request.user,
+        )
+
+    def perform_destroy(self, instance):
+        meeting = self.get_meeting()
+        user = instance.user
+        remove_participant(
+            meeting=meeting,
+            user=user,
+            actor=self.request.user,
+        )
 
 
 class ArtifactLinkViewSet(viewsets.ModelViewSet):

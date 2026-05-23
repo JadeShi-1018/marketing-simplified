@@ -279,6 +279,67 @@ def update_meeting_summary(meeting: Meeting, new_summary: str, actor: Optional[U
     )
 
 
+def add_participant(
+    meeting: Meeting,
+    user: User,
+    role: str,
+    actor: Optional[User],
+) -> ParticipantLink:
+    """
+    Add a user to a meeting as a participant.
+    Records an audit entry if creation succeeds.
+    """
+    link = ParticipantLink.objects.create(
+        meeting=meeting,
+        user=user,
+        role=role,
+    )
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.participant_added',
+        after={
+            'user_id': user.id,
+            'user_name': user.display_name,
+            'role': role,
+        },
+        context={
+            'participant_count_after': meeting.participant_links.count(),
+        },
+    )
+
+    return link
+
+
+def remove_participant(
+    meeting: Meeting,
+    user: User,
+    actor: Optional[User],
+) -> None:
+    """
+    Remove a user from a meeting.
+    Records an audit entry if removal succeeds.
+    """
+    link = ParticipantLink.objects.get(meeting=meeting, user=user)
+    user_name = user.display_name
+    user_id = user.id
+
+    link.delete()
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.participant_removed',
+        after={
+            'user_id': user_id,
+            'user_name': user_name,
+        },
+        context={
+            'participant_count_after': meeting.participant_links.count(),
+        },
+    )
+
 
 def user_has_meeting_document_access(user_id: int, meeting: Meeting) -> bool:
     """Project member (active) or explicit meeting participant may load/sync the meeting document."""
