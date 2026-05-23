@@ -161,7 +161,7 @@ describe('HomeSidebar — Project members integration', () => {
     render(<HomeSidebar {...defaultProps} projectMembers={members} />);
 
     await waitFor(() => {
-      expect(screen.getByText('No direct messages')).toBeInTheDocument();
+      expect(screen.getByText('No direct messages yet')).toBeInTheDocument();
       expect(screen.getByText('Project members')).toBeInTheDocument();
       expect(screen.getByText('Alice')).toBeInTheDocument();
     });

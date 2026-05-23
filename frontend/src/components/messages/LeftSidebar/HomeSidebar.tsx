@@ -17,6 +17,7 @@ import ActivitySidebarView from './ActivitySidebarView';
 import ProjectMembersSection from './ProjectMembersSection';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
 import { Skeleton } from '@/components/ui/skeleton';
+import SidebarChatRow from './SidebarChatRow';
 
 function normalizeChat(c: Chat): Chat {
   const raw = c.project_id ?? (c as { project?: number }).project;
@@ -162,6 +163,24 @@ export default function HomeSidebar({
       return otherUser?.username || chat.name || 'Direct message';
     },
     [currentUserId]
+  );
+
+  const isChatAgentBot = useCallback(
+    (chat: Chat): boolean => {
+      if (chat.type !== 'private' || !currentUserId) return false;
+      const other = chat.participants?.find((p) => p.user.id !== currentUserId);
+      const otherUser = other?.user;
+      return (
+        otherUser?.email === 'agent-bot@system.local' || otherUser?.username === 'agent-bot'
+      );
+    },
+    [currentUserId]
+  );
+
+  const rowDisplayName = useCallback(
+    (chat: Chat): string =>
+      chat.type === 'private' ? getPrivateChatDisplayName(chat) : chat.name || 'untitled',
+    [getPrivateChatDisplayName]
   );
 
   const starredIdSet = useMemo(() => new Set(starredOrder), [starredOrder]);
@@ -411,59 +430,25 @@ export default function HomeSidebar({
                 Drag important channels or DMs here from the lists below.
               </div>
             ) : (
-              <div className="divide-y divide-gray-100 border border-dashed border-gray-200 rounded-lg overflow-hidden mx-1">
+              <div className="space-y-0.5 mx-1 border border-dashed border-gray-200 rounded-lg p-1">
                 {starredChatsOrdered.map((chat) => (
-                  <div
+                  <SidebarChatRow
                     key={chat.id}
+                    chat={chat}
+                    isActive={chat.id === currentChatId}
+                    displayName={rowDisplayName(chat)}
+                    isBot={isChatAgentBot(chat)}
+                    currentUserId={currentUserId}
+                    onClick={() => onSelectChat(chat.id)}
+                    showStarToggle
+                    isStarred
+                    onStarToggle={() => void toggleStar(chat.id)}
+                    draggable
+                    onDragStart={handleDragStart(chat.id)}
                     onDragOver={handleDragOver}
                     onDrop={handleDropOn(chat.id)}
-                    className={draggingId === chat.id ? 'opacity-60' : ''}
-                  >
-                    <button
-                      key={chat.id}
-                      type="button"
-                      onClick={() => onSelectChat(chat.id)}
-                      className={[
-                        'w-full px-3 py-1.5 flex items-center gap-2 text-sm text-gray-700 hover:bg-gray-100 text-left rounded-none group/starrow',
-                        chat.id === currentChatId ? 'bg-[#3CCED7]/10 text-[#3CCED7] border-l-2 border-[#3CCED7]' : '',
-                      ].join(' ')}
-                      data-testid="messages-chat-row"
-                      data-chat-id={String(chat.id)}
-                      draggable
-                      onDragStart={handleDragStart(chat.id)}
-                      title={chat.type === 'private' ? getPrivateChatDisplayName(chat) : chat.name || 'Channel'}
-                    >
-                      {chat.type === 'group' ? (
-                        <Hash className="w-4 h-4 text-gray-400" />
-                      ) : (
-                        <Users className="w-4 h-4 text-gray-400" />
-                      )}
-
-                      <span className="flex-1 min-w-0 truncate">
-                        {chat.type === 'private'
-                          ? getPrivateChatDisplayName(chat)
-                          : chat.name || 'untitled'}
-                      </span>
-
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void toggleStar(chat.id);
-                        }}
-                        className={[
-                          'p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-opacity',
-                          'opacity-0 group-hover/starrow:opacity-100',
-                          'opacity-100 text-yellow-500 hover:text-yellow-600',
-                        ].join(' ')}
-                        aria-label="Unstar"
-                        title="Unstar"
-                      >
-                        <Star className="w-4 h-4" />
-                      </button>
-                    </button>
-                  </div>
+                    isDragging={draggingId === chat.id}
+                  />
                 ))}
               </div>
             )}
@@ -472,7 +457,7 @@ export default function HomeSidebar({
 
         {showHome && (
           <div className="mt-3">
-            <div className="px-3 flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide group/channels">
+            <div className="px-3 flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
               <span className="text-gray-500">
                 <Hash className="w-3.5 h-3.5" />
               </span>
@@ -483,7 +468,7 @@ export default function HomeSidebar({
                   e.stopPropagation();
                   onCreateChannel();
                 }}
-                className="p-1 rounded text-gray-500 hover:bg-gray-200 hover:text-gray-800 opacity-0 group-hover/channels:opacity-100 transition-opacity"
+                className="p-1 rounded text-gray-500 hover:bg-gray-200 hover:text-gray-800 transition-colors"
                 title="Add channel"
                 aria-label="Add channel"
                 data-testid="messages-add-channel"
@@ -493,27 +478,32 @@ export default function HomeSidebar({
             </div>
             <div className="mt-2 mx-1">
               {groupChats.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-gray-500">No channels</div>
+                <div className="px-3 py-4 text-center text-xs text-gray-500">
+                  <Hash className="mx-auto mb-1 h-5 w-5 text-gray-300" />
+                  <p className="mb-2">No channels yet</p>
+                  <button
+                    type="button"
+                    onClick={onCreateChannel}
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                    data-testid="messages-empty-create-channel"
+                  >
+                    <Plus className="h-3 w-3" />
+                    Create channel
+                  </button>
+                </div>
               ) : (
                 <div className="space-y-0.5">
                   {groupChats.map((chat) => (
-                    <button
+                    <SidebarChatRow
                       key={chat.id}
-                      type="button"
+                      chat={chat}
+                      isActive={chat.id === currentChatId}
+                      displayName={rowDisplayName(chat)}
+                      currentUserId={currentUserId}
                       onClick={() => onSelectChat(chat.id)}
-                      className={[
-                        'w-full px-3 py-1.5 flex items-center gap-2 text-sm text-gray-700 hover:bg-gray-100 text-left rounded-md',
-                        chat.id === currentChatId ? 'bg-[#3CCED7]/10 text-[#3CCED7] border-l-2 border-[#3CCED7]' : '',
-                      ].join(' ')}
-                      data-testid="messages-chat-row"
-                      data-chat-id={String(chat.id)}
                       draggable={!starredIdSet.has(chat.id)}
                       onDragStart={listDragStart(chat.id)}
-                      title={chat.name || 'Channel'}
-                    >
-                      <Hash className="w-4 h-4 text-gray-400" />
-                      <span className="truncate">{chat.name || 'untitled'}</span>
-                    </button>
+                    />
                   ))}
                 </div>
               )}
@@ -525,7 +515,6 @@ export default function HomeSidebar({
           <Section
             title="Direct messages"
             icon={<Users className="w-3.5 h-3.5" />}
-            headerRowClassName="group/dms"
             headerExtra={
               <button
                 type="button"
@@ -534,7 +523,7 @@ export default function HomeSidebar({
                   onCreateChat();
                 }}
                 disabled={!selectedProjectId}
-                className="p-1 rounded text-gray-500 hover:bg-gray-200 hover:text-gray-800 opacity-0 group-hover/dms:opacity-100 transition-opacity disabled:opacity-0"
+                className="p-1 rounded text-gray-500 hover:bg-gray-200 hover:text-gray-800 transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                 title="New chat"
                 aria-label="New chat"
                 data-testid="messages-new-chat"
@@ -544,47 +533,37 @@ export default function HomeSidebar({
             }
           >
             {privateChats.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-gray-500">No direct messages</div>
+              <div className="px-3 py-4 text-center text-sm text-gray-500">
+                <MessagesSquare className="mx-auto mb-1 h-5 w-5 text-gray-300" />
+                <p className="mb-2 text-xs">No direct messages yet</p>
+                <button
+                  type="button"
+                  onClick={onCreateChat}
+                  disabled={!selectedProjectId}
+                  className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-testid="messages-empty-new-chat"
+                >
+                  <Plus className="h-3 w-3" />
+                  New chat
+                </button>
+              </div>
             ) : (
               <div className="space-y-0.5 mx-1">
                 {privateChats.map((chat) => (
-                  <button
+                  <SidebarChatRow
                     key={chat.id}
-                    type="button"
+                    chat={chat}
+                    isActive={chat.id === currentChatId}
+                    displayName={rowDisplayName(chat)}
+                    isBot={isChatAgentBot(chat)}
+                    currentUserId={currentUserId}
                     onClick={() => onSelectChat(chat.id)}
-                    className={[
-                      'w-full px-3 py-1.5 flex items-center gap-2 text-sm text-gray-700 hover:bg-gray-100 text-left rounded-md group/dmrow',
-                      chat.id === currentChatId ? 'bg-[#3CCED7]/10 text-[#3CCED7] border-l-2 border-[#3CCED7]' : '',
-                    ].join(' ')}
-                    data-testid="messages-chat-row"
-                    data-chat-id={String(chat.id)}
+                    showStarToggle={showHome}
+                    isStarred={starredIdSet.has(chat.id)}
+                    onStarToggle={showHome ? () => void toggleStar(chat.id) : undefined}
                     draggable={showHome && !starredIdSet.has(chat.id)}
                     onDragStart={showHome ? listDragStart(chat.id) : undefined}
-                    title={chat.name || 'Direct message'}
-                  >
-                    <Users className="w-4 h-4 text-gray-400" />
-                    <span className="flex-1 min-w-0 truncate">{getPrivateChatDisplayName(chat)}</span>
-
-                    {showHome && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void toggleStar(chat.id);
-                        }}
-                        className={[
-                          'p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-opacity',
-                          'opacity-0 group-hover/dmrow:opacity-100',
-                          starredIdSet.has(chat.id) ? 'opacity-100 text-yellow-500 hover:text-yellow-600' : '',
-                        ].join(' ')}
-                        aria-label={starredIdSet.has(chat.id) ? 'Unstar' : 'Star'}
-                        title={starredIdSet.has(chat.id) ? 'Unstar' : 'Star'}
-                      >
-                        <Star className="w-4 h-4" />
-                      </button>
-                    )}
-                  </button>
+                  />
                 ))}
               </div>
             )}

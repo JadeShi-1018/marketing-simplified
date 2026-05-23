@@ -79,6 +79,23 @@ export async function mockProjectShellApis(page: Page) {
 		});
 	});
 
+	// Called on every Messages page mount — must be mocked to avoid hanging without a backend.
+	await page.route('**/api/chat/messages/unread_count/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ unread_count: 0 }),
+		});
+	});
+
+	await page.route('**/api/chat/starred/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify([]),
+		});
+	});
+
 	await page.route('**/api/core/invitations/pending**', async (route) => {
 		await route.fulfill({
 			status: 200,
@@ -132,6 +149,26 @@ export async function mockProjectShellApis(page: Page) {
 			status: 200,
 			contentType: 'application/json',
 			body: JSON.stringify({ results: [] }),
+		});
+	});
+
+	await page.route('**/api/core/projects/*/members/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ results: [], next: null }),
+		});
+	});
+
+	await page.route('**/api/chat/chats/**', async (route) => {
+		if (route.request().method() !== 'GET') {
+			await route.fallback();
+			return;
+		}
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
 		});
 	});
 }
@@ -224,7 +261,7 @@ export async function assertChatListOrEmptyState(page: Page) {
 	const noChatsState = page.getByText('No chats yet', { exact: true });
 	const selectProjectHint = page.getByText('Select a project to view chats');
 	const selectProjectStart = page.getByRole('heading', { name: 'Select a project to start' });
-	const noDirectMessages = page.getByText('No direct messages', { exact: true });
+	const noDirectMessages = page.getByText('No direct messages yet', { exact: true });
 
 	await expect
 		.poll(async () => {

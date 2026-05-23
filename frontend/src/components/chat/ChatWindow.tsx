@@ -11,14 +11,21 @@ import type { Chat } from '@/types/chat';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import ForwardMessagesDialog from './ForwardMessagesDialog';
+import TypingIndicator from './TypingIndicator';
 
 interface ChatWindowProps {
   chat: Chat;
   onBack: () => void;
   roleByUserId?: Record<number, string>;
+  /**
+   * When true, the back button hides on the md+ viewport. Use this for the
+   * full-page Messages view where the sidebar is always visible on desktop.
+   * Default false — preserves the floating-widget back behavior.
+   */
+  hideBackOnDesktop?: boolean;
 }
 
-export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowProps) {
+export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDesktop }: ChatWindowProps) {
   const searchParams = useSearchParams();
   // Use selector for stable reference
   const user = useAuthStore(state => state.user);
@@ -43,6 +50,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
   
   // Track last message count to detect new messages
   const lastMessageCountRef = useRef<number>(0);
+  const lastReadChatIdRef = useRef<number | null>(null);
   const markAsReadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const jumpInFlightRef = useRef(false);
   const previousChatIdRef = useRef<number | null>(null);
@@ -121,19 +129,26 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
   // Mark messages as read when viewing - both on open AND when new messages arrive
   useEffect(() => {
     if (!chat.id || messages.length === 0) return;
-      
+
+    // Reset the per-chat counter when switching chats so the next compare
+    // always sees a fresh open and fires markAllAsRead.
+    if (lastReadChatIdRef.current !== chat.id) {
+      lastMessageCountRef.current = 0;
+      lastReadChatIdRef.current = chat.id;
+    }
+
     // Get store actions
     const { updateChat, updateUnreadCount, fetchGlobalUnreadCount } = useChatStore.getState();
-    
+
     // Always keep local unread count at 0 while viewing (optimistic update)
     updateChat(chat.id, { unread_count: 0 });
     updateUnreadCount(chat.id, 0);
-    
+
     // Debounce the API call to avoid too many requests when messages stream in
     if (markAsReadTimeoutRef.current) {
       clearTimeout(markAsReadTimeoutRef.current);
     }
-    
+
     // Only call API if this is initial load OR new messages arrived
     if (messages.length > lastMessageCountRef.current) {
       console.log('[ChatWindow] New messages detected, scheduling markAllAsRead:', {
@@ -141,7 +156,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
         previousCount: lastMessageCountRef.current,
         newCount: messages.length,
       });
-      
+
       markAsReadTimeoutRef.current = setTimeout(() => {
         markAllAsRead().then(() => {
           console.log('[ChatWindow] markAllAsRead completed for chat:', chat.id);
@@ -150,7 +165,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
         });
       }, 500); // Debounce 500ms
     }
-    
+
     lastMessageCountRef.current = messages.length;
     
     // Cleanup timeout on unmount
@@ -234,7 +249,10 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
       <div className="flex flex-shrink-0 items-center gap-2 border-b border-gray-200 bg-white px-3 py-2 sm:gap-3 sm:px-4 sm:py-3">
         <button
           onClick={onBack}
-          className="rounded p-1 transition-colors hover:bg-gray-100"
+          className={[
+            'rounded p-1 transition-colors hover:bg-gray-100',
+            hideBackOnDesktop ? 'md:hidden' : '',
+          ].join(' ')}
           aria-label="Back to chat list"
           title="Back to chat list"
         >
@@ -311,12 +329,16 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
         />
       </div>
 
+      {/* Typing indicator */}
+      <TypingIndicator chat={chat} currentUserId={user?.id ? Number(user.id) : null} />
+
       {/* Message Input */}
       <div className="flex-shrink-0">
-        <MessageInput 
-          onSend={handleSendMessage} 
+        <MessageInput
+          onSend={handleSendMessage}
           onSendWithAttachments={handleSendWithAttachments}
           disabled={isSending || isSelectMode || isForwarding}
+          chatId={chat.id}
         />
       </div>
 

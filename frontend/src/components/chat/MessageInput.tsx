@@ -5,12 +5,15 @@ import { Send, Smile, Paperclip, X, Image as ImageIcon, FileText, Film, Loader2 
 import dynamic from 'next/dynamic';
 import toast from 'react-hot-toast';
 import type { MessageInputProps, MessageAttachment } from '@/types/chat';
-import { 
-  uploadAttachment, 
-  validateFile, 
+import {
+  uploadAttachment,
+  validateFile,
   getFileTypeFromMime,
   formatFileSize,
 } from '@/lib/api/attachmentApi';
+import { sendTypingEvent } from '@/hooks/useChatSocket';
+
+const TYPING_STOP_DELAY_MS = 3000;
 
 const MOBILE_QUERY = '(max-width: 640px)';
 
@@ -39,12 +42,15 @@ interface PendingAttachment {
 
 interface ExtendedMessageInputProps extends MessageInputProps {
   onSendWithAttachments?: (content: string, attachmentIds: number[]) => void;
+  /** When set, MessageInput broadcasts typing_start / typing_stop for this chat over the WS. */
+  chatId?: number;
 }
 
-export default function MessageInput({ 
-  onSend, 
+export default function MessageInput({
+  onSend,
   onSendWithAttachments,
-  disabled = false 
+  disabled = false,
+  chatId,
 }: ExtendedMessageInputProps) {
   const [content, setContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -56,6 +62,35 @@ export default function MessageInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Typing-event bookkeeping.
+  const isTypingRef = useRef(false);
+  const typingStopTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastTypingChatIdRef = useRef<number | null>(null);
+
+  const stopTypingNow = () => {
+    if (typingStopTimeoutRef.current) {
+      clearTimeout(typingStopTimeoutRef.current);
+      typingStopTimeoutRef.current = null;
+    }
+    if (isTypingRef.current && lastTypingChatIdRef.current != null) {
+      sendTypingEvent(lastTypingChatIdRef.current, false);
+    }
+    isTypingRef.current = false;
+  };
+
+  const noteTyping = () => {
+    if (!chatId) return;
+    if (!isTypingRef.current) {
+      sendTypingEvent(chatId, true);
+      isTypingRef.current = true;
+      lastTypingChatIdRef.current = chatId;
+    }
+    if (typingStopTimeoutRef.current) {
+      clearTimeout(typingStopTimeoutRef.current);
+    }
+    typingStopTimeoutRef.current = setTimeout(stopTypingNow, TYPING_STOP_DELAY_MS);
+  };
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_QUERY);
@@ -93,6 +128,14 @@ export default function MessageInput({
     };
   }, [pendingAttachments]);
 
+  // Stop any in-flight typing event when the chat changes or the input unmounts.
+  useEffect(() => {
+    return () => {
+      stopTypingNow();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId]);
+
   const handleSend = async () => {
     const trimmedContent = content.trim();
     const uploadedAttachments = pendingAttachments.filter(a => a.uploaded);
@@ -122,7 +165,10 @@ export default function MessageInput({
     } else {
       onSend(trimmedContent);
     }
-    
+
+    // A sent message implicitly ends a typing session.
+    stopTypingNow();
+
     // Clear state
     setContent('');
     setPendingAttachments([]);
@@ -385,7 +431,15 @@ export default function MessageInput({
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={(e) => {
+            setContent(e.target.value);
+            if (e.target.value.length > 0) {
+              noteTyping();
+            } else {
+              stopTypingNow();
+            }
+          }}
+          onBlur={stopTypingNow}
           onKeyPress={handleKeyPress}
           placeholder={inputPlaceholder}
           disabled={disabled}

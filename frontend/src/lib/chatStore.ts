@@ -31,6 +31,7 @@ export const useChatStore = create<ChatState>()(
       widgetChatId: null,       // For Chat Widget (independent)
       messages: {},
       unreadCounts: {},
+      typingUsersByChat: {},    // chatId -> userIds currently typing (ephemeral, not persisted)
       globalUnreadCount: 0,     // Total unread across ALL projects
       isWidgetOpen: false,
       isMessagePageOpen: false,
@@ -334,6 +335,40 @@ export const useChatStore = create<ChatState>()(
       decrementUnreadCount: (chatId: number) => {
         const current = get().unreadCounts[chatId] || 0;
         get().updateUnreadCount(chatId, current - 1);
+      },
+
+      // ==================== Typing Indicator Actions ====================
+
+      setTypingUser: (chatId: number, userId: number) => {
+        set((state) => {
+          const current = state.typingUsersByChat[chatId] ?? [];
+          if (current.includes(userId)) return state;
+          return {
+            typingUsersByChat: {
+              ...state.typingUsersByChat,
+              [chatId]: [...current, userId],
+            },
+          };
+        });
+      },
+
+      clearTypingUser: (chatId: number, userId: number) => {
+        set((state) => {
+          const current = state.typingUsersByChat[chatId];
+          if (!current || !current.includes(userId)) return state;
+          const next = current.filter((id) => id !== userId);
+          const updated = { ...state.typingUsersByChat };
+          if (next.length === 0) {
+            delete updated[chatId];
+          } else {
+            updated[chatId] = next;
+          }
+          return { typingUsersByChat: updated };
+        });
+      },
+
+      getTypingUsers: (chatId: number) => {
+        return get().typingUsersByChat[chatId] ?? [];
       },
 
       // ==================== UI State Actions ====================

@@ -20,6 +20,26 @@ interface UseChatSocketOptions {
 let globalConnectionPromise: Promise<void> | null = null;
 let globalClosePromise: Promise<void> | null = null;
 
+// Module-level WS reference so components that don't host the hook (e.g. MessageInput)
+// can still emit lightweight events like typing without spinning up a second socket.
+let activeChatWs: WebSocket | null = null;
+
+export function sendTypingEvent(chatId: number, isTyping: boolean): boolean {
+  if (!activeChatWs || activeChatWs.readyState !== WebSocket.OPEN) return false;
+  try {
+    activeChatWs.send(
+      JSON.stringify({
+        type: isTyping ? 'typing_start' : 'typing_stop',
+        chat_id: chatId,
+      })
+    );
+    return true;
+  } catch (error) {
+    console.error('Error sending typing event:', error);
+    return false;
+  }
+}
+
 export function useChatSocket(userId: number | null | undefined, options: UseChatSocketOptions = {}) {
   const { enabled = true } = options;
   const token = useAuthStore(state => state.token);
@@ -88,7 +108,7 @@ export function useChatSocket(userId: number | null | undefined, options: UseCha
         message_id: messageId,
         status: 'read',
       };
-      
+
       wsRef.current.send(JSON.stringify(payload));
       return true;
     } catch (error) {
@@ -96,6 +116,29 @@ export function useChatSocket(userId: number | null | undefined, options: UseCha
       return false;
     }
   }, []);
+
+  // Send typing start/stop to backend.
+  const sendTyping = useCallback((chatId: number, isTyping: boolean) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+
+    try {
+      const payload: WebSocketMessage = {
+        type: isTyping ? 'typing_start' : 'typing_stop',
+        chat_id: chatId,
+      };
+      wsRef.current.send(JSON.stringify(payload));
+      return true;
+    } catch (error) {
+      console.error('Error sending typing event:', error);
+      return false;
+    }
+  }, []);
+
+  // Track per-(chat,user) safety timeouts so a dropped typing_stop event
+  // doesn't leave the indicator stuck on.
+  const typingTimeoutsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
 
   useEffect(() => {
     // Early return if we shouldn't run
@@ -156,6 +199,7 @@ export function useChatSocket(userId: number | null | undefined, options: UseCha
         setConnecting(false);
         retryRef.current = 0;
           globalConnectionPromise = null;
+          activeChatWs = ws;
           optionsRef.current.onOpen?.();
           resolve();
         
@@ -271,6 +315,32 @@ export function useChatSocket(userId: number | null | undefined, options: UseCha
               }
               break;
 
+            case 'typing_indicator': {
+              if (!data.chat_id || !data.user_id) break;
+              // Backend emits typing_indicator on both start and stop with is_typing bool.
+              // Skip our own echoes (server filters, but defensive).
+              if (data.user_id === userId) break;
+              const { setTypingUser, clearTypingUser } = useChatStore.getState();
+              const key = `${data.chat_id}:${data.user_id}`;
+              const existing = typingTimeoutsRef.current.get(key);
+              if (existing) {
+                clearTimeout(existing);
+                typingTimeoutsRef.current.delete(key);
+              }
+              if (data.is_typing) {
+                setTypingUser(data.chat_id, data.user_id);
+                // Safety net: auto-clear after 6s if no follow-up typing_stop arrives.
+                const t = setTimeout(() => {
+                  useChatStore.getState().clearTypingUser(data.chat_id!, data.user_id!);
+                  typingTimeoutsRef.current.delete(key);
+                }, 6000);
+                typingTimeoutsRef.current.set(key, t);
+              } else {
+                clearTypingUser(data.chat_id, data.user_id);
+              }
+              break;
+            }
+
               case 'pong':
                 // Heartbeat response from server, ignore
                 console.log('[Chat WebSocket] Pong received');
@@ -313,6 +383,7 @@ export function useChatSocket(userId: number | null | undefined, options: UseCha
         setConnected(false);
         setConnecting(false);
         wsRef.current = null;
+          if (activeChatWs === ws) activeChatWs = null;
           globalConnectionPromise = null;
           optionsRef.current.onClose?.();
 
@@ -392,11 +463,21 @@ export function useChatSocket(userId: number | null | undefined, options: UseCha
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldRun, userId, token]);
 
+  // Cleanup typing timeouts on unmount to avoid leaks.
+  useEffect(() => {
+    const timeouts = typingTimeoutsRef.current;
+    return () => {
+      timeouts.forEach((t) => clearTimeout(t));
+      timeouts.clear();
+    };
+  }, []);
+
   return {
     connected,
     connecting,
     sendMessage,
     markDelivered,
     markRead,
+    sendTyping,
   };
 }

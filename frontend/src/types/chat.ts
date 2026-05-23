@@ -187,13 +187,14 @@ export interface MarkAsReadRequest {
 
 // ==================== WebSocket Types ====================
 
-export type WebSocketMessageType = 
+export type WebSocketMessageType =
   | 'new_message'
   | 'chat_message'
   | 'message_status_update'
   | 'send_message'
   | 'typing_start'
   | 'typing_stop'
+  | 'typing_indicator'
   | 'chat_created'
   | 'pong'
   | 'error';
@@ -207,6 +208,7 @@ export interface WebSocketMessage {
   status?: MessageStatusType;
   message_id?: number;
   user_id?: number;
+  is_typing?: boolean;
   error?: string;
 }
 
@@ -220,6 +222,7 @@ export interface ChatState {
   messages: Record<number, Message[]>; // Keyed by chat_id
   unreadCounts: Record<number, number>; // Keyed by chat_id
   globalUnreadCount: number; // Total unread across ALL projects
+  typingUsersByChat: Record<number, number[]>; // chatId -> userIds currently typing
   
   // UI State
   isWidgetOpen: boolean;
@@ -248,6 +251,11 @@ export interface ChatState {
   
   updateUnreadCount: (chatId: number, count: number) => void;
   decrementUnreadCount: (chatId: number) => void;
+
+  // Typing indicator actions
+  setTypingUser: (chatId: number, userId: number) => void;
+  clearTypingUser: (chatId: number, userId: number) => void;
+  getTypingUsers: (chatId: number) => number[];
   
   // Global unread count actions
   fetchGlobalUnreadCount: () => Promise<number>;
