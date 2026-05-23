@@ -557,6 +557,8 @@ class MeetingAuditLog(models.Model):
             models.CheckConstraint(check=models.Q(id__isnull=False), name='audit_log_has_id'),
         ]
         ordering = ['-timestamp']
+        verbose_name = 'Meeting Audit Log'
+        verbose_name_plural = 'Meeting Audit Logs'
 
     def __str__(self):
         actor_name = self.actor.display_name if self.actor else 'System'
