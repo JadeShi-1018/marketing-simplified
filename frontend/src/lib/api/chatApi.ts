@@ -331,6 +331,17 @@ export const hideMessage = async (
   return response.data;
 };
 
+/**
+ * Forward multiple messages to multiple chats/users in batch.
+ * POST /api/chat/messages/forward_batch/
+ */
+export const forwardBatch = async (
+  data: ForwardBatchRequest
+): Promise<ForwardBatchResponse> => {
+  const response = await api.post('/api/chat/messages/forward_batch/', data);
+  return response.data;
+};
+
 // Export all functions as a single API object (optional alternative style)
 const chatApi = {
   getChats,

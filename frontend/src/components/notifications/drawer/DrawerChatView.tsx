@@ -7,12 +7,15 @@ import toast from 'react-hot-toast';
 import type { NotificationItem } from '@/types/notifications';
 import type { Message } from '@/types/chat';
 import { useDrawerChat } from '@/hooks/useDrawerChat';
-import { addReaction, setMessageReminder, revokeMessage, deleteMessage, hideMessage } from '@/lib/api/chatApi';
+import { addReaction, setMessageReminder, revokeMessage, deleteMessage, hideMessage, forwardBatch } from '@/lib/api/chatApi';
 import { useChatStore } from '@/lib/chatStore';
+import { useChatData } from '@/hooks/useChatData';
+import { useProjectMembers } from '@/hooks/useProjectMembers';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages from './DrawerChatMessages';
 import MessageInput from '@/components/chat/MessageInput';
 import ReminderPickerSheet from '@/components/chat/ReminderPickerSheet';
+import ForwardMessageSheet from '@/components/chat/ForwardMessageSheet';
 
 interface DrawerChatViewProps {
   notification: NotificationItem;
@@ -67,6 +70,15 @@ export default function DrawerChatView({
   // Reminder state
   const [showReminderPicker, setShowReminderPicker] = useState(false);
   const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
+
+  // Forward state
+  const [showForwardSheet, setShowForwardSheet] = useState(false);
+  const [forwardMessageIds, setForwardMessageIds] = useState<number[]>([]);
+
+  // Fetch chats and project members for forward sheet
+  const chatsByProject = useChatStore((state) => state.chatsByProject);
+  const projectChats = projectId ? (chatsByProject[projectId] || []) : [];
+  const { members: projectMembers, isLoading: isLoadingMembers } = useProjectMembers(projectId || null);
 
   // Selection mode handlers
   const handleEnterSelectMode = (initialMessageId?: number) => {
@@ -124,14 +136,47 @@ export default function DrawerChatView({
   };
 
   const handleForward = (messageId: number) => {
-    // TODO: Implement forward dialog
-    toast('Forward feature coming soon!', { icon: '↪️' });
+    setForwardMessageIds([messageId]);
+    setShowForwardSheet(true);
   };
 
   const handleBulkForward = () => {
     if (selectedMessageIds.length === 0) return;
-    // TODO: Implement forward dialog
-    toast(`Forward ${selectedMessageIds.length} messages - coming soon!`, { icon: '↪️' });
+    setForwardMessageIds(selectedMessageIds);
+    setShowForwardSheet(true);
+  };
+
+  const handleConfirmForward = async (targetChatIds: number[], targetUserIds: number[]) => {
+    if (!chatId) return;
+
+    try {
+      await forwardBatch({
+        source_chat_id: chatId,
+        source_message_ids: forwardMessageIds,
+        target_chat_ids: targetChatIds,
+        target_user_ids: targetUserIds,
+      });
+
+      const messageText = forwardMessageIds.length === 1 ? 'Message' : `${forwardMessageIds.length} messages`;
+      const targetText = (targetChatIds.length + targetUserIds.length) === 1
+        ? '1 target'
+        : `${targetChatIds.length + targetUserIds.length} targets`;
+
+      toast.success(`${messageText} forwarded to ${targetText}`, { icon: '↪️' });
+
+      setShowForwardSheet(false);
+      setForwardMessageIds([]);
+
+      // Exit select mode if in bulk forward
+      if (isSelectMode) {
+        setIsSelectMode(false);
+        setSelectedMessageIds([]);
+      }
+    } catch (error: any) {
+      console.error('Failed to forward messages:', error);
+      const errorMsg = error?.response?.data?.error || 'Failed to forward messages';
+      toast.error(errorMsg);
+    }
   };
 
   const handleRemind = (messageId: number) => {
@@ -337,6 +382,18 @@ export default function DrawerChatView({
         open={showReminderPicker}
         onOpenChange={setShowReminderPicker}
         onConfirm={handleConfirmReminder}
+      />
+
+      {/* Forward Message Sheet */}
+      <ForwardMessageSheet
+        open={showForwardSheet}
+        onOpenChange={setShowForwardSheet}
+        onConfirm={handleConfirmForward}
+        messageCount={forwardMessageIds.length}
+        selectedProjectId={projectId || null}
+        chats={projectChats}
+        projectMembers={projectMembers}
+        isLoading={isLoadingMembers}
       />
     </div>
   );
