@@ -7,12 +7,12 @@ Comprehensive tests for MeetingAuditLog model covering:
 """
 
 import json
-from datetime import datetime
 from uuid import uuid4
 
 from django.db import connection, transaction
 from django.db.utils import OperationalError
 from django.test import TestCase
+from django.utils import timezone
 
 from core.models import Organization, Project, CustomUser
 from meetings.models import Meeting, MeetingAuditLog, MeetingTypeDefinition
@@ -103,7 +103,7 @@ class TestMeetingAuditLogCreation(TestCase):
 
     def test_timestamp_auto_populated(self):
         """Test that timestamp is automatically set on creation."""
-        before_create = datetime.now()
+        before_create = timezone.now()
 
         audit_log = MeetingAuditLog.objects.create(
             meeting=self.meeting,
@@ -111,7 +111,7 @@ class TestMeetingAuditLogCreation(TestCase):
             event_type=MeetingAuditLog.EVENT_STATUS_CHANGED,
         )
 
-        after_create = datetime.now()
+        after_create = timezone.now()
 
         # Verify timestamp is within reasonable range
         self.assertIsNotNone(audit_log.timestamp)
