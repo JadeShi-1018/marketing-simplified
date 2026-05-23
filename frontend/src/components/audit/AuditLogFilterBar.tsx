@@ -179,8 +179,9 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
               <div className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Date Range</div>
               <div className="space-y-2">
                 <div>
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">From</label>
+                  <label htmlFor="audit-filter-from" className="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">From</label>
                   <input
+                    id="audit-filter-from"
                     type="date"
                     value={filters.from ? filters.from.slice(0, 10) : ''}
                     onChange={(e) => {
@@ -191,8 +192,9 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">To</label>
+                  <label htmlFor="audit-filter-to" className="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">To</label>
                   <input
+                    id="audit-filter-to"
                     type="date"
                     value={filters.to ? filters.to.slice(0, 10) : ''}
                     onChange={(e) => {
