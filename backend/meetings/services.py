@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers as drf_serializers
 
 from core.models import Project, ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink, MeetingDocument, MeetingActionItem
+from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink, MeetingDocument, MeetingActionItem, MeetingTagAssignment, MeetingTemplate
 from meetings.audit import record_audit_entry
 
 User = get_user_model()
@@ -704,4 +704,129 @@ def resolve_action_item(
     )
 
     return item
+
+
+@transaction.atomic
+def update_meeting_type(
+    meeting: Meeting,
+    new_type: MeetingTypeDefinition,
+    actor: Optional[User],
+) -> None:
+    """Update meeting type and record audit entry."""
+    old_type_id = meeting.type_definition_id
+    meeting.type_definition = new_type
+    meeting.save(update_fields=['type_definition'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.type_changed',
+        before={'type_definition_id': old_type_id},
+        after={'type_definition_id': new_type.id},
+    )
+
+
+@transaction.atomic
+def update_meeting_datetime(
+    meeting: Meeting,
+    scheduled_date,
+    scheduled_time,
+    actor: Optional[User],
+) -> None:
+    """Update meeting date and time and record audit entry."""
+    old_date = meeting.scheduled_date
+    old_time = meeting.scheduled_time
+
+    meeting.scheduled_date = scheduled_date
+    meeting.scheduled_time = scheduled_time
+    meeting.save(update_fields=['scheduled_date', 'scheduled_time'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.datetime_changed',
+        before={
+            'scheduled_date': str(old_date) if old_date else None,
+            'scheduled_time': str(old_time) if old_time else None,
+        },
+        after={
+            'scheduled_date': str(scheduled_date) if scheduled_date else None,
+            'scheduled_time': str(scheduled_time) if scheduled_time else None,
+        },
+    )
+
+
+@transaction.atomic
+def update_meeting_tags(
+    meeting: Meeting,
+    tag_definition_ids: list,
+    actor: Optional[User],
+) -> None:
+    """Update meeting tags and record audit entry."""
+    old_tags = list(meeting.tag_assignments.values_list('tag_definition_id', flat=True))
+
+    meeting.tag_assignments.all().delete()
+    for tag_id in tag_definition_ids:
+        MeetingTagAssignment.objects.create(meeting=meeting, tag_definition_id=tag_id)
+
+    new_tags = tag_definition_ids
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.tags_changed',
+        before={'tag_ids': old_tags},
+        after={'tag_ids': new_tags},
+        context={'count_before': len(old_tags), 'count_after': len(new_tags)},
+    )
+
+
+@transaction.atomic
+def apply_template(
+    meeting: Meeting,
+    template: MeetingTemplate,
+    actor: Optional[User],
+) -> None:
+    """Apply a template to meeting and record audit entry."""
+    meeting.layout_config = template.layout_config
+    meeting.save(update_fields=['layout_config'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.template_applied',
+        context={
+            'template_id': template.id,
+            'template_name': template.name,
+            'blocks_applied': list(template.layout_config.keys()) if template.layout_config else [],
+        },
+    )
+
+
+def record_decision_created(
+    meeting: Meeting,
+    decision_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a decision is created from a meeting."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.decision_created',
+        context={'decision_id': decision_id},
+    )
+
+
+def record_task_created(
+    meeting: Meeting,
+    task_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a task is created from a meeting."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.task_created',
+        context={'task_id': task_id},
+    )
 
