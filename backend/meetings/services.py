@@ -279,6 +279,7 @@ def update_meeting_summary(meeting: Meeting, new_summary: str, actor: Optional[U
     )
 
 
+@transaction.atomic
 def add_participant(
     meeting: Meeting,
     user: User,
@@ -288,6 +289,15 @@ def add_participant(
     """
     Add a user to a meeting as a participant.
     Records an audit entry if creation succeeds.
+
+    Args:
+        meeting: The Meeting to add the participant to.
+        user: The User to add as a participant.
+        role: The participant role (e.g., 'attendee', 'facilitator').
+        actor: The User adding the participant (for audit recording).
+
+    Returns:
+        The created ParticipantLink instance.
     """
     link = ParticipantLink.objects.create(
         meeting=meeting,
@@ -312,6 +322,7 @@ def add_participant(
     return link
 
 
+@transaction.atomic
 def remove_participant(
     meeting: Meeting,
     user: User,
@@ -320,8 +331,20 @@ def remove_participant(
     """
     Remove a user from a meeting.
     Records an audit entry if removal succeeds.
+
+    Args:
+        meeting: The Meeting from which to remove the participant.
+        user: The User to remove.
+        actor: The User performing the removal (for audit recording).
+
+    Raises:
+        ValueError: If the user is not a participant of the meeting.
     """
-    link = ParticipantLink.objects.get(meeting=meeting, user=user)
+    try:
+        link = ParticipantLink.objects.get(meeting=meeting, user=user)
+    except ParticipantLink.DoesNotExist:
+        raise ValueError(f"User {user.id} is not a participant of meeting {meeting.id}")
+
     user_name = user.display_name
     user_id = user.id
 
