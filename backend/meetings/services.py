@@ -571,12 +571,19 @@ def delete_agenda_item(item: AgendaItem, actor: Optional[User]) -> None:
         actor: The User deleting the agenda item (for audit recording).
     """
     meeting = item.meeting
+    content = item.content
+    order_index = item.order_index
+
     item.delete()
 
     record_audit_entry(
         meeting=meeting,
         actor=actor,
         event_type='meeting.agenda_item_deleted',
+        before={
+            'content': content,
+            'order_index': order_index,
+        },
     )
 
 

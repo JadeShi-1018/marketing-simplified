@@ -40,7 +40,7 @@ from meetings.serializers import (
 from meetings.services import (
     reorder_agenda_items,
     get_or_create_meeting_document,
-    update_meeting_document_content,
+    update_document_content,
     user_has_meeting_document_access,
     meetings_base_queryset_for_project,
     apply_meeting_knowledge_filters,
@@ -565,12 +565,15 @@ class MeetingDocumentAPIView(APIView):
         yjs_state = request.data.get("yjs_state")
         if yjs_state is not None and not isinstance(yjs_state, str):
             raise ValidationError({"yjs_state": ["This field must be a string."]})
-        document = update_meeting_document_content(
-            meeting_id=meeting.id,
-            content=content,
-            yjs_state=yjs_state,
-            user_id=request.user.id,
+        document = get_or_create_meeting_document(meeting.id)
+        document = update_document_content(
+            document=document,
+            new_content=content,
+            actor=request.user,
         )
+        if isinstance(yjs_state, str):
+            document.yjs_state = yjs_state
+            document.save(update_fields=['yjs_state'])
         serializer = MeetingDocumentSerializer(document)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
