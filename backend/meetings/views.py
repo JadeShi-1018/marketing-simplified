@@ -1,8 +1,10 @@
 import logging
+from datetime import datetime
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -11,6 +13,8 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.filters import OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
 
 from core.models import Project, ProjectMember
 from meetings.lifecycle import execute_transition, get_available_transitions
@@ -22,6 +26,7 @@ from meetings.models import (
     MeetingTemplate,
     MeetingDocument,
     MeetingActionItem,
+    MeetingAuditLog,
 )
 from meetings.serializers import (
     MeetingSerializer,
@@ -36,6 +41,7 @@ from meetings.serializers import (
     MeetingActionItemSerializer,
     ActionItemConvertSerializer,
     BulkActionItemConvertSerializer,
+    MeetingAuditLogSerializer,
 )
 from meetings.services import (
     reorder_agenda_items,
@@ -78,6 +84,13 @@ def _ensure_meeting_document_access(user, meeting: Meeting) -> None:
     if user_has_meeting_document_access(user.id, meeting):
         return
     raise PermissionDenied("You do not have access to this meeting document.")
+
+
+class AuditLogPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+    page_size_query_description = "Number of audit log entries per page (max 200)"
 
 
 class MeetingViewSet(viewsets.ModelViewSet):
@@ -576,4 +589,62 @@ class MeetingDocumentAPIView(APIView):
             document.save(update_fields=['yjs_state'])
         serializer = MeetingDocumentSerializer(document)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class MeetingAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = MeetingAuditLogSerializer
+    pagination_class = AuditLogPagination
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    ordering_fields = ['timestamp']
+    ordering = ['-timestamp']
+
+    def get_queryset(self):
+        meeting_id = self.kwargs.get('meeting_id')
+        project_id = self.kwargs.get('project_id')
+
+        # Verify project membership
+        project = get_object_or_404(Project, id=project_id)
+        _ensure_project_membership(self.request.user, project)
+
+        # Get meeting and verify it belongs to project
+        meeting = get_object_or_404(Meeting, id=meeting_id, project=project)
+
+        queryset = MeetingAuditLog.objects.filter(meeting=meeting).select_related('actor')
+
+        # Handle event_type filtering (multi-value with OR logic)
+        event_types = self.request.query_params.getlist('event_type')
+        if event_types:
+            valid_types = [choice[0] for choice in MeetingAuditLog.EVENT_TYPE_CHOICES]
+            for event_type in event_types:
+                if event_type not in valid_types:
+                    raise ValidationError({
+                        'event_type': f'Invalid event type. Must be one of: {", ".join(valid_types)}'
+                    })
+            queryset = queryset.filter(Q(event_type__in=event_types))
+
+        # Handle actor_id filtering
+        actor_id = self.request.query_params.get('actor_id')
+        if actor_id:
+            queryset = queryset.filter(actor_id=actor_id)
+
+        # Handle date range filtering
+        from_date = self.request.query_params.get('from')
+        to_date = self.request.query_params.get('to')
+
+        if from_date:
+            try:
+                from_datetime = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
+                queryset = queryset.filter(timestamp__gte=from_datetime)
+            except ValueError:
+                raise ValidationError({'from': 'Invalid ISO 8601 date format'})
+
+        if to_date:
+            try:
+                to_datetime = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
+                queryset = queryset.filter(timestamp__lte=to_datetime)
+            except ValueError:
+                raise ValidationError({'to': 'Invalid ISO 8601 date format'})
+
+        return queryset
 
