@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers as drf_serializers
 
 from core.models import Project, ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink, MeetingDocument
+from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink, MeetingDocument, MeetingActionItem
 from meetings.audit import record_audit_entry
 
 User = get_user_model()
@@ -436,4 +436,265 @@ def update_meeting_document_content(
         update_fields.append("yjs_state")
     document.save(update_fields=update_fields)
     return document
+
+
+@transaction.atomic
+def update_document_content(
+    document: MeetingDocument,
+    new_content: str,
+    actor: Optional[User],
+) -> MeetingDocument:
+    """
+    Update meeting document content and record audit entry.
+
+    Args:
+        document: The MeetingDocument to update.
+        new_content: The new document content.
+        actor: The User updating the document (for audit recording).
+
+    Returns:
+        The updated MeetingDocument instance.
+    """
+    old_content = document.content
+    document.content = new_content
+    document.save(update_fields=['content'])
+
+    char_diff = len(new_content) - len(old_content)
+
+    record_audit_entry(
+        meeting=document.meeting,
+        actor=actor,
+        event_type='meeting.document_edited',
+        context={
+            'char_count_before': len(old_content),
+            'char_count_after': len(new_content),
+            'char_diff': char_diff,
+        },
+    )
+
+    return document
+
+
+@transaction.atomic
+def create_agenda_item(
+    meeting: Meeting,
+    content: str,
+    order_index: int,
+    is_priority: bool,
+    actor: Optional[User],
+) -> AgendaItem:
+    """
+    Create agenda item and record audit entry.
+
+    Args:
+        meeting: The Meeting to add the agenda item to.
+        content: The agenda item content/text.
+        order_index: The position in the agenda (0-indexed).
+        is_priority: Whether this item is marked as priority.
+        actor: The User creating the agenda item (for audit recording).
+
+    Returns:
+        The created AgendaItem instance.
+    """
+    item = AgendaItem.objects.create(
+        meeting=meeting,
+        content=content,
+        order_index=order_index,
+        is_priority=is_priority,
+    )
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.agenda_item_added',
+        after={
+            'content': content,
+            'order_index': order_index,
+            'is_priority': is_priority,
+        },
+    )
+
+    return item
+
+
+@transaction.atomic
+def update_agenda_item(
+    item: AgendaItem,
+    content: str,
+    is_priority: bool,
+    actor: Optional[User],
+) -> AgendaItem:
+    """
+    Update agenda item and record audit entry.
+
+    Args:
+        item: The AgendaItem to update.
+        content: The new agenda item content.
+        is_priority: Whether the item is marked as priority.
+        actor: The User updating the agenda item (for audit recording).
+
+    Returns:
+        The updated AgendaItem instance.
+    """
+    old_content = item.content
+    old_priority = item.is_priority
+
+    item.content = content
+    item.is_priority = is_priority
+    item.save(update_fields=['content', 'is_priority'])
+
+    record_audit_entry(
+        meeting=item.meeting,
+        actor=actor,
+        event_type='meeting.agenda_item_edited',
+        before={
+            'content': old_content,
+            'is_priority': old_priority,
+        },
+        after={
+            'content': content,
+            'is_priority': is_priority,
+        },
+        context={'order_index': item.order_index},
+    )
+
+    return item
+
+
+@transaction.atomic
+def delete_agenda_item(item: AgendaItem, actor: Optional[User]) -> None:
+    """
+    Delete agenda item and record audit entry.
+
+    Args:
+        item: The AgendaItem to delete.
+        actor: The User deleting the agenda item (for audit recording).
+    """
+    meeting = item.meeting
+    item.delete()
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.agenda_item_deleted',
+    )
+
+
+@transaction.atomic
+def create_action_item(
+    meeting: Meeting,
+    title: str,
+    description: str,
+    order_index: int,
+    actor: Optional[User],
+) -> MeetingActionItem:
+    """
+    Create action item and record audit entry.
+
+    Args:
+        meeting: The Meeting to add the action item to.
+        title: The action item title.
+        description: The action item description.
+        order_index: The position in the action items list.
+        actor: The User creating the action item (for audit recording).
+
+    Returns:
+        The created MeetingActionItem instance.
+    """
+    item = MeetingActionItem.objects.create(
+        meeting=meeting,
+        title=title,
+        description=description,
+        order_index=order_index,
+    )
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.action_item_added',
+        after={
+            'title': title,
+            'description': description,
+            'order_index': order_index,
+        },
+    )
+
+    return item
+
+
+@transaction.atomic
+def update_action_item(
+    item: MeetingActionItem,
+    title: str,
+    description: str,
+    is_resolved: bool,
+    actor: Optional[User],
+) -> MeetingActionItem:
+    """
+    Update action item and record audit entry.
+
+    Args:
+        item: The MeetingActionItem to update.
+        title: The new action item title.
+        description: The new action item description.
+        is_resolved: Whether the action item is marked as resolved.
+        actor: The User updating the action item (for audit recording).
+
+    Returns:
+        The updated MeetingActionItem instance.
+    """
+    old_title = item.title
+    old_resolved = item.is_resolved
+
+    item.title = title
+    item.description = description
+    item.is_resolved = is_resolved
+    item.save(update_fields=['title', 'description', 'is_resolved'])
+
+    record_audit_entry(
+        meeting=item.meeting,
+        actor=actor,
+        event_type='meeting.action_item_edited',
+        before={
+            'title': old_title,
+            'is_resolved': old_resolved,
+        },
+        after={
+            'title': title,
+            'is_resolved': is_resolved,
+        },
+    )
+
+    return item
+
+
+@transaction.atomic
+def resolve_action_item(
+    item: MeetingActionItem,
+    actor: Optional[User],
+) -> MeetingActionItem:
+    """
+    Mark action item as resolved and record audit entry.
+
+    Args:
+        item: The MeetingActionItem to resolve.
+        actor: The User resolving the action item (for audit recording).
+
+    Returns:
+        The updated MeetingActionItem instance.
+    """
+    item.is_resolved = True
+    item.save(update_fields=['is_resolved'])
+
+    record_audit_entry(
+        meeting=item.meeting,
+        actor=actor,
+        event_type='meeting.action_item_resolved',
+        after={
+            'title': item.title,
+            'id': item.id,
+        },
+    )
+
+    return item
 
