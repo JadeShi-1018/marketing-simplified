@@ -19,6 +19,7 @@ class NotificationEventType(models.TextChoices):
     # Collaboration & assets
     CHAT_NEW_MESSAGE = "chat_new_message", "Chat new message"
     CHAT_NEW_CONVERSATION = "chat_new_conversation", "Chat new conversation"
+    MESSAGE_REMINDER = "message_reminder", "Message reminder"
     PROJECT_INVITE = "project_invite", "Project invitation"
     CALENDAR_REMINDER = "calendar_reminder", "Calendar reminder"
     DOC_ASSET_UPDATE = "doc_asset_update", "Document or asset update"
@@ -84,6 +85,7 @@ def default_notification_preferences() -> dict:
         "collaboration_assets": {
             "chat_in_app": r(),
             "chat_new_session": r(),
+            "message_reminder": r(),
             "project_invite": r(),
             "calendar_reminders": r(),
             "doc_asset_updates": r(),

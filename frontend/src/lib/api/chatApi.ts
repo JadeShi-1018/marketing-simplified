@@ -269,6 +269,33 @@ export const removeReaction = async (
   return response.data;
 };
 
+// ==================== Reminder Endpoints ====================
+
+/**
+ * Set or update a reminder for a message
+ */
+export const setMessageReminder = async (
+  messageId: number,
+  remindAt: Date,
+  note?: string
+): Promise<{ status: 'created' | 'updated'; reminder: { id: number; remind_at: string; note: string } }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/remind/`, {
+    remind_at: remindAt.toISOString(),
+    note: note || '',
+  });
+  return response.data;
+};
+
+/**
+ * Cancel a reminder for a message
+ */
+export const cancelMessageReminder = async (
+  messageId: number
+): Promise<{ status: 'cancelled' }> => {
+  const response = await api.delete(`/api/chat/messages/${messageId}/cancel_remind/`);
+  return response.data;
+};
+
 // Export all functions as a single API object (optional alternative style)
 const chatApi = {
   getChats,
@@ -291,6 +318,8 @@ const chatApi = {
   getUnreadCount,
   addReaction,
   removeReaction,
+  setMessageReminder,
+  cancelMessageReminder,
 };
 
 export default chatApi;

@@ -416,7 +416,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get messages for a specific chat"""
         # For retrieve/detail actions, return all messages (permission checked in retrieve method)
-        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction']:
+        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction', 'remind', 'cancel_remind']:
             return Message.objects.all()
         
         # For list action, require chat_id
@@ -801,6 +801,100 @@ class MessageViewSet(viewsets.ModelViewSet):
             'status': 'removed',
             'message': response_serializer.data
         })
+
+    @action(detail=True, methods=['post'])
+    def remind(self, request, pk=None):
+        """
+        Set or update a reminder for a message.
+
+        Body:
+        - remind_at: When to send the reminder (ISO 8601 datetime)
+        - note: Optional note for the reminder (max 255 chars)
+        """
+        from .models import MessageReminder
+        from .serializers import SetReminderSerializer
+
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = SetReminderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        remind_at = serializer.validated_data['remind_at']
+        note = serializer.validated_data.get('note', '')
+
+        # Create or update reminder
+        reminder, created = MessageReminder.objects.update_or_create(
+            message=message,
+            user=request.user,
+            defaults={
+                'remind_at': remind_at,
+                'note': note,
+                'is_sent': False,
+                'sent_at': None,
+            }
+        )
+
+        logger.info(
+            f"User {request.user.id} {'created' if created else 'updated'} reminder for message {message.id} at {remind_at}"
+        )
+
+        return Response({
+            'status': 'created' if created else 'updated',
+            'reminder': {
+                'id': reminder.id,
+                'remind_at': reminder.remind_at.isoformat(),
+                'note': reminder.note,
+            }
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=['delete'])
+    def cancel_remind(self, request, pk=None):
+        """
+        Cancel a reminder for a message.
+
+        DELETE /api/chat/messages/{id}/cancel_remind/
+        """
+        from .models import MessageReminder
+
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Delete the reminder
+        deleted_count, _ = MessageReminder.objects.filter(
+            message=message,
+            user=request.user
+        ).delete()
+
+        if deleted_count == 0:
+            return Response(
+                {'error': 'No reminder found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        logger.info(f"User {request.user.id} cancelled reminder for message {message.id}")
+
+        return Response({'status': 'cancelled'}, status=status.HTTP_200_OK)
 
 
 class AttachmentViewSet(viewsets.GenericViewSet):

@@ -2,15 +2,17 @@
 
 import { useState, useCallback } from 'react';
 import { AlertCircle, X } from 'lucide-react';
+import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import type { NotificationItem } from '@/types/notifications';
 import type { Message } from '@/types/chat';
 import { useDrawerChat } from '@/hooks/useDrawerChat';
-import { addReaction } from '@/lib/api/chatApi';
+import { addReaction, setMessageReminder } from '@/lib/api/chatApi';
 import { useChatStore } from '@/lib/chatStore';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages from './DrawerChatMessages';
 import MessageInput from '@/components/chat/MessageInput';
+import ReminderPickerSheet from '@/components/chat/ReminderPickerSheet';
 
 interface DrawerChatViewProps {
   notification: NotificationItem;
@@ -60,6 +62,10 @@ export default function DrawerChatView({
 
   // Quote reply state
   const [quoteMessage, setQuoteMessage] = useState<Message | null>(null);
+
+  // Reminder state
+  const [showReminderPicker, setShowReminderPicker] = useState(false);
+  const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
 
   // Selection mode handlers
   const handleEnterSelectMode = (initialMessageId?: number) => {
@@ -128,8 +134,21 @@ export default function DrawerChatView({
   };
 
   const handleRemind = (messageId: number) => {
-    // TODO: Implement reminder scheduling
-    toast('Reminder feature coming soon!', { icon: '🔔' });
+    setReminderMessageId(messageId);
+    setShowReminderPicker(true);
+  };
+
+  const handleConfirmReminder = async (time: Date) => {
+    if (!reminderMessageId) return;
+
+    try {
+      await setMessageReminder(reminderMessageId, time);
+      setShowReminderPicker(false);
+      toast.success(`Reminder set for ${format(time, 'MMM dd HH:mm')}`, { icon: '🔔' });
+    } catch (error) {
+      console.error('Failed to set reminder:', error);
+      toast.error('Failed to set reminder');
+    }
   };
 
   const handleRevoke = (messageId: number) => {
@@ -205,7 +224,7 @@ export default function DrawerChatView({
   }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="relative flex flex-col h-full">
       {/* Header */}
       <DrawerChatHeader
         chat={chat}
@@ -270,6 +289,13 @@ export default function DrawerChatView({
           disabled={isSending || isLoading || isSelectMode}
         />
       </div>
+
+      {/* Reminder Picker Sheet */}
+      <ReminderPickerSheet
+        open={showReminderPicker}
+        onOpenChange={setShowReminderPicker}
+        onConfirm={handleConfirmReminder}
+      />
     </div>
   );
 }

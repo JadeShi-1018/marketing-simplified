@@ -349,3 +349,82 @@ def fire_meeting_starting_soon_notifications() -> int:
         "fire_meeting_starting_soon_notifications: sent %d notifications", sent_count
     )
     return sent_count
+
+
+# ── Message reminders ─────────────────────────────────────────────────────────
+
+_MESSAGE_REMINDER_LOOKBACK_MINUTES = 5
+
+@shared_task(name="notifications.tasks.fire_message_reminders")
+def fire_message_reminders() -> int:
+    """
+    Send in-app notifications for MessageReminder records whose remind_at time
+    has arrived and have not yet been dispatched.
+    """
+    from chat.models import MessageReminder
+    from notifications.models import NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+
+    now = timezone.now()
+    lookback = now - timedelta(minutes=_MESSAGE_REMINDER_LOOKBACK_MINUTES)
+
+    pending = MessageReminder.objects.filter(
+        is_sent=False,
+        remind_at__lte=now,
+        remind_at__gte=lookback,
+    ).select_related(
+        'message__sender',
+        'message__chat',
+        'user'
+    )
+
+    sent_count = 0
+    for reminder in pending:
+        try:
+            message = reminder.message
+            sender = message.sender
+            chat = message.chat
+
+            # Build action URL to navigate to the message
+            action_url = f"/messages?chatId={chat.id}&messageId={message.id}&projectId={chat.project_id}"
+
+            # Truncate message content for notification body
+            content_preview = message.content[:200] if message.content else "[Attachment]"
+
+            # Build notification title
+            sender_name = sender.username or sender.email
+            title = f"Reminder: Message from {sender_name}"
+
+            create_notification(
+                recipient_id=reminder.user_id,
+                actor_id=sender.id,
+                category=NotificationCategory.COLLABORATION,
+                event_type=NotificationEventType.MESSAGE_REMINDER,
+                title=title,
+                body=content_preview,
+                related_object_type="message",
+                related_object_id=str(message.id),
+                action_url=action_url,
+                metadata={
+                    "message_id": message.id,
+                    "chat_id": chat.id,
+                    "project_id": chat.project_id,
+                    "sender_name": sender_name,
+                    "reminder_note": reminder.note,
+                },
+            )
+            sent_count += 1
+        except Exception:
+            logger.exception(
+                "fire_message_reminders: error processing reminder=%s",
+                reminder.id,
+            )
+        finally:
+            # Mark as sent regardless of success (idempotency)
+            MessageReminder.objects.filter(pk=reminder.pk).update(
+                is_sent=True,
+                sent_at=now,
+            )
+
+    logger.info("fire_message_reminders: sent %d reminders", sent_count)
+    return sent_count

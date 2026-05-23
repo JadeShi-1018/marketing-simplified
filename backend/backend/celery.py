@@ -37,6 +37,11 @@ app.conf.beat_schedule = {
         "task": "notifications.tasks.fire_meeting_starting_soon_notifications",
         "schedule": timedelta(minutes=5),
     },
+    # Message reminders fire every minute like calendar reminders.
+    "fire-message-reminders": {
+        "task": "notifications.tasks.fire_message_reminders",
+        "schedule": timedelta(minutes=1),
+    },
 }
 app.conf.timezone = "UTC"
 

@@ -584,5 +584,56 @@ class MessageAttachment(TimeStampedModel):
         allowed = ALLOWED_MIMES.get(file_type, ALLOWED_MIMES[AttachmentType.DOCUMENT])
         if content_type and content_type.lower() not in allowed:
             return False, f"File type '{content_type}' is not allowed for {file_type}"
-        
+
         return True, None
+
+
+class MessageReminder(TimeStampedModel):
+    """
+    Reminder for a message that should notify the user at a specific time.
+    Users can set reminders to be notified about messages later.
+    """
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='reminders',
+        help_text="The message to be reminded about"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='message_reminders',
+        help_text="User who set the reminder"
+    )
+    remind_at = models.DateTimeField(
+        help_text="When to send the reminder notification"
+    )
+    note = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Optional note for the reminder"
+    )
+
+    # Status tracking
+    is_sent = models.BooleanField(
+        default=False,
+        help_text="Whether the reminder notification has been sent"
+    )
+    sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the reminder notification was sent"
+    )
+
+    class Meta:
+        unique_together = ['message', 'user']
+        ordering = ['remind_at']
+        indexes = [
+            models.Index(fields=['is_sent', 'remind_at']),  # For periodic task queries
+            models.Index(fields=['user', 'is_sent']),
+            models.Index(fields=['message', 'user']),
+        ]
+
+    def __str__(self):
+        return f"Reminder for {self.user.email} on message {self.message_id} at {self.remind_at}"

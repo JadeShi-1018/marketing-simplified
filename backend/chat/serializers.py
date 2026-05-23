@@ -869,3 +869,25 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
             )
 
         return message
+
+
+class SetReminderSerializer(serializers.Serializer):
+    """Serializer for setting a message reminder"""
+    remind_at = serializers.DateTimeField(
+        required=True,
+        help_text="When to send the reminder notification (must be in the future)"
+    )
+    note = serializers.CharField(
+        max_length=255,
+        required=False,
+        allow_blank=True,
+        default='',
+        help_text="Optional note for the reminder"
+    )
+
+    def validate_remind_at(self, value):
+        """Validate that remind_at is in the future"""
+        from django.utils import timezone
+        if value <= timezone.now():
+            raise serializers.ValidationError("Reminder time must be in the future")
+        return value
