@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { AlertCircle, X } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -11,6 +11,8 @@ import { addReaction, setMessageReminder, revokeMessage, deleteMessage, hideMess
 import { useChatStore } from '@/lib/chatStore';
 import { useChatData } from '@/hooks/useChatData';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
+import { useChatWebSocket } from '@/hooks/useChatWebSocket';
+import { useAuthStore } from '@/lib/authStore';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages from './DrawerChatMessages';
 import MessageInput from '@/components/chat/MessageInput';
@@ -79,6 +81,68 @@ export default function DrawerChatView({
   const chatsByProject = useChatStore((state) => state.chatsByProject);
   const projectChats = projectId ? (chatsByProject[projectId] || []) : [];
   const { members: projectMembers, isLoading: isLoadingMembers } = useProjectMembers(projectId || null);
+
+  // Typing indicator state
+  const [typingUserId, setTypingUserId] = useState<number | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const user = useAuthStore((state) => state.user);
+  const userId = user?.id ? Number(user.id) : null;
+
+  // WebSocket connection for real-time events
+  const { connected, sendTypingStart, sendTypingStop } = useChatWebSocket(userId, {
+    onTypingIndicator: useCallback((event) => {
+      // Only handle typing events for this chat
+      if (event.chat_id !== chatId) return;
+
+      const otherUserId = event.user_id;
+      const isTyping = event.is_typing;
+
+      if (isTyping) {
+        setTypingUserId(otherUserId ?? null);
+
+        // Clear existing timeout
+        if (typingTimeoutRef.current) {
+          clearTimeout(typingTimeoutRef.current);
+        }
+
+        // Auto-clear after 5 seconds (in case we don't receive typing_stop)
+        typingTimeoutRef.current = setTimeout(() => {
+          setTypingUserId(null);
+        }, 5000);
+      } else {
+        // User stopped typing
+        if (otherUserId === typingUserId) {
+          setTypingUserId(null);
+          if (typingTimeoutRef.current) {
+            clearTimeout(typingTimeoutRef.current);
+            typingTimeoutRef.current = null;
+          }
+        }
+      }
+    }, [chatId, typingUserId]),
+  });
+
+  // Cleanup typing timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Typing handlers for MessageInput
+  const handleTypingStart = useCallback(() => {
+    if (chatId) {
+      sendTypingStart(chatId);
+    }
+  }, [chatId, sendTypingStart]);
+
+  const handleTypingStop = useCallback(() => {
+    if (chatId) {
+      sendTypingStop(chatId);
+    }
+  }, [chatId, sendTypingStop]);
 
   // Selection mode handlers
   const handleEnterSelectMode = (initialMessageId?: number) => {
@@ -322,6 +386,7 @@ export default function DrawerChatView({
         selectedCount={selectedMessageIds.length}
         onCancelSelect={handleCancelSelectMode}
         onBulkForward={handleBulkForward}
+        typingUserId={typingUserId}
       />
 
       {/* Messages area */}
@@ -374,6 +439,9 @@ export default function DrawerChatView({
           onSend={handleSendMessage}
           onSendWithAttachments={handleSendWithAttachments}
           disabled={isSending || isLoading || isSelectMode}
+          chatId={chatId}
+          onTypingStart={handleTypingStart}
+          onTypingStop={handleTypingStop}
         />
       </div>
 

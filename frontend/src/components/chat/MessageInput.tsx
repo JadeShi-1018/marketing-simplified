@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, KeyboardEvent, ChangeEvent } from 'react';
+import { useState, useRef, useEffect, KeyboardEvent, ChangeEvent, useCallback } from 'react';
 import { Send, Smile, Paperclip, X, Image as ImageIcon, FileText, Film, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import toast from 'react-hot-toast';
@@ -39,13 +39,19 @@ interface PendingAttachment {
 
 interface ExtendedMessageInputProps extends MessageInputProps {
   onSendWithAttachments?: (content: string, attachmentIds: number[]) => void;
+  chatId?: number | null;
+  onTypingStart?: () => void;
+  onTypingStop?: () => void;
 }
 
-export default function MessageInput({ 
-  onSend, 
+export default function MessageInput({
+  onSend,
   onSendWithAttachments,
   disabled = false,
   variant = 'default',
+  chatId,
+  onTypingStart,
+  onTypingStop,
 }: ExtendedMessageInputProps) {
   const [content, setContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -58,6 +64,11 @@ export default function MessageInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Typing indicator refs
+  const isTypingRef = useRef(false);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_QUERY);
@@ -103,14 +114,99 @@ export default function MessageInput({
     }
   }, [shouldRefocus]);
 
+  // Cleanup typing timers on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (typingDebounceRef.current) {
+        clearTimeout(typingDebounceRef.current);
+      }
+    };
+  }, []);
+
+  /**
+   * Start typing indicator with debounce
+   */
+  const startTyping = useCallback(() => {
+    if (!chatId || !onTypingStart) return;
+
+    // Clear existing debounce timer
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+    }
+
+    // If not already typing, send typing_start
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      onTypingStart();
+    }
+
+    // Clear existing auto-stop timer
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Auto-stop after 3 seconds of no typing
+    typingTimeoutRef.current = setTimeout(() => {
+      stopTyping();
+    }, 3000);
+  }, [chatId, onTypingStart]);
+
+  /**
+   * Stop typing indicator
+   */
+  const stopTyping = useCallback(() => {
+    if (!chatId || !onTypingStop) return;
+
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      onTypingStop();
+    }
+
+    // Clear all timers
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+      typingDebounceRef.current = null;
+    }
+  }, [chatId, onTypingStop]);
+
+  /**
+   * Handle content change with typing indicator
+   */
+  const handleContentChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+    const newContent = e.target.value;
+    setContent(newContent);
+
+    // Don't send typing if input is empty or disabled
+    if (!newContent.trim() || disabled) {
+      stopTyping();
+      return;
+    }
+
+    // Debounce typing_start to avoid sending too frequently (300ms)
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+    }
+
+    typingDebounceRef.current = setTimeout(() => {
+      startTyping();
+    }, 300);
+  }, [disabled, startTyping, stopTyping]);
+
   const handleSend = async () => {
     const trimmedContent = content.trim();
     const uploadedAttachments = pendingAttachments.filter(a => a.uploaded);
-    
+
     // Must have content or attachments
     if (!trimmedContent && uploadedAttachments.length === 0) return;
     if (disabled) return;
-    
+
     // Check if still uploading
     if (pendingAttachments.some(a => a.uploading)) {
       toast.error('Please wait for uploads to complete');
@@ -123,6 +219,9 @@ export default function MessageInput({
       toast.error('Some files failed to upload. Remove them and try again.');
       return;
     }
+
+    // Stop typing indicator before sending
+    stopTyping();
 
     // Clear state first to provide immediate feedback
     setContent('');
@@ -403,8 +502,9 @@ export default function MessageInput({
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={handleContentChange}
           onKeyPress={handleKeyPress}
+          onBlur={stopTyping}
           placeholder={inputPlaceholder}
           disabled={disabled}
           rows={1}

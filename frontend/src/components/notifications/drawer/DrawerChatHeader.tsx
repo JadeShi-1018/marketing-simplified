@@ -15,6 +15,8 @@ interface DrawerChatHeaderProps {
   selectedCount?: number;
   onCancelSelect?: () => void;
   onBulkForward?: () => void;
+  // Typing indicator
+  typingUserId?: number | null;
 }
 
 export default function DrawerChatHeader({
@@ -26,6 +28,7 @@ export default function DrawerChatHeader({
   selectedCount = 0,
   onCancelSelect,
   onBulkForward,
+  typingUserId = null,
 }: DrawerChatHeaderProps) {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -54,9 +57,12 @@ export default function DrawerChatHeader({
       (p) => p.user.id !== currentUserId
     );
 
+    // Check if the other user is typing
+    const isOtherUserTyping = typingUserId !== null && typingUserId !== currentUserId;
+
     return {
       name: otherParticipant?.user?.username || 'Direct Message',
-      subtitle: 'Direct Message',
+      subtitle: isOtherUserTyping ? 'Typing...' : 'Direct Message',
       isPrivate: true,
     };
   };
