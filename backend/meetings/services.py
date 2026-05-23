@@ -1,15 +1,19 @@
 import datetime
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone as dj_timezone
 from django.utils.text import slugify
 
+from django.contrib.auth import get_user_model
 from rest_framework import serializers as drf_serializers
 
 from core.models import Project, ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink
+from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink, MeetingDocument
+from meetings.audit import record_audit_entry
+
+User = get_user_model()
 
 
 def validate_meeting_for_origin_link(*, meeting_id: int, project: Project, user) -> Meeting:
@@ -216,8 +220,64 @@ def ensure_meeting_type_definition(project: Project, label: str) -> MeetingTypeD
         if created or mtd.label == safe_label:
             return mtd
     raise ValueError("Could not allocate meeting type slug")  # pragma: no cover - defensive
-from core.models import ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingDocument, ParticipantLink
+
+
+def transition_meeting_status(
+    meeting: Meeting,
+    new_status: str,
+    actor: Optional[User],
+    reason: str = 'user_initiated',
+) -> None:
+    """
+    Transition a meeting to a new status.
+    Records an audit entry if transition succeeds.
+    """
+    old_status = meeting.status
+    meeting.status = new_status
+    meeting.save(update_fields=['status'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.status_changed',
+        before={'status': old_status},
+        after={'status': new_status},
+        context={'reason': reason},
+    )
+
+
+def update_meeting_title(meeting: Meeting, new_title: str, actor: Optional[User]) -> None:
+    """Update meeting title and record audit entry."""
+    old_title = meeting.title
+    meeting.title = new_title
+    meeting.save(update_fields=['title'])
+    record_audit_entry(
+        meeting=meeting, actor=actor, event_type='meeting.title_changed',
+        before={'title': old_title}, after={'title': new_title},
+    )
+
+
+def update_meeting_objective(meeting: Meeting, new_objective: str, actor: Optional[User]) -> None:
+    """Update meeting objective and record audit entry."""
+    old_objective = meeting.objective
+    meeting.objective = new_objective
+    meeting.save(update_fields=['objective'])
+    record_audit_entry(
+        meeting=meeting, actor=actor, event_type='meeting.objective_changed',
+        before={'objective': old_objective}, after={'objective': new_objective},
+    )
+
+
+def update_meeting_summary(meeting: Meeting, new_summary: str, actor: Optional[User]) -> None:
+    """Update meeting summary and record audit entry."""
+    old_summary = meeting.summary
+    meeting.summary = new_summary
+    meeting.save(update_fields=['summary'])
+    record_audit_entry(
+        meeting=meeting, actor=actor, event_type='meeting.summary_changed',
+        before={'summary': old_summary}, after={'summary': new_summary},
+    )
+
 
 
 def user_has_meeting_document_access(user_id: int, meeting: Meeting) -> bool:

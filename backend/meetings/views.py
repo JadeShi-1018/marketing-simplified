@@ -46,6 +46,10 @@ from meetings.services import (
     apply_meeting_knowledge_filters,
     meeting_list_order_by_fields,
     hub_split_meeting_pks_for_project,
+    transition_meeting_status,
+    update_meeting_title,
+    update_meeting_objective,
+    update_meeting_summary,
 )
 
 
@@ -196,6 +200,46 @@ class MeetingViewSet(viewsets.ModelViewSet):
                         }
                     ) from exc
 
+    def perform_update(self, serializer):
+        """
+        Update meeting using service functions for immutable field tracking.
+
+        Fields that require service function calls:
+        - title → update_meeting_title()
+        - objective → update_meeting_objective()
+        - summary → update_meeting_summary()
+
+        Other fields are updated via the serializer after service calls.
+        """
+        meeting = self.get_object()
+        validated_data = dict(serializer.validated_data)
+
+        # Extract fields that need service function calls
+        new_title = validated_data.pop("title", None)
+        new_objective = validated_data.pop("objective", None)
+        new_summary = validated_data.pop("summary", None)
+
+        # Update title if provided and changed
+        if new_title is not None and new_title != meeting.title:
+            update_meeting_title(meeting, new_title, self.request.user)
+
+        # Update objective if provided and changed
+        if new_objective is not None and new_objective != meeting.objective:
+            update_meeting_objective(meeting, new_objective, self.request.user)
+
+        # Update summary if provided and changed
+        if new_summary is not None and new_summary != meeting.summary:
+            update_meeting_summary(meeting, new_summary, self.request.user)
+
+        # Update remaining fields using the serializer (but without title/objective/summary)
+        # We need to update the serializer's instance with the filtered validated_data
+        if validated_data:
+            # Temporarily replace validated_data to exclude the fields we already handled
+            original_validated = serializer.validated_data
+            serializer._validated_data = validated_data
+            serializer.save()
+            serializer._validated_data = original_validated
+
     def destroy(self, request, *args, **kwargs):
         """
         Deleting a meeting is blocked when it has converted action items, because
@@ -249,11 +293,26 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="lifecycle/transition")
     def transition(self, request, project_id=None, pk=None):
-        """Execute a lifecycle transition."""
+        """Transition meeting status via state machine (validates rules, then audits)."""
         meeting = self.get_object()
-        serializer = TransitionRequestSerializer(data=request.data)
+
+        serializer = TransitionRequestSerializer(data=request.data, context={'meeting': meeting})
         serializer.is_valid(raise_exception=True)
-        updated = execute_transition(meeting, serializer.validated_data["to_state"])
+
+        to_state = serializer.validated_data["to_state"]
+
+        # Step 1: Execute transition (validates state machine rules, saves meeting)
+        updated = execute_transition(meeting, to_state)
+
+        # Step 2: Record audit entry (after successful transition)
+        transition_meeting_status(
+            meeting=updated,
+            new_status=to_state,
+            actor=request.user,
+            reason='api_request',
+        )
+
+        # Return updated meeting state with available transitions
         return Response(
             {
                 "status": updated.status,
