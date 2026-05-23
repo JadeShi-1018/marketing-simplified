@@ -67,12 +67,10 @@ export function useChatWebSocket(
       if (stopped) return;
 
       const url = buildWsUrl(`/ws/chat/${userId}/`, token ? { token } : undefined);
-      console.log('🔌 Chat WebSocket connecting to:', url);
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log('[ChatWS] Connected');
         setConnected(true);
         retryRef.current = 0;
         handlers.onOpen?.();
@@ -88,7 +86,6 @@ export function useChatWebSocket(
       ws.onmessage = (ev) => {
         try {
           const data: ChatWsEvent = JSON.parse(ev.data);
-          console.log('[ChatWS] event', data);
 
           switch (data.type) {
             case 'chat_message':
@@ -140,7 +137,6 @@ export function useChatWebSocket(
         // Reconnect with exponential backoff
         if (!stopped) {
           const retry = Math.min(1000 * Math.pow(2, retryRef.current++), 10000);
-          console.log(`[ChatWS] Reconnecting in ${retry}ms...`);
           setTimeout(connect, retry);
         }
       };

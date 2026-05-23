@@ -223,12 +223,9 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   // Mark all messages in chat as read (uses efficient backend endpoint)
   const markAllAsRead = useCallback(async () => {
     if (!chatId) return;
-    
-    console.log('[useMessageData] markAllAsRead called for chat:', chatId);
-    
+
     try {
       await markChatAsRead(chatId);
-      console.log('[useMessageData] markAllAsRead success for chat:', chatId);
     } catch (err: any) {
       console.error('[useMessageData] Error marking chat as read:', chatId, err);
       // Don't show toast for read errors (not critical)
