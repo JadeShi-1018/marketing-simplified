@@ -7,8 +7,12 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Modal from '@/components/ui/Modal';
 import { CustomerAPI } from '@/lib/api/customerApi';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
+import { RegionAPI } from '@/lib/api/regionAPI';
+import { OrganisationAPI } from '@/lib/api/organisationAPI';
 import { Customer, CreateCustomerData, UpdateCustomerData } from '@/types/customer';
 import { ExperienceGroupListItem } from '@/types/experienceGroup';
+import { Region } from '@/types/region';
+import { Organisation } from '@/types/organisation';
 import { Plus, Pencil, Trash2, AlertCircle, X, Users, ArrowLeft } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
@@ -37,22 +41,72 @@ const GroupSelect: React.FC<GroupSelectProps> = ({ value, onChange, groups, disa
   </select>
 );
 
+// ── Region selector ──────────────────────────────────────────────────────────
+
+interface RegionSelectProps {
+  value: number | null;
+  onChange: (id: number | null) => void;
+  regions: Region[];
+  disabled?: boolean;
+}
+
+const RegionSelect: React.FC<RegionSelectProps> = ({ value, onChange, regions, disabled }) => (
+  <select
+    value={value ?? ''}
+    onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+    disabled={disabled}
+    className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+  >
+    <option value="">— No region —</option>
+    {regions.filter((r) => r.is_active).map((r) => (
+      <option key={r.id} value={r.id}>{r.name}</option>
+    ))}
+  </select>
+);
+
+// ── Organisation selector ────────────────────────────────────────────────────
+
+interface OrgSelectProps {
+  value: number | null;
+  onChange: (id: number | null) => void;
+  orgs: Organisation[];
+  disabled?: boolean;
+}
+
+const OrgSelect: React.FC<OrgSelectProps> = ({ value, onChange, orgs, disabled }) => (
+  <select
+    value={value ?? ''}
+    onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+    disabled={disabled}
+    className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+  >
+    <option value="">— No organisation —</option>
+    {orgs.map((o) => (
+      <option key={o.id} value={o.id}>{o.name}</option>
+    ))}
+  </select>
+);
+
 // ── Create Form ───────────────────────────────────────────────────────────────
 
 interface CreateFormProps {
   projectId: number;
   groups: ExperienceGroupListItem[];
+  regions: Region[];
+  orgs: Organisation[];
   onSuccess: (customer: Customer) => void;
   onCancel: () => void;
 }
 
-const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, onSuccess, onCancel }) => {
+const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, orgs, onSuccess, onCancel }) => {
   const [form, setForm] = useState<CreateCustomerData>({
     email: '',
     full_name: '',
     company: '',
     phone: '',
     experience_group: null,
+    region: null,
+    organisation: null,
   });
   const [errors, setErrors] = useState<Partial<Record<keyof CreateCustomerData, string>>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -161,6 +215,27 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, onSuccess, o
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-gray-700">Region</label>
+          <RegionSelect
+            value={form.region ?? null}
+            onChange={(id) => setForm({ ...form, region: id })}
+            regions={regions}
+            disabled={submitting}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-gray-700">Organisation</label>
+          <OrgSelect
+            value={form.organisation ?? null}
+            onChange={(id) => setForm({ ...form, organisation: id })}
+            orgs={orgs}
+            disabled={submitting}
+          />
+        </div>
+      </div>
+
       <div className="flex justify-end gap-3 pt-2 border-t border-gray-200">
         <button
           type="button"
@@ -187,11 +262,13 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, onSuccess, o
 interface EditFormProps {
   customerId: number;
   groups: ExperienceGroupListItem[];
+  regions: Region[];
+  orgs: Organisation[];
   onSaved: (customer: Customer) => void;
   onClose: () => void;
 }
 
-const EditForm: React.FC<EditFormProps> = ({ customerId, groups, onSaved, onClose }) => {
+const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, onSaved, onClose }) => {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -212,6 +289,8 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, onSaved, onClos
         company: res.data.company,
         phone: res.data.phone,
         experience_group: res.data.experience_group,
+        region: res.data.region,
+        organisation: res.data.organisation,
         is_active: res.data.is_active,
       });
     } catch {
@@ -231,6 +310,8 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, onSaved, onClos
     form.company !== customer.company ||
     form.phone !== customer.phone ||
     form.experience_group !== customer.experience_group ||
+    form.region !== customer.region ||
+    form.organisation !== customer.organisation ||
     form.is_active !== customer.is_active
   );
 
@@ -346,6 +427,27 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, onSaved, onClos
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-4">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-gray-700">Region</label>
+          <RegionSelect
+            value={form.region ?? null}
+            onChange={(id) => setForm({ ...form, region: id })}
+            regions={regions}
+            disabled={saving}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm font-medium text-gray-700">Organisation</label>
+          <OrgSelect
+            value={form.organisation ?? null}
+            onChange={(id) => setForm({ ...form, organisation: id })}
+            orgs={orgs}
+            disabled={saving}
+          />
+        </div>
+      </div>
+
       <div className="flex items-center gap-3">
         <input
           id="is_active"
@@ -388,9 +490,12 @@ const CustomersPage: React.FC = () => {
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [groups, setGroups] = useState<ExperienceGroupListItem[]>([]);
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [orgs, setOrgs] = useState<Organisation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [regionFilter, setRegionFilter] = useState<number | ''>('');
   const [editingCustomerId, setEditingCustomerId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -403,14 +508,20 @@ const CustomersPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [custRes, grpRes] = await Promise.all([
+      const [custRes, grpRes, regRes, orgRes] = await Promise.all([
         CustomerAPI.list({ project: projectId }),
         ExperienceGroupAPI.list({ project: projectId }),
+        RegionAPI.list({ project: projectId }),
+        OrganisationAPI.list({ project: projectId }),
       ]);
       const custData = custRes.data;
       setCustomers(Array.isArray(custData) ? custData : (custData as any).results ?? []);
       const grpData = grpRes.data;
       setGroups(Array.isArray(grpData) ? grpData : (grpData as any).results ?? []);
+      const regData = regRes.data;
+      setRegions(Array.isArray(regData) ? regData : (regData as any).results ?? []);
+      const orgData = orgRes.data;
+      setOrgs(Array.isArray(orgData) ? orgData : (orgData as any).results ?? []);
     } catch {
       setError('Failed to load data. Please try again.');
     } finally {
@@ -514,7 +625,7 @@ const CustomersPage: React.FC = () => {
                 Retry
               </button>
             </div>
-          ) : customers.length === 0 ? (
+          ) : customers.length === 0 && regionFilter === '' ? (
             <div className="flex flex-col items-center justify-center min-h-[300px] gap-4 border-2 border-dashed border-gray-200 rounded-xl">
               <Users className="h-8 w-8 text-gray-300" />
               <p className="text-gray-400 text-sm">No customers found.</p>
@@ -527,6 +638,27 @@ const CustomersPage: React.FC = () => {
               </button>
             </div>
           ) : (
+            <>
+            {/* Region filter (AC5) */}
+            {regions.length > 0 && (
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium text-gray-600">Filter by Region:</label>
+                <select
+                  value={regionFilter}
+                  onChange={(e) => setRegionFilter(e.target.value === '' ? '' : Number(e.target.value))}
+                  className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                >
+                  <option value="">All Regions</option>
+                  {regions.filter((r) => r.is_active).map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+                {regionFilter !== '' && (
+                  <button onClick={() => setRegionFilter('')} className="text-xs text-indigo-600 hover:underline">Clear</button>
+                )}
+              </div>
+            )}
+
             <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200">
@@ -535,12 +667,16 @@ const CustomersPage: React.FC = () => {
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Email</th>
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Company</th>
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Experience Group</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Region</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Organisation</th>
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
                     <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wide">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {customers.map((customer) => (
+                  {customers
+                    .filter((c) => regionFilter === '' || c.region === regionFilter)
+                    .map((customer) => (
                     <tr key={customer.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-4 font-medium text-gray-900">{customer.full_name}</td>
                       <td className="px-5 py-4 text-gray-500">{customer.email}</td>
@@ -552,6 +688,24 @@ const CustomersPage: React.FC = () => {
                           </span>
                         ) : (
                           <span className="italic text-gray-300 text-xs">Unassigned</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4">
+                        {customer.region ? (
+                          <span className="px-2 py-0.5 text-xs font-medium bg-blue-50 text-blue-700 rounded-full">
+                            {regions.find((r) => r.id === customer.region)?.name ?? '—'}
+                          </span>
+                        ) : (
+                          <span className="italic text-gray-300 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4">
+                        {customer.organisation ? (
+                          <span className="px-2 py-0.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-full">
+                            {orgs.find((o) => o.id === customer.organisation)?.name ?? '—'}
+                          </span>
+                        ) : (
+                          <span className="italic text-gray-300 text-xs">—</span>
                         )}
                       </td>
                       <td className="px-5 py-4">
@@ -583,6 +737,7 @@ const CustomersPage: React.FC = () => {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
 
@@ -596,6 +751,8 @@ const CustomersPage: React.FC = () => {
             <CreateForm
               projectId={projectId}
               groups={groups}
+              regions={regions}
+              orgs={orgs}
               onSuccess={handleCreated}
               onCancel={() => setIsCreateModalOpen(false)}
             />
@@ -618,6 +775,8 @@ const CustomersPage: React.FC = () => {
               <EditForm
                 customerId={editingCustomerId}
                 groups={groups}
+                regions={regions}
+                orgs={orgs}
                 onSaved={handleSaved}
                 onClose={() => setEditingCustomerId(null)}
               />

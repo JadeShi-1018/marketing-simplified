@@ -1,8 +1,62 @@
 from rest_framework import serializers
 
-from .models import Customer
+from .models import Customer, CustomerOrganisation,Region
 
+class RegionSerializer(serializers.ModelSerializer): 
+    class Meta:
+      model = Region                                                                                                                  
+      fields = ['id', 'name', 'is_active', 'created_at', 'updated_at']                                                              
+      read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def _project_id(self):                                                                                                            
+      if self.instance and self.instance.project_id:
+          return self.instance.project_id
+      return self.context.get('project_id')   
+    
+    def validate_name(self, value):
+      project_id = self._project_id()                                                                                                 
+      qs = Region.objects.filter(name__iexact=value)
+      if project_id is not None:                                                                                                      
+          qs = qs.filter(project_id=project_id)                                                                                     
+      if self.instance:                                                                                                               
+          qs = qs.exclude(pk=self.instance.pk)
+      if qs.exists():                                                                                                                 
+          raise serializers.ValidationError(                                                                                        
+              'A region with this name already exists in this project.'
+          )
+      return value
+                          
+class CustomerOrganisationSerializer(serializers.ModelSerializer):
+    customers = serializers.SerializerMethodField(read_only=True)
 
+    class Meta:
+        model = CustomerOrganisation
+        fields = ['id', 'name', 'domains', 'industry', 'plan', 'region', 'customers', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'customers', 'created_at', 'updated_at']
+
+    def get_customers(self, obj):
+        from .serializers import CustomerSerializer
+        return CustomerSerializer(obj.customers.all(), many=True).data
+
+    def _project_id(self):
+        if self.instance and self.instance.project_id:
+            return self.instance.project_id
+        return self.context.get('project_id')
+
+    def validate_name(self, value):
+        project_id = self._project_id()
+        qs = CustomerOrganisation.objects.filter(name__iexact=value)
+        if project_id is not None:
+            qs = qs.filter(project_id=project_id)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                'A organisation with this name already exists in this project.'
+            )
+        return value
+
+    
 class CustomerSerializer(serializers.ModelSerializer):
     experience_group_name = serializers.SerializerMethodField(read_only=True)
 
@@ -16,6 +70,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             'phone',
             'experience_group',
             'experience_group_name',
+            'region',
+            'organisation',
             'is_active',
             'created_at',
             'updated_at',
@@ -57,3 +113,5 @@ class CustomerSerializer(serializers.ModelSerializer):
                     {'experience_group': 'Group must belong to the same project.'}
                 )
         return attrs
+
+    
