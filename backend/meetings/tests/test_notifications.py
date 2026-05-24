@@ -313,14 +313,14 @@ class TaskNotificationSSETests(TestCase):
 
     @patch(_PUBLISH_PATH)
     def test_task_create_without_owner_does_not_fire_publish(self, mock_publish):
-        """Creating a task without an owner → no SSE publish."""
+        """Creating a task without owner or approver → no SSE publish."""
         r = self.client.post(
             "/api/tasks/",
             {
                 "summary": "Unassigned task",
                 "type": "execution",
                 "project_id": self.project.id,
-                "current_approver_id": self.owner.id,
+                "create_as_draft": True,
             },
             format="json",
         )
@@ -387,14 +387,17 @@ class TaskNotificationSSETests(TestCase):
         task_id = r_create.data["id"]
 
         # Set owner to self.owner (different from creator) and mark as accepted.
+        # Also set creator as approver so they can update the task.
         task = Task.objects.get(pk=task_id)
         task.owner = self.owner
         task.owner_invite_pending = False
-        task.save(update_fields=["owner", "owner_invite_pending"])
+        task.current_approver = self.creator
+        task.approver_invite_pending = False
+        task.save(update_fields=["owner", "owner_invite_pending", "current_approver", "approver_invite_pending"])
 
         mock_publish.reset_mock()
 
-        # Change the due date (creator → owner notification expected).
+        # Change the due date (creator/approver → owner notification expected).
         r_update = self.client.patch(
             f"/api/tasks/{task_id}/",
             {"due_date": "2099-06-30"},
@@ -582,8 +585,8 @@ class AgendaItemDedupNotificationTests(TestCase):
             title="Dedup Meeting",
             type_definition=self.mtd,
         )
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.editor)
-        ParticipantLink.objects.create(meeting=self.meeting, user=self.watcher)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.editor, is_accepted=True)
+        ParticipantLink.objects.create(meeting=self.meeting, user=self.watcher, is_accepted=True)
 
         self.client.force_authenticate(user=self.editor)
 
@@ -600,6 +603,9 @@ class AgendaItemDedupNotificationTests(TestCase):
     @patch(_PUBLISH_PATH)
     def test_single_update_fires_exactly_one_notification(self, mock_publish):
         """One PATCH → one SSE push to the watcher."""
+        # Reset mock to ignore the CREATE notification from setUp
+        mock_publish.reset_mock()
+
         r = self._patch_item("Updated text")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 

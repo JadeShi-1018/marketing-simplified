@@ -385,6 +385,7 @@ def upsert_agenda_item_notification(
         },
     )
     if notif:
+        # create_notification already publishes SSE notification internally
         django_cache.set(data_key, str(notif.id), timeout=_AGENDA_NOTIF_DEDUP_TTL)
     else:
         # create_notification returned None — preferences/settings blocked it.
