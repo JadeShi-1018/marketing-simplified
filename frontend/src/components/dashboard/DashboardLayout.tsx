@@ -45,7 +45,7 @@ const BREADCRUMB_ROOT: Record<string, string> = {
   calendar: 'Collaborate',
   messages: 'Collaborate',
   miro: 'Collaborate',
-  variations: 'Content',
+  'variations-studio': 'Content',
   facebook_meta: 'Content',
   tiktok: 'Content',
   google_ads: 'Content',
@@ -125,7 +125,9 @@ export default function DashboardLayout({
   const handleBack = () => {
     const segments = (pathname ?? '').split('/').filter(Boolean);
     const parent = segments.length > 1 ? '/' + segments.slice(0, -1).join('/') : '/overview';
-    router.push(parent);
+    // /admin maps to Django admin — navigate to project selection instead
+    const safePath = parent === '/admin' ? '/select-project' : parent;
+    router.push(safePath);
   };
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);

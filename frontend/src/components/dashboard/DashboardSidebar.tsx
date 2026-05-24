@@ -82,7 +82,6 @@ const navGroups: NavGroup[] = [
   {
     title: 'CONTENT',
     items: [
-      { label: 'Ad Variations', href: '/variations', icon: Target },
       { label: 'Variations Studio', href: '/variations-studio', icon: Sparkles },
       {
         label: 'Ads Draft',
@@ -483,6 +482,7 @@ export default function DashboardSidebar() {
             <Plug className="text-gray-500" />
             <span>Integrations</span>
           </DropdownMenuItem>
+
           <DropdownMenuSeparator className="my-1" />
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5 text-red-600 focus:text-red-700 focus:bg-red-50"

@@ -62,6 +62,7 @@ INSTALLED_APPS = [
     'asset.apps.AssetConfig',
     'budget_approval',
     'retrospective',
+    'behavioral_tracking.apps.BehavioralTrackingConfig',
     'task',
     'alerting.apps.AlertingConfig',
     'dashboard',
@@ -83,7 +84,6 @@ INSTALLED_APPS = [
     'client_communication.apps.ClientCommunicationConfig',
     'calendars.apps.CalendarConfig',
     'miro.apps.MiroConfig',
-    'ad_variations.apps.AdVariationsConfig',
     'ad_copy_variation',
     'policy.apps.PolicyConfig',
     'campaign.apps.CampaignConfig',
@@ -97,6 +97,8 @@ INSTALLED_APPS = [
     'google_calendar_integration.apps.GoogleCalendarIntegrationConfig',
     'facebook_integration.apps.FacebookIntegrationConfig',
     'meta_ads.apps.MetaAdsConfig',
+    'experience_group',
+    'customer',
     'tracking',
 ]
 
