@@ -566,8 +566,12 @@ class BulkActionItemConvertSerializer(serializers.Serializer):
 class AuditLogActorSerializer(serializers.Serializer):
     """Serializer for actor info in audit log responses."""
     id = serializers.IntegerField()
-    display_name = serializers.CharField()
+    display_name = serializers.SerializerMethodField()
     email = serializers.EmailField()
+
+    def get_display_name(self, obj):
+        full_name = f"{obj.first_name} {obj.last_name}".strip()
+        return full_name if full_name else obj.username
 
 
 class MeetingAuditLogSerializer(serializers.ModelSerializer):
