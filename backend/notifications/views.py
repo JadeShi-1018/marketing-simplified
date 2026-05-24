@@ -250,6 +250,13 @@ def _send_response_notification(notification, responder, responder_display, acti
     from notifications.models import NotificationCategory  # noqa: PLC0415
 
     # Reuse the same category / event_type so the actor sees it in context
+    # Filter out change-related metadata fields that should not appear in response notifications
+    filtered_metadata = {
+        k: v
+        for k, v in notification.metadata.items()
+        if k not in ("change_type", "old_value", "new_value", "old_status", "new_status")
+    }
+
     try:
         create_notification(
             recipient_id=notification.actor_id,
@@ -262,7 +269,7 @@ def _send_response_notification(notification, responder, responder_display, acti
             related_object_id=notification.related_object_id,
             action_url=notification.action_url,
             metadata={
-                **notification.metadata,
+                **filtered_metadata,
                 "response": action_label,
                 "responder": responder_display,
                 "is_response_feedback": True,
