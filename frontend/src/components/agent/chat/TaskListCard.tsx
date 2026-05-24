@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { CheckCircle2, ChevronDown, ChevronRight, Clock, ListChecks, Loader2, AlertCircle, XCircle } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { AgentMessageBoardText } from "./AgentMessageBoardText"
 import type { RecommendedTask } from "@/types/agent"
 
 const priorityColors = {
@@ -17,6 +18,8 @@ export type TaskGenerationStatus = "idle" | "generating" | "awaiting_approval" |
 
 interface TaskListCardProps {
   tasks: RecommendedTask[]
+  messageId?: string
+  blockId?: string
   /** Legacy action (pre-approval selection): creates tasks for all recommendations. */
   onCreateAll?: () => void
   approvalRequired?: boolean
@@ -41,6 +44,8 @@ interface TaskListCardProps {
 
 export function TaskListCard({
   tasks,
+  messageId = "tasks",
+  blockId,
   onCreateAll,
   approvalRequired,
   generatedTaskIndexes,
@@ -56,6 +61,7 @@ export function TaskListCard({
   generationStatus = "idle",
 }: TaskListCardProps) {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null)
+  const titleTarget = `Recommended Tasks (${tasks.length})`
 
   const generatedSet = useMemo(() => {
     return new Set(Array.isArray(generatedTaskIndexes) ? generatedTaskIndexes : [])
@@ -83,9 +89,6 @@ export function TaskListCard({
     selectedSet.size > 0 &&
     !createButtonDisabled
 
-  // In approval mode, we still want the Create Tasks button visible while the user is
-  // deciding which tasks to create (even if the global status shows "Awaiting approval").
-  // Hide only once we're actively generating/creating tasks (or disabled).
   const showCreateActions = approvalMode
     ? generationStatus !== "generating" && !generating && !createButtonDisabled
     : generationStatus === "idle" && !generating && !createButtonDisabled
@@ -106,7 +109,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
-          Generating…
+          <AgentMessageBoardText target="Generating…" partId={`${messageId}-status-generating`} blockId={blockId} />
         </span>
       )
     }
@@ -114,7 +117,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
           <Clock className="h-3 w-3" />
-          Awaiting approval
+          <AgentMessageBoardText target="Awaiting approval" partId={`${messageId}-status-awaiting`} blockId={blockId} />
         </span>
       )
     }
@@ -122,7 +125,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600">
           <CheckCircle2 className="h-3 w-3" />
-          Generated
+          <AgentMessageBoardText target="Generated" partId={`${messageId}-status-generated`} blockId={blockId} />
         </span>
       )
     }
@@ -130,7 +133,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive">
           <AlertCircle className="h-3 w-3" />
-          Failed
+          <AgentMessageBoardText target="Failed" partId={`${messageId}-status-failed`} blockId={blockId} />
         </span>
       )
     }
@@ -146,7 +149,7 @@ export function TaskListCard({
           </div>
           <div className="min-w-0 flex-1">
             <CardTitle className="text-sm font-semibold text-card-foreground">
-              Recommended Tasks ({tasks.length})
+              <AgentMessageBoardText target={titleTarget} partId={`${messageId}-task-list-title`} blockId={blockId} />
             </CardTitle>
           </div>
           {statusChip ? <div className="shrink-0">{statusChip}</div> : null}
@@ -157,7 +160,10 @@ export function TaskListCard({
           const priority = priorityColors[task.priority] || priorityColors.MEDIUM
           const isGenerated = generatedSet.has(i)
           const isSelected = selectedSet.has(i)
-          const isSkipped = skippedSet.has(i)
+          const descriptionTarget = task.description?.trim()
+            ? task.description
+            : "No description provided."
+
           const statusNode = (() => {
             if (isGenerated) {
               return (
@@ -169,7 +175,7 @@ export function TaskListCard({
                 </span>
               )
             }
-            if (isSkipped) {
+            if (skippedSet.has(i)) {
               return (
                 <span
                   className="inline-flex items-center text-destructive"
@@ -232,11 +238,27 @@ export function TaskListCard({
                     priority.text
                   )}
                 >
-                  {task.priority}
+                  <AgentMessageBoardText
+                    target={task.priority}
+                    partId={`${messageId}-task-${i}-priority`}
+                    blockId={blockId}
+                  />
                 </span>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm text-foreground">{task.summary}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{task.type}</p>
+                  <p className="text-sm text-foreground">
+                    <AgentMessageBoardText
+                      target={task.summary}
+                      partId={`${messageId}-task-${i}-summary`}
+                      blockId={blockId}
+                    />
+                  </p>
+                  <p className="text-xs text-muted-foreground capitalize">
+                    <AgentMessageBoardText
+                      target={task.type}
+                      partId={`${messageId}-task-${i}-type`}
+                      blockId={blockId}
+                    />
+                  </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 pt-0.5">
                   {statusNode}
@@ -250,7 +272,11 @@ export function TaskListCard({
               {expandedIndex === i && (
                 <div className={cn("px-2 pb-2", showSelection ? "pl-[72px]" : "pl-[52px]")}>
                   <p className="text-xs text-muted-foreground whitespace-pre-wrap">
-                    {task.description?.trim() ? task.description : "No description provided."}
+                    <AgentMessageBoardText
+                      target={descriptionTarget}
+                      partId={`${messageId}-task-${i}-description`}
+                      blockId={blockId}
+                    />
                   </p>
                 </div>
               )}

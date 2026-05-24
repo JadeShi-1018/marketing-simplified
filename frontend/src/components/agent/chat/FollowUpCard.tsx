@@ -4,13 +4,22 @@ import { MessageSquarePlus } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { AgentMessageBoardText } from "./AgentMessageBoardText"
+
+const TITLE = "Follow-up Chat"
+const BODY_ACTIVE =
+  "Follow-up chat is active. Ask a follow-up question, request a short report, or include an exact username/email for forwarding."
+const BODY_IDLE =
+  "Start a follow-up chat for this analysis when you want an explanation, a short report, or a forwarded message for a project member."
 
 interface FollowUpCardProps {
   active?: boolean
   onToggle?: () => void
+  messageId?: string
+  blockId?: string
 }
 
-export function FollowUpCard({ active = false, onToggle }: FollowUpCardProps) {
+export function FollowUpCard({ active = false, onToggle, messageId, blockId }: FollowUpCardProps) {
   return (
     <Card className="bg-card border-border">
       <CardHeader className="pb-3 pt-4 px-4">
@@ -19,18 +28,28 @@ export function FollowUpCard({ active = false, onToggle }: FollowUpCardProps) {
             <MessageSquarePlus className="h-4 w-4 text-primary" />
           </div>
           <CardTitle className="text-sm font-semibold text-card-foreground">
-            Follow-up Chat
+            <AgentMessageBoardText
+              target={TITLE}
+              partId={`${messageId ?? "followup"}-title`}
+              blockId={blockId}
+            />
           </CardTitle>
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-4 pt-0 space-y-3">
         <p className="text-sm text-foreground">
-          {active
-            ? "Follow-up chat is active. Ask a follow-up question, request a short report, or include an exact username/email for forwarding."
-            : "Start a follow-up chat for this analysis when you want an explanation, a short report, or a forwarded message for a project member."}
+          <AgentMessageBoardText
+            target={active ? BODY_ACTIVE : BODY_IDLE}
+            partId={`${messageId ?? "followup"}-body`}
+            blockId={blockId}
+          />
         </p>
         <Button size="sm" variant="outline" onClick={onToggle}>
-          {active ? "Close Follow-up" : "Start Follow-up"}
+          <AgentMessageBoardText
+            target={active ? "Close Follow-up" : "Start Follow-up"}
+            partId={`${messageId ?? "followup"}-toggle`}
+            blockId={blockId}
+          />
         </Button>
       </CardContent>
     </Card>

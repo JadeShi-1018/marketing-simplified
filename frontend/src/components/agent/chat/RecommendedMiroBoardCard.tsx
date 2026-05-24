@@ -4,6 +4,10 @@ import { LayoutTemplate, Loader2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
+import { AgentMessageBoardText } from "./AgentMessageBoardText"
+
+const TITLE = "Recommended Miro Board"
+const SUBTITLE = "Review destination and approve generation."
 
 type RecommendedMiroBoardCardProps = {
   pending: PendingExternalApproval
@@ -11,6 +15,8 @@ type RecommendedMiroBoardCardProps = {
   generating?: boolean
   onApprove?: () => void
   onReject?: () => void
+  messageId?: string
+  blockId?: string
 }
 
 export function RecommendedMiroBoardCard({
@@ -19,7 +25,11 @@ export function RecommendedMiroBoardCard({
   generating,
   onApprove,
   onReject,
+  messageId = "miro-approval",
+  blockId,
 }: RecommendedMiroBoardCardProps) {
+  void pending
+
   return (
     <Card className="bg-card border-border">
       <CardHeader className="pb-3 pt-4 px-4">
@@ -29,10 +39,10 @@ export function RecommendedMiroBoardCard({
           </div>
           <div className="min-w-0">
             <CardTitle className="text-sm font-semibold text-card-foreground truncate">
-              Recommended Miro Board
+              <AgentMessageBoardText target={TITLE} partId={`${messageId}-miro-approval-title`} blockId={blockId} className="inline" />
             </CardTitle>
             <p className="text-xs text-muted-foreground truncate">
-              Review destination and approve generation.
+              <AgentMessageBoardText target={SUBTITLE} partId={`${messageId}-miro-approval-subtitle`} blockId={blockId} />
             </p>
           </div>
           {generating && (
@@ -45,7 +55,7 @@ export function RecommendedMiroBoardCard({
       <CardContent className="px-4 pb-4 pt-0 space-y-3">
         <div className="flex items-center justify-end gap-2">
           <Button type="button" variant="outline" size="sm" disabled={disabled || generating} onClick={() => onReject?.()}>
-            Reject
+            <AgentMessageBoardText target="Reject" partId={`${messageId}-miro-reject`} blockId={blockId} />
           </Button>
           <Button
             type="button"
@@ -53,11 +63,10 @@ export function RecommendedMiroBoardCard({
             disabled={disabled || generating}
             onClick={() => onApprove?.()}
           >
-            Approve
+            <AgentMessageBoardText target="Approve" partId={`${messageId}-miro-approve`} blockId={blockId} />
           </Button>
         </div>
       </CardContent>
     </Card>
   )
 }
-
