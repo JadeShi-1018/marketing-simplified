@@ -736,3 +736,48 @@ def apply_and_save_notification_preferences(user, patch: dict) -> UserNotificati
         pref.preferences = merge_preferences_update(pref.preferences, patch)
         pref.save(update_fields=["preferences", "updated_at"])
         return pref
+
+
+def revoke_access_to_resource(user_id: int, object_type: str, object_id: str) -> int:
+    """
+    Mark all historical notifications for a user about a specific resource
+    as revoked_access, indicating the user no longer has permission to access it.
+
+    This is used when a user loses access to a resource (removed from project/meeting,
+    rejected invitation, etc.) to prevent them from accessing it via old notifications.
+
+    Args:
+        user_id: The user who lost access
+        object_type: e.g., "meeting", "project", "task"
+        object_id: The ID of the related object
+
+    Returns:
+        Number of notifications updated
+
+    Note:
+        Uses PostgreSQL jsonb_set for efficient batch update.
+    """
+    from django.db import connection
+
+    with connection.cursor() as cursor:
+        cursor.execute("""
+            UPDATE notifications_notification
+            SET metadata = jsonb_set(
+                COALESCE(metadata, '{}'::jsonb),
+                '{revoked_access}',
+                'true',
+                true
+            )
+            WHERE recipient_id = %s
+              AND related_object_type = %s
+              AND related_object_id = %s
+              AND (metadata->>'revoked_access' IS NULL
+                   OR metadata->>'revoked_access' = 'false')
+        """, [user_id, object_type, object_id])
+        count = cursor.rowcount
+
+    logger.info(
+        "Revoked access to %s:%s for user %s, updated %d notifications",
+        object_type, object_id, user_id, count
+    )
+    return count

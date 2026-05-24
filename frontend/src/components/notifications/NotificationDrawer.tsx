@@ -119,7 +119,14 @@ export default function NotificationDrawer() {
 
               {/* Type card — Invite (with Accept/Decline) */}
               {isInviteNotification(notification) && (
-                <DrawerInviteCard notification={notification} />
+                <DrawerInviteCard
+                  notification={notification}
+                  onResponseComplete={() => {
+                    triggerRefresh();
+                    // Close drawer after a brief delay to allow user to see the response status
+                    setTimeout(closeDrawer, 800);
+                  }}
+                />
               )}
 
               {/* Type card — Change (field-level diffs) */}

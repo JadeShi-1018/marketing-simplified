@@ -755,7 +755,15 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
                     "meeting_title": meeting.title,
                     "project_name": meeting.project.name,
                     "project_id": meeting.project_id,
+                    "revoked_access": True,  # User no longer has access to this meeting
                 },
+            )
+            # Revoke access to all historical meeting notifications
+            from notifications.services import revoke_access_to_resource
+            revoke_access_to_resource(
+                user_id=removed_user_id,
+                object_type="meeting",
+                object_id=str(meeting.id)
             )
 
 

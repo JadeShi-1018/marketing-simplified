@@ -292,7 +292,16 @@ def _dispatch_response(notification, action, user):
 
 
 def _handle_project_invite(notification, action, user):
-    """Accept → activate/create ProjectMember; reject → no structural change."""
+    """Accept → activate/create ProjectMember; reject → revoke access to project notifications."""
+    if action == "reject":
+        # User rejected the invitation - revoke access to all historical project notifications
+        from notifications.services import revoke_access_to_resource  # noqa: PLC0415
+        revoke_access_to_resource(
+            user_id=user.id,
+            object_type=notification.related_object_type,
+            object_id=notification.related_object_id
+        )
+        return
     if action != "accept":
         return
     from django.db import transaction  # noqa: PLC0415
@@ -333,7 +342,7 @@ def _handle_project_invite(notification, action, user):
 
 
 def _handle_meeting_participant(notification, action, user):
-    """Accept → mark participant link as accepted; reject → remove the link entirely."""
+    """Accept → mark participant link as accepted; reject → remove the link and revoke access."""
     from meetings.models import ParticipantLink  # noqa: PLC0415
 
     participant_link_id = notification.metadata.get("participant_link_id")
@@ -345,10 +354,17 @@ def _handle_meeting_participant(notification, action, user):
         ParticipantLink.objects.filter(pk=participant_link_id, user=user).update(is_accepted=True)
     elif action == "reject":
         ParticipantLink.objects.filter(pk=participant_link_id, user=user).delete()
+        # User rejected the invitation - revoke access to all historical meeting notifications
+        from notifications.services import revoke_access_to_resource  # noqa: PLC0415
+        revoke_access_to_resource(
+            user_id=user.id,
+            object_type=notification.related_object_type,
+            object_id=notification.related_object_id
+        )
 
 
 def _handle_task_assignment(notification, action, user):
-    """Accept → clear the invite-pending flag; reject → clear the owner or approver field."""
+    """Accept → clear the invite-pending flag; reject → clear the owner or approver field and revoke access."""
     from task.models import Task  # noqa: PLC0415
 
     task_id = notification.related_object_id
@@ -375,6 +391,13 @@ def _handle_task_assignment(notification, action, user):
             task.owner = None
             task.owner_invite_pending = False
         task.save()
+        # User rejected the assignment - revoke access to all historical task notifications
+        from notifications.services import revoke_access_to_resource  # noqa: PLC0415
+        revoke_access_to_resource(
+            user_id=user.id,
+            object_type=notification.related_object_type,
+            object_id=notification.related_object_id
+        )
 
 
 async def stream_notifications(request):

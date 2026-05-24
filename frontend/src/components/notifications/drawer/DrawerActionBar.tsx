@@ -275,6 +275,9 @@ function GoToFullPageLink({
   const router = useRouter();
   const target = buildNotificationFullPageTarget(notification);
 
+  // Hide button if user's access to the resource has been revoked
+  if (notification.metadata?.revoked_access === true) return null;
+
   if (!target) return null;
 
   const handleClick = async () => {

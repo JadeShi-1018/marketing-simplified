@@ -642,7 +642,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         if removed_user.id != actor.id:
             try:
                 from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
-                from notifications.services import create_notification  # noqa: PLC0415
+                from notifications.services import create_notification, revoke_access_to_resource  # noqa: PLC0415
                 create_notification(
                     recipient_id=removed_user.id,
                     actor_id=actor.id,
@@ -656,7 +656,14 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
                     metadata={
                         "project_name": project.name,
                         "action": "removed_from_project",
+                        "revoked_access": True,  # User no longer has access to this project
                     },
+                )
+                # Revoke access to all historical project notifications
+                revoke_access_to_resource(
+                    user_id=removed_user.id,
+                    object_type="project",
+                    object_id=str(project.id)
                 )
             except Exception:
                 logger.exception(

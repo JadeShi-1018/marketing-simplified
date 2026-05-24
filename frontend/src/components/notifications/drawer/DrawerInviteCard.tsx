@@ -110,9 +110,13 @@ function RespondedBanner({ response }: { response: string }) {
 
 interface DrawerInviteCardProps {
   notification: NotificationItem;
+  onResponseComplete?: () => void;
 }
 
-export default function DrawerInviteCard({ notification }: DrawerInviteCardProps) {
+export default function DrawerInviteCard({
+  notification,
+  onResponseComplete,
+}: DrawerInviteCardProps) {
   const initialResponse =
     notification.responded && notification.response ? notification.response : null;
   const [localResponse, setLocalResponse] = useState<string | null>(initialResponse);
@@ -128,6 +132,8 @@ export default function DrawerInviteCard({ notification }: DrawerInviteCardProps
       await notificationsApi.respond(notification.id, action);
       setLocalResponse(action === "accept" ? "accept" : "reject");
       toast.success(action === "accept" ? "Accepted!" : "Declined");
+      // Refresh notification data to get updated metadata (e.g., revoked_access flag)
+      onResponseComplete?.();
     } catch {
       toast.error(`Failed to ${action === "accept" ? "accept" : "decline"}`);
     } finally {
