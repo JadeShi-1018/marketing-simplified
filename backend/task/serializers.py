@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
-from meetings.services import validate_meeting_for_origin_link
+from meetings.services import validate_meeting_for_origin_link, record_task_created
 from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, TaskPin
 from core.models import Project, ProjectMember
 from core.utils.project import get_user_active_project
@@ -440,10 +440,20 @@ class TaskSerializer(serializers.ModelSerializer):
                 with transaction.atomic():
                     task = super().create(validated_data)
                     if origin_meeting_id is not None:
+                        from meetings.models import Meeting
                         MeetingTaskOrigin.objects.create(
                             meeting_id=origin_meeting_id,
                             task=task,
                         )
+                        try:
+                            mtg = Meeting.objects.get(id=origin_meeting_id)
+                            record_task_created(
+                                meeting=mtg,
+                                task_id=task.id,
+                                actor=self.context['request'].user,
+                            )
+                        except (Meeting.DoesNotExist, KeyError):
+                            pass
             except (OperationalError, ProgrammingError) as db_err:
                 err_msg = str(db_err).lower()
                 if "draft_payload" in err_msg or "no such column" in err_msg or ("column" in err_msg and "does not exist" in err_msg):

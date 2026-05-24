@@ -58,6 +58,15 @@ from meetings.services import (
     update_meeting_summary,
     add_participant,
     remove_participant,
+    create_agenda_item,
+    update_agenda_item,
+    delete_agenda_item,
+    create_action_item,
+    update_action_item,
+    update_meeting_type,
+    update_meeting_datetime,
+    update_meeting_tags,
+    ensure_meeting_type_definition,
 )
 
 
@@ -233,18 +242,40 @@ class MeetingViewSet(viewsets.ModelViewSet):
         new_title = validated_data.pop("title", None)
         new_objective = validated_data.pop("objective", None)
         new_summary = validated_data.pop("summary", None)
+        new_meeting_type_label = validated_data.pop("meeting_type", None)
+        new_scheduled_date = validated_data.pop("scheduled_date", None)
+        new_scheduled_time = validated_data.pop("scheduled_time", None)
+        new_tags = validated_data.pop("tag_definition_ids", None)
 
-        # Update title if provided and changed
         if new_title is not None and new_title != meeting.title:
             update_meeting_title(meeting, new_title, self.request.user)
 
-        # Update objective if provided and changed
         if new_objective is not None and new_objective != meeting.objective:
             update_meeting_objective(meeting, new_objective, self.request.user)
 
-        # Update summary if provided and changed
         if new_summary is not None and new_summary != meeting.summary:
             update_meeting_summary(meeting, new_summary, self.request.user)
+
+        if new_meeting_type_label is not None:
+            new_type_obj = ensure_meeting_type_definition(meeting.project, new_meeting_type_label)
+            if new_type_obj != meeting.type_definition:
+                update_meeting_type(meeting, new_type_obj, self.request.user)
+
+        date_changed = (
+            new_scheduled_date is not None and new_scheduled_date != meeting.scheduled_date
+        ) or (
+            new_scheduled_time is not None and new_scheduled_time != meeting.scheduled_time
+        )
+        if date_changed:
+            update_meeting_datetime(
+                meeting,
+                new_scheduled_date if new_scheduled_date is not None else meeting.scheduled_date,
+                new_scheduled_time if new_scheduled_time is not None else meeting.scheduled_time,
+                self.request.user,
+            )
+
+        if new_tags is not None:
+            update_meeting_tags(meeting, new_tags, self.request.user)
 
         # Update remaining fields using the serializer (but without title/objective/summary)
         # We need to update the serializer's instance with the filtered validated_data
@@ -358,14 +389,32 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
+        vd = serializer.validated_data
         try:
-            serializer.save(meeting=meeting)
+            serializer.instance = create_agenda_item(
+                meeting=meeting,
+                content=vd.get("content", ""),
+                order_index=vd.get("order_index", 0),
+                is_priority=vd.get("is_priority", False),
+                actor=self.request.user,
+            )
         except IntegrityError:
             from rest_framework.exceptions import ValidationError
-
             raise ValidationError(
                 {"order_index": ["This order_index is already used for this meeting."]}
             )
+
+    def perform_update(self, serializer):
+        vd = serializer.validated_data
+        update_agenda_item(
+            item=serializer.instance,
+            content=vd.get("content", serializer.instance.content),
+            is_priority=vd.get("is_priority", serializer.instance.is_priority),
+            actor=self.request.user,
+        )
+
+    def perform_destroy(self, instance):
+        delete_agenda_item(item=instance, actor=self.request.user)
 
     @action(detail=False, methods=["patch"], url_path="reorder")
     def reorder(self, request, project_id=None, meeting_id=None):
@@ -497,7 +546,24 @@ class MeetingActionItemViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
-        serializer.save(meeting=meeting)
+        vd = serializer.validated_data
+        serializer.instance = create_action_item(
+            meeting=meeting,
+            title=vd.get("title", ""),
+            description=vd.get("description", ""),
+            order_index=vd.get("order_index", 0),
+            actor=self.request.user,
+        )
+
+    def perform_update(self, serializer):
+        vd = serializer.validated_data
+        update_action_item(
+            item=serializer.instance,
+            title=vd.get("title", serializer.instance.title),
+            description=vd.get("description", serializer.instance.description),
+            is_resolved=vd.get("is_resolved", serializer.instance.is_resolved),
+            actor=self.request.user,
+        )
 
     @action(detail=True, methods=["post"], url_path="convert-to-task")
     def convert_to_task(self, request, project_id=None, meeting_id=None, pk=None):

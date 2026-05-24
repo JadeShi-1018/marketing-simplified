@@ -9,6 +9,7 @@ from django.utils import timezone
 
 from core.models import Project, ProjectMember
 from meetings.models import MeetingDecisionOrigin
+from meetings.services import record_decision_created
 from .models import CommitRecord, Decision, DecisionEdge, Review, Signal
 from calendars.models import CalendarEvent
 from .permissions import DecisionPermission
@@ -127,6 +128,16 @@ class DecisionDraftViewSet(
                     meeting_id=origin_meeting_id,
                     decision=decision,
                 )
+                from meetings.models import Meeting
+                try:
+                    mtg = Meeting.objects.get(id=origin_meeting_id)
+                    record_decision_created(
+                        meeting=mtg,
+                        decision_id=decision.id,
+                        actor=self.request.user,
+                    )
+                except Meeting.DoesNotExist:
+                    pass
             self._apply_parent_edges(decision, parent_ids)
 
     def create(self, request, *args, **kwargs):

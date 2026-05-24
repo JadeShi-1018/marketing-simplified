@@ -311,7 +311,7 @@ def add_participant(
         event_type='meeting.participant_added',
         after={
             'user_id': user.id,
-            'user_name': user.display_name,
+            'user_name': (f"{user.first_name} {user.last_name}".strip() or user.username),
             'role': role,
         },
         context={
@@ -345,7 +345,7 @@ def remove_participant(
     except ParticipantLink.DoesNotExist:
         raise ValueError(f"User {user.id} is not a participant of meeting {meeting.id}")
 
-    user_name = user.display_name
+    user_name = (f"{user.first_name} {user.last_name}".strip() or user.username)
     user_id = user.id
 
     link.delete()
