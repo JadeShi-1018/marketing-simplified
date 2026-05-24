@@ -7,6 +7,7 @@ import { useAuthStore } from '@/lib/authStore';
 import { useMessageData } from '@/hooks/useMessageData';
 import { useForwardMessages } from '@/hooks/useForwardMessages';
 import { useChatStore } from '@/lib/chatStore';
+import { editMessage, deleteMessage } from '@/lib/api/chatApi';
 import type { Chat } from '@/types/chat';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
@@ -30,10 +31,14 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   // Use selector for stable reference
   const user = useAuthStore(state => state.user);
   const chatsByProject = useChatStore(state => state.chatsByProject);
+  // Snapshot taken at click-time in setCurrentChat — immune to subsequent setChatsForProject resets
+  const capturedUnreadCount = useChatStore(state => state.capturedUnreadCounts[chat.id] ?? 0);
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<number[]>([]);
   const [isForwardDialogOpen, setIsForwardDialogOpen] = useState(false);
   const [showSwitchLoadingSkeleton, setShowSwitchLoadingSkeleton] = useState(false);
+  const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<number | null>(null);
+  const unreadCapturedForChatRef = useRef<number | null>(null);
   const { forward, isForwarding } = useForwardMessages();
 
   const {
@@ -70,6 +75,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setIsSelectMode(false);
     setSelectedMessageIds([]);
     setIsForwardDialogOpen(false);
+    setFirstUnreadMessageId(null);
+    unreadCapturedForChatRef.current = null;
   }, [chat.id]);
 
   useEffect(() => {
@@ -160,8 +167,9 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       markAsReadTimeoutRef.current = setTimeout(() => {
         markAllAsRead().then(() => {
           console.log('[ChatWindow] markAllAsRead completed for chat:', chat.id);
-          // Refetch global unread count from backend to ensure accuracy
           fetchGlobalUnreadCount();
+          // Intentionally NOT clearing firstUnreadMessageId here — the divider
+          // stays visible until the user closes and reopens the conversation.
         });
       }, 500); // Debounce 500ms
     }
@@ -176,6 +184,59 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     };
   }, [chat.id, messages.length, markAllAsRead]);
   
+  // When a fresh positive capturedUnreadCount arrives (e.g. setChatsForProject resolves
+  // after a race, or account switch) and the divider is not currently showing, unlock
+  // the capture ref so the effect below can re-run.  Must be defined BEFORE the
+  // capture effect so it runs first within the same React commit.
+  useEffect(() => {
+    if (firstUnreadMessageId !== null) return; // Divider already visible — don't disturb it
+    if (capturedUnreadCount > 0) {
+      unreadCapturedForChatRef.current = null; // Unlock → let the capture effect fire
+    }
+  }, [chat.id, capturedUnreadCount, firstUnreadMessageId]);
+
+  // Capture the first unread message once per chat open, before markAllAsRead fires.
+  // Uses capturedUnreadCount (snapshotted at click-time in setCurrentChat, then
+  // refreshed by setChatsForProject) rather than chat.unread_count.
+  useEffect(() => {
+    if (unreadCapturedForChatRef.current === chat.id) return;
+    if (messages.length === 0) return;
+    if (capturedUnreadCount > 0 && capturedUnreadCount <= messages.length) {
+      const firstUnread = messages[messages.length - capturedUnreadCount];
+      if (firstUnread) setFirstUnreadMessageId(firstUnread.id);
+    }
+    // Only lock the ref once we've seen real data (non-zero count, or confirmed 0
+    // by having messages loaded — the unlock effect above will re-open it if needed).
+    // Only lock once messages are actually loaded. If we locked on capturedUnreadCount > 0
+    // alone (messages still empty), the effect would return early on the messages.length
+    // guard above and then the ref would be locked before we could ever capture.
+    if (messages.length > 0) {
+      unreadCapturedForChatRef.current = chat.id;
+    }
+  }, [chat.id, capturedUnreadCount, messages]);
+
+  const handleEditMessage = async (messageId: number, newContent: string) => {
+    const { updateMessage } = useChatStore.getState();
+    const original = messages.find((m) => m.id === messageId);
+    updateMessage(messageId, { content: newContent, is_edited: true });
+    try {
+      const updated = await editMessage(messageId, newContent);
+      updateMessage(messageId, { content: updated.content, is_edited: updated.is_edited ?? true });
+    } catch {
+      updateMessage(messageId, { content: original?.content ?? newContent, is_edited: original?.is_edited ?? false });
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: number) => {
+    const { removeMessage } = useChatStore.getState();
+    removeMessage(messageId);
+    try {
+      await deleteMessage(messageId);
+    } catch {
+      // rollback not implemented — message is already gone from UI
+    }
+  };
+
   const handleSendMessage = async (content: string) => {
     await send(content);
   };
@@ -326,6 +387,9 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           isSelectMode={isSelectMode}
           selectedMessageIds={selectedMessageIds}
           onToggleSelectMessage={handleToggleSelectMessage}
+          firstUnreadMessageId={firstUnreadMessageId}
+          onEditMessage={handleEditMessage}
+          onDeleteMessage={handleDeleteMessage}
         />
       </div>
 

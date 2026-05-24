@@ -273,6 +273,7 @@ class Message(TimeStampedModel):
         blank=True,
         help_text="Snapshot of original message creation time at forward time"
     )
+    is_edited = models.BooleanField(default=False, help_text="True after content has been edited")
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag")
     deleted_at = models.DateTimeField(null=True, blank=True, help_text="When the message was soft deleted")
 

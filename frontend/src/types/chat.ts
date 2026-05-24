@@ -96,6 +96,8 @@ export interface Message {
   updated_at: string;
   statuses?: MessageStatus[];
   is_read?: boolean;
+  is_edited?: boolean;
+  is_deleted?: boolean;
   has_attachments?: boolean;
   attachment_count?: number;
   attachments?: MessageAttachment[];
@@ -221,6 +223,7 @@ export interface ChatState {
   widgetChatId: number | null;   // For Chat Widget (independent)
   messages: Record<number, Message[]>; // Keyed by chat_id
   unreadCounts: Record<number, number>; // Keyed by chat_id
+  capturedUnreadCounts: Record<number, number>; // Snapshot taken at the moment a chat is opened — used for the "New messages" divider
   globalUnreadCount: number; // Total unread across ALL projects
   typingUsersByChat: Record<number, number[]>; // chatId -> userIds currently typing
   
@@ -248,6 +251,7 @@ export interface ChatState {
   addMessage: (chatId: number, message: Message, currentUserId?: number) => void;
   prependMessages: (chatId: number, messages: Message[]) => void;
   updateMessage: (messageId: number, updates: Partial<Message>) => void;
+  removeMessage: (messageId: number) => void;
   
   updateUnreadCount: (chatId: number, count: number) => void;
   decrementUnreadCount: (chatId: number) => void;
@@ -275,6 +279,10 @@ export interface ChatState {
   getCurrentChat: () => Chat | undefined;
   getCurrentMessages: () => Message[];
   getTotalUnreadCount: () => number;
+
+  // Clears all per-user in-memory state on logout so the next login starts
+  // with a clean slate and always picks up fresh counts from the backend.
+  clearUserState: () => void;
 }
 
 // ==================== Component Props Types ====================
@@ -317,6 +325,21 @@ export interface ChatWindowProps {
   isLoading: boolean;
 }
 
+export interface MessageItemProps {
+  message: Message;
+  isOwnMessage: boolean;
+  showSender?: boolean;
+  isCompact?: boolean;
+  senderRole?: string;
+  isSelectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (messageId: number) => void;
+  /** When true, visually emphasize this message (e.g. jump target). */
+  isHighlighted?: boolean;
+  onEdit?: (messageId: number, newContent: string) => void;
+  onDelete?: (messageId: number) => void;
+}
+
 export interface MessageListProps {
   messages: Message[];
   currentUserId: number;
@@ -330,18 +353,9 @@ export interface MessageListProps {
   isSelectMode?: boolean;
   selectedMessageIds?: number[];
   onToggleSelectMessage?: (messageId: number) => void;
-}
-
-export interface MessageItemProps {
-  message: Message;
-  isOwnMessage: boolean;
-  showSender?: boolean;
-  senderRole?: string;
-  isSelectMode?: boolean;
-  isSelected?: boolean;
-  onToggleSelect?: (messageId: number) => void;
-  /** When true, visually emphasize this message (e.g. jump target). */
-  isHighlighted?: boolean;
+  firstUnreadMessageId?: number | null;
+  onEditMessage?: (messageId: number, newContent: string) => void;
+  onDeleteMessage?: (messageId: number) => void;
 }
 
 export interface MessageInputProps {

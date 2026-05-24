@@ -415,7 +415,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get messages for a specific chat"""
         # For retrieve/detail actions, return all messages (permission checked in retrieve method)
-        if self.action in ['retrieve', 'mark_as_read']:
+        if self.detail or self.action == 'mark_as_read':
             return Message.objects.all()
         
         # For list action, require chat_id
@@ -582,6 +582,15 @@ class MessageViewSet(viewsets.ModelViewSet):
             logger.warning(f"Failed to create message: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
+    def partial_update(self, request, *args, **kwargs):
+        message = self.get_object()
+        if message.sender != request.user:
+            return Response({'error': 'You can only edit your own messages'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = self.get_serializer(message, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(is_edited=True)
+        return Response(serializer.data)
+
     def retrieve(self, request, *args, **kwargs):
         """Get message details"""
         message = self.get_object()

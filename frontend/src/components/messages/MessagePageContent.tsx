@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
@@ -23,6 +23,7 @@ export default function MessagePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const user = useAuthStore(state => state.user);
+  const isAuthenticated = useAuthStore(state => state.isAuthenticated);
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -67,9 +68,6 @@ export default function MessagePageContent() {
     },
   });
   
-  // Fetch chats when project changes or WebSocket connects
-  // Combined into one effect to prevent duplicate fetches
-  const hasFetchedRef = useRef<string | null>(null);
 
   useEffect(() => {
     const projectIdParam = searchParams.get('projectId');
@@ -125,17 +123,15 @@ export default function MessagePageContent() {
     [router, searchParams]
   );
   
+  // Fetch chats whenever the project, auth state, or WebSocket connection changes.
+  // isAuthenticated is used (not userId) because it is a guaranteed boolean flip
+  // on every logout→login cycle, even when the same account re-logs in.
   useEffect(() => {
-    if (selectedProjectId) {
-      // Only fetch if we haven't fetched for this project yet, or if WebSocket just connected
-      const fetchKey = `${selectedProjectId}-${connected}`;
-      if (hasFetchedRef.current !== fetchKey) {
-        hasFetchedRef.current = fetchKey;
-        console.log('[MessagePage] Fetching chats for project:', selectedProjectId, 'connected:', connected);
-        fetchChats();
-      }
+    if (isAuthenticated && selectedProjectId) {
+      fetchChats();
     }
-  }, [selectedProjectId, connected, fetchChats]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId, connected, isAuthenticated]);
   
   // Get current chat from store
   const currentChat = chats.find(chat => chat.id === currentChatId);
@@ -171,6 +167,12 @@ export default function MessagePageContent() {
     selectedProjectId === null && (!hasProjectStoreHydrated || hasProjectCandidate);
   
   const handleSelectChat = (chatId: number) => {
+    // Clicking the already-open chat closes it and returns to the list
+    if (chatId === currentChatId) {
+      setCurrentChat(null);
+      replaceMessagesQuery({ projectId: selectedProjectId, chatId: null, messageId: null });
+      return;
+    }
     setCurrentChat(chatId);
     replaceMessagesQuery({
       projectId: selectedProjectId,

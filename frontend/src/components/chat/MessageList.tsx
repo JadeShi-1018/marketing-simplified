@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
+import { ChevronDown } from 'lucide-react';
 import type { MessageListProps } from '@/types/chat';
 import { Skeleton } from '@/components/ui/skeleton';
 import MessageItem from './MessageItem';
@@ -102,6 +103,9 @@ export default function MessageList({
   isSelectMode = false,
   selectedMessageIds = [],
   onToggleSelectMessage,
+  firstUnreadMessageId = null,
+  onEditMessage,
+  onDeleteMessage,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -110,6 +114,16 @@ export default function MessageList({
   const lastMessageIdRef = useRef<number | null>(null); // Track LAST message ID (newest) instead of first
   const isLoadingMoreRef = useRef(false); // Track if we're loading more (older) messages
   const scrollPositionBeforeLoadRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  // Always-current ref so useLayoutEffect closures read the latest firstUnreadMessageId
+  // without needing it in the dependency array (avoids re-running the scroll effects
+  // on every render where only the ref value changes).
+  const firstUnreadMessageIdRef = useRef(firstUnreadMessageId);
+  firstUnreadMessageIdRef.current = firstUnreadMessageId;
+  // Prevent double-scrolling to the divider within one chat session
+  const unreadScrollDoneRef = useRef(false);
+  // When the scroll container is hidden by the switch skeleton, we queue the
+  // intended scroll target here and execute it once the skeleton disappears.
+  const scrollPendingRef = useRef<'bottom' | 'divider' | null>(null);
 
   useEffect(() => {
     // Listen for cross-component "jump to message" events.
@@ -132,30 +146,72 @@ export default function MessageList({
     return () => window.clearTimeout(t);
   }, [highlightMessageId, messages]);
 
-  // Auto-scroll to bottom when chat changes or on initial load
+  // Helper: scroll the container so the "New messages" divider sits just inside the top.
+  // Returns true if the divider was found and scrolled to.
+  const scrollToDivider = useCallback((): boolean => {
+    const divider = document.getElementById('new-messages-divider');
+    if (!divider || !scrollRef.current) return false;
+    const container = scrollRef.current;
+    const offset =
+      divider.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    container.scrollTo({ top: container.scrollTop + offset - 16, behavior: 'instant' }); // 16px breathing room
+    unreadScrollDoneRef.current = true;
+    return true;
+  }, []);
+
+  // Effect 1 — Detect chat switch / initial load and record the intended scroll
+  // target in a ref.  We intentionally do NOT scroll here because
+  // setShowSwitchLoadingSkeleton(true) fires in the same effect flush: by the
+  // time any setTimeout callback would run, the skeleton is already covering
+  // the scroll container (scrollRef.current === null).  Execution is deferred
+  // to Effect 2 which fires only when the container is actually in the DOM.
   useEffect(() => {
-    if (messages.length > 0 && scrollRef.current) {
-      const lastMessageId = messages[messages.length - 1]?.id;
-      
-      // Detect if this is a new chat by checking if the LAST (newest) message ID changed significantly
-      // A new chat means we're viewing a different conversation
-      const isNewChat = lastMessageIdRef.current !== null && 
-                        lastMessageIdRef.current !== lastMessageId &&
-                        !isLoadingMoreRef.current; // Don't scroll if we're loading more
-      const isInitialLoad = lastMessageIdRef.current === null;
-      
-      if (isInitialLoad || isNewChat) {
-        // Use setTimeout to ensure DOM has updated
-        setTimeout(() => {
-          if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-          }
-        }, 50);
-      }
-      
-      lastMessageIdRef.current = lastMessageId;
+    if (messages.length === 0) return;
+
+    const lastMessageId = messages[messages.length - 1]?.id;
+    const isNewChat =
+      lastMessageIdRef.current !== null &&
+      lastMessageIdRef.current !== lastMessageId &&
+      !isLoadingMoreRef.current;
+    const isInitialLoad = lastMessageIdRef.current === null;
+
+    if (isInitialLoad || isNewChat) {
+      if (isNewChat) unreadScrollDoneRef.current = false;
+      scrollPendingRef.current = firstUnreadMessageIdRef.current ? 'divider' : 'bottom';
     }
+
+    lastMessageIdRef.current = lastMessageId;
   }, [messages]);
+
+  // Effect 2 — Execute the pending scroll synchronously before the browser paints.
+  // useLayoutEffect fires after React commits the DOM but before the frame is
+  // drawn, so the user never sees the content at scrollTop=0.
+  useLayoutEffect(() => {
+    if (showSwitchLoadingSkeleton) return;
+    if (!scrollPendingRef.current) return;
+    if (!scrollRef.current || messages.length === 0) return;
+
+    const target = scrollPendingRef.current;
+    scrollPendingRef.current = null;
+
+    if (target === 'divider' && scrollToDivider()) return;
+    scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
+  }, [showSwitchLoadingSkeleton, messages, scrollToDivider]);
+
+  // When firstUnreadMessageId arrives AFTER the initial message render (the
+  // common race: messages load → bottom scroll fires → capture effect sets
+  // firstUnreadMessageId → we override with divider scroll).
+  // useLayoutEffect wins the race without any setTimeout because it fires
+  // synchronously before paint on every render where firstUnreadMessageId changes.
+  useLayoutEffect(() => {
+    if (!firstUnreadMessageId) {
+      // Divider cleared (chat closed / switched) — reset flag so next open works.
+      unreadScrollDoneRef.current = false;
+      return;
+    }
+    if (unreadScrollDoneRef.current) return; // Already scrolled this session
+    scrollToDivider();
+  }, [firstUnreadMessageId, scrollToDivider]);
 
   // Maintain scroll position after loading older messages
   useEffect(() => {
@@ -165,7 +221,7 @@ export default function MessageList({
       const heightDiff = newScrollHeight - oldScrollHeight;
       
       // Adjust scroll position to maintain the same view
-      scrollRef.current.scrollTop = oldScrollTop + heightDiff;
+      scrollRef.current.scrollTo({ top: oldScrollTop + heightDiff, behavior: 'instant' });
       
       // Reset refs
       scrollPositionBeforeLoadRef.current = null;
@@ -181,7 +237,7 @@ export default function MessageList({
 
     // Only auto-scroll for new messages at bottom, not when loading history
     if (isNewMessage && isAtBottom && scrollRef.current && !wasLoadingMore) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
     }
   }, [messages.length, isAtBottom]);
 
@@ -277,10 +333,11 @@ export default function MessageList({
 
       {/* Messages grouped by date */}
       {messages.length > 0 && (
-        <div 
+        <div className="relative flex-1 min-h-0">
+        <div
           ref={scrollRef}
           onScroll={handleScroll}
-          className="flex-1 space-y-4 overflow-y-auto p-3 sm:p-4"
+          className="h-full space-y-4 overflow-y-auto p-3 sm:p-4"
         >
           {messageGroups.map((group) => (
             <div key={group.date}>
@@ -292,29 +349,60 @@ export default function MessageList({
               </div>
 
               {/* Messages */}
-              <div className="space-y-3">
+              <div>
                 {group.messages.map((message, index) => {
                   const prevMessage = index > 0 ? group.messages[index - 1] : null;
                   const showSender = !prevMessage || prevMessage.sender.id !== message.sender.id;
+                  const isCompact = !showSender;
                   const senderRole = isGroupChat ? roleByUserId?.[message.sender.id] : undefined;
+                  const showUnreadDivider = firstUnreadMessageId === message.id;
 
                   return (
-                    <MessageItem
-                      key={message.id}
-                      message={message}
-                      isOwnMessage={message.sender.id === currentUserId}
-                      showSender={showSender}
-                      senderRole={senderRole}
-                      isSelectMode={isSelectMode}
-                      isSelected={selectedMessageIds.includes(message.id)}
-                      onToggleSelect={onToggleSelectMessage}
-                      isHighlighted={highlightMessageId === message.id}
-                    />
+                    <div key={message.id}>
+                      {showUnreadDivider && (
+                        <div id="new-messages-divider" className="my-3 flex items-center gap-3" aria-label="New messages">
+                          <div className="h-px flex-1 bg-[#3CCED7]/40" />
+                          <span className="shrink-0 rounded-full bg-[#3CCED7]/10 px-2.5 py-0.5 text-[11px] font-medium text-[#3CCED7]">
+                            New messages
+                          </span>
+                          <div className="h-px flex-1 bg-[#3CCED7]/40" />
+                        </div>
+                      )}
+                      <MessageItem
+                        message={message}
+                        isOwnMessage={message.sender.id === currentUserId}
+                        showSender={showSender}
+                        isCompact={isCompact}
+                        senderRole={senderRole}
+                        isSelectMode={isSelectMode}
+                        isSelected={selectedMessageIds.includes(message.id)}
+                        onToggleSelect={onToggleSelectMessage}
+                        isHighlighted={highlightMessageId === message.id}
+                        onEdit={onEditMessage}
+                        onDelete={onDeleteMessage}
+                      />
+                    </div>
                   );
                 })}
               </div>
             </div>
           ))}
+        </div>
+
+        {/* Scroll-to-bottom button */}
+        {!isAtBottom && (
+          <button
+            onClick={() => {
+              if (scrollRef.current) {
+                scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+              }
+            }}
+            className="absolute bottom-4 right-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-md border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50 transition-all"
+            aria-label="Scroll to bottom"
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        )}
         </div>
       )}
         </>

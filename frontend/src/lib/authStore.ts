@@ -4,6 +4,7 @@ import { authAPI } from './api';
 import { User } from '../types/auth';
 import TeamAPI from './api/teamApi';
 import { LOGIN_ERROR_MESSAGES, isNetworkError } from './authMessages';
+import { useChatStore } from './chatStore';
 
 // Authentication state interface
 interface AuthState {
@@ -262,6 +263,18 @@ export const useAuthStore = create<AuthState>()(
 
       // Clear all authentication data
       clearAuth: () => {
+        // Dismiss any open chat/widget so mounted ChatWindow components unmount
+        // before they can fire unauthenticated API calls.
+        const chatStore = useChatStore.getState();
+        chatStore.setCurrentChat(null);
+        chatStore.setWidgetChat(null);
+        // Reset all per-user in-memory chat state (unread counts, cached chats,
+        // messages). Without this, the stale "localCount=0" values in unreadCounts
+        // survive the logout and cause setChatsForProject to ignore the backend's
+        // real unread_count on the next login — the root cause of badges and the
+        // "New messages" divider not appearing without a page refresh.
+        chatStore.clearUserState();
+
         set({
           user: null,
           token: null,

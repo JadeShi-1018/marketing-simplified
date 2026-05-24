@@ -25,6 +25,12 @@ function normalizeChat(c: Chat): Chat {
   return Number.isFinite(project_id) ? { ...c, project_id } : c;
 }
 
+/** Most recent activity timestamp for a chat — used for newest-first list ordering. */
+function chatActivityTs(chat: Chat): number {
+  const ts = chat.last_message?.created_at ?? chat.updated_at ?? chat.created_at;
+  return ts ? new Date(ts).getTime() : 0;
+}
+
 interface HomeSidebarProps {
   view: MessagesNavView;
   onChangeView: (view: MessagesNavView) => void;
@@ -134,6 +140,9 @@ export default function HomeSidebar({
       if (chat.type === 'group') group.push(chat);
       else priv.push(chat);
     }
+    // Sort each list newest-first so the most recently active chat floats to the top.
+    group.sort((a, b) => chatActivityTs(b) - chatActivityTs(a));
+    priv.sort((a, b) => chatActivityTs(b) - chatActivityTs(a));
     return { groupChats: group, privateChats: priv };
   }, [chats]);
 

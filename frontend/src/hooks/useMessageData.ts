@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useChatStore } from '@/lib/chatStore';
+import { useAuthStore } from '@/lib/authStore';
 import { getMessages, sendMessage, markMessageAsRead, markChatAsRead } from '@/lib/api/chatApi';
 import type { SendMessageRequest, Message } from '@/types/chat';
 import toast from 'react-hot-toast';
@@ -193,14 +194,15 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
     }
   }, [chatId]);
 
-  // Auto-fetch messages when chat changes
+  // Auto-fetch messages when chat changes — only when authenticated
+  const isAuthenticated = useAuthStore(state => state.isAuthenticated);
   useEffect(() => {
-    if (autoFetch && chatId) {
+    if (autoFetch && chatId && isAuthenticated) {
       fetchMessages();
       setHasMore(true); // Reset pagination
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFetch, chatId]); // Don't include fetchMessages to avoid infinite loop
+  }, [autoFetch, chatId, isAuthenticated]); // Don't include fetchMessages to avoid infinite loop
 
   return {
     messages: currentMessages,

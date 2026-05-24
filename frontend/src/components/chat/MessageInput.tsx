@@ -57,6 +57,7 @@ export default function MessageInput({
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -208,87 +209,8 @@ export default function MessageInput({
   const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
-    const newAttachments: PendingAttachment[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      
-      // Validate file
-      const { isValid, error } = validateFile(file);
-      if (!isValid) {
-        toast.error(error || 'Invalid file');
-        continue;
-      }
-
-      // Create preview for images
-      let preview: string | undefined;
-      if (file.type.startsWith('image/')) {
-        preview = URL.createObjectURL(file);
-      }
-
-      const tempId = `temp-${Date.now()}-${i}`;
-      newAttachments.push({
-        id: tempId,
-        file,
-        preview,
-        progress: 0,
-        uploading: true,
-      });
-    }
-
-    if (newAttachments.length === 0) {
-      // Reset file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      return;
-    }
-
-    setPendingAttachments(prev => [...prev, ...newAttachments]);
-    setIsUploading(true);
-
-    // Upload files
-    for (const attachment of newAttachments) {
-      try {
-        const uploaded = await uploadAttachment(attachment.file, (progress) => {
-          setPendingAttachments(prev => 
-            prev.map(a => 
-              a.id === attachment.id 
-                ? { ...a, progress } 
-                : a
-            )
-          );
-        });
-
-        setPendingAttachments(prev => 
-          prev.map(a => 
-            a.id === attachment.id 
-              ? { ...a, uploading: false, uploaded } 
-              : a
-          )
-        );
-      } catch (error: any) {
-        console.error('Upload failed:', error);
-        const errorMsg = error?.response?.data?.error || 'Upload failed';
-        
-        setPendingAttachments(prev => 
-          prev.map(a => 
-            a.id === attachment.id 
-              ? { ...a, uploading: false, error: errorMsg } 
-              : a
-          )
-        );
-        toast.error(`Failed to upload ${attachment.file.name}`);
-      }
-    }
-
-    setIsUploading(false);
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    await uploadFiles(Array.from(files));
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleRemoveAttachment = (id: string) => {
@@ -297,6 +219,66 @@ export default function MessageInput({
       URL.revokeObjectURL(attachment.preview);
     }
     setPendingAttachments(prev => prev.filter(a => a.id !== id));
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    const newAttachments: PendingAttachment[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const { isValid, error } = validateFile(file);
+      if (!isValid) {
+        toast.error(error || `Invalid file: ${file.name}`);
+        continue;
+      }
+      let preview: string | undefined;
+      if (file.type.startsWith('image/')) preview = URL.createObjectURL(file);
+      newAttachments.push({ id: `temp-${Date.now()}-${i}`, file, preview, progress: 0, uploading: true });
+    }
+
+    if (newAttachments.length === 0) return;
+    setPendingAttachments(prev => [...prev, ...newAttachments]);
+    setIsUploading(true);
+
+    for (const attachment of newAttachments) {
+      try {
+        const uploaded = await uploadAttachment(attachment.file, (progress) => {
+          setPendingAttachments(prev => prev.map(a => a.id === attachment.id ? { ...a, progress } : a));
+        });
+        setPendingAttachments(prev => prev.map(a => a.id === attachment.id ? { ...a, uploading: false, uploaded } : a));
+      } catch (err: any) {
+        const errorMsg = err?.response?.data?.error || 'Upload failed';
+        setPendingAttachments(prev => prev.map(a => a.id === attachment.id ? { ...a, uploading: false, error: errorMsg } : a));
+        toast.error(`Failed to upload ${attachment.file.name}`);
+      }
+    }
+    setIsUploading(false);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files);
+    if (files.length > 0) {
+      e.preventDefault();
+      uploadFiles(files);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) uploadFiles(files);
   };
 
   const handleAttachmentClick = () => {
@@ -324,7 +306,20 @@ export default function MessageInput({
     : (isMobile ? 'Message...' : 'Type a message...');
 
   return (
-    <div className="relative border-t border-gray-200 bg-white px-3 py-2 sm:px-4 sm:py-3">
+    <div
+      className={[
+        'relative border-t border-gray-200 bg-white px-3 py-2 sm:px-4 sm:py-3 transition-colors',
+        isDragOver ? 'bg-[#3CCED7]/5' : '',
+      ].join(' ')}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragOver && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-[#3CCED7] bg-[#3CCED7]/5">
+          <p className="text-sm font-medium text-[#3CCED7]">Drop files to attach</p>
+        </div>
+      )}
       {/* Attachment Previews */}
       {hasAttachments && (
         <div className="mb-3 flex flex-wrap gap-2">
@@ -441,6 +436,7 @@ export default function MessageInput({
           }}
           onBlur={stopTypingNow}
           onKeyPress={handleKeyPress}
+          onPaste={handlePaste}
           placeholder={inputPlaceholder}
           disabled={disabled}
           rows={1}

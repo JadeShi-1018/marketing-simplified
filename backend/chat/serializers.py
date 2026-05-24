@@ -124,7 +124,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         model = Message
         fields = [
             'id', 'chat', 'sender', 'content', 'status', 'statuses',
-            'created_at', 'updated_at', 'is_deleted',
+            'created_at', 'updated_at', 'is_edited', 'is_deleted',
             'has_attachments', 'attachment_count',
             'is_forwarded', 'forwarded_from'
         ]

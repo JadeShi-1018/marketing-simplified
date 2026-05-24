@@ -159,6 +159,15 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
   return response.data;
 };
 
+export const editMessage = async (messageId: number, content: string): Promise<Message> => {
+  const response = await api.patch(`/api/chat/messages/${messageId}/`, { content });
+  return response.data;
+};
+
+export const deleteMessage = async (messageId: number): Promise<void> => {
+  await api.delete(`/api/chat/messages/${messageId}/`);
+};
+
 /**
  * Mark a message as read
  */

@@ -31,6 +31,7 @@ export const useChatStore = create<ChatState>()(
       widgetChatId: null,       // For Chat Widget (independent)
       messages: {},
       unreadCounts: {},
+      capturedUnreadCounts: {}, // Snapshot of unread_count at the moment each chat is opened
       typingUsersByChat: {},    // chatId -> userIds currently typing (ephemeral, not persisted)
       globalUnreadCount: 0,     // Total unread across ALL projects
       isWidgetOpen: false,
@@ -80,18 +81,32 @@ export const useChatStore = create<ChatState>()(
             }
           });
           
+          // Always refresh capturedUnreadCounts for the currently-viewed chat from the
+          // backend. This handles two races:
+          //   1. setCurrentChat fired before fetchChats → captured 0 instead of real count
+          //   2. Account switch without remount → stale count from previous session
+          // The ChatWindow capture-unread effect is guarded by unreadCapturedForChatRef,
+          // so an overwrite here only shows a new divider when the ref hasn't been locked yet.
+          const newCapturedUnreadCounts = { ...state.capturedUnreadCounts };
+          if (currentChatId !== null) {
+            const currentChatBackendCount =
+              normalizedChats.find(c => Number(c.id) === Number(currentChatId))?.unread_count ?? 0;
+            newCapturedUnreadCounts[currentChatId] = currentChatBackendCount;
+          }
+
           // Update chats with synced unread_count values
           const updatedChats = normalizedChats.map(chat => ({
             ...chat,
             unread_count: newUnreadCounts[chat.id] ?? chat.unread_count ?? 0,
           }));
 
-          return { 
+          return {
             chatsByProject: {
               ...state.chatsByProject,
               [projectId]: updatedChats,
             },
             unreadCounts: newUnreadCounts,
+            capturedUnreadCounts: newCapturedUnreadCounts,
           };
         });
       },
@@ -182,21 +197,26 @@ export const useChatStore = create<ChatState>()(
             currentView: numericChatId !== null ? 'chat' : 'list',
           };
           
-          // Reset unread count for this chat (both in unreadCounts AND chat.unread_count)
+          // Snapshot the real unread count before zeroing the badge counter.
+          // capturedUnreadCounts[chatId] is immune to subsequent setChatsForProject calls
+          // (which see localCount=0 and would zero chat.unread_count), so ChatWindow
+          // can reliably read it when the "New messages" divider effect runs.
           if (numericChatId !== null) {
+            // Look up current unread_count from chatsByProject
+            let capturedCount = 0;
+            Object.values(state.chatsByProject).forEach(chats => {
+              const found = chats.find(c => Number(c.id) === numericChatId);
+              if (found) capturedCount = found.unread_count ?? 0;
+            });
+
             const newUnreadCounts = { ...state.unreadCounts };
             newUnreadCounts[numericChatId] = 0;
             updates.unreadCounts = newUnreadCounts;
-            
-            // Also update the chat object's unread_count for consistency in all projects
-            const newChatsByProject = { ...state.chatsByProject };
-            Object.keys(newChatsByProject).forEach(projectIdStr => {
-              const projectId = parseInt(projectIdStr);
-              newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
-                Number(chat.id) === numericChatId ? { ...chat, unread_count: 0 } : chat
-              );
-            });
-            updates.chatsByProject = newChatsByProject;
+
+            updates.capturedUnreadCounts = {
+              ...state.capturedUnreadCounts,
+              [numericChatId]: capturedCount,
+            };
           }
           
           return updates;
@@ -293,7 +313,7 @@ export const useChatStore = create<ChatState>()(
       updateMessage: (messageId: number, updates: Partial<Message>) => {
         set(state => {
           const newMessages = { ...state.messages };
-          
+
           // Find and update the message in the correct chat
           Object.keys(newMessages).forEach(chatIdStr => {
             const chatId = parseInt(chatIdStr);
@@ -301,7 +321,18 @@ export const useChatStore = create<ChatState>()(
               msg.id === messageId ? { ...msg, ...updates } : msg
             );
           });
-          
+
+          return { messages: newMessages };
+        });
+      },
+
+      removeMessage: (messageId: number) => {
+        set(state => {
+          const newMessages = { ...state.messages };
+          Object.keys(newMessages).forEach(chatIdStr => {
+            const chatId = parseInt(chatIdStr);
+            newMessages[chatId] = newMessages[chatId].filter(msg => msg.id !== messageId);
+          });
           return { messages: newMessages };
         });
       },
@@ -387,9 +418,33 @@ export const useChatStore = create<ChatState>()(
 
       // Widget-specific actions
       setWidgetChat: (chatId: number | null) => {
-        set({
-          widgetChatId: chatId,
-          widgetView: chatId !== null ? 'chat' : 'list',
+        const numericChatId = chatId !== null ? Number(chatId) : null;
+        set(state => {
+          const updates: Partial<ChatState> = {
+            widgetChatId: numericChatId,
+            widgetView: numericChatId !== null ? 'chat' : 'list',
+          };
+
+          // Mirror the same unread-count snapshot logic as setCurrentChat so the
+          // "New messages" divider works in the widget for both DMs and channels.
+          if (numericChatId !== null) {
+            let capturedCount = 0;
+            Object.values(state.chatsByProject).forEach(chats => {
+              const found = chats.find(c => Number(c.id) === numericChatId);
+              if (found) capturedCount = found.unread_count ?? 0;
+            });
+
+            const newUnreadCounts = { ...state.unreadCounts };
+            newUnreadCounts[numericChatId] = 0;
+            updates.unreadCounts = newUnreadCounts;
+
+            updates.capturedUnreadCounts = {
+              ...state.capturedUnreadCounts,
+              [numericChatId]: capturedCount,
+            };
+          }
+
+          return updates;
         });
       },
 
@@ -466,6 +521,21 @@ export const useChatStore = create<ChatState>()(
       // Decrement global unread count (called when message is read)
       decrementGlobalUnreadCount: (amount: number = 1) => {
         set(state => ({ globalUnreadCount: Math.max(0, state.globalUnreadCount - amount) }));
+      },
+
+      // Reset all per-user in-memory state so the next login always picks up
+      // fresh counts from the backend. Called by authStore.clearAuth().
+      // This prevents the "preserve local 0" logic in setChatsForProject from
+      // hiding unread counts that arrived while the user was logged out.
+      clearUserState: () => {
+        set({
+          chatsByProject: {},
+          messages: {},
+          unreadCounts: {},
+          capturedUnreadCounts: {},
+          globalUnreadCount: 0,
+          typingUsersByChat: {},
+        });
       },
     }),
     {
