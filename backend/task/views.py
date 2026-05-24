@@ -449,8 +449,10 @@ class TaskViewSet(viewsets.ModelViewSet):
         return full or row["username"]
 
     def perform_create(self, serializer):
-        """Create a new task and notify the assigned owner (if not the creator)."""
+        """Create a new task and notify the assigned owner and approver (if not the creator)."""
         task = serializer.save()
+
+        # Notify owner if assigned and not the creator
         if task.owner_id and task.owner_id != self.request.user.id:
             # Mark invite as pending before notifying
             task.owner_invite_pending = True
@@ -473,6 +475,31 @@ class TaskViewSet(viewsets.ModelViewSet):
                     "new_value": self._user_display_name(task.owner_id),
                 },
             )
+
+        # Notify approver if assigned and not the creator
+        if task.current_approver_id and task.current_approver_id != self.request.user.id:
+            # Mark approver invite as pending before notifying
+            task.approver_invite_pending = True
+            task.save(update_fields=["approver_invite_pending"])
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_ASSIGNED,
+                title=f"Approval requested: {task.summary}",
+                body="You have been assigned as approver for this task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=task_action_url(task.id),
+                metadata={
+                    "task_id": task.id,
+                    "project_id": task.project_id,
+                    "change_type": "task_approver",
+                    "old_value": None,
+                    "new_value": self._user_display_name(task.current_approver_id),
+                },
+            )
+
         return task
 
     def perform_update(self, serializer):
@@ -540,11 +567,32 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         # Skip change notifications for users who have not yet accepted their assignment
         owner_accepted = task.owner_id and not task.owner_invite_pending
+        approver_accepted = task.current_approver_id and not task.approver_invite_pending
 
         # ── Due date changed ──────────────────────────────────────────────────
         if task.due_date != old_due_date and owner_accepted and task.owner_id != actor_id:
             create_notification(
                 recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task deadline updated: {task.summary}",
+                body="The deadline for this task has been changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_due_date",
+                    "old_value": str(old_due_date) if old_due_date else None,
+                    "new_value": str(task.due_date) if task.due_date else None,
+                },
+            )
+
+        # Notify approver of due date change
+        if task.due_date != old_due_date and approver_accepted and task.current_approver_id != actor_id:
+            create_notification(
+                recipient_id=task.current_approver_id,
                 actor_id=actor_id,
                 category=NotificationCategory.TASKS,
                 event_type=NotificationEventType.TASK_OWNER_CHANGED,
@@ -581,10 +629,50 @@ class TaskViewSet(viewsets.ModelViewSet):
                 },
             )
 
+        # Notify approver of summary change
+        if task.summary != old_summary and approver_accepted and task.current_approver_id != actor_id:
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task updated: {task.summary}",
+                body="The title of this task was changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_title",
+                    "old_value": old_summary,
+                    "new_value": task.summary,
+                },
+            )
+
         # ── Priority changed ──────────────────────────────────────────────────
         if task.priority != old_priority and owner_accepted and task.owner_id != actor_id:
             create_notification(
                 recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task priority changed: {task.summary}",
+                body=f"Priority changed from {old_priority} to {task.priority}.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_priority",
+                    "old_value": old_priority,
+                    "new_value": task.priority,
+                },
+            )
+
+        # Notify approver of priority change
+        if task.priority != old_priority and approver_accepted and task.current_approver_id != actor_id:
+            create_notification(
+                recipient_id=task.current_approver_id,
                 actor_id=actor_id,
                 category=NotificationCategory.TASKS,
                 event_type=NotificationEventType.TASK_OWNER_CHANGED,
