@@ -99,6 +99,7 @@ INSTALLED_APPS = [
     'experience_group',
     'customer',
     'tracking',
+    'csm',
 ]
 
 MIDDLEWARE = [
