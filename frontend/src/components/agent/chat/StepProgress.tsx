@@ -3,6 +3,7 @@
 import { Check, Loader2, Circle, Clock } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { StepExecutionStatus } from "@/types/agent"
+import { AgentMessageBoardText } from "./AgentMessageBoardText"
 
 export interface StepProgressItem {
   order: number
@@ -13,6 +14,8 @@ export interface StepProgressItem {
 interface StepProgressProps {
   steps: StepProgressItem[]
   className?: string
+  messageId?: string
+  blockId?: string
 }
 
 const statusConfig: Record<StepExecutionStatus, {
@@ -28,7 +31,7 @@ const statusConfig: Record<StepExecutionStatus, {
   awaiting: { icon: Clock, color: "text-amber-500" },
 }
 
-export function StepProgress({ steps, className }: StepProgressProps) {
+export function StepProgress({ steps, className, messageId, blockId }: StepProgressProps) {
   if (steps.length === 0) return null
 
   return (
@@ -51,7 +54,11 @@ export function StepProgress({ steps, className }: StepProgressProps) {
                 "text-[11px] hidden sm:inline",
                 step.status === "running" ? "text-foreground font-medium" : "text-muted-foreground"
               )}>
-                {step.name}
+                <AgentMessageBoardText
+                  target={step.name}
+                  partId={`${messageId ?? "step"}-progress-${step.order}`}
+                  blockId={blockId}
+                />
               </span>
             </div>
             {idx < steps.length - 1 && (

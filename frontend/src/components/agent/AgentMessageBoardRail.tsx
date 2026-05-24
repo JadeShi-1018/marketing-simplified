@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Loader2, MoreVertical, Pin, Plus, Search } from 'lucide-react';
 import { AgentAPI } from '@/lib/api/agentApi';
 import type { AgentSession } from '@/types/agent';
@@ -17,6 +18,17 @@ const MENU_W = 200;
 const MENU_MAX_H = 320;
 
 type ContextState = { sessionId: string; x: number; y: number };
+
+function clampMenuPosition(x: number, y: number) {
+  const pad = 8;
+  let nx = x;
+  let ny = y;
+  if (nx + MENU_W > window.innerWidth - pad) nx = window.innerWidth - MENU_W - pad;
+  if (ny + MENU_MAX_H > window.innerHeight - pad) ny = window.innerHeight - MENU_MAX_H - pad;
+  if (nx < pad) nx = pad;
+  if (ny < pad) ny = pad;
+  return { x: nx, y: ny };
+}
 
 /** Section labels — regular weight, ~13px, medium gray (sidebar reference). Horizontal inset comes from the list column wrapper. */
 const SECTION_HEADING =
@@ -83,6 +95,7 @@ export function AgentMessageBoardRail({ isVisible, activeSessionId }: AgentMessa
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const ctxMenuRef = useRef<HTMLDivElement>(null);
 
   const loadSessions = useCallback(async () => {
     if (!isVisible) return;
@@ -122,9 +135,14 @@ export function AgentMessageBoardRail({ isVisible, activeSessionId }: AgentMessa
 
   useEffect(() => {
     if (!ctx) return;
-    const onDoc = () => setTimeout(() => setCtx(null), 0);
-    document.addEventListener('click', onDoc);
-    return () => document.removeEventListener('click', onDoc);
+    const onPointerDown = (e: PointerEvent) => {
+      const el = ctxMenuRef.current;
+      if (el && !el.contains(e.target as Node)) {
+        setCtx(null);
+      }
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
   }, [ctx]);
 
   useEffect(() => {
@@ -139,10 +157,7 @@ export function AgentMessageBoardRail({ isVisible, activeSessionId }: AgentMessa
   const openCtx = (e: React.MouseEvent, sessionId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    let x = e.clientX;
-    let y = e.clientY;
-    if (x + MENU_W > window.innerWidth) x = e.clientX - MENU_W;
-    if (y + MENU_MAX_H > window.innerHeight) y = e.clientY - MENU_MAX_H;
+    const { x, y } = clampMenuPosition(e.clientX, e.clientY);
     setCtx({ sessionId, x, y });
   };
 
@@ -348,77 +363,82 @@ export function AgentMessageBoardRail({ isVisible, activeSessionId }: AgentMessa
         )}
       </div>
 
-      {ctx && ctxSession && (
-        <div
-          className="fixed z-[200] min-w-[180px] overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
-          style={{ left: ctx.x, top: ctx.y }}
-          onClick={(e) => e.stopPropagation()}
-          onContextMenu={(e) => e.preventDefault()}
-          role="menu"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-            onClick={() =>
-              void runCtx(() =>
-                patchSession(ctx.sessionId, { is_pinned: !ctxSession.is_pinned }),
-              )
-            }
+      {ctx &&
+        ctxSession &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            ref={ctxMenuRef}
+            className="fixed z-[200] min-w-[180px] overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+            style={{ left: ctx.x, top: ctx.y }}
+            onClick={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+            role="menu"
           >
-            {ctxSession.is_pinned ? 'Unpin' : 'Pin'}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-            onClick={() =>
-              void runCtx(() =>
-                patchSession(ctx.sessionId, {
-                  status: ctxSession.status === 'archived' ? 'active' : 'archived',
-                }),
-              )
-            }
-          >
-            {ctxSession.status === 'archived' ? 'Unarchive' : 'Archive'}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-            onClick={startRename}
-          >
-            Rename…
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-            onClick={() =>
-              void runCtx(async () => {
-                await AgentAPI.updateSession(ctx.sessionId, {
-                  last_read_at: ctxSession.has_unread ? new Date().toISOString() : null,
-                });
-                window.dispatchEvent(new CustomEvent('agent:sessions-changed'));
-              })
-            }
-          >
-            {ctxSession.has_unread ? 'Mark read' : 'Mark unread'}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
-            onClick={() => {
-              setDeleteId(ctx.sessionId);
-              setDeleteOpen(true);
-              closeCtx();
-            }}
-          >
-            Delete…
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              role="menuitem"
+              className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              onClick={() =>
+                void runCtx(() =>
+                  patchSession(ctx.sessionId, { is_pinned: !ctxSession.is_pinned }),
+                )
+              }
+            >
+              {ctxSession.is_pinned ? 'Unpin' : 'Pin'}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              onClick={() =>
+                void runCtx(() =>
+                  patchSession(ctx.sessionId, {
+                    status: ctxSession.status === 'archived' ? 'active' : 'archived',
+                  }),
+                )
+              }
+            >
+              {ctxSession.status === 'archived' ? 'Unarchive' : 'Archive'}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              onClick={startRename}
+            >
+              Rename…
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+              onClick={() =>
+                void runCtx(async () => {
+                  await AgentAPI.updateSession(ctx.sessionId, {
+                    last_read_at: ctxSession.has_unread ? new Date().toISOString() : null,
+                  });
+                  window.dispatchEvent(new CustomEvent('agent:sessions-changed'));
+                })
+              }
+            >
+              {ctxSession.has_unread ? 'Mark read' : 'Mark unread'}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="block w-full px-3 py-2 text-left text-sm text-red-600 hover:bg-red-50"
+              onClick={() => {
+                setDeleteId(ctx.sessionId);
+                setDeleteOpen(true);
+                closeCtx();
+              }}
+            >
+              Delete…
+            </button>
+          </div>,
+          document.body,
+        )}
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
         <DialogContent className="sm:max-w-md">
