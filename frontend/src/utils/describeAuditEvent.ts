@@ -45,12 +45,17 @@ function formatDateTime(isoString: string | null | undefined): string {
 }
 
 /**
- * Helper: Extract string value from record, with fallback
+ * Helper: Extract a human-readable string value from a record.
+ * Returns fallback for missing, empty, or numeric-only values to prevent
+ * raw IDs (e.g. "42", "decision_id: 5") from reaching the UI.
  */
 function getString(obj: Record<string, unknown> | null | undefined, key: string, fallback: string = 'unknown'): string {
   if (!obj || typeof obj !== 'object') return fallback;
   const value = obj[key];
-  return typeof value === 'string' && value ? value : fallback;
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  // Reject purely numeric strings — those are raw IDs, not human-readable labels
+  if (/^\d+$/.test(value.trim())) return fallback;
+  return value;
 }
 
 /**
@@ -159,7 +164,7 @@ export function describeAuditEvent(entry: AuditLogEntry): string {
     }
 
     case 'meeting.task_created': {
-      return `${actor} created a task from this meeting`;
+      return `${actor} converted an action item to a task`;
     }
 
     case 'meeting.task_updated': {

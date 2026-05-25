@@ -65,7 +65,7 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
           <Filter size={14} />
           Filters
           {activeFilterCount > 0 && (
-            <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+            <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-[#3CCED7] text-white text-[10px] font-bold">
               {activeFilterCount}
             </span>
           )}
@@ -93,7 +93,7 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
 
         {/* Event type chips (show up to 3) */}
         {selectedTypes.slice(0, 3).map((t) => (
-          <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">
+          <span key={t} className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-[#3CCED7]/10 text-[#1a9ba3]">
             {AUDIT_EVENT_METADATA[t].label}
             <button onClick={() => toggleEventType(t)} aria-label={`Remove ${t} filter`}>
               <X size={10} />
@@ -132,7 +132,7 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
                             if (el) el.indeterminate = isCategoryIndeterminate(categoryKey);
                           }}
                           onChange={() => toggleCategory(categoryKey)}
-                          className="rounded border-gray-300 dark:border-gray-600 text-blue-600"
+                          className="rounded border-gray-300 dark:border-gray-600 accent-[#3CCED7]"
                         />
                         <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{category.label}</span>
                       </label>
@@ -143,7 +143,7 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
                               type="checkbox"
                               checked={selectedTypes.includes(eventType)}
                               onChange={() => toggleEventType(eventType)}
-                              className="rounded border-gray-300 dark:border-gray-600 text-blue-600"
+                              className="rounded border-gray-300 dark:border-gray-600 accent-[#3CCED7]"
                             />
                             <span className="text-xs text-gray-600 dark:text-gray-400">
                               {AUDIT_EVENT_METADATA[eventType].label}
@@ -170,7 +170,7 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
                   const val = e.target.value;
                   onChange({ ...filters, actor_id: val ? parseInt(val, 10) : undefined });
                 }}
-                className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
               />
             </div>
 
@@ -188,7 +188,7 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
                       const val = e.target.value;
                       onChange({ ...filters, from: val ? `${val}T00:00:00Z` : undefined });
                     }}
-                    className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
                   />
                 </div>
                 <div>
@@ -201,7 +201,7 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
                       const val = e.target.value;
                       onChange({ ...filters, to: val ? `${val}T23:59:59Z` : undefined });
                     }}
-                    className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
                   />
                 </div>
               </div>

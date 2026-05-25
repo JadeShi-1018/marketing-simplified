@@ -31,8 +31,8 @@ describe('AuditLogTimeline', () => {
       makeEntry('2', '2026-05-24T11:00:00Z'),
     ];
     render(<AuditLogTimeline entries={entries} />);
-    // Both actors should appear (Alice × 2)
-    expect(screen.getAllByText('Alice').length).toBe(2);
+    // Both meta lines should contain "Alice · "
+    expect(screen.getAllByText(/Alice · /).length).toBe(2);
   });
 
   it('groups entries under a date divider', () => {

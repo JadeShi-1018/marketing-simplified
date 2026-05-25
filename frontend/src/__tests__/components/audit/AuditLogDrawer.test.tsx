@@ -111,7 +111,7 @@ describe('AuditLogDrawer', () => {
     mockFetch.mockResolvedValue(onePageResponse);
     render(<AuditLogDrawer isOpen onClose={() => {}} projectId={1} meetingId={2} />);
     await waitFor(() => {
-      expect(screen.getByText('Alice')).toBeInTheDocument();
+      expect(screen.getByText(/Alice · /)).toBeInTheDocument();
     });
   });
 
