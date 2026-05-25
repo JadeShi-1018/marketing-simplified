@@ -496,7 +496,11 @@ class MeetingAuditLog(models.Model):
     EVENT_ACTION_ITEM_EDITED = 'meeting.action_item_edited'
     EVENT_ACTION_ITEM_RESOLVED = 'meeting.action_item_resolved'
     EVENT_DECISION_CREATED = 'meeting.decision_created'
+    EVENT_DECISION_UPDATED = 'meeting.decision_updated'
+    EVENT_DECISION_DELETED = 'meeting.decision_deleted'
     EVENT_TASK_CREATED = 'meeting.task_created'
+    EVENT_TASK_UPDATED = 'meeting.task_updated'
+    EVENT_TASK_DELETED = 'meeting.task_deleted'
     EVENT_TEMPLATE_APPLIED = 'meeting.template_applied'
     EVENT_TAGS_CHANGED = 'meeting.tags_changed'
 
@@ -517,7 +521,11 @@ class MeetingAuditLog(models.Model):
         (EVENT_ACTION_ITEM_EDITED, 'Action Item Edited'),
         (EVENT_ACTION_ITEM_RESOLVED, 'Action Item Resolved'),
         (EVENT_DECISION_CREATED, 'Decision Created'),
+        (EVENT_DECISION_UPDATED, 'Decision Updated'),
+        (EVENT_DECISION_DELETED, 'Decision Deleted'),
         (EVENT_TASK_CREATED, 'Task Created'),
+        (EVENT_TASK_UPDATED, 'Task Updated'),
+        (EVENT_TASK_DELETED, 'Task Deleted'),
         (EVENT_TEMPLATE_APPLIED, 'Template Applied'),
         (EVENT_TAGS_CHANGED, 'Tags Changed'),
     ]

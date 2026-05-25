@@ -150,8 +150,24 @@ export function describeAuditEvent(entry: AuditLogEntry): string {
       return `${actor} created a decision`;
     }
 
+    case 'meeting.decision_updated': {
+      return `${actor} updated a decision`;
+    }
+
+    case 'meeting.decision_deleted': {
+      return `${actor} deleted a decision`;
+    }
+
     case 'meeting.task_created': {
-      return `${actor} converted an action item to a task`;
+      return `${actor} created a task from this meeting`;
+    }
+
+    case 'meeting.task_updated': {
+      return `${actor} updated a task`;
+    }
+
+    case 'meeting.task_deleted': {
+      return `${actor} deleted a task`;
     }
 
     // Template and tags events

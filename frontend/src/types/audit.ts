@@ -26,7 +26,11 @@ export type AuditEventType =
   | 'meeting.action_item_edited'
   | 'meeting.action_item_resolved'
   | 'meeting.decision_created'
+  | 'meeting.decision_updated'
+  | 'meeting.decision_deleted'
   | 'meeting.task_created'
+  | 'meeting.task_updated'
+  | 'meeting.task_deleted'
   | 'meeting.template_applied'
   | 'meeting.tags_changed';
 
@@ -118,7 +122,11 @@ export const AUDIT_EVENT_TYPES = {
   ACTION_ITEM_EDITED: 'meeting.action_item_edited' as const,
   ACTION_ITEM_RESOLVED: 'meeting.action_item_resolved' as const,
   DECISION_CREATED: 'meeting.decision_created' as const,
+  DECISION_UPDATED: 'meeting.decision_updated' as const,
+  DECISION_DELETED: 'meeting.decision_deleted' as const,
   TASK_CREATED: 'meeting.task_created' as const,
+  TASK_UPDATED: 'meeting.task_updated' as const,
+  TASK_DELETED: 'meeting.task_deleted' as const,
   TEMPLATE_APPLIED: 'meeting.template_applied' as const,
   TAGS_CHANGED: 'meeting.tags_changed' as const,
 } as const;
@@ -144,7 +152,11 @@ export const AUDIT_EVENTS: AuditEventType[] = [
   AUDIT_EVENT_TYPES.ACTION_ITEM_EDITED,
   AUDIT_EVENT_TYPES.ACTION_ITEM_RESOLVED,
   AUDIT_EVENT_TYPES.DECISION_CREATED,
+  AUDIT_EVENT_TYPES.DECISION_UPDATED,
+  AUDIT_EVENT_TYPES.DECISION_DELETED,
   AUDIT_EVENT_TYPES.TASK_CREATED,
+  AUDIT_EVENT_TYPES.TASK_UPDATED,
+  AUDIT_EVENT_TYPES.TASK_DELETED,
   AUDIT_EVENT_TYPES.TEMPLATE_APPLIED,
   AUDIT_EVENT_TYPES.TAGS_CHANGED,
 ];
@@ -291,10 +303,30 @@ export const AUDIT_EVENT_METADATA: Record<AuditEventType, EventMetadata> = {
     label: 'Decision created',
     description: 'Decision was linked to the meeting',
   },
+  'meeting.decision_updated': {
+    category: 'decision',
+    label: 'Decision updated',
+    description: 'Decision linked to this meeting was modified',
+  },
+  'meeting.decision_deleted': {
+    category: 'decision',
+    label: 'Decision deleted',
+    description: 'Decision linked to this meeting was deleted',
+  },
   'meeting.task_created': {
     category: 'task',
     label: 'Task created',
-    description: 'Action item was converted to a task',
+    description: 'Task was created from this meeting',
+  },
+  'meeting.task_updated': {
+    category: 'task',
+    label: 'Task updated',
+    description: 'Task linked to this meeting was modified',
+  },
+  'meeting.task_deleted': {
+    category: 'task',
+    label: 'Task deleted',
+    description: 'Task linked to this meeting was deleted',
   },
   'meeting.template_applied': {
     category: 'template',

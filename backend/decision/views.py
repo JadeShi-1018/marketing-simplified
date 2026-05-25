@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from core.models import Project, ProjectMember
 from meetings.models import MeetingDecisionOrigin
-from meetings.services import record_decision_created
+from meetings.services import record_decision_created, record_decision_updated, record_decision_deleted
 from .models import CommitRecord, Decision, DecisionEdge, Review, Signal
 from calendars.models import CalendarEvent
 from .permissions import DecisionPermission
@@ -174,6 +174,14 @@ class DecisionDraftViewSet(
             instance.promote_to_draft()
             instance.is_pre_draft = False
             instance.save()
+        from meetings.models import Meeting
+        origin = MeetingDecisionOrigin.objects.filter(decision=instance).select_related('meeting').first()
+        if origin:
+            record_decision_updated(
+                meeting=origin.meeting,
+                decision_id=instance.id,
+                actor=self.request.user,
+            )
 
     def retrieve(self, request, *args, **kwargs):
         decision = self.get_object()
@@ -820,11 +828,18 @@ class DecisionViewSet(
         if decision.is_deleted:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     
+        origin = MeetingDecisionOrigin.objects.filter(decision=decision).select_related('meeting').first()
+
         with transaction.atomic():
-        # Delete all CalendarEvents derived from this Decision before soft-deleting
             CalendarEvent.objects.filter(decision=decision).delete()
-        
             decision.is_deleted = True
             decision.save(update_fields=["is_deleted", "updated_at"])
-    
+
+        if origin:
+            record_decision_deleted(
+                meeting=origin.meeting,
+                decision_id=decision.id,
+                actor=request.user,
+            )
+
         return Response(status=status.HTTP_204_NO_CONTENT)

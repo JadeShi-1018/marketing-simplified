@@ -817,6 +817,34 @@ def record_decision_created(
     )
 
 
+def record_decision_updated(
+    meeting: Meeting,
+    decision_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a decision linked to a meeting is modified."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.decision_updated',
+        context={'decision_id': decision_id},
+    )
+
+
+def record_decision_deleted(
+    meeting: Meeting,
+    decision_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a decision linked to a meeting is deleted."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.decision_deleted',
+        context={'decision_id': decision_id},
+    )
+
+
 def record_task_created(
     meeting: Meeting,
     task_id: int,
@@ -827,6 +855,34 @@ def record_task_created(
         meeting=meeting,
         actor=actor,
         event_type='meeting.task_created',
+        context={'task_id': task_id},
+    )
+
+
+def record_task_updated(
+    meeting: Meeting,
+    task_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a task linked to a meeting is modified."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.task_updated',
+        context={'task_id': task_id},
+    )
+
+
+def record_task_deleted(
+    meeting: Meeting,
+    task_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a task linked to a meeting is deleted."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.task_deleted',
         context={'task_id': task_id},
     )
 

@@ -52,7 +52,6 @@ from meetings.services import (
     apply_meeting_knowledge_filters,
     meeting_list_order_by_fields,
     hub_split_meeting_pks_for_project,
-    transition_meeting_status,
     update_meeting_title,
     update_meeting_objective,
     update_meeting_summary,
@@ -346,16 +345,20 @@ class MeetingViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         to_state = serializer.validated_data["to_state"]
+        old_status = meeting.status
 
         # Step 1: Execute transition (validates state machine rules, saves meeting)
         updated = execute_transition(meeting, to_state)
 
         # Step 2: Record audit entry (after successful transition)
-        transition_meeting_status(
+        from meetings.audit import record_audit_entry
+        record_audit_entry(
             meeting=updated,
-            new_status=to_state,
             actor=request.user,
-            reason='api_request',
+            event_type='meeting.status_changed',
+            before={'status': old_status},
+            after={'status': to_state},
+            context={'reason': 'api_request'},
         )
 
         # Return updated meeting state with available transitions

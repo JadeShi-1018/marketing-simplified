@@ -682,6 +682,16 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         serializer.save()
 
+        from meetings.models import MeetingTaskOrigin
+        from meetings.services import record_task_updated
+        origin = MeetingTaskOrigin.objects.filter(task=task).select_related('meeting').first()
+        if origin:
+            record_task_updated(
+                meeting=origin.meeting,
+                task_id=task.id,
+                actor=self.request.user,
+            )
+
     def pin(self, request, pk=None):
         """Pin a task for the current user."""
         task = self.get_object()
@@ -750,8 +760,21 @@ class TaskViewSet(viewsets.ModelViewSet):
         except (ImportError, DatabaseError):
             pass
 
+        from meetings.models import MeetingTaskOrigin
+        from meetings.services import record_task_deleted
+        origin = MeetingTaskOrigin.objects.filter(task=instance).select_related('meeting').first()
+        meeting = origin.meeting if origin else None
+        task_id = instance.id
+
         # Delete the task itself
         instance.delete()
+
+        if meeting:
+            record_task_deleted(
+                meeting=meeting,
+                task_id=task_id,
+                actor=self.request.user,
+            )
 
     @action(detail=False, methods=['post'], url_path='bulk_action')
     def bulk_action(self, request):
