@@ -1,0 +1,18 @@
+{
+  "run_timestamp": "2026-05-24T05:01:28.195044",
+  "total_tests": 1,
+  "passed_tests": 1,
+  "failed_tests": 0,
+  "benchmarks": [
+    {
+      "test_name": "kpi_query_1000_records",
+      "duration_seconds": 0.118,
+      "target_seconds": 2.0,
+      "passed": true,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-05-24T05:01:28.194831",
+      "result_data": 1000
+    }
+  ]
+}
