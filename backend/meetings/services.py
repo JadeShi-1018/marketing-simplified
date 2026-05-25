@@ -658,10 +658,12 @@ def update_action_item(
     item.is_resolved = is_resolved
     item.save(update_fields=['title', 'description', 'is_resolved'])
 
+    just_resolved = is_resolved and not old_resolved
+
     record_audit_entry(
         meeting=item.meeting,
         actor=actor,
-        event_type='meeting.action_item_edited',
+        event_type='meeting.action_item_resolved' if just_resolved else 'meeting.action_item_edited',
         before={
             'title': old_title,
             'is_resolved': old_resolved,
