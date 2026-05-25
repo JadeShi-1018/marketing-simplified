@@ -457,6 +457,7 @@ class TaskSerializer(serializers.ModelSerializer):
             if not create_as_draft:
                 try:
                     task.submit()
+                    task._suppress_status_notification = True
                     task.save()
                     logger.debug(
                         f"DEBUG: Task {task.id} status changed from DRAFT to SUBMITTED"

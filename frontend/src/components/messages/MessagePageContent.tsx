@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
 import { useChatData } from '@/hooks/useChatData';
-import { useChatSocket } from '@/hooks/useChatSocket';
 import { useProjectMemberRoles } from '@/hooks/useProjectMemberRoles';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
 import { useProjectStore } from '@/lib/projectStore';
@@ -31,9 +30,6 @@ export default function MessagePageContent() {
   const [isConversationDrawerOpen, setIsConversationDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Ensure userId is a number for consistent comparison in addMessage
-  const userId = user?.id ? Number(user.id) : null;
-  
   // Chat store state
   const currentChatId = useChatStore(state => state.currentChatId);
   const setCurrentChat = useChatStore(state => state.setCurrentChat);
@@ -53,23 +49,22 @@ export default function MessagePageContent() {
     autoFetch: false,
   });
   
-  // Connect to WebSocket for real-time updates
-  const { connected } = useChatSocket(userId, {
-    enabled: true,
-    onMessage: (message) => {
-      console.log('[MessagePage] New message received:', message);
-    },
-    onOpen: () => {
-      console.log('[MessagePage] WebSocket connected');
-    },
-    onClose: () => {
-      console.warn('[MessagePage] WebSocket disconnected');
-    },
-  });
-  
-  // Fetch chats when project changes or WebSocket connects
-  // Combined into one effect to prevent duplicate fetches
+  // Real-time updates are handled by useNotificationSSE (mounted in ChatWidget).
+  // When a chat SSE event arrives, chatStore.lastChatActivity is bumped and the
+  // widget's fetchChats runs.  Here we only need to fetch on project change.
+  const lastChatActivity = useChatStore(state => state.lastChatActivity);
   const hasFetchedRef = useRef<string | null>(null);
+
+  // Re-fetch the chat list when the project changes or an SSE chat event arrives.
+  useEffect(() => {
+    if (selectedProjectId) {
+      const fetchKey = `${selectedProjectId}-${lastChatActivity}`;
+      if (hasFetchedRef.current !== fetchKey) {
+        hasFetchedRef.current = fetchKey;
+        fetchChats();
+      }
+    }
+  }, [selectedProjectId, lastChatActivity, fetchChats]);
 
   useEffect(() => {
     const projectIdParam = searchParams.get('projectId');
@@ -125,17 +120,6 @@ export default function MessagePageContent() {
     [router, searchParams]
   );
   
-  useEffect(() => {
-    if (selectedProjectId) {
-      // Only fetch if we haven't fetched for this project yet, or if WebSocket just connected
-      const fetchKey = `${selectedProjectId}-${connected}`;
-      if (hasFetchedRef.current !== fetchKey) {
-        hasFetchedRef.current = fetchKey;
-        console.log('[MessagePage] Fetching chats for project:', selectedProjectId, 'connected:', connected);
-        fetchChats();
-      }
-    }
-  }, [selectedProjectId, connected, fetchChats]);
   
   // Get current chat from store
   const currentChat = chats.find(chat => chat.id === currentChatId);

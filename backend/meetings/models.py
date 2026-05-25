@@ -158,6 +158,10 @@ class Meeting(TimeStampedModel):
         default=False,
         help_text="Soft-delete flag (added in migration 0002).",
     )
+    minutes_published = models.BooleanField(
+        default=False,
+        help_text="Whether the meeting minutes have been published to all participants.",
+    )
 
     objects = MeetingManager()
 
@@ -222,6 +226,10 @@ class ParticipantLink(models.Model):
         related_name="meeting_participations",
     )
     role = models.CharField(max_length=100, blank=True, null=True)
+    is_accepted = models.BooleanField(
+        default=False,
+        help_text="True once the invitee explicitly accepts; False while the invite is pending.",
+    )
 
     class Meta:
         unique_together = ("meeting", "user")

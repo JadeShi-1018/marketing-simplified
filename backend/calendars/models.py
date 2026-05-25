@@ -141,10 +141,13 @@ class Calendar(TimeStampedModel):
     def clean(self):
         super().clean()
 
-        # organization must match owner.organization
-        owner_org_id = _user_org_id(self.owner)
-        if owner_org_id and self.organization_id and owner_org_id != self.organization_id:
-            raise ValidationError({"organization": "Calendar.organization must match owner.organization"})
+        # Personal calendars: owner must belong to the same organization.
+        # Project-bound calendars use project.organization; the owner may be a
+        # cross-org project member while still matching project.owner.
+        if not self.project_id:
+            owner_org_id = _user_org_id(self.owner)
+            if owner_org_id and self.organization_id and owner_org_id != self.organization_id:
+                raise ValidationError({"organization": "Calendar.organization must match owner.organization"})
 
         if self.project_id:
             if self.project.organization_id != self.organization_id:

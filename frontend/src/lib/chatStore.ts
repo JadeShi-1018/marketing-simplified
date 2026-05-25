@@ -432,6 +432,10 @@ export const useChatStore = create<ChatState>()(
       decrementGlobalUnreadCount: (amount: number = 1) => {
         set(state => ({ globalUnreadCount: Math.max(0, state.globalUnreadCount - amount) }));
       },
+
+      // ── SSE-driven chat activity signal ──────────────────────────────
+      lastChatActivity: 0,
+      triggerChatActivity: () => set({ lastChatActivity: Date.now() }),
     }),
     {
       name: 'chat-storage',

@@ -26,6 +26,9 @@ from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from core.models import ProjectMember, Project
 from core.utils.project import get_user_active_project
+from notifications.models import NotificationCategory, NotificationEventType
+from notifications.services import create_notification
+from notifications.action_urls import task_action_url
 import json
 import traceback
 
@@ -668,19 +671,265 @@ class TaskViewSet(viewsets.ModelViewSet):
         self.check_object_permissions(self.request, task)
         return task
     
+    # ── internal helper ───────────────────────────────────────────────────────
+    @staticmethod
+    def _user_display_name(user_id) -> str | None:
+        """Return 'First Last' (or username) for a user id, or None if not found."""
+        if user_id is None:
+            return None
+        User = get_user_model()
+        row = User.objects.filter(pk=user_id).values(
+            "username", "first_name", "last_name"
+        ).first()
+        if not row:
+            return None
+        full = f"{row['first_name']} {row['last_name']}".strip()
+        return full or row["username"]
+
     def perform_create(self, serializer):
-        """Create a new task"""
-        return serializer.save()
-    
+        """Create a new task and notify the assigned owner and approver (if not the creator)."""
+        task = serializer.save()
+
+        # Notify owner if assigned and not the creator
+        if task.owner_id and task.owner_id != self.request.user.id:
+            # Mark invite as pending before notifying
+            task.owner_invite_pending = True
+            task.save(update_fields=["owner_invite_pending"])
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_ASSIGNED,
+                title=f"Task assigned: {task.summary}",
+                body="You have been assigned to a new task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=task_action_url(task.id),
+                metadata={
+                    "task_id": task.id,
+                    "project_id": task.project_id,
+                    "change_type": "task_assignee",
+                    "old_value": None,
+                    "new_value": self._user_display_name(task.owner_id),
+                },
+            )
+
+        # Notify approver if assigned and not the creator
+        if task.current_approver_id and task.current_approver_id != self.request.user.id:
+            # Mark approver invite as pending before notifying
+            task.approver_invite_pending = True
+            task.save(update_fields=["approver_invite_pending"])
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=self.request.user.id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_ASSIGNED,
+                title=f"Approval requested: {task.summary}",
+                body="You have been assigned as approver for this task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=task_action_url(task.id),
+                metadata={
+                    "task_id": task.id,
+                    "project_id": task.project_id,
+                    "change_type": "task_approver",
+                    "old_value": None,
+                    "new_value": self._user_display_name(task.current_approver_id),
+                },
+            )
+
+        return task
+
     def perform_update(self, serializer):
-        """Update a task"""
+        """Update a task and fire targeted notifications for key field changes."""
         task = serializer.instance
         if not user_can_edit_task(self.request.user, task):
             raise PermissionDenied(
                 'Only the task owner, current approver, or unassigned draft creator can edit this task.'
             )
 
+        # Snapshot all watched fields BEFORE saving.
+        old_owner_id   = task.owner_id
+        old_approver_id = task.current_approver_id
+        old_due_date   = task.due_date
+        old_summary    = task.summary
+        old_priority   = task.priority
+
         serializer.save()
+
+        actor_id   = self.request.user.id
+        project_id = task.project_id
+        action_url = task_action_url(task.id)
+        task_meta  = {"task_id": task.id, "project_id": project_id}
+
+        # ── Owner reassigned ──────────────────────────────────────────────────
+        if task.owner_id and task.owner_id != old_owner_id:
+            # New owner must accept before they receive further change notifications
+            task.owner_invite_pending = True
+            task.save(update_fields=["owner_invite_pending"])
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task reassigned: {task.summary}",
+                body="You are now the owner of this task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_assignee",
+                    "old_value": self._user_display_name(old_owner_id),
+                    "new_value": self._user_display_name(task.owner_id),
+                },
+            )
+
+        # ── Approver changed ──────────────────────────────────────────────────
+        if task.current_approver_id and task.current_approver_id != old_approver_id:
+            task.approver_invite_pending = True
+            task.save(update_fields=["approver_invite_pending"])
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_ASSIGNED,
+                title=f"Approval requested: {task.summary}",
+                body="You are the current approver for this task.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_approver",
+                    "old_value": self._user_display_name(old_approver_id),
+                    "new_value": self._user_display_name(task.current_approver_id),
+                },
+            )
+
+        # Skip change notifications for users who have not yet accepted their assignment
+        owner_accepted = task.owner_id and not task.owner_invite_pending
+        approver_accepted = task.current_approver_id and not task.approver_invite_pending
+
+        # ── Due date changed ──────────────────────────────────────────────────
+        if task.due_date != old_due_date and owner_accepted and task.owner_id != actor_id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task deadline updated: {task.summary}",
+                body="The deadline for this task has been changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_due_date",
+                    "old_value": str(old_due_date) if old_due_date else None,
+                    "new_value": str(task.due_date) if task.due_date else None,
+                },
+            )
+
+        # Notify approver of due date change
+        if task.due_date != old_due_date and approver_accepted and task.current_approver_id != actor_id:
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task deadline updated: {task.summary}",
+                body="The deadline for this task has been changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_due_date",
+                    "old_value": str(old_due_date) if old_due_date else None,
+                    "new_value": str(task.due_date) if task.due_date else None,
+                },
+            )
+
+        # ── Title / summary changed ───────────────────────────────────────────
+        if task.summary != old_summary and owner_accepted and task.owner_id != actor_id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task updated: {task.summary}",
+                body="The title of this task was changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_title",
+                    "old_value": old_summary,
+                    "new_value": task.summary,
+                },
+            )
+
+        # Notify approver of summary change
+        if task.summary != old_summary and approver_accepted and task.current_approver_id != actor_id:
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task updated: {task.summary}",
+                body="The title of this task was changed.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_title",
+                    "old_value": old_summary,
+                    "new_value": task.summary,
+                },
+            )
+
+        # ── Priority changed ──────────────────────────────────────────────────
+        if task.priority != old_priority and owner_accepted and task.owner_id != actor_id:
+            create_notification(
+                recipient_id=task.owner_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task priority changed: {task.summary}",
+                body=f"Priority changed from {old_priority} to {task.priority}.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_priority",
+                    "old_value": old_priority,
+                    "new_value": task.priority,
+                },
+            )
+
+        # Notify approver of priority change
+        if task.priority != old_priority and approver_accepted and task.current_approver_id != actor_id:
+            create_notification(
+                recipient_id=task.current_approver_id,
+                actor_id=actor_id,
+                category=NotificationCategory.TASKS,
+                event_type=NotificationEventType.TASK_OWNER_CHANGED,
+                title=f"Task priority changed: {task.summary}",
+                body=f"Priority changed from {old_priority} to {task.priority}.",
+                related_object_type="task",
+                related_object_id=str(task.id),
+                action_url=action_url,
+                metadata={
+                    **task_meta,
+                    "change_type": "task_priority",
+                    "old_value": old_priority,
+                    "new_value": task.priority,
+                },
+            )
 
     def pin(self, request, pk=None):
         """Pin a task for the current user."""
@@ -700,6 +949,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='field-history')
     def field_history(self, request, pk=None):
+        """Get field change history for a task."""
         task = self.get_object()
         qs = TaskFieldHistory.objects.filter(task=task).select_related('changed_by').order_by('-changed_at')
         try:
@@ -894,21 +1144,33 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from budget_approval.services import BudgetRequestService
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
-                        if is_approved:
-                            # Advance up to APPROVED only — pool deduction happens at task LOCKED.
-                            # submitted_at is set at task submission time, so we skip DRAFT→SUBMITTED here.
-                            if br.status == BudgetRequestStatus.SUBMITTED:
-                                br.send_for_review()
-                                br.save()
-                            if br.status == BudgetRequestStatus.UNDER_REVIEW:
-                                br.approve()
-                                br.save()
-                        else:
-                            if br.status in (BudgetRequestStatus.SUBMITTED, BudgetRequestStatus.UNDER_REVIEW):
-                                br.reject()
-                                br.save()
+                        next_approver = None
+                        if is_approved and task.status == Task.Status.UNDER_REVIEW:
+                            next_approver = task.current_approver
+                        if br.status == BudgetRequestStatus.SUBMITTED:
+                            br = BudgetRequestService.start_review(br)
+                        if br.status == BudgetRequestStatus.UNDER_REVIEW:
+                            br = BudgetRequestService.process_approval(
+                                budget_request=br,
+                                approver=request.user,
+                                is_approved=is_approved,
+                                comment=comment,
+                                next_approver=next_approver,
+                            )
+                        elif (
+                            not is_approved
+                            and br.status == BudgetRequestStatus.SUBMITTED
+                        ):
+                            br = BudgetRequestService.start_review(br)
+                            br = BudgetRequestService.process_approval(
+                                budget_request=br,
+                                approver=request.user,
+                                is_approved=False,
+                                comment=comment,
+                            )
                 except Exception as e:
                     logger.error('Budget sync failed on task %s approval: %s', task.id, e, exc_info=True)
 
@@ -963,10 +1225,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest
+                    from budget_approval.services import BudgetRequestService
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
-                        br.cancel()
-                        br.save()
+                        BudgetRequestService.cancel_budget_request(
+                            br,
+                            actor_id=request.user.id,
+                        )
                 except Exception as e:
                     logger.error('Budget cancel sync failed on task %s: %s', task.id, e, exc_info=True)
 
@@ -1148,11 +1413,16 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from budget_approval import notifications as budget_notifications
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest):
                         if br.status == BudgetRequestStatus.DRAFT:
                             br.submit()
                             br.save()
+                            budget_notifications.notify_budget_submitted(
+                                br,
+                                actor_id=request.user.id,
+                            )
                         elif br.status == BudgetRequestStatus.SUBMITTED:
                             br.submitted_at = timezone.now()
                             br.save(update_fields=['submitted_at'])
@@ -1272,10 +1542,13 @@ class TaskViewSet(viewsets.ModelViewSet):
             if task.type == 'budget':
                 try:
                     from budget_approval.models import BudgetRequest, BudgetRequestStatus
+                    from budget_approval.services import BudgetRequestService
                     br = task.linked_object or task.budget_requests.first()
                     if isinstance(br, BudgetRequest) and br.status == BudgetRequestStatus.APPROVED:
-                        br.lock()
-                        br.save()
+                        BudgetRequestService.lock_budget_request(
+                            br,
+                            actor_id=request.user.id,
+                        )
                 except Exception as e:
                     logger.error('Budget sync failed on task %s lock: %s', task.id, e, exc_info=True)
 
@@ -1557,13 +1830,46 @@ class TaskCommentListView(generics.ListCreateAPIView):
         return TaskComment.objects.filter(task_id=task_id)
 
     def perform_create(self, serializer):
+        import re  # noqa: PLC0415
+
         task_id = self.kwargs.get('task_id')
         task = get_object_or_404(Task, pk=task_id)
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to comment on this task.')
 
-        serializer.save(task=task, user=self.request.user)
+        comment = serializer.save(task=task, user=self.request.user)
+
+        # Parse @username mentions and notify each mentioned user once
+        body = comment.body or ""
+        mentioned_usernames = set(re.findall(r'@(\w+)', body))
+        if mentioned_usernames:
+            User = get_user_model()
+            for username in mentioned_usernames:
+                try:
+                    mentioned_user = User.objects.get(username=username)
+                except User.DoesNotExist:
+                    continue
+                if mentioned_user.id == self.request.user.id:
+                    continue
+                create_notification(
+                    recipient_id=mentioned_user.id,
+                    actor_id=self.request.user.id,
+                    category=NotificationCategory.TASKS,
+                    event_type=NotificationEventType.TASK_COMMENT_MENTION,
+                    title=f"You were mentioned in a comment on: {task.summary}",
+                    body=body[:200] + ("…" if len(body) > 200 else ""),
+                    related_object_type="task",
+                    related_object_id=str(task.id),
+                    action_url=task_action_url(task.id),
+                    metadata={
+                        "task_id": task.id,
+                        "project_id": task.project_id,
+                        "comment_id": comment.id,
+                        "comment_excerpt": body[:300],
+                        "change_type": "comment_mention",
+                    },
+                )
 
 
 class TaskAttachmentListView(generics.ListCreateAPIView):
