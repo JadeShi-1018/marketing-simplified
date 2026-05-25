@@ -3,16 +3,17 @@
 import { useState } from 'react';
 import { Filter, X } from 'lucide-react';
 import type { AuditEventType, AuditLogFilters } from '@/types/audit';
-import { AUDIT_EVENT_CATEGORIES, AUDIT_EVENT_METADATA, AUDIT_EVENTS, getEventTypesForCategory } from '@/types/audit';
+import { AUDIT_EVENT_CATEGORIES, AUDIT_EVENT_METADATA, getEventTypesForCategory } from '@/types/audit';
 
 interface AuditLogFilterBarProps {
   filters: AuditLogFilters;
   onChange: (filters: AuditLogFilters) => void;
+  actors?: { id: number; display_name: string }[];
 }
 
 const CATEGORY_KEYS = Object.keys(AUDIT_EVENT_CATEGORIES);
 
-export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterBarProps) {
+export default function AuditLogFilterBar({ filters, onChange, actors = [] }: AuditLogFilterBarProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const selectedTypes = filters.event_type ?? [];
@@ -71,10 +72,10 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
           )}
         </button>
 
-        {/* Actor ID chip */}
+        {/* Actor chip */}
         {filters.actor_id && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300">
-            Actor: {filters.actor_id}
+            {actors.find((a) => a.id === filters.actor_id)?.display_name ?? `User #${filters.actor_id}`}
             <button onClick={() => onChange({ ...filters, actor_id: undefined })} aria-label="Remove actor filter">
               <X size={10} />
             </button>
@@ -157,21 +158,28 @@ export default function AuditLogFilterBar({ filters, onChange }: AuditLogFilterB
               </div>
             </div>
 
-            {/* Actor ID */}
+            {/* Actor */}
             <div>
               <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">
-                Actor ID
+                Actor
               </label>
-              <input
-                type="number"
-                placeholder="e.g. 42"
-                value={filters.actor_id ?? ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  onChange({ ...filters, actor_id: val ? parseInt(val, 10) : undefined });
-                }}
-                className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
-              />
+              {actors.length === 0 ? (
+                <p className="text-xs text-gray-400 dark:text-gray-500 italic">No actors in log yet</p>
+              ) : (
+                <select
+                  value={filters.actor_id ?? ''}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    onChange({ ...filters, actor_id: val ? parseInt(val, 10) : undefined });
+                  }}
+                  className="w-full px-3 py-1.5 text-sm rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
+                >
+                  <option value="">All actors</option>
+                  {actors.map((a) => (
+                    <option key={a.id} value={a.id}>{a.display_name}</option>
+                  ))}
+                </select>
+              )}
             </div>
 
             {/* Date range */}

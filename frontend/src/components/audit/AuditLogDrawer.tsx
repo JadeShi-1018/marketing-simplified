@@ -93,7 +93,17 @@ export default function AuditLogDrawer({ isOpen, onClose, projectId, meetingId }
 
         {/* Filters */}
         <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700">
-          <AuditLogFilterBar filters={filters} onChange={handleFiltersChange} />
+          <AuditLogFilterBar
+            filters={filters}
+            onChange={handleFiltersChange}
+            actors={Array.from(
+              new Map(
+                entries
+                  .filter((e) => e.actor !== null)
+                  .map((e) => [e.actor!.id, { id: e.actor!.id, display_name: e.actor!.display_name }])
+              ).values()
+            )}
+          />
         </div>
 
         {/* Timeline */}

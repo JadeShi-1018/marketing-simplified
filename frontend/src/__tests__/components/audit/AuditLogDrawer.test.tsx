@@ -142,17 +142,17 @@ describe('AuditLogDrawer', () => {
     render(<AuditLogDrawer isOpen onClose={() => {}} projectId={1} meetingId={2} />);
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
 
-    // Open the filter dropdown first
+    // Open the filter dropdown and select an event type
     fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
-
-    // Wait for the dropdown to appear, then change actor input
-    const actorInput = await screen.findByPlaceholderText(/e\.g\. 42/i);
-    fireEvent.change(actorInput, { target: { value: '3' } });
+    const checkbox = await screen.findByLabelText('Title changed');
+    fireEvent.click(checkbox);
 
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalledTimes(2);
     });
-    expect(mockFetch).toHaveBeenLastCalledWith(1, 2, expect.objectContaining({ actor_id: 3 }), 1);
+    expect(mockFetch).toHaveBeenLastCalledWith(
+      1, 2, expect.objectContaining({ event_type: ['meeting.title_changed'] }), 1,
+    );
   });
 
   it('shows an error message when the API call fails', async () => {

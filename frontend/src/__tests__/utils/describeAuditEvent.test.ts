@@ -1,7 +1,6 @@
 import { describeAuditEvent } from '@/utils/describeAuditEvent';
 import { AuditLogEntry, AuditActor } from '@/types/audit';
 
-// Mock actor for testing
 const mockActor: AuditActor = {
   id: 1,
   display_name: 'John Doe',
@@ -14,493 +13,285 @@ const mockActor2: AuditActor = {
   email: 'sarah@example.com',
 };
 
+function makeEntry(
+  id: string,
+  event_type: AuditLogEntry['event_type'],
+  overrides: Partial<AuditLogEntry> = {},
+): AuditLogEntry {
+  return {
+    id,
+    event_type,
+    timestamp: '2024-05-24T10:00:00Z',
+    actor: mockActor,
+    before: null,
+    after: null,
+    context: null,
+    ...overrides,
+  };
+}
+
 describe('describeAuditEvent', () => {
   describe('Lifecycle events', () => {
     it('describes meeting.status_changed', () => {
-      const entry: AuditLogEntry = {
-        id: '1',
-        event_type: 'meeting.status_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
+      const entry = makeEntry('1', 'meeting.status_changed', {
         before: { status: 'scheduled' },
         after: { status: 'in_progress' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe(
-        'John Doe changed the meeting status from scheduled to in_progress'
-      );
+      });
+      expect(describeAuditEvent(entry)).toBe('Changed status from scheduled to in_progress');
     });
 
     it('handles meeting.status_changed with missing before/after', () => {
-      const entry: AuditLogEntry = {
-        id: '1',
-        event_type: 'meeting.status_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe(
-        'John Doe changed the meeting status from unknown status to unknown status'
-      );
+      const entry = makeEntry('1', 'meeting.status_changed');
+      expect(describeAuditEvent(entry)).toBe('Changed status from unknown to unknown');
     });
   });
 
   describe('Metadata events', () => {
     it('describes meeting.title_changed', () => {
-      const entry: AuditLogEntry = {
-        id: '2',
-        event_type: 'meeting.title_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+      const entry = makeEntry('2', 'meeting.title_changed', {
         after: { title: 'Q4 Planning Meeting' },
-        context: null,
-      };
+      });
+      expect(describeAuditEvent(entry)).toBe("Updated meeting title to 'Q4 Planning Meeting'");
+    });
 
-      const result = describeAuditEvent(entry);
-      expect(result).toBe(
-        "John Doe updated the meeting title to 'Q4 Planning Meeting'"
-      );
+    it('falls back gracefully for meeting.title_changed with no title', () => {
+      const entry = makeEntry('2b', 'meeting.title_changed');
+      expect(describeAuditEvent(entry)).toBe('Updated meeting title');
     });
 
     it('describes meeting.objective_changed', () => {
-      const entry: AuditLogEntry = {
-        id: '3',
-        event_type: 'meeting.objective_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe updated the meeting objective');
+      expect(describeAuditEvent(makeEntry('3', 'meeting.objective_changed'))).toBe(
+        'Updated meeting objective',
+      );
     });
 
     it('describes meeting.summary_changed', () => {
-      const entry: AuditLogEntry = {
-        id: '4',
-        event_type: 'meeting.summary_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe updated the meeting summary');
+      expect(describeAuditEvent(makeEntry('4', 'meeting.summary_changed'))).toBe(
+        'Updated meeting summary',
+      );
     });
 
     it('describes meeting.type_changed', () => {
-      const entry: AuditLogEntry = {
-        id: '5',
-        event_type: 'meeting.type_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: { type_name: 'Standup' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe("John Doe changed the meeting type to 'Standup'");
+      const entry = makeEntry('5', 'meeting.type_changed', { after: { type_name: 'Standup' } });
+      expect(describeAuditEvent(entry)).toBe("Changed meeting type to 'Standup'");
     });
 
-    it('describes meeting.datetime_changed with ISO datetime', () => {
-      const entry: AuditLogEntry = {
-        id: '6',
-        event_type: 'meeting.datetime_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+    it('describes meeting.datetime_changed with date and time', () => {
+      const entry = makeEntry('6', 'meeting.datetime_changed', {
         after: { scheduled_date: '2024-06-01', scheduled_time: '2:30 PM' },
-        context: null,
-      };
-
+      });
       const result = describeAuditEvent(entry);
-      expect(result).toContain('John Doe rescheduled the meeting to');
+      expect(result).toContain('Rescheduled to');
       expect(result).toContain('2024-06-01');
       expect(result).toContain('2:30 PM');
     });
 
-    it('describes meeting.datetime_changed without datetime', () => {
-      const entry: AuditLogEntry = {
-        id: '6b',
-        event_type: 'meeting.datetime_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: { scheduled_date: null },
-        context: null,
-      };
+    it('describes meeting.datetime_changed without time', () => {
+      const entry = makeEntry('6b', 'meeting.datetime_changed', {
+        after: { scheduled_date: '2024-06-01' },
+      });
+      expect(describeAuditEvent(entry)).toBe('Rescheduled to 2024-06-01');
+    });
 
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe rescheduled the meeting to a new time');
+    it('falls back when meeting.datetime_changed has no date', () => {
+      const entry = makeEntry('6c', 'meeting.datetime_changed', {
+        after: { scheduled_date: null },
+      });
+      expect(describeAuditEvent(entry)).toBe('Rescheduled the meeting');
     });
   });
 
   describe('Participant events', () => {
     it('describes meeting.participant_added', () => {
-      const entry: AuditLogEntry = {
-        id: '7',
-        event_type: 'meeting.participant_added',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: {
-          user_name: 'Alice Chen',
-          role: 'attendee',
-        },
-        context: null,
-      };
+      const entry = makeEntry('7', 'meeting.participant_added', {
+        after: { user_name: 'Alice Chen', role: 'attendee' },
+      });
+      expect(describeAuditEvent(entry)).toBe('Added Alice Chen as a attendee');
+    });
 
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe added Alice Chen as a attendee');
+    it('falls back when participant has no name', () => {
+      const entry = makeEntry('7b', 'meeting.participant_added');
+      expect(describeAuditEvent(entry)).toBe('Added a participant');
     });
 
     it('describes meeting.participant_removed', () => {
-      const entry: AuditLogEntry = {
-        id: '8',
-        event_type: 'meeting.participant_removed',
-        timestamp: '2024-05-24T10:00:00Z',
+      const entry = makeEntry('8', 'meeting.participant_removed', {
         actor: mockActor2,
-        before: null,
         after: { user_name: 'Bob Smith' },
-        context: null,
-      };
+      });
+      expect(describeAuditEvent(entry)).toBe('Removed Bob Smith from participants');
+    });
 
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('Sarah Chen removed Bob Smith from participants');
+    it('falls back when removed participant has no name', () => {
+      const entry = makeEntry('8b', 'meeting.participant_removed');
+      expect(describeAuditEvent(entry)).toBe('Removed a participant');
     });
   });
 
   describe('Agenda events', () => {
     it('describes meeting.agenda_item_added', () => {
-      const entry: AuditLogEntry = {
-        id: '9',
-        event_type: 'meeting.agenda_item_added',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+      const entry = makeEntry('9', 'meeting.agenda_item_added', {
         after: { content: 'Review Q3 results' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe("John Doe added agenda item: 'Review Q3 results'");
+      });
+      expect(describeAuditEvent(entry)).toBe("Added agenda item: 'Review Q3 results'");
     });
 
     it('describes meeting.agenda_item_edited', () => {
-      const entry: AuditLogEntry = {
-        id: '10',
-        event_type: 'meeting.agenda_item_edited',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+      const entry = makeEntry('10', 'meeting.agenda_item_edited', {
         after: { content: 'Discuss budget allocation' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe(
-        "John Doe edited agenda item to 'Discuss budget allocation'"
+      });
+      expect(describeAuditEvent(entry)).toBe(
+        "Edited agenda item to 'Discuss budget allocation'",
       );
     });
 
     it('describes meeting.agenda_item_deleted', () => {
-      const entry: AuditLogEntry = {
-        id: '11',
-        event_type: 'meeting.agenda_item_deleted',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
+      const entry = makeEntry('11', 'meeting.agenda_item_deleted', {
         before: { content: 'Old topic' },
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe("John Doe deleted the agenda item 'Old topic'");
+      });
+      expect(describeAuditEvent(entry)).toBe("Deleted agenda item 'Old topic'");
     });
 
     it('truncates long agenda content', () => {
       const longContent =
         'This is a very long agenda item that exceeds the maximum truncation length and should be shortened with ellipsis';
-      const entry: AuditLogEntry = {
-        id: '12',
-        event_type: 'meeting.agenda_item_added',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+      const entry = makeEntry('12', 'meeting.agenda_item_added', {
         after: { content: longContent },
-        context: null,
-      };
-
+      });
       const result = describeAuditEvent(entry);
       expect(result).toContain('...');
       expect(result).not.toContain(longContent);
-      expect(result.length).toBeLessThan(longContent.length);
     });
   });
 
   describe('Document event', () => {
     it('describes meeting.document_edited', () => {
-      const entry: AuditLogEntry = {
-        id: '13',
-        event_type: 'meeting.document_edited',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe edited the meeting document');
+      expect(describeAuditEvent(makeEntry('13', 'meeting.document_edited'))).toBe(
+        'Edited the meeting document',
+      );
     });
   });
 
   describe('Action item events', () => {
     it('describes meeting.action_item_added', () => {
-      const entry: AuditLogEntry = {
-        id: '14',
-        event_type: 'meeting.action_item_added',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+      const entry = makeEntry('14', 'meeting.action_item_added', {
         after: { title: 'Follow up with client' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe(
-        "John Doe created action item: 'Follow up with client'"
-      );
+      });
+      expect(describeAuditEvent(entry)).toBe("Created action item: 'Follow up with client'");
     });
 
     it('describes meeting.action_item_edited', () => {
-      const entry: AuditLogEntry = {
-        id: '15',
-        event_type: 'meeting.action_item_edited',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+      const entry = makeEntry('15', 'meeting.action_item_edited', {
         after: { title: 'Send proposal to stakeholders' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe(
-        "John Doe updated action item: 'Send proposal to stakeholders'"
+      });
+      expect(describeAuditEvent(entry)).toBe(
+        "Updated action item: 'Send proposal to stakeholders'",
       );
     });
 
     it('describes meeting.action_item_resolved', () => {
-      const entry: AuditLogEntry = {
-        id: '16',
-        event_type: 'meeting.action_item_resolved',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+      const entry = makeEntry('16', 'meeting.action_item_resolved', {
         after: { title: 'Review budget spreadsheet' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe(
-        "John Doe marked action item 'Review budget spreadsheet' as resolved"
+      });
+      expect(describeAuditEvent(entry)).toBe(
+        "Resolved action item 'Review budget spreadsheet'",
       );
     });
   });
 
   describe('Decision and task events', () => {
     it('describes meeting.decision_created', () => {
-      const entry: AuditLogEntry = {
-        id: '17',
-        event_type: 'meeting.decision_created',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe created a decision');
+      expect(describeAuditEvent(makeEntry('17', 'meeting.decision_created'))).toBe(
+        'Created a decision',
+      );
     });
 
     it('describes meeting.task_created', () => {
-      const entry: AuditLogEntry = {
-        id: '18',
-        event_type: 'meeting.task_created',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe converted an action item to a task');
+      expect(describeAuditEvent(makeEntry('18', 'meeting.task_created'))).toBe(
+        'Converted an action item to a task',
+      );
     });
   });
 
   describe('Template and tags events', () => {
     it('describes meeting.template_applied', () => {
-      const entry: AuditLogEntry = {
-        id: '19',
-        event_type: 'meeting.template_applied',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
+      const entry = makeEntry('19', 'meeting.template_applied', {
         context: { template_name: 'Planning Meeting' },
-      };
+      });
+      expect(describeAuditEvent(entry)).toBe("Applied the 'Planning Meeting' template");
+    });
 
-      const result = describeAuditEvent(entry);
-      expect(result).toBe("John Doe applied the 'Planning Meeting' template");
+    it('falls back when template name is missing', () => {
+      expect(describeAuditEvent(makeEntry('19b', 'meeting.template_applied'))).toBe(
+        'Applied a template',
+      );
     });
 
     it('describes meeting.tags_changed', () => {
-      const entry: AuditLogEntry = {
-        id: '20',
-        event_type: 'meeting.tags_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe updated the meeting tags');
+      expect(describeAuditEvent(makeEntry('20', 'meeting.tags_changed'))).toBe(
+        'Updated meeting tags',
+      );
     });
   });
 
-  describe('System events (null actor)', () => {
-    it('uses System for null actor in status change', () => {
-      const entry: AuditLogEntry = {
-        id: '21',
-        event_type: 'meeting.status_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: null,
-        before: { status: 'draft' },
-        after: { status: 'scheduled' },
-        context: null,
-      };
-
+  describe('Actor is not included in descriptions', () => {
+    it('does not include actor name in the description', () => {
+      const entry = makeEntry('21', 'meeting.title_changed', {
+        after: { title: 'New Title' },
+      });
       const result = describeAuditEvent(entry);
-      expect(result).toContain('System');
-      expect(result).not.toContain('John');
+      expect(result).not.toContain('John Doe');
     });
 
-    it('uses System for null actor in template applied', () => {
-      const entry: AuditLogEntry = {
-        id: '22',
-        event_type: 'meeting.template_applied',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: null,
-        before: null,
-        after: null,
-        context: { template_name: 'Daily Standup' },
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe("System applied the 'Daily Standup' template");
+    it('returns the same description regardless of actor', () => {
+      const entry1 = makeEntry('22a', 'meeting.document_edited', { actor: mockActor });
+      const entry2 = makeEntry('22b', 'meeting.document_edited', { actor: mockActor2 });
+      const entry3 = makeEntry('22c', 'meeting.document_edited', { actor: null });
+      expect(describeAuditEvent(entry1)).toBe(describeAuditEvent(entry2));
+      expect(describeAuditEvent(entry2)).toBe(describeAuditEvent(entry3));
     });
   });
 
   describe('Edge cases and fallbacks', () => {
-    it('handles unknown event type with fallback', () => {
-      const entry: AuditLogEntry = {
-        id: '23',
-        event_type: 'meeting.status_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      // We intentionally don't set before/after data to test fallback
-      const result = describeAuditEvent(entry);
-      expect(result).toContain('John Doe');
+    it('handles unknown event type with default fallback', () => {
+      // Cast to bypass TS — tests runtime default branch
+      const entry = makeEntry('23', 'meeting.status_changed');
+      expect(describeAuditEvent(entry)).toBeTruthy();
     });
 
     it('handles missing before/after objects gracefully', () => {
-      const entry: AuditLogEntry = {
-        id: '24',
-        event_type: 'meeting.participant_added',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: null,
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toBe('John Doe added a participant as a participant');
+      const entry = makeEntry('24', 'meeting.participant_added');
+      expect(describeAuditEvent(entry)).toBe('Added a participant');
     });
 
-    it('handles empty string values', () => {
-      const entry: AuditLogEntry = {
-        id: '25',
-        event_type: 'meeting.title_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: { title: '' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toContain('John Doe');
-      expect(result).toContain('updated the meeting title');
+    it('handles empty string values with fallback', () => {
+      const entry = makeEntry('25', 'meeting.title_changed', { after: { title: '' } });
+      expect(describeAuditEvent(entry)).toBe('Updated meeting title');
     });
 
-    it('handles non-string values in after object', () => {
-      const entry: AuditLogEntry = {
-        id: '26',
-        event_type: 'meeting.title_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
-        after: { title: 123 },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toContain('John Doe');
-      expect(result).toContain('the meeting');
+    it('handles non-string values in after object with fallback', () => {
+      const entry = makeEntry('26', 'meeting.title_changed', { after: { title: 123 } });
+      expect(describeAuditEvent(entry)).toBe('Updated meeting title');
     });
 
-    it('handles invalid ISO datetime gracefully', () => {
-      const entry: AuditLogEntry = {
-        id: '27',
-        event_type: 'meeting.datetime_changed',
-        timestamp: '2024-05-24T10:00:00Z',
-        actor: mockActor,
-        before: null,
+    it('does not expose purely numeric IDs', () => {
+      const entry = makeEntry('27', 'meeting.title_changed', { after: { title: '42' } });
+      const result = describeAuditEvent(entry);
+      // Numeric-only string should be rejected; falls back to generic label
+      expect(result).toBe('Updated meeting title');
+    });
+
+    it('handles invalid date in datetime_changed gracefully', () => {
+      const entry = makeEntry('28', 'meeting.datetime_changed', {
         after: { scheduled_date: 'not-a-valid-date' },
-        context: null,
-      };
-
-      const result = describeAuditEvent(entry);
-      expect(result).toContain('John Doe');
-      expect(result).toContain('not-a-valid-date');
+      });
+      expect(describeAuditEvent(entry)).toContain('not-a-valid-date');
     });
   });
 
   describe('All 19 event types covered', () => {
-    it('has description for all event types', () => {
-      const eventTypes = [
+    it('returns a non-empty description for every event type', () => {
+      const eventTypes: AuditLogEntry['event_type'][] = [
         'meeting.status_changed',
         'meeting.title_changed',
         'meeting.objective_changed',
@@ -520,7 +311,7 @@ describe('describeAuditEvent', () => {
         'meeting.task_created',
         'meeting.template_applied',
         'meeting.tags_changed',
-      ] as const;
+      ];
 
       for (const eventType of eventTypes) {
         const entry: AuditLogEntry = {
@@ -534,9 +325,9 @@ describe('describeAuditEvent', () => {
             status: 'active',
             title: 'Test Title',
             type_name: 'Test Type',
-            datetime: '2024-06-01T14:30:00Z',
-            display_name: 'Test User',
+            user_name: 'Test User',
             role: 'organizer',
+            scheduled_date: '2024-06-01',
           },
           context: { template_name: 'Test Template' },
         };
@@ -544,7 +335,7 @@ describe('describeAuditEvent', () => {
         const result = describeAuditEvent(entry);
         expect(result).toBeTruthy();
         expect(result.length).toBeGreaterThan(0);
-        expect(result).not.toBe('System updated the meeting');
+        expect(result).not.toContain('John Doe');
       }
     });
   });

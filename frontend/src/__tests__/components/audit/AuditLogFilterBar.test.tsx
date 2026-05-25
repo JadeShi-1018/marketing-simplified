@@ -81,32 +81,39 @@ describe('AuditLogFilterBar', () => {
     );
   });
 
-  it('calls onChange with actor_id when actor input is filled', () => {
-    const onChange = jest.fn();
-    render(<AuditLogFilterBar filters={emptyFilters} onChange={onChange} />);
+  it('shows "No actors in log yet" placeholder when actors list is empty', () => {
+    render(<AuditLogFilterBar filters={emptyFilters} onChange={() => {}} />);
     fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
-    const input = screen.getByPlaceholderText(/e\.g\. 42/i);
-    fireEvent.change(input, { target: { value: '7' } });
+    expect(screen.getByText(/No actors in log yet/i)).toBeInTheDocument();
+  });
+
+  it('calls onChange with actor_id when an actor is selected from the dropdown', () => {
+    const onChange = jest.fn();
+    const actors = [{ id: 7, display_name: 'Alice' }];
+    render(<AuditLogFilterBar filters={emptyFilters} onChange={onChange} actors={actors} />);
+    fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '7' } });
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ actor_id: 7 }));
   });
 
-  it('clears actor_id when input is emptied', () => {
+  it('clears actor_id when "All actors" is selected', () => {
     const onChange = jest.fn();
+    const actors = [{ id: 7, display_name: 'Alice' }];
     render(
-      <AuditLogFilterBar filters={{ actor_id: 7 }} onChange={onChange} />,
+      <AuditLogFilterBar filters={{ actor_id: 7 }} onChange={onChange} actors={actors} />,
     );
     fireEvent.click(screen.getByRole('button', { name: /Filters/i }));
-    const input = screen.getByPlaceholderText(/e\.g\. 42/i);
-    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '' } });
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ actor_id: undefined }));
   });
 
-  it('shows actor chip and removes it when X is clicked', () => {
+  it('shows actor chip with display name and removes it when X is clicked', () => {
     const onChange = jest.fn();
+    const actors = [{ id: 42, display_name: 'Alice Chen' }];
     render(
-      <AuditLogFilterBar filters={{ actor_id: 42 }} onChange={onChange} />,
+      <AuditLogFilterBar filters={{ actor_id: 42 }} onChange={onChange} actors={actors} />,
     );
-    expect(screen.getByText(/Actor: 42/i)).toBeInTheDocument();
+    expect(screen.getByText('Alice Chen')).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText('Remove actor filter'));
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ actor_id: undefined }));
   });

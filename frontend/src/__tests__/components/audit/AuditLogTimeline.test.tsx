@@ -79,4 +79,63 @@ describe('AuditLogTimeline', () => {
     render(<AuditLogTimeline entries={entries} hasMore onLoadMore={() => {}} isLoadingMore />);
     expect(screen.getByRole('button', { name: /Loading/i })).toBeDisabled();
   });
+
+  describe('consecutive entry grouping', () => {
+    it('merges two consecutive same event+actor entries within 5 minutes into one card', () => {
+      const entries = [
+        makeEntry('1', '2026-05-24T10:00:00Z'),
+        makeEntry('2', '2026-05-24T10:03:00Z'), // 3 min later, same type+actor
+      ];
+      render(<AuditLogTimeline entries={entries} />);
+      // Only one meta line for Alice
+      expect(screen.getAllByText(/Alice · /).length).toBe(1);
+      expect(screen.getByText(/2 times/)).toBeInTheDocument();
+    });
+
+    it('does not merge entries more than 5 minutes apart', () => {
+      const entries = [
+        makeEntry('1', '2026-05-24T10:00:00Z'),
+        makeEntry('2', '2026-05-24T10:06:00Z'), // 6 min later
+      ];
+      render(<AuditLogTimeline entries={entries} />);
+      expect(screen.getAllByText(/Alice · /).length).toBe(2);
+      expect(screen.queryByText(/times/)).not.toBeInTheDocument();
+    });
+
+    it('does not merge entries with different event types', () => {
+      const entries = [
+        makeEntry('1', '2026-05-24T10:00:00Z', 'meeting.title_changed'),
+        makeEntry('2', '2026-05-24T10:01:00Z', 'meeting.summary_changed'),
+      ];
+      render(<AuditLogTimeline entries={entries} />);
+      expect(screen.getAllByText(/Alice · /).length).toBe(2);
+      expect(screen.queryByText(/times/)).not.toBeInTheDocument();
+    });
+
+    it('does not merge entries from different actors', () => {
+      const entry1: AuditLogEntry = {
+        ...makeEntry('1', '2026-05-24T10:00:00Z'),
+        actor: { id: 1, display_name: 'Alice', email: 'alice@example.com' },
+      };
+      const entry2: AuditLogEntry = {
+        ...makeEntry('2', '2026-05-24T10:01:00Z'),
+        actor: { id: 2, display_name: 'Bob', email: 'bob@example.com' },
+      };
+      render(<AuditLogTimeline entries={[entry1, entry2]} />);
+      expect(screen.getByText(/Alice · /)).toBeInTheDocument();
+      expect(screen.getByText(/Bob · /)).toBeInTheDocument();
+      expect(screen.queryByText(/times/)).not.toBeInTheDocument();
+    });
+
+    it('merges three consecutive same event+actor entries within 5 minutes', () => {
+      const entries = [
+        makeEntry('1', '2026-05-24T10:00:00Z'),
+        makeEntry('2', '2026-05-24T10:02:00Z'),
+        makeEntry('3', '2026-05-24T10:04:00Z'),
+      ];
+      render(<AuditLogTimeline entries={entries} />);
+      expect(screen.getAllByText(/Alice · /).length).toBe(1);
+      expect(screen.getByText(/3 times/)).toBeInTheDocument();
+    });
+  });
 });

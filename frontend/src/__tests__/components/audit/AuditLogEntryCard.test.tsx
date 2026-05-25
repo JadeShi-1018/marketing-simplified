@@ -27,8 +27,8 @@ describe('AuditLogEntryCard', () => {
 
   it('renders a human-readable description', () => {
     render(<AuditLogEntryCard entry={baseEntry} />);
-    // describeAuditEvent produces a sentence about the event
-    expect(screen.getByText(/updated the meeting/i)).toBeInTheDocument();
+    // describeAuditEvent for title_changed with no after → "Updated meeting title"
+    expect(screen.getByText(/updated meeting title/i)).toBeInTheDocument();
   });
 
   it('renders a formatted timestamp in the meta line', () => {
@@ -75,5 +75,31 @@ describe('AuditLogEntryCard', () => {
       <AuditLogEntryCard entry={baseEntry} className="custom-class" />,
     );
     expect(container.firstChild).toHaveClass('custom-class');
+  });
+
+  it('does not show count badge when count is 1', () => {
+    render(<AuditLogEntryCard entry={baseEntry} count={1} />);
+    expect(screen.queryByText(/times/)).not.toBeInTheDocument();
+  });
+
+  it('shows "(N times)" badge when count is greater than 1', () => {
+    render(<AuditLogEntryCard entry={baseEntry} count={3} />);
+    expect(screen.getByText(/3 times/)).toBeInTheDocument();
+  });
+
+  it('does not show count badge when count is undefined', () => {
+    render(<AuditLogEntryCard entry={baseEntry} />);
+    expect(screen.queryByText(/times/)).not.toBeInTheDocument();
+  });
+
+  it('does not include actor name in the description text', () => {
+    const entry: AuditLogEntry = {
+      ...baseEntry,
+      after: { title: 'New Title' },
+    };
+    render(<AuditLogEntryCard entry={entry} />);
+    // Description should be action-only, not include "Alice"
+    const description = screen.getByText(/Updated meeting title to/i);
+    expect(description.textContent).not.toContain('Alice');
   });
 });
