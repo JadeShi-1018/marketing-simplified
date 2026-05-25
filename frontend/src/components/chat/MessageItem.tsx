@@ -43,6 +43,42 @@ function extractTaskIds(content: string): number[] {
 const TOOLBAR_BASE =
   'flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white shadow-md px-1 py-0.5 z-10';
 
+function Avatar({
+  src,
+  username,
+  userId,
+  colorClass,
+  initials,
+}: {
+  src?: string | null;
+  username: string;
+  userId: number;
+  colorClass?: string;
+  initials: string;
+}) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={username}
+        title={username}
+        className="h-8 w-8 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <div
+      className={[
+        'flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white',
+        colorClass ?? avatarColor(userId),
+      ].join(' ')}
+      title={username}
+    >
+      {initials}
+    </div>
+  );
+}
+
 export default function MessageItem({
   message,
   isOwnMessage,
@@ -138,17 +174,21 @@ export default function MessageItem({
     if (isSelectMode) onToggleSelect?.(message.id);
   };
 
-  const rowSpacing = showSender ? 'mt-4' : 'mt-1';
+  // Avatar rows keep a real gap (mt-4) above so groups stay separated; only small
+  // vertical padding is used for the hover highlight. Consecutive rows have no
+  // margin so the ring highlight looks continuous across a group.
+  const rowPadding = showSender ? 'mt-4 py-1' : 'py-1';
 
-  // ── Own messages (right-aligned, no avatar) ────────────────────────────────
+  // ── Own messages (left-aligned, same style as others) ────────────────────────
   if (isOwnMessage) {
     return (
       <div
         id={`message-${message.id}`}
         className={[
-          rowSpacing,
+          rowPadding,
+          'transition-colors',
+          isHighlighted ? 'bg-amber-50/40 scroll-mt-24' : isHovered ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md' : '',
           isSelectMode ? 'relative pl-8' : '',
-          isHighlighted ? 'scroll-mt-24' : '',
         ].join(' ')}
       >
         {isSelectMode && (
@@ -162,17 +202,38 @@ export default function MessageItem({
 
         <div
           className={[
-            'flex justify-end gap-2 pr-3',
-            isHighlighted ? 'rounded-lg bg-amber-50/40 ring-2 ring-amber-200' : '',
+            'flex gap-2 pl-3 pr-4 relative',
+            isHighlighted ? 'rounded-lg ring-2 ring-amber-200' : '',
             isSelectMode ? 'cursor-pointer' : '',
           ].join(' ')}
           onClick={handleToggleSelect}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
         >
-          <div className="max-w-[75%] min-w-0">
+          {/* Avatar column */}
+          <div className="w-8 shrink-0 flex items-end pb-0.5">
+            {showSender ? (
+              <Avatar
+                src={message.sender.avatar}
+                username={message.sender.username}
+                userId={message.sender.id}
+                initials={(message.sender.username[0] ?? 'Y').toUpperCase()}
+              />
+            ) : (
+              <div className="w-8" />
+            )}
+          </div>
+
+          {/* Content column */}
+          <div className="min-w-0 flex-1">
             {showSender && (
-              <div className="mb-0.5 flex items-baseline justify-end gap-1.5 px-1">
+              <div className="mb-0.5 flex items-baseline gap-1.5 px-0.5">
+                <span className="text-sm font-semibold text-gray-900">You</span>
                 <span className="text-[11px] text-gray-400">{time}</span>
-                <span className="text-xs font-semibold text-gray-700">You</span>
+                {message.is_edited && (
+                  <span className="text-[9px] text-gray-400">edited</span>
+                )}
+                <MessageStatus message={message} />
               </div>
             )}
 
@@ -212,55 +273,9 @@ export default function MessageItem({
                 </div>
               </div>
             ) : (
-              /* Hover zone is the bubble wrapper only */
-              <div
-                className="relative w-fit ml-auto"
-                onMouseEnter={handleMouseEnter}
-                onMouseLeave={handleMouseLeave}
-              >
-                {!showSender && isHovered && (
-                  <span className="absolute left-full top-1/2 -translate-y-1/2 ml-2 whitespace-nowrap text-[11px] text-gray-400">
-                    {time}
-                  </span>
-                )}
-                {isHovered && (
-                  <div className={`absolute top-0 left-0 -translate-y-1/2 ${TOOLBAR_BASE}`}>
-                    <button
-                      type="button"
-                      onClick={() => setIsEditing(true)}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                      title="Edit message"
-                      aria-label="Edit message"
-                    >
-                      <Edit2 className="h-3.5 w-3.5" />
-                    </button>
-                    {hasContent && (
-                      <button
-                        type="button"
-                        onClick={handleCopy}
-                        className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                        title="Copy text"
-                        aria-label="Copy text"
-                      >
-                        <Copy className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onDelete?.(message.id)}
-                      className="rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
-                      title="Delete message"
-                      aria-label="Delete message"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
-
+              <>
                 {hasContent && (
-                  <div className="inline-block w-fit max-w-full break-words rounded-2xl rounded-br-sm bg-[#A6E661] px-3 py-2 text-gray-900 [overflow-wrap:anywhere] sm:px-4">
-                    <p className="text-sm whitespace-pre-wrap">{messageContent}</p>
-                  </div>
+                  <p className="text-sm whitespace-pre-wrap text-gray-900 [overflow-wrap:anywhere]">{messageContent}</p>
                 )}
                 {showTaskPreview && taskPreviewId ? (
                   <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
@@ -269,33 +284,44 @@ export default function MessageItem({
                 {hasAttachments && (
                   <AttachmentDisplay attachments={message.attachments!} isOwnMessage />
                 )}
-              </div>
+              </>
             )}
-
           </div>
 
-          {/* Avatar + status column — right side */}
-          <div className="w-8 shrink-0 flex flex-col items-center justify-end gap-0.5 pb-0.5">
-            {showSender ? (
-              <div
-                className={[
-                  'flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white',
-                  avatarColor(message.sender.id),
-                ].join(' ')}
-                title={message.sender.username}
+          {/* Toolbar — Slack-style, anchored to right edge of row */}
+          {isHovered && !isEditing && (
+            <div className={`absolute right-2 -top-5 ${TOOLBAR_BASE}`}>
+              <button
+                type="button"
+                onClick={() => setIsEditing(true)}
+                className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                title="Edit message"
+                aria-label="Edit message"
               >
-                {(message.sender.username[0] ?? 'Y').toUpperCase()}
-              </div>
-            ) : (
-              <div className="flex-1" />
-            )}
-            <div className="flex items-center gap-0.5">
-              {message.is_edited && (
-                <span className="text-[9px] text-gray-400">ed</span>
+                <Edit2 className="h-3.5 w-3.5" />
+              </button>
+              {hasContent && (
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                  title="Copy text"
+                  aria-label="Copy text"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
               )}
-              <MessageStatus message={message} />
+              <button
+                type="button"
+                onClick={() => onDelete?.(message.id)}
+                className="rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
+                title="Delete message"
+                aria-label="Delete message"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
             </div>
-          </div>
+          )}
         </div>
       </div>
     );
@@ -308,9 +334,10 @@ export default function MessageItem({
     <div
       id={`message-${message.id}`}
       className={[
-        rowSpacing,
+        rowPadding,
+        'transition-colors',
+        isHighlighted ? 'bg-amber-50/40 scroll-mt-24' : isHovered ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md' : '',
         isSelectMode ? 'relative pl-8' : '',
-        isHighlighted ? 'scroll-mt-24' : '',
       ].join(' ')}
     >
       {isSelectMode && (
@@ -324,24 +351,24 @@ export default function MessageItem({
 
       <div
         className={[
-          'flex gap-2 pl-3 pr-4',
-          isHighlighted ? 'rounded-lg bg-amber-50/40 ring-2 ring-amber-200' : '',
+          'flex gap-2 pl-3 pr-4 relative',
+          isHighlighted ? 'rounded-lg ring-2 ring-amber-200' : '',
           isSelectMode ? 'cursor-pointer' : '',
         ].join(' ')}
         onClick={handleToggleSelect}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
         {/* Avatar column */}
         <div className="w-8 shrink-0 flex items-end pb-0.5">
           {showSender ? (
-            <div
-              className={[
-                'flex h-8 w-8 items-center justify-center rounded-full text-xs font-semibold text-white',
-                bot ? 'bg-violet-500' : avatarColor(message.sender.id),
-              ].join(' ')}
-              title={message.sender.username}
-            >
-              {initials}
-            </div>
+            <Avatar
+              src={bot ? null : message.sender.avatar}
+              username={message.sender.username}
+              userId={message.sender.id}
+              colorClass={bot ? 'bg-violet-500' : undefined}
+              initials={initials}
+            />
           ) : (
             <div className="w-8" />
           )}
@@ -374,55 +401,32 @@ export default function MessageItem({
             </div>
           )}
 
-          {/* Hover zone is the bubble wrapper only */}
-          <div
-            className="relative w-fit"
-            onMouseEnter={handleMouseEnter}
-            onMouseLeave={handleMouseLeave}
-          >
-            {!showSender && isHovered && (
-              <span className="absolute right-full top-1/2 -translate-y-1/2 mr-2 whitespace-nowrap text-[11px] text-gray-400">
-                {time}
-              </span>
-            )}
-
-            {isHovered && hasContent && (
-              <div className={`absolute top-0 right-0 -translate-y-1/2 ${TOOLBAR_BASE}`}>
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                  title="Copy text"
-                  aria-label="Copy text"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
-
-            {hasContent && (
-              <div
-                className={[
-                  'inline-block w-fit max-w-full break-words rounded-2xl rounded-tl-sm px-3 py-2 [overflow-wrap:anywhere] sm:px-4',
-                  bot
-                    ? 'border border-violet-100 bg-violet-50 text-gray-900'
-                    : 'bg-gray-100 text-gray-900',
-                ].join(' ')}
-              >
-                <p className="text-sm whitespace-pre-wrap">{messageContent}</p>
-              </div>
-            )}
-
-            {showTaskPreview && taskPreviewId ? (
-              <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
-            ) : null}
-            {showLinkPreview && <LinkPreview content={messageContent} />}
-            {hasAttachments && (
-              <AttachmentDisplay attachments={message.attachments!} isOwnMessage={false} />
-            )}
-          </div>
-
+          {hasContent && (
+            <p className="text-sm whitespace-pre-wrap text-gray-900 [overflow-wrap:anywhere]">{messageContent}</p>
+          )}
+          {showTaskPreview && taskPreviewId ? (
+            <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
+          ) : null}
+          {showLinkPreview && <LinkPreview content={messageContent} />}
+          {hasAttachments && (
+            <AttachmentDisplay attachments={message.attachments!} isOwnMessage={false} />
+          )}
         </div>
+
+        {/* Toolbar — Slack-style, anchored to right edge of row */}
+        {isHovered && hasContent && (
+          <div className={`absolute right-2 -top-5 ${TOOLBAR_BASE}`}>
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+              title="Copy text"
+              aria-label="Copy text"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
