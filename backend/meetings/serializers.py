@@ -29,11 +29,24 @@ from meetings.services import (
 from zoom_integration.post_meeting_payload import build_zoom_post_meeting_payload
 
 
-def meeting_participants_for_api(meeting: Meeting) -> list[dict]:
-    return [
-        {"user_id": link.user_id, "role": link.role}
-        for link in meeting.participant_links.all()
-    ]
+def meeting_participants_for_api(meeting: Meeting, request=None) -> list[dict]:
+    result = []
+    for link in meeting.participant_links.select_related("user").all():
+        user = link.user
+        avatar_url = None
+        if user.avatar:
+            avatar_url = (
+                request.build_absolute_uri(user.avatar.url)
+                if request
+                else user.avatar.url
+            )
+        result.append({
+            "user_id": link.user_id,
+            "role": link.role,
+            "username": user.username,
+            "avatar": avatar_url,
+        })
+    return result
 
 
 def meeting_tags_for_api(meeting: Meeting) -> list[dict]:
@@ -90,6 +103,7 @@ class MeetingSerializer(serializers.ModelSerializer):
             "layout_config",
             "status",
             "is_archived",
+            "minutes_published",
             "participants",
             "tags",
             "generated_decisions",
@@ -121,7 +135,7 @@ class MeetingSerializer(serializers.ModelSerializer):
         ]
 
     def get_participants(self, obj):
-        return meeting_participants_for_api(obj)
+        return meeting_participants_for_api(obj, self.context.get("request"))
 
     def get_tags(self, obj):
         return meeting_tags_for_api(obj)
@@ -404,7 +418,7 @@ class MeetingListSerializer(serializers.ModelSerializer):
         ]
 
     def get_participants(self, obj):
-        return meeting_participants_for_api(obj)
+        return meeting_participants_for_api(obj, self.context.get("request"))
 
     def get_tags(self, obj):
         return meeting_tags_for_api(obj)

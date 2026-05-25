@@ -158,6 +158,16 @@ class ChatService:
         return chat
     
     @staticmethod
+    def display_name_for_user(user: User) -> str:
+        """Human-readable name for notifications and UI."""
+        full = (user.get_full_name() or "").strip()
+        if full:
+            return full
+        if getattr(user, "username", None):
+            return str(user.username)
+        return user.email or str(user.pk)
+
+    @staticmethod
     def get_user_chats(user: User, project_id: Optional[int] = None):
         """Get all chats for a user, optionally filtered by project"""
         query = Chat.objects.filter(
@@ -349,6 +359,7 @@ class ChatStarService:
                 s.save(update_fields=['position', 'updated_at'])
 
 
+
 class MessageService:
     """Service for message-related business logic"""
 
@@ -413,6 +424,22 @@ class MessageService:
         ])
         
         logger.info(f"Created message {message.id} in chat {chat.id} by user {sender.id}")
+
+        try:
+            from notifications.services import create_or_update_chat_notification
+
+            for recipient in recipients:
+                create_or_update_chat_notification(
+                    recipient_id=recipient.user_id,
+                    actor_id=sender.id,
+                    chat_id=chat.id,
+                    message_id=message.id,
+                    project_id=chat.project_id,
+                    message_preview=content,
+                    actor_name=sender.username or sender.email or "",
+                )
+        except Exception:
+            logger.exception("In-app notification for chat message failed")
 
         # Route message to Agent Bot if it is a participant in this chat.
         # Wrapped in try/except so this never breaks normal chat functionality.
@@ -538,9 +565,6 @@ class MessageService:
             old_last_read_at = participant.last_read_at
             participant.last_read_at = timezone.now()
             participant.save()
-            
-            # Verify the save worked by reloading from DB
-            participant.refresh_from_db()
             
             logger.info(
                 f"mark_chat_as_read: chat={chat.id}, user={user.id}, "

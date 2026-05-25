@@ -10,6 +10,9 @@ from django.utils import timezone
 from core.models import Project, ProjectMember
 from meetings.models import MeetingDecisionOrigin
 from meetings.services import record_decision_created, record_decision_updated, record_decision_deleted
+from notifications.models import NotificationCategory, NotificationEventType
+from notifications.services import create_notification
+from notifications.action_urls import decision_action_url
 from .models import CommitRecord, Decision, DecisionEdge, Review, Signal
 from calendars.models import CalendarEvent
 from .permissions import DecisionPermission
@@ -656,6 +659,26 @@ class DecisionViewSet(
                 note=serializer.validated_data.get("note"),
                 metadata=metadata,
             )
+
+        # Notify project owner when approval is required (skip self-approval)
+        if decision.status == Decision.Status.AWAITING_APPROVAL:
+            project = decision.project
+            owner_id = project.owner_id if project else None
+            if owner_id and owner_id != decision.author_id:
+                decision_label = decision.title or f"#{decision.project_seq}"
+                create_notification(
+                    recipient_id=owner_id,
+                    actor_id=decision.author_id,
+                    category=NotificationCategory.DECISIONS,
+                    event_type=NotificationEventType.DECISION_REVIEW_NEEDED,
+                    title=f"Decision needs your approval: {decision_label}",
+                    body="A decision has been submitted and is waiting for your approval.",
+                    related_object_type="decision",
+                    related_object_id=str(decision.id),
+                    action_url=decision_action_url(decision.id, decision.project_id),
+                    metadata={"project_id": decision.project_id},
+                )
+
         response_serializer = DecisionCommittedSerializer(
             decision,
             context=self.get_serializer_context(),
@@ -772,6 +795,23 @@ class DecisionViewSet(
                 note=serializer.validated_data.get("note"),
                 metadata=serializer.validated_data.get("metadata"),
             )
+
+        # Notify the decision author that their decision was approved (skip self-approval)
+        if decision.author_id and decision.author_id != request.user.id:
+            decision_label = decision.title or f"#{decision.project_seq}"
+            create_notification(
+                recipient_id=decision.author_id,
+                actor_id=request.user.id,
+                category=NotificationCategory.DECISIONS,
+                event_type=NotificationEventType.DECISION_PUBLISHED,
+                title=f"Decision approved: {decision_label}",
+                body="Your decision has been approved and committed.",
+                related_object_type="decision",
+                related_object_id=str(decision.id),
+                action_url=decision_action_url(decision.id, decision.project_id),
+                metadata={"project_id": decision.project_id},
+            )
+
         response_serializer = DecisionCommittedSerializer(
             decision,
             context=self.get_serializer_context(),

@@ -90,9 +90,9 @@ export default function TasksV2Page() {
     [router, searchParams]
   );
 
-  const refreshTasks = () => {
+  const refreshTasks = async () => {
     if (projectId) {
-      void fetchTasks({ project_id: projectId, page: 1 });
+      await fetchTasks({ project_id: projectId, page: 1 });
     }
     setMyActionsRefreshKey((k) => k + 1);
   };

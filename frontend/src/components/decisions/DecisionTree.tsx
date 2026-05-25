@@ -678,7 +678,7 @@ const DecisionTree = ({
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-xl ring-1 ring-gray-100 bg-gray-50">
-      <div className="absolute right-8 top-3 z-10 flex items-center gap-1 rounded-full bg-white/90 px-1.5 py-1 shadow-sm ring-1 ring-gray-200 backdrop-blur-sm">
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-full bg-white/90 px-1.5 py-1 shadow-sm ring-1 ring-gray-200 backdrop-blur-sm">
         <button
           type="button"
           onClick={() => handleZoom('out')}

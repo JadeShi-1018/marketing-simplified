@@ -16,6 +16,8 @@
  * only carry base Task fields, so there is no schema here.
  */
 
+import { getTaskTypeLabel } from '@/lib/tasks/taskTypes';
+
 export type FieldKind =
   | 'text'
   | 'textarea'
@@ -60,7 +62,7 @@ export interface FieldDef {
 export interface TypeSchema {
   /** Matches Task.type value exactly. */
   type: string;
-  /** Human-readable label, mirrors TYPE_META. */
+  /** Human-readable label from the shared task type registry. */
   label: string;
   /** Django ContentType.model value used by /api/tasks/{id}/link/. */
   contentType: string;
@@ -68,6 +70,8 @@ export interface TypeSchema {
   /** If provided, used instead of `fields` when rendering the inline edit form in TaskTypeBlock. */
   editFields?: FieldDef[];
 }
+
+const taskTypeLabel = (type: string): string => getTaskTypeLabel(type) ?? type;
 
 // ---------------------------------------------------------------------------
 // Individual schemas
@@ -103,7 +107,7 @@ const BUDGET_BASE_FIELDS: FieldDef[] = [
 
 const BUDGET: TypeSchema = {
   type: 'budget',
-  label: 'Budget',
+  label: taskTypeLabel('budget'),
   contentType: 'budgetrequest',
   fields: BUDGET_BASE_FIELDS,
   editFields: BUDGET_BASE_FIELDS,
@@ -111,7 +115,7 @@ const BUDGET: TypeSchema = {
 
 const ASSET: TypeSchema = {
   type: 'asset',
-  label: 'Asset',
+  label: taskTypeLabel('asset'),
   contentType: 'asset',
   fields: [
     {
@@ -133,7 +137,7 @@ const ASSET: TypeSchema = {
 
 const RETROSPECTIVE: TypeSchema = {
   type: 'retrospective',
-  label: 'Retrospective',
+  label: taskTypeLabel('retrospective'),
   contentType: 'retrospectivetask',
   fields: [
     {
@@ -294,7 +298,7 @@ const RETROSPECTIVE: TypeSchema = {
 
 const REPORT: TypeSchema = {
   type: 'report',
-  label: 'Report',
+  label: taskTypeLabel('report'),
   contentType: 'reporttask',
   fields: [
     {
@@ -344,7 +348,7 @@ const REPORT: TypeSchema = {
 
 const SCALING: TypeSchema = {
   type: 'scaling',
-  label: 'Scaling',
+  label: taskTypeLabel('scaling'),
   contentType: 'scalingplan',
   fields: [
     {
@@ -516,7 +520,7 @@ const SCALING: TypeSchema = {
 
 const ALERT: TypeSchema = {
   type: 'alert',
-  label: 'Alert',
+  label: taskTypeLabel('alert'),
   contentType: 'alerttask',
   fields: [
     {
@@ -762,7 +766,7 @@ const ALERT: TypeSchema = {
 
 const EXPERIMENT: TypeSchema = {
   type: 'experiment',
-  label: 'Experiment',
+  label: taskTypeLabel('experiment'),
   contentType: 'experiment',
   fields: [
     {
@@ -897,7 +901,7 @@ const EXPERIMENT: TypeSchema = {
 
 const OPTIMIZATION: TypeSchema = {
   type: 'optimization',
-  label: 'Optimization',
+  label: taskTypeLabel('optimization'),
   contentType: 'optimization',
   fields: [
     {
@@ -1007,7 +1011,7 @@ const OPTIMIZATION: TypeSchema = {
 
 const COMMUNICATION: TypeSchema = {
   type: 'communication',
-  label: 'Client Communication',
+  label: taskTypeLabel('communication'),
   contentType: 'clientcommunication',
   fields: [
     {
@@ -1066,7 +1070,7 @@ const COMMUNICATION: TypeSchema = {
 
 const PLATFORM_POLICY_UPDATE: TypeSchema = {
   type: 'platform_policy_update',
-  label: 'Platform Policy Update',
+  label: taskTypeLabel('platform_policy_update'),
   contentType: 'platformpolicyupdate',
   fields: [
     {

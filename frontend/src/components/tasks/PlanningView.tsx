@@ -14,7 +14,10 @@ import {
 import type { TaskData } from '@/types/task';
 import { userDisplayName } from '@/types/task';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PRIORITY_META, STATUS_META, TASK_TYPES, formatDateShort } from './TYPE_META';
+import { TASK_PRIORITY_BY_VALUE } from '@/lib/tasks/taskPriorities';
+import { TASK_STATUS_BY_VALUE } from '@/lib/tasks/taskStatuses';
+import { TASK_TYPE_DEFINITIONS } from '@/lib/tasks/taskTypes';
+import { formatTaskDateShort } from '@/lib/tasks/taskDates';
 
 type GroupBy = 'type' | 'owner' | 'priority' | 'theme';
 type MetricKey = 'groups' | 'duplicates' | 'conflicts' | 'nextCycle' | 'sparse';
@@ -109,15 +112,15 @@ function taskUrl(task: TaskData): string {
 }
 
 function typeLabel(type?: string): string {
-  return TASK_TYPES.find((t) => t.value === type)?.shortLabel ?? type ?? 'No type';
+  return TASK_TYPE_DEFINITIONS.find((t) => t.value === type)?.shortLabel ?? type ?? 'No type';
 }
 
 function statusLabel(status?: string): string {
-  return STATUS_META[status ?? '']?.label ?? status ?? 'Draft';
+  return TASK_STATUS_BY_VALUE[status ?? '']?.label ?? status ?? 'Draft';
 }
 
 function priorityLabel(priority?: string): string {
-  return PRIORITY_META[priority ?? '']?.label ?? priority ?? 'Medium';
+  return TASK_PRIORITY_BY_VALUE[priority ?? '']?.label ?? priority ?? 'Medium';
 }
 
 function normalizedWords(value?: string): string[] {
@@ -208,8 +211,8 @@ function rangesOverlap(a: { start: string; end: string }, b: { start: string; en
 }
 
 function formatRange(range: { start: string; end: string }): string {
-  if (range.start === range.end) return formatDateShort(range.start);
-  return `${formatDateShort(range.start)} - ${formatDateShort(range.end)}`;
+  if (range.start === range.end) return formatTaskDateShort(range.start);
+  return `${formatTaskDateShort(range.start)} - ${formatTaskDateShort(range.end)}`;
 }
 
 function groupTasks(tasks: TaskData[], groupBy: GroupBy): GroupRow[] {

@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import { CalendarDays, CheckSquare, Users } from 'lucide-react';
-import { PRIORITY_OPTIONS, STATUS_OPTIONS } from './TYPE_META';
+import { TASK_PRIORITY_OPTIONS } from '@/lib/tasks/taskPriorities';
+import { TASK_STATUS_OPTIONS } from '@/lib/tasks/taskStatuses';
 
 export type BulkField =
   | 'status'
@@ -54,8 +55,8 @@ export default function BulkActionToolbar({
   const [value, setValue] = useState('');
 
   const selectableValues = useMemo(() => {
-    if (field === 'status') return statusOptions ?? STATUS_OPTIONS;
-    if (field === 'priority') return PRIORITY_OPTIONS;
+    if (field === 'status') return statusOptions ?? TASK_STATUS_OPTIONS;
+    if (field === 'priority') return TASK_PRIORITY_OPTIONS;
     return [];
   }, [field, statusOptions]);
 

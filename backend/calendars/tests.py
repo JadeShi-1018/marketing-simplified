@@ -118,6 +118,30 @@ class CalendarModelTests(CalendarTestBase):
             cal.full_clean()
         self.assertIn("Calendar.organization must match owner.organization", str(ctx.exception))
 
+    def test_project_calendar_allows_cross_org_owner(self):
+        other_org = Organization.objects.create(name="Other", slug="other-cross")
+        cross_org_user = User.objects.create_user(
+            username="crossowner",
+            email="crossowner@other.com",
+            password="pass12345",
+            organization=other_org,
+        )
+        project = Project.objects.create(
+            name="Cross Org Owner Project",
+            organization=self.organization,
+            owner=cross_org_user,
+            objectives=["awareness"],
+            kpis={"ctr": {"target": 0.02}},
+        )
+        cal = Calendar(
+            organization=self.organization,
+            owner=cross_org_user,
+            project=project,
+            name=f"{project.name} Calendar",
+            timezone="UTC",
+        )
+        cal.full_clean()
+
     def test_only_one_primary_calendar_per_owner_and_org(self):
         initial_calendar = self.calendar
         self.assertTrue(initial_calendar.is_primary)

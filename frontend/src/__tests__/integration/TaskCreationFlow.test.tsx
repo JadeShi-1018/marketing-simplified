@@ -115,6 +115,8 @@ describe('TaskCreationFlow - Budget Task', () => {
 
     mockTaskAPI.getAutosave = jest.fn().mockResolvedValue(null);
 
+    mockTaskAPI.getTagCatalog = jest.fn().mockResolvedValue([]);
+
     mockProjectAPI.getProjectMembers.mockResolvedValue([
       {
         id: 1,

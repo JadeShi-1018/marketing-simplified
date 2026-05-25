@@ -41,7 +41,7 @@ test.describe('Task list filter/sort persistence', () => {
   });
 
   async function focusFixtureTask(page: Page) {
-    const searchInput = page.getByPlaceholder('Search summary, type or owner…');
+    const searchInput = page.getByPlaceholder('Search summary, tags, type or owner…');
     await expect(searchInput).toBeVisible();
     await searchInput.fill(fixtureSummary);
     await expect(page.getByTestId('task-row').filter({ hasText: fixtureSummary })).toBeVisible({ timeout: 10_000 });
@@ -84,7 +84,7 @@ test.describe('Task list filter/sort persistence', () => {
   });
 
   test('search text persists after navigating to task detail and back', async ({ page }) => {
-    const searchInput = page.getByPlaceholder('Search summary, type or owner…');
+    const searchInput = page.getByPlaceholder('Search summary, tags, type or owner…');
     await expect(searchInput).toBeVisible();
     await searchInput.fill(fixtureSummary);
     await expect(page.getByTestId('task-row').filter({ hasText: fixtureSummary })).toBeVisible({ timeout: 10_000 });
@@ -96,7 +96,7 @@ test.describe('Task list filter/sort persistence', () => {
     await page.waitForURL(/\/tasks/, { timeout: 10_000 });
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });
 
-    await expect(page.getByPlaceholder('Search summary, type or owner…')).toHaveValue(fixtureSummary);
+    await expect(page.getByPlaceholder('Search summary, tags, type or owner…')).toHaveValue(fixtureSummary);
   });
 
   test('page reload always resets sort to default', async ({ page }) => {
