@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
@@ -10,6 +10,13 @@ import StatusPill from './pills/StatusPill';
 import InlineSelect, { UserInitialsAvatar, type InlineSelectOption } from './InlineSelect';
 import { ChevronsUp, ChevronUp, Minus, ChevronDown, ChevronsDown } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import TaskLabelsPicker from '@/components/tasks/TaskLabelsPicker';
+import type { TaskTag } from '@/types/task';
+
+import {
+  START_MUST_BE_ON_OR_BEFORE_DUE,
+  violatesStartBeforeDue,
+} from '@/lib/tasks/taskScheduleDates';
 
 const PRIORITY_LEADING: Record<string, { Icon: typeof Minus; cls: string }> = {
   HIGHEST: { Icon: ChevronsUp, cls: 'text-rose-600' },
@@ -46,7 +53,7 @@ interface Props {
   task: TaskData;
   members: ProjectMemberData[];
   readOnly: boolean;
-  onUpdated: () => void | Promise<void>;
+  onUpdated: (updatedTask?: TaskData) => void | Promise<void>;
   loading?: boolean;
   onFirstInteraction?: () => void;
 }
@@ -55,6 +62,10 @@ const LABEL = 'text-[11px] font-medium uppercase tracking-wide text-gray-500';
 const ROW = 'grid grid-cols-1 gap-1 py-2 sm:grid-cols-[88px_1fr] sm:items-center sm:gap-3';
 const DATE_INPUT =
   'w-full rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none transition hover:border-gray-300 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-500';
+
+function tagsForTask(task: TaskData): TaskTag[] {
+  return Array.isArray(task.tags) ? task.tags : [];
+}
 
 export default function PropertiesPanel({
   task,
@@ -66,16 +77,59 @@ export default function PropertiesPanel({
 }: Props) {
   const id = task.id!;
   const [saving, setSaving] = useState(false);
+  const [savingTags, setSavingTags] = useState(false);
+  const savingTagsRef = useRef(false);
+  const [localTags, setLocalTags] = useState<TaskTag[]>(() => tagsForTask(task));
+
+  useEffect(() => {
+    savingTagsRef.current = savingTags;
+  }, [savingTags]);
+
+  useEffect(() => {
+    if (savingTagsRef.current) return;
+    const next = tagsForTask(task);
+    setLocalTags(next);
+  }, [task.id, task.tags]);
 
   const patch = async (data: Partial<TaskData>) => {
+    if (data.start_date !== undefined || data.due_date !== undefined) {
+      const nextStart = data.start_date !== undefined ? data.start_date : task.start_date;
+      const nextDue = data.due_date !== undefined ? data.due_date : task.due_date;
+      if (violatesStartBeforeDue(nextStart, nextDue)) {
+        toast.error(START_MUST_BE_ON_OR_BEFORE_DUE);
+        return false;
+      }
+    }
     setSaving(true);
     try {
       await TaskAPI.updateTask(id, data);
       await onUpdated();
+      return true;
     } catch (e) {
+      toast.error((e as any)?.response?.data?.detail || 'Update failed');
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveTags = async (next: TaskTag[]) => {
+    const previous = localTags;
+    setLocalTags(next);
+    setSavingTags(true);
+    setSaving(true);
+    try {
+      const response = await TaskAPI.updateTask(id, { tags: next });
+      const savedTask = response.data as TaskData;
+      const savedTags = Array.isArray(savedTask?.tags) ? savedTask.tags : next;
+      setLocalTags(savedTags);
+      await onUpdated(savedTask);
+    } catch (e) {
+      setLocalTags(previous);
       toast.error((e as any)?.response?.data?.detail || 'Update failed');
     } finally {
       setSaving(false);
+      setSavingTags(false);
     }
   };
 
@@ -175,6 +229,16 @@ export default function PropertiesPanel({
           options={approverOpts}
           disabled={saving || readOnly || isSubmitted}
           placeholder="Select an approver…"
+        />
+      </div>
+
+      <div className={ROW}>
+        <span className={LABEL}>Labels</span>
+        <TaskLabelsPicker
+          projectId={task.project?.id ?? task.project_id}
+          value={localTags}
+          onChange={(next) => { void saveTags(next); }}
+          disabled={readOnly}
         />
       </div>
 

@@ -8,14 +8,20 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { useProjectStore } from '@/lib/projectStore';
 import { TaskAPI } from '@/lib/api/taskApi';
+import type { TaskTag } from '@/types/task';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import TaskTypeFieldsSection, { fieldId } from '@/components/tasks/new/TaskTypeFieldsSection';
+import TaskLabelsPicker from '@/components/tasks/TaskLabelsPicker';
 import TaskCreateChecklistAside, {
   type ChecklistItem,
 } from '@/components/tasks/new/TaskCreateChecklistAside';
 import { getTypeSchema, getUnfilledRequiredKeys } from '@/lib/tasks/typeFieldSchemas';
 import { TASK_TYPE_CONFIG_STATIC } from '@/lib/taskTypeConfigRegistry';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  START_MUST_BE_ON_OR_BEFORE_DUE,
+  violatesStartBeforeDue,
+} from '@/lib/tasks/taskScheduleDates';
 import { useTaskFormAutosave } from '@/hooks/useTaskFormAutosave';
 
 const PRIORITIES: { value: string; label: string }[] = [
@@ -30,12 +36,14 @@ const BRAND_GRADIENT = 'linear-gradient(90deg, #3CCED7 0%, #A6E661 100%)';
 const WORK_TYPE_SKELETON_WIDTHS = ['w-20', 'w-24', 'w-28', 'w-32', 'w-[92px]', 'w-[116px]'];
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const DEFAULT_TASK_LABEL_COLOR = '#6B7280';
 
 const COMMON_ANCHOR = {
   summary: 'task-common-summary',
   type: 'task-common-type',
   priority: 'task-common-priority',
   schedule: 'task-common-schedule',
+  labels: 'task-common-labels',
   approver: 'task-common-approver',
 };
 
@@ -43,6 +51,7 @@ const DEFAULT_FORM = {
   summary: '',
   description: '',
   priority: 'MEDIUM',
+  tags: [] as TaskTag[],
   plannedStartDate: '',
   startDate: '',
   dueDate: '',
@@ -61,6 +70,36 @@ function flashAndFocus(el: HTMLElement) {
   setTimeout(() => {
     el.classList.remove('ring-2', 'ring-[#3CCED7]', 'ring-offset-2', 'rounded-md');
   }, 1500);
+}
+
+function normalizeDraftTags(value: unknown): TaskTag[] {
+  const rawTags =
+    typeof value === 'string'
+      ? value.split(',')
+      : Array.isArray(value)
+      ? value
+      : [];
+  const tags: TaskTag[] = [];
+  const seen = new Set<string>();
+  rawTags.forEach((raw) => {
+    const source =
+      typeof raw === 'string'
+        ? { name: raw, color: DEFAULT_TASK_LABEL_COLOR }
+        : raw && typeof raw === 'object'
+        ? (raw as Record<string, unknown>)
+        : null;
+    if (!source) return;
+    const name = String(source.name ?? '').trim().replace(/^#+/, '').replace(/\s+/g, ' ');
+    if (!name) return;
+    const key = name.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    const color = typeof source.color === 'string' && source.color.trim()
+      ? source.color.trim().toUpperCase()
+      : DEFAULT_TASK_LABEL_COLOR;
+    tags.push({ name: name.slice(0, 15), color });
+  });
+  return tags.slice(0, 10);
 }
 
 export default function CreateTaskPage() {
@@ -91,6 +130,7 @@ export default function CreateTaskPage() {
   const [startDate, setStartDate] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [approverId, setApproverId] = useState('');
+  const [tags, setTags] = useState<TaskTag[]>([]);
   const [typeFormState, setTypeFormState] = useState<Record<string, string>>({});
 
   const { isSaving, lastSavedAt, save, saveNow, clear, suspend, resume } =
@@ -103,13 +143,14 @@ export default function CreateTaskPage() {
       summary,
       description,
       priority,
+      tags,
       planned_start_date: plannedStartDate,
       start_date: startDate,
       due_date: dueDate,
       approver_id: approverId || undefined,
       type_form: typeFormState,
     }),
-    [summary, description, priority, plannedStartDate, startDate, dueDate, approverId, typeFormState],
+    [summary, description, priority, tags, plannedStartDate, startDate, dueDate, approverId, typeFormState],
   );
 
   // Hydrate all form fields from a remote draft, or reset to defaults if null.
@@ -118,6 +159,7 @@ export default function CreateTaskPage() {
       setSummary(DEFAULT_FORM.summary);
       setDescription(DEFAULT_FORM.description);
       setPriority(DEFAULT_FORM.priority);
+      setTags(DEFAULT_FORM.tags);
       setPlannedStartDate(DEFAULT_FORM.plannedStartDate);
       setStartDate(DEFAULT_FORM.startDate);
       setDueDate(DEFAULT_FORM.dueDate);
@@ -128,6 +170,7 @@ export default function CreateTaskPage() {
     setSummary(typeof draft.summary === 'string' ? draft.summary : DEFAULT_FORM.summary);
     setDescription(typeof draft.description === 'string' ? draft.description : DEFAULT_FORM.description);
     setPriority(typeof draft.priority === 'string' ? draft.priority : DEFAULT_FORM.priority);
+    setTags(normalizeDraftTags(draft.tags));
     setPlannedStartDate(typeof draft.planned_start_date === 'string' ? draft.planned_start_date : DEFAULT_FORM.plannedStartDate);
     setStartDate(typeof draft.start_date === 'string' ? draft.start_date : DEFAULT_FORM.startDate);
     setDueDate(typeof draft.due_date === 'string' ? draft.due_date : DEFAULT_FORM.dueDate);
@@ -230,6 +273,13 @@ export default function CreateTaskPage() {
         anchorId: COMMON_ANCHOR.priority,
       },
       {
+        key: 'labels',
+        label: 'Labels',
+        required: false,
+        filled: tags.length > 0,
+        anchorId: COMMON_ANCHOR.labels,
+      },
+      {
         key: 'dates',
         label: 'Dates',
         required: false,
@@ -260,7 +310,7 @@ export default function CreateTaskPage() {
       }
     }
     return base;
-  }, [summary, type, priority, approverId, plannedStartDate, startDate, dueDate, schema, typeFormState]);
+  }, [summary, type, priority, tags, approverId, plannedStartDate, startDate, dueDate, schema, typeFormState]);
 
   const allRequiredReady = useMemo(
     () => checklistItems.filter((i) => i.required).every((i) => i.filled),
@@ -282,6 +332,12 @@ export default function CreateTaskPage() {
       toast.error('Fill all required fields first.');
       return;
     }
+    if (violatesStartBeforeDue(startDate, dueDate)) {
+      toast.error(START_MUST_BE_ON_OR_BEFORE_DUE);
+      const scheduleEl = document.getElementById(COMMON_ANCHOR.schedule);
+      if (scheduleEl) flashAndFocus(scheduleEl);
+      return;
+    }
     setSubmitting(asDraft ? 'draft' : 'submit');
     try {
       const payload: Record<string, unknown> = {
@@ -296,6 +352,7 @@ export default function CreateTaskPage() {
       if (plannedStartDate) payload.planned_start_date = plannedStartDate;
       if (startDate) payload.start_date = startDate;
       if (dueDate) payload.due_date = dueDate;
+      if (tags.length) payload.tags = tags;
 
       const res = await TaskAPI.createTask(payload as never);
       const createdTask = (res?.data as any) ?? {};
@@ -545,6 +602,18 @@ export default function CreateTaskPage() {
                   placeholder={todayIso()}
                 />
               </div>
+            </div>
+
+            <div id={COMMON_ANCHOR.labels} className="px-8 py-5">
+              <p className="mb-2 text-[11px] font-medium uppercase tracking-wider text-gray-400">
+                Labels
+              </p>
+              <TaskLabelsPicker
+                projectId={projectId}
+                value={tags}
+                onChange={setTags}
+                disabled={submitting !== null}
+              />
             </div>
 
             <div id={COMMON_ANCHOR.approver} className="px-4 py-5 sm:px-8">

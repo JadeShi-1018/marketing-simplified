@@ -77,6 +77,28 @@ def _field_value(old_instance, new_instance, field):
 
         return old_val, new_val
 
+    if field == 'tags':
+        def _format_tags(value):
+            if not value:
+                return None
+            if isinstance(value, list):
+                labels = []
+                for item in value:
+                    if isinstance(item, dict):
+                        name = str(item.get('name', '') or '').strip()
+                        if name:
+                            labels.append(name)
+                    elif isinstance(item, str):
+                        label = item.strip()
+                        if label:
+                            labels.append(label)
+                return ', '.join(labels) if labels else None
+            return str(value)
+
+        return _format_tags(getattr(old_instance, field, None)), _format_tags(
+            new_instance.__dict__.get(field, getattr(new_instance, field, None))
+        )
+
     # Plain scalar field
     old_raw = getattr(old_instance, field, None)
     new_raw = new_instance.__dict__.get(field, getattr(new_instance, field, None))

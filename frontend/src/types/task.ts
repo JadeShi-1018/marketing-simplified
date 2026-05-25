@@ -34,6 +34,11 @@ export interface ApprovalChainProgress {
   steps: ApprovalChainStepData[];
 }
 
+export interface TaskTag {
+  name: string;
+  color: string;
+}
+
 // Type for getting an existing task
 export interface TaskData {
   id?: number;
@@ -82,6 +87,8 @@ export interface TaskData {
   origin_meeting?: OriginMeetingPayload | null;
   /** Provenance: action item this task was converted from, if any (task detail only). */
   origin_action_item?: OriginActionItemPayload | null;
+  /** Frontend-owned colored tags `{ name, color }`; PATCH/create sends full replacement array */
+  tags?: TaskTag[];
   /** Set when this task was imported from Linear. */
   linear_issue_id?: string | null;
   /** ISO datetime of creation (auto-set by server). */
@@ -107,12 +114,15 @@ export interface CreateTaskData {
   draft_payload?: unknown | null;
   /** When set, creates ``MeetingTaskOrigin`` on the server (same project as task). */
   origin_meeting_id?: number;
+  /** Stored on task JSON field (omit to leave empty). */
+  tags?: TaskTag[];
 }
 
 export interface UserSummary {
   id: number;
   username: string;
   email: string;
+  avatar?: string | null;
   name?: string;
 }
 
@@ -201,6 +211,7 @@ export interface TaskListFilters {
   created_before?: string;
   include_subtasks?: boolean;
   all_projects?: boolean;
+  tag_names?: string[];
 }
 
 /** GET /api/tasks/gantt/ — chart payload derived server-side from tasks + dates */
