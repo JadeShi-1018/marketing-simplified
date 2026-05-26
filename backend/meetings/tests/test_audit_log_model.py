@@ -218,64 +218,60 @@ class TestMeetingAuditLogImmutability(TestCase):
 
     def test_update_via_orm_raises_program_error(self):
         """Test that UPDATE via ORM raises InternalError with immutability message."""
-        with transaction.atomic():
-            self.audit_log.context = {"modified": True}
-            with self.assertRaises(InternalError) as context:
+        with self.assertRaises(InternalError) as context:
+            with transaction.atomic():
+                self.audit_log.context = {"modified": True}
                 self.audit_log.save()
 
-            # Verify error message contains immutability indicator
-            self.assertIn("immutable", str(context.exception).lower())
+        self.assertIn("immutable", str(context.exception).lower())
 
     def test_delete_via_orm_raises_program_error(self):
         """Test that DELETE via ORM raises InternalError with immutability message."""
         audit_log_id = self.audit_log.id
 
-        with transaction.atomic():
-            with self.assertRaises(InternalError) as context:
+        with self.assertRaises(InternalError) as context:
+            with transaction.atomic():
                 self.audit_log.delete()
 
-            # Verify error message contains immutability indicator
-            self.assertIn("immutable", str(context.exception).lower())
-
+        self.assertIn("immutable", str(context.exception).lower())
         # Verify record still exists after failed delete
         self.assertTrue(MeetingAuditLog.objects.filter(id=audit_log_id).exists())
 
     def test_update_via_queryset_raises_program_error(self):
         """Test that UPDATE via queryset raises InternalError."""
-        with transaction.atomic():
-            with self.assertRaises(InternalError) as context:
+        with self.assertRaises(InternalError) as context:
+            with transaction.atomic():
                 MeetingAuditLog.objects.filter(id=self.audit_log.id).update(
                     context={"modified": True}
                 )
 
-            self.assertIn("immutable", str(context.exception).lower())
+        self.assertIn("immutable", str(context.exception).lower())
 
     def test_update_via_raw_sql_raises_program_error(self):
         """Test that UPDATE via raw SQL raises InternalError."""
-        with transaction.atomic():
-            with self.assertRaises(InternalError) as context:
+        with self.assertRaises(InternalError) as context:
+            with transaction.atomic():
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "UPDATE meetings_meetingauditlog SET context = %s WHERE id = %s",
                         [json.dumps({"modified": True}), str(self.audit_log.id)]
                     )
 
-            self.assertIn("immutable", str(context.exception).lower())
+        self.assertIn("immutable", str(context.exception).lower())
 
     def test_delete_via_raw_sql_raises_program_error(self):
         """Test that DELETE via raw SQL raises InternalError."""
         audit_log_id = self.audit_log.id
 
-        with transaction.atomic():
-            with self.assertRaises(InternalError) as context:
+        with self.assertRaises(InternalError) as context:
+            with transaction.atomic():
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "DELETE FROM meetings_meetingauditlog WHERE id = %s",
                         [str(audit_log_id)]
                     )
 
-            self.assertIn("immutable", str(context.exception).lower())
-
+        self.assertIn("immutable", str(context.exception).lower())
         # Verify record still exists after failed delete
         self.assertTrue(MeetingAuditLog.objects.filter(id=audit_log_id).exists())
 
@@ -299,15 +295,15 @@ class TestMeetingAuditLogImmutability(TestCase):
         )
 
         # First entry remains immutable
-        with transaction.atomic():
-            self.audit_log.context = {"modified": True}
-            with self.assertRaises(InternalError):
+        with self.assertRaises(InternalError):
+            with transaction.atomic():
+                self.audit_log.context = {"modified": True}
                 self.audit_log.save()
 
         # Second entry is also immutable
-        with transaction.atomic():
-            audit_log_2.context = {"modified": True}
-            with self.assertRaises(InternalError):
+        with self.assertRaises(InternalError):
+            with transaction.atomic():
+                audit_log_2.context = {"modified": True}
                 audit_log_2.save()
 
 
