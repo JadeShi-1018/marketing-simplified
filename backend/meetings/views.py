@@ -107,6 +107,19 @@ class AuditLogPagination(PageNumberPagination):
     max_page_size = 200
     page_size_query_description = "Number of audit log entries per page (max 200)"
 
+    def paginate_queryset(self, queryset, request, view=None):
+        # Return empty page instead of 404 when page is out of range.
+        try:
+            return super().paginate_queryset(queryset, request, view)
+        except Exception:
+            self.page = None
+            return []
+
+    def get_paginated_response(self, data):
+        if self.page is None:
+            return Response({'count': 0, 'next': None, 'previous': None, 'results': []})
+        return super().get_paginated_response(data)
+
 
 class MeetingViewSet(viewsets.ModelViewSet):
     serializer_class = MeetingSerializer
