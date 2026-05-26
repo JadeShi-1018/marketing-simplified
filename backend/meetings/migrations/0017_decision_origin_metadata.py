@@ -44,7 +44,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("meetings", "0013_participantlink_is_accepted"),
+        ("meetings", "0016_fix_audit_trigger_allow_actor_set_null"),
     ]
 
     operations = [

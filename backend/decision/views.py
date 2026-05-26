@@ -8,6 +8,7 @@ from rest_framework.response import Response
 
 from core.models import Project, ProjectMember
 from meetings.models import Meeting, MeetingDecisionOrigin
+from meetings.services import record_decision_created, record_decision_updated, record_decision_deleted
 from notifications.models import NotificationCategory, NotificationEventType
 from notifications.services import create_notification
 from notifications.action_urls import decision_action_url
@@ -161,7 +162,11 @@ class DecisionDraftViewSet(
                     },
                     created_by=self.request.user,
                 )
-
+                record_decision_created(
+                    meeting=origin_meeting,
+                    decision_id=decision.id,
+                    actor=self.request.user,
+                )
             self._apply_parent_edges(decision, parent_ids)
 
     def create(self, request, *args, **kwargs):
@@ -198,6 +203,14 @@ class DecisionDraftViewSet(
             instance.promote_to_draft()
             instance.is_pre_draft = False
             instance.save()
+        from meetings.models import Meeting
+        origin = MeetingDecisionOrigin.objects.filter(decision=instance).select_related('meeting').first()
+        if origin:
+            record_decision_updated(
+                meeting=origin.meeting,
+                decision_id=instance.id,
+                actor=self.request.user,
+            )
 
     def retrieve(self, request, *args, **kwargs):
         decision = self.get_object()
@@ -905,11 +918,18 @@ class DecisionViewSet(
         if decision.is_deleted:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     
+        origin = MeetingDecisionOrigin.objects.filter(decision=decision).select_related('meeting').first()
+
         with transaction.atomic():
-        # Delete all CalendarEvents derived from this Decision before soft-deleting
             CalendarEvent.objects.filter(decision=decision).delete()
-        
             decision.is_deleted = True
             decision.save(update_fields=["is_deleted", "updated_at"])
-    
+
+        if origin:
+            record_decision_deleted(
+                meeting=origin.meeting,
+                decision_id=decision.id,
+                actor=request.user,
+            )
+
         return Response(status=status.HTTP_204_NO_CONTENT)
