@@ -1,7 +1,9 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from freezegun import freeze_time
 
+from tracking.enums import EndReason
 from tracking.models import TrackingSession
 from tracking.services import SessionLookup
 
@@ -52,3 +54,32 @@ class SessionLookupTests(TestCase):
         sid2 = self.lookup.get_or_create_session(self.user2.pk)
         self.assertNotEqual(sid1, sid2)
         self.assertEqual(TrackingSession.objects.count(), 2)
+
+    def test_new_session_sets_last_heartbeat_at(self):
+        with freeze_time("2026-01-01 12:00:00"):
+            sid = self.lookup.get_or_create_session(self.user1.pk)
+        session = TrackingSession.objects.get(pk=sid)
+        expected = timezone.datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(session.last_heartbeat_at, expected)
+
+    def test_cache_hit_refreshes_last_heartbeat_at(self):
+        with freeze_time("2026-01-01 12:00:00"):
+            sid = self.lookup.get_or_create_session(self.user1.pk)
+        with freeze_time("2026-01-01 12:05:00"):
+            self.lookup.get_or_create_session(self.user1.pk)
+        session = TrackingSession.objects.get(pk=sid)
+        expected = timezone.datetime(2026, 1, 1, 12, 5, 0, tzinfo=timezone.utc)
+        self.assertEqual(session.last_heartbeat_at, expected)
+
+    def test_ended_session_heartbeat_not_refreshed(self):
+        with freeze_time("2026-01-01 12:00:00"):
+            sid = self.lookup.get_or_create_session(self.user1.pk)
+            original_heartbeat = timezone.datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        TrackingSession.objects.filter(pk=sid).update(
+            ended_at=timezone.now(),
+            end_reason=EndReason.TIMEOUT,
+        )
+        with freeze_time("2026-01-01 12:05:00"):
+            self.lookup.get_or_create_session(self.user1.pk)
+        session = TrackingSession.objects.get(pk=sid)
+        self.assertEqual(session.last_heartbeat_at, original_heartbeat)
