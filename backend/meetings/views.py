@@ -1,3 +1,7 @@
+from django.db.models import Max
+from django.utils import timezone
+from decision.models import Decision
+from decision.serializers import DecisionCommittedSerializer, DecisionListSerializer
 import logging
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -16,6 +20,7 @@ from core.models import Project, ProjectMember
 from meetings.lifecycle import execute_transition, get_available_transitions
 from meetings.models import (
     Meeting,
+    MeetingDecisionOrigin,
     AgendaItem,
     ParticipantLink,
     ArtifactLink,
@@ -139,6 +144,85 @@ class MeetingViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=["get", "post"], url_path="decisions")
+    def decisions(self, request, project_id=None, pk=None):
+        project = self.get_project()
+        meeting = self.get_object()
+
+        if request.method == "GET":
+            origins = (
+                MeetingDecisionOrigin.objects
+                .filter(meeting=meeting, decision__is_deleted=False)
+                .select_related("decision", "created_by")
+                .order_by("-origin_timestamp", "-created_at")
+            )
+            decisions = [origin.decision for origin in origins]
+            serializer = DecisionListSerializer(
+                decisions,
+                many=True,
+                context=self.get_serializer_context(),
+            )
+            return Response({"items": serializer.data})
+
+        title = (request.data.get("title") or "").strip() or meeting.title
+        context_summary = (
+            request.data.get("contextSummary")
+            or request.data.get("context_summary")
+            or ""
+        ).strip()
+        if not context_summary:
+            context_summary = meeting.summary or meeting.objective or meeting.title
+
+        with transaction.atomic():
+            project = Project.objects.select_for_update().get(pk=project.pk)
+            meeting = (
+                Meeting.objects
+                .select_for_update()
+                .get(pk=meeting.pk, project=project)
+            )
+
+            max_seq = (
+                Decision.objects.filter(project=project)
+                .aggregate(max_seq=Max("project_seq"))
+                .get("max_seq")
+            )
+            next_seq = (max_seq or 0) + 1
+
+            decision = Decision.objects.create(
+                title=title,
+                context_summary=context_summary,
+                author=request.user,
+                last_edited_by=request.user,
+                project=project,
+                project_seq=next_seq,
+            )
+
+            MeetingDecisionOrigin.objects.create(
+                meeting=meeting,
+                decision=decision,
+                origin_timestamp=timezone.now(),
+                creation_context={
+                    "source": "meeting_decisions_endpoint",
+                    "meeting_id": meeting.id,
+                    "meeting_title": meeting.title,
+                    "meeting_summary": meeting.summary,
+                    "meeting_objective": meeting.objective,
+                    "artifact_links": list(
+                        meeting.artifact_links.values(
+                            "artifact_type",
+                            "artifact_id",
+                        )
+                    ),
+                },
+                created_by=request.user,
+            )
+
+        serializer = DecisionCommittedSerializer(
+            decision,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
     def perform_create(self, serializer):
         project = self.get_project()
         raw_ids = serializer.validated_data.pop("participant_user_ids", None)
@@ -217,7 +301,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         """Tasks anchored to this meeting via ``MeetingTaskOrigin`` (paginated)."""
         meeting = self.get_object()
         _ensure_project_membership(request.user, meeting.project)
-        from meetings.models import MeetingTaskOrigin
+        from meetings.models import Meeting, MeetingDecisionOriginTaskOrigin
         from task.models import Task
         from task.serializers import TaskListSerializer
 

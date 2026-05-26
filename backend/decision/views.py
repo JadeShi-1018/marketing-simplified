@@ -5,10 +5,9 @@ from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.utils import timezone
 
 from core.models import Project, ProjectMember
-from meetings.models import MeetingDecisionOrigin
+from meetings.models import Meeting, MeetingDecisionOrigin
 from .models import CommitRecord, Decision, DecisionEdge, Review, Signal
 from calendars.models import CalendarEvent
 from .permissions import DecisionPermission
@@ -108,25 +107,58 @@ class DecisionDraftViewSet(
 
         parent_ids = serializer.validated_data.pop("parentDecisionIds", None)
         origin_meeting_id = serializer.validated_data.pop("origin_meeting_id", None)
+
         with transaction.atomic():
             project = Project.objects.select_for_update().get(pk=project_id)
+
+            origin_meeting = None
+            if origin_meeting_id is not None:
+                origin_meeting = (
+                    Meeting.objects
+                    .select_for_update()
+                    .filter(pk=origin_meeting_id, project=project)
+                    .first()
+                )
+                if origin_meeting is None:
+                    raise ValidationError({
+                        "origin_meeting_id": "Origin meeting must exist in the selected project."
+                    })
+
             max_seq = (
                 Decision.objects.filter(project=project)
                 .aggregate(max_seq=Max("project_seq"))
                 .get("max_seq")
             )
             next_seq = (max_seq or 0) + 1
+
             decision = serializer.save(
                 author=self.request.user,
                 last_edited_by=self.request.user,
                 project=project,
                 project_seq=next_seq,
             )
-            if origin_meeting_id is not None:
+
+            if origin_meeting is not None:
                 MeetingDecisionOrigin.objects.create(
-                    meeting_id=origin_meeting_id,
+                    meeting=origin_meeting,
                     decision=decision,
+                    origin_timestamp=timezone.now(),
+                    creation_context={
+                        "source": "decision_create_origin_meeting_id",
+                        "meeting_id": origin_meeting.id,
+                        "meeting_title": origin_meeting.title,
+                        "meeting_summary": origin_meeting.summary,
+                        "meeting_objective": origin_meeting.objective,
+                        "artifact_links": list(
+                            origin_meeting.artifact_links.values(
+                                "artifact_type",
+                                "artifact_id",
+                            )
+                        ),
+                    },
+                    created_by=self.request.user,
                 )
+
             self._apply_parent_edges(decision, parent_ids)
 
     def create(self, request, *args, **kwargs):
@@ -344,6 +376,30 @@ class DecisionViewSet(
                 if child not in visited:
                     stack.append(child)
         return False
+
+    @action(detail=True, methods=["get"], url_path="origin")
+    def origin(self, request, pk=None):
+        decision = self.get_object()
+
+        try:
+            origin = decision.meeting_origin
+        except MeetingDecisionOrigin.DoesNotExist:
+            return Response(
+                {"detail": "This decision does not have a meeting origin."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        meeting = origin.meeting
+        return Response({
+            "decisionId": decision.id,
+            "meeting": {
+                "id": meeting.id,
+                "title": meeting.title,
+            },
+            "originTimestamp": origin.origin_timestamp,
+            "createdBy": origin.created_by_id,
+            "creationContext": origin.creation_context,
+        })
 
     @action(detail=True, methods=['get', 'put'], url_path='connections')
     def connections(self, request, pk=None):

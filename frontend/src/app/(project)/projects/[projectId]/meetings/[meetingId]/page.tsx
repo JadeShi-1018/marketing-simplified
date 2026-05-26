@@ -2180,6 +2180,8 @@ export default function MeetingWorkspacePage() {
                     meetingId={meetingId}
                     generatedTasks={meeting.generated_tasks ?? []}
                     generatedDecisions={meeting.generated_decisions ?? []}
+                    meetingTitle={meeting.title}
+                    meetingSummary={meeting.summary || meeting.objective || ''}
                   />
                 </div>
               ) : null}
