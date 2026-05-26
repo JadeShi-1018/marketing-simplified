@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckSquare, Forward, X } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useMessageData } from '@/hooks/useMessageData';
 import { useForwardMessages } from '@/hooks/useForwardMessages';
+import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useChatStore } from '@/lib/chatStore';
 import { editMessage, deleteMessage } from '@/lib/api/chatApi';
 import type { Chat } from '@/types/chat';
@@ -30,6 +31,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const searchParams = useSearchParams();
   // Use selector for stable reference
   const user = useAuthStore(state => state.user);
+  const currentUserId = user?.id ? Number(user.id) : null;
   const chatsByProject = useChatStore(state => state.chatsByProject);
   // Snapshot taken at click-time in setCurrentChat — immune to subsequent setChatsForProject resets
   const capturedUnreadCount = useChatStore(state => state.capturedUnreadCounts[chat.id] ?? 0);
@@ -40,6 +42,42 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<number | null>(null);
   const unreadCapturedForChatRef = useRef<number | null>(null);
   const { forward, isForwarding } = useForwardMessages();
+
+  const handleSocketChatMessage = useCallback((event: ChatWsEvent) => {
+    if (!event.message) return;
+    const rawChatId = event.message.chat_id ?? event.message.chat ?? event.chat_id;
+    const messageChatId = typeof rawChatId === 'string' ? Number(rawChatId) : rawChatId;
+    if (!messageChatId || Number.isNaN(messageChatId)) return;
+    useChatStore.getState().addMessage(
+      messageChatId,
+      { ...event.message, chat_id: messageChatId },
+      currentUserId ?? undefined
+    );
+  }, [currentUserId]);
+
+  const handleSocketTypingIndicator = useCallback((event: ChatWsEvent) => {
+    if (event.chat_id !== chat.id || !event.user_id || event.user_id === currentUserId) return;
+    const { setTypingUser, clearTypingUser } = useChatStore.getState();
+    if (event.is_typing) {
+      setTypingUser(event.chat_id, event.user_id);
+    } else {
+      clearTypingUser(event.chat_id, event.user_id);
+    }
+  }, [chat.id, currentUserId]);
+
+  const handleSocketMessageStatusUpdate = useCallback((event: ChatWsEvent) => {
+    const messageId = Number(event.message_id);
+    if (!Number.isFinite(messageId) || !event.message?.statuses) return;
+    useChatStore.getState().updateMessage(messageId, {
+      statuses: event.message.statuses,
+    });
+  }, []);
+
+  const { sendTypingStart, sendTypingStop } = useChatWebSocket(currentUserId, {
+    onChatMessage: handleSocketChatMessage,
+    onTypingIndicator: handleSocketTypingIndicator,
+    onMessageStatusUpdate: handleSocketMessageStatusUpdate,
+  });
 
   const {
     messages,
@@ -158,15 +196,9 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
 
     // Only call API if this is initial load OR new messages arrived
     if (messages.length > lastMessageCountRef.current) {
-      console.log('[ChatWindow] New messages detected, scheduling markAllAsRead:', {
-        chatId: chat.id,
-        previousCount: lastMessageCountRef.current,
-        newCount: messages.length,
-      });
-
       markAsReadTimeoutRef.current = setTimeout(() => {
         markAllAsRead().then(() => {
-          console.log('[ChatWindow] markAllAsRead completed for chat:', chat.id);
+          // Refetch global unread count from backend to ensure accuracy
           fetchGlobalUnreadCount();
           // Intentionally NOT clearing firstUnreadMessageId here — the divider
           // stays visible until the user closes and reopens the conversation.
@@ -290,7 +322,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const getOtherParticipant = () => {
     if (chat.type === 'group' || !chat.participants) return null;
     // Ensure numeric comparison to avoid type mismatch (user.id can be string | number | undefined)
-    const currentUserId = user?.id ? Number(user.id) : null;
     if (currentUserId === null) return null;
     return chat.participants.find(p => p.user.id !== currentUserId);
   };
@@ -303,6 +334,13 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const chatName = chat.type === 'group' 
     ? (chat.name || 'Group Chat')
     : (otherParticipant?.user?.username || 'Chat');
+  const handleTypingStart = useCallback(() => {
+    sendTypingStart(chat.id);
+  }, [chat.id, sendTypingStart]);
+
+  const handleTypingStop = useCallback(() => {
+    sendTypingStop(chat.id);
+  }, [chat.id, sendTypingStop]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -376,7 +414,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       <div className="flex-1 overflow-hidden">
         <MessageList
           messages={messages}
-          currentUserId={user?.id ? Number(user.id) : 0}
+          currentUserId={currentUserId ?? 0}
           onLoadMore={loadMoreMessages}
           hasMore={hasMore}
           isLoading={isLoadingMessages}
@@ -394,7 +432,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       </div>
 
       {/* Typing indicator */}
-      <TypingIndicator chat={chat} currentUserId={user?.id ? Number(user.id) : null} />
+      <TypingIndicator chat={chat} currentUserId={currentUserId} />
 
       {/* Message Input */}
       <div className="flex-shrink-0">
@@ -403,6 +441,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           onSendWithAttachments={handleSendWithAttachments}
           disabled={isSending || isSelectMode || isForwarding}
           chatId={chat.id}
+          onTypingStart={handleTypingStart}
+          onTypingStop={handleTypingStop}
         />
       </div>
 
@@ -411,7 +451,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
         onClose={() => setIsForwardDialogOpen(false)}
         projectId={chatProjectId ? String(chatProjectId) : ''}
         availableChats={availableTargetChats}
-        currentUserId={user?.id ? Number(user.id) : 0}
+        currentUserId={currentUserId ?? 0}
         selectedMessageCount={selectedMessageIds.length}
         isForwarding={isForwarding}
         onSubmit={handleForwardSubmit}

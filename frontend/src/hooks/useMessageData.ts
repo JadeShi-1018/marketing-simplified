@@ -18,14 +18,41 @@ interface UseMessageDataOptions {
 
 export function useMessageData(options: UseMessageDataOptions = {}) {
   const { chatId, autoFetch = true, limit = 50 } = options;
-  
-  // Get messages for current chat - use stable selector
+
+  // Local state for messages (independent from store)
+  const [localMessages, setLocalMessages] = useState<Message[]>([]);
+
+  // Get messages from store for real-time updates (WebSocket)
   const allMessages = useChatStore(state => state.messages);
-  const currentMessages = useMemo(() => {
+  const storeMessages = useMemo(() => {
     if (!chatId) return EMPTY_MESSAGES;
     return allMessages[chatId] || EMPTY_MESSAGES;
   }, [chatId, allMessages]);
-  
+
+  // Merge local messages with store messages for display
+  // Use Map for deduplication, store messages override local (more up-to-date from WebSocket)
+  const currentMessages = useMemo(() => {
+    if (!chatId) return EMPTY_MESSAGES;
+
+    // Create a map of message IDs for deduplication
+    const messageMap = new Map<number, Message>();
+
+    // Add local messages first
+    localMessages.forEach((msg) => {
+      messageMap.set(msg.id, msg);
+    });
+
+    // Override/add with store messages (more up-to-date from WebSocket)
+    storeMessages.forEach((msg) => {
+      messageMap.set(msg.id, msg);
+    });
+
+    // Sort by created_at (ascending order - oldest to newest)
+    return Array.from(messageMap.values()).sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    );
+  }, [chatId, storeMessages, localMessages]);
+
   const [isFetchingMessages, setIsFetchingMessages] = useState(false);
   const [isLoadingMoreMessages, setIsLoadingMoreMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -37,9 +64,9 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   const fetchMessages = useCallback(async (chatIdToFetch?: number) => {
     const targetChatId = chatIdToFetch || chatId;
     if (!targetChatId) return;
-    
+
     const { setMessages } = useChatStore.getState();
-    
+
     try {
       setIsFetchingMessages(true);
       setError(null);
@@ -48,8 +75,11 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
         chat_id: targetChatId,
         limit,
       });
-      
+
+      // Update both local state AND store
+      setLocalMessages(response.results);
       setMessages(targetChatId, response.results);
+
       // prev_cursor indicates there are older messages available
       setHasMore(!!response.prev_cursor || response.results.length === limit);
     } catch (err: any) {
@@ -65,24 +95,26 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   // Load more (older) messages
   const loadMoreMessages = useCallback(async () => {
     if (!chatId || !hasMore || isLoadingMessages) return;
-    
+
     const { prependMessages } = useChatStore.getState();
-    
+
     try {
       setIsLoadingMoreMessages(true);
       setError(null);
-      
+
       // Get the oldest message's timestamp for cursor-based pagination
       const oldestMessage = currentMessages.length > 0 ? currentMessages[0] : null;
       const beforeTimestamp = oldestMessage?.created_at;
-      
+
       const response = await getMessages({
         chat_id: chatId,
         before: beforeTimestamp, // Use timestamp instead of ID
         limit,
       });
-      
+
       if (response.results.length > 0) {
+        // Update both local state AND store
+        setLocalMessages((prev) => [...response.results, ...prev]);
         prependMessages(chatId, response.results);
       }
       // Check if there are more messages (prev_cursor indicates more older messages)
@@ -99,23 +131,28 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   // Send new message
   const send = useCallback(async (content: string): Promise<Message | null> => {
     if (!chatId || !content.trim()) return null;
-    
+
     const { addMessage } = useChatStore.getState();
-    
+
     try {
       setIsSending(true);
       setError(null);
-      
+
       const data: SendMessageRequest = {
         chat_id: chatId,
         content: content.trim(),
       };
-      
+
       const newMessage = await sendMessage(data);
-      
-      // Add to store (if not already added by WebSocket)
+
+      // Add to both local state AND store
+      setLocalMessages((prev) => {
+        // Check if already exists (avoid duplicates)
+        if (prev.some((m) => m.id === newMessage.id)) return prev;
+        return [...prev, newMessage];
+      });
       addMessage(chatId, newMessage);
-      
+
       return newMessage;
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || 'Failed to send message';
@@ -130,30 +167,35 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
 
   // Send message with attachments
   const sendWithAttachments = useCallback(async (
-    content: string, 
+    content: string,
     attachmentIds: number[]
   ): Promise<Message | null> => {
     if (!chatId) return null;
     // Must have content OR attachments
     if (!content.trim() && attachmentIds.length === 0) return null;
-    
+
     const { addMessage } = useChatStore.getState();
-    
+
     try {
       setIsSending(true);
       setError(null);
-      
+
       const data: SendMessageRequest = {
         chat_id: chatId,
         content: content.trim() || '', // Allow empty content if attachments exist
         attachment_ids: attachmentIds,
       };
-      
+
       const newMessage = await sendMessage(data);
-      
-      // Add to store (if not already added by WebSocket)
+
+      // Add to both local state AND store
+      setLocalMessages((prev) => {
+        // Check if already exists (avoid duplicates)
+        if (prev.some((m) => m.id === newMessage.id)) return prev;
+        return [...prev, newMessage];
+      });
       addMessage(chatId, newMessage);
-      
+
       return newMessage;
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || 'Failed to send message';
@@ -182,12 +224,9 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   // Mark all messages in chat as read (uses efficient backend endpoint)
   const markAllAsRead = useCallback(async () => {
     if (!chatId) return;
-    
-    console.log('[useMessageData] markAllAsRead called for chat:', chatId);
-    
+
     try {
       await markChatAsRead(chatId);
-      console.log('[useMessageData] markAllAsRead success for chat:', chatId);
     } catch (err: any) {
       console.error('[useMessageData] Error marking chat as read:', chatId, err);
       // Don't show toast for read errors (not critical)
@@ -196,10 +235,17 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
 
   // Auto-fetch messages when chat changes — only when authenticated
   const isAuthenticated = useAuthStore(state => state.isAuthenticated);
+
+  // Clear local messages when chatId changes
+  useEffect(() => {
+    setLocalMessages([]);
+    setHasMore(true); // Reset pagination
+  }, [chatId]);
+
+  // Auto-fetch messages when chat changes
   useEffect(() => {
     if (autoFetch && chatId && isAuthenticated) {
       fetchMessages();
-      setHasMore(true); // Reset pagination
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFetch, chatId, isAuthenticated]); // Don't include fetchMessages to avoid infinite loop

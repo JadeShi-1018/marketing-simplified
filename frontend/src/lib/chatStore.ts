@@ -537,6 +537,10 @@ export const useChatStore = create<ChatState>()(
           typingUsersByChat: {},
         });
       },
+
+      // ── SSE-driven chat activity signal ──────────────────────────────
+      lastChatActivity: 0,
+      triggerChatActivity: () => set({ lastChatActivity: Date.now() }),
     }),
     {
       name: 'chat-storage',

@@ -16,40 +16,11 @@ class NotificationDispatcher:
     
     def dispatch_mock_notification(self, user_id, trigger_type, message):
         """
-        Main method to process mock notification dispatch
-        
-        Returns dict with channels that would be notified and mock logs
+        Delegates to notifications app unified channel mock (email / Slack).
         """
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return {
-                'error': 'User not found',
-                'channels_would_notify': [],
-                'mock_logs': []
-            }
-        
-        # Check quiet hours status
-        if self._is_in_quiet_hours(user):
-            return {
-                'quiet_hours_active': True,
-                'channels_would_notify': [],
-                'mock_logs': [f"[MOCK NOTIFICATION] Skipped - User {user.username} is in quiet hours"]
-            }
-        
-        # Find enabled notification channels for this trigger
-        enabled_channels = self._get_enabled_channels(user, trigger_type)
-        
-        # Generate mock dispatch logs
-        mock_logs = self._generate_mock_logs(user, trigger_type, message, enabled_channels)
-        
-        return {
-            'user_id': user_id,
-            'trigger_type': trigger_type,
-            'quiet_hours_active': False,
-            'channels_would_notify': [channel['name'] for channel in enabled_channels],
-            'mock_logs': mock_logs
-        }
+        from notifications.dispatch import dispatch_notification_channels
+
+        return dispatch_notification_channels(user_id, trigger_type, message)
     
     def _is_in_quiet_hours(self, user):
         """

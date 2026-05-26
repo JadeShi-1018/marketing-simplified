@@ -314,7 +314,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'type': 'chat_created',
             'chat': event['chat']
         }))
-    
+
+    async def in_app_notification(self, event):
+        """Push in-app notification (bell) to the same channel as chat."""
+        await self.send(text_data=json.dumps({
+            'type': 'in_app_notification',
+            'notification': event['notification'],
+        }))
+
+    async def reaction_update(self, event):
+        """Send reaction update to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'reaction_update',
+            'reaction': event['reaction'],
+        }))
+
     async def send_error(self, message):
         """Send error message to client"""
         await self.send(text_data=json.dumps({

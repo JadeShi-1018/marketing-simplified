@@ -1,7 +1,7 @@
 // Chat feature TypeScript types
 // Based on OpenAPI spec: /openapi/openapi_spec/chat.yaml
 
-import type { DragEvent, MouseEvent } from 'react';
+import type { DragEvent, MouseEvent, ReactNode } from 'react';
 
 // ==================== User Types ====================
 
@@ -81,6 +81,18 @@ export interface ChatFileListItem extends MessageAttachment {
   message_id: number | null;
 }
 
+export interface ReactionUser {
+  id: number;
+  username: string;
+}
+
+export interface Reaction {
+  emoji: string;
+  count: number;
+  users: ReactionUser[];
+  reacted_by_me: boolean;
+}
+
 export interface Message {
   id: number;
   chat_id: number;
@@ -93,15 +105,26 @@ export interface Message {
     sender_display: string;
     created_at: string | null;
   } | null;
+  reply_to?: {
+    id: number;
+    sender: User;
+    content: string;
+    created_at: string | null;
+  } | null;
+  reactions?: Reaction[];
   created_at: string;
   updated_at: string;
   statuses?: MessageStatus[];
   is_read?: boolean;
   is_edited?: boolean;
   is_deleted?: boolean;
+  is_revoked?: boolean;
+  revoked_at?: string | null;
+  can_revoke?: boolean;
   has_attachments?: boolean;
   attachment_count?: number;
   attachments?: MessageAttachment[];
+  is_hidden_by_me?: boolean;
 }
 
 // ==================== API Request/Response Types ====================
@@ -119,6 +142,7 @@ export interface SendMessageRequest {
   chat_id: number;
   content: string;
   attachment_ids?: number[];
+  reply_to_id?: number | null;
 }
 
 export interface SendMessageResponse extends Message {}
@@ -199,8 +223,33 @@ export type WebSocketMessageType =
   | 'typing_stop'
   | 'typing_indicator'
   | 'chat_created'
+  | 'in_app_notification'
+  | 'reaction_update'
   | 'pong'
   | 'error';
+
+/** In-app notification payload mirrors API NotificationSerializer. */
+export interface WebSocketInAppNotificationPayload {
+  id: string;
+  category: string;
+  event_type: string;
+  related_object_type: string;
+  related_object_id: string;
+  title: string;
+  body: string;
+  is_read: boolean;
+  action_url: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface WebSocketReactionPayload {
+  message_id: number;
+  chat_id: number;
+  user: ReactionUser;
+  emoji: string;
+  action: 'added' | 'removed';
+}
 
 export interface WebSocketMessage {
   type: WebSocketMessageType;
@@ -213,6 +262,8 @@ export interface WebSocketMessage {
   user_id?: number;
   is_typing?: boolean;
   error?: string;
+  notification?: WebSocketInAppNotificationPayload;
+  reaction?: WebSocketReactionPayload;
 }
 
 // ==================== Store Types ====================
@@ -276,6 +327,12 @@ export interface ChatState {
   
   setLoading: (loading: boolean) => void;
   
+  // SSE-driven chat activity signal
+  /** Epoch ms bumped whenever an SSE notification for a chat event is received. */
+  lastChatActivity: number;
+  /** Called by useNotificationSSE when a chat-related event arrives. */
+  triggerChatActivity: () => void;
+
   // Helpers
   getCurrentChat: () => Chat | undefined;
   getCurrentMessages: () => Message[];
@@ -339,6 +396,12 @@ export interface MessageItemProps {
   isHighlighted?: boolean;
   onEdit?: (messageId: number, newContent: string) => void;
   onDelete?: (messageId: number) => void;
+  /** When true, show hover actions (e.g. more button). */
+  isHovered?: boolean;
+  /** Render prop for actions to show in the message action area. */
+  renderActions?: () => ReactNode;
+  /** Callback when a reaction is clicked (toggle reaction). */
+  onReactionClick?: (emoji: string, isReactedByMe: boolean) => void;
 }
 
 export interface MessageListProps {
@@ -362,6 +425,8 @@ export interface MessageListProps {
 export interface MessageInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
+  /** Drawer-style input: brand top border handled by parent; gradient send button. */
+  variant?: 'default' | 'drawer';
 }
 
 export interface CreateChatDialogProps {

@@ -149,12 +149,17 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
     chat: data.chat_id, // Backend expects 'chat' not 'chat_id'
     content: data.content,
   };
-  
+
   // Include attachment_ids if present
   if (data.attachment_ids && data.attachment_ids.length > 0) {
     payload.attachment_ids = data.attachment_ids;
   }
-  
+
+  // Include reply_to_id if present (quote reply)
+  if (data.reply_to_id) {
+    payload.reply_to_id = data.reply_to_id;
+  }
+
   const response = await api.post('/api/chat/messages/', payload);
   return response.data;
 };
@@ -162,10 +167,6 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
 export const editMessage = async (messageId: number, content: string): Promise<Message> => {
   const response = await api.patch(`/api/chat/messages/${messageId}/`, { content });
   return response.data;
-};
-
-export const deleteMessage = async (messageId: number): Promise<void> => {
-  await api.delete(`/api/chat/messages/${messageId}/`);
 };
 
 /**
@@ -244,6 +245,108 @@ export const getUnreadCount = async (chatId?: number): Promise<number> => {
   }
 };
 
+// ==================== Reaction Endpoints ====================
+
+/**
+ * Add or toggle a reaction on a message
+ * If the user already has this reaction, it will be removed (toggle behavior)
+ */
+export const addReaction = async (
+  messageId: number,
+  emoji: string
+): Promise<{ status: 'added' | 'removed'; message: Message }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/react/`, {
+    emoji,
+  });
+  return response.data;
+};
+
+/**
+ * Remove a specific reaction from a message
+ */
+export const removeReaction = async (
+  messageId: number,
+  emoji: string
+): Promise<{ status: 'removed'; message: Message }> => {
+  const response = await api.delete(
+    `/api/chat/messages/${messageId}/react/${encodeURIComponent(emoji)}/`
+  );
+  return response.data;
+};
+
+// ==================== Reminder Endpoints ====================
+
+/**
+ * Set or update a reminder for a message
+ */
+export const setMessageReminder = async (
+  messageId: number,
+  remindAt: Date,
+  note?: string
+): Promise<{ status: 'created' | 'updated'; reminder: { id: number; remind_at: string; note: string } }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/remind/`, {
+    remind_at: remindAt.toISOString(),
+    note: note || '',
+  });
+  return response.data;
+};
+
+/**
+ * Cancel a reminder for a message
+ */
+export const cancelMessageReminder = async (
+  messageId: number
+): Promise<{ status: 'cancelled' }> => {
+  const response = await api.delete(`/api/chat/messages/${messageId}/cancel_remind/`);
+  return response.data;
+};
+
+// ==================== Revoke/Delete Endpoints ====================
+
+/**
+ * Revoke a message (within 2 minutes of sending)
+ * The message will be marked as revoked and show a notice to all users
+ */
+export const revokeMessage = async (
+  messageId: number
+): Promise<{ status: 'revoked'; message: Message }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/revoke/`);
+  return response.data;
+};
+
+/**
+ * Delete a message (hard delete from database)
+ * The message will be completely removed
+ */
+export const deleteMessage = async (
+  messageId: number
+): Promise<{ status: 'deleted' }> => {
+  const response = await api.delete(`/api/chat/messages/${messageId}/`);
+  return response.data;
+};
+
+/**
+ * Hide a message for the current user only (personal hide, does not affect others).
+ * POST /api/chat/messages/{messageId}/hide/
+ */
+export const hideMessage = async (
+  messageId: number
+): Promise<{ status: 'hidden'; message: Message }> => {
+  const response = await api.post(`/api/chat/messages/${messageId}/hide/`);
+  return response.data;
+};
+
+/**
+ * Forward multiple messages to multiple chats/users in batch.
+ * POST /api/chat/messages/forward_batch/
+ */
+export const forwardBatch = async (
+  data: ForwardBatchRequest
+): Promise<ForwardBatchResponse> => {
+  const response = await api.post('/api/chat/messages/forward_batch/', data);
+  return response.data;
+};
+
 // Export all functions as a single API object (optional alternative style)
 const chatApi = {
   getChats,
@@ -264,6 +367,12 @@ const chatApi = {
   markChatAsRead,
   findPrivateChat,
   getUnreadCount,
+  addReaction,
+  removeReaction,
+  setMessageReminder,
+  cancelMessageReminder,
+  revokeMessage,
+  deleteMessage,
 };
 
 export default chatApi;

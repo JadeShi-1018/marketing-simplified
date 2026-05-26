@@ -13,6 +13,7 @@ from meetings.models import (
     MeetingDocument,
     ParticipantLink,
 )
+from notifications.models import Notification, NotificationEventType
 
 
 
@@ -224,7 +225,7 @@ class TestMeetingAPI(TestCase):
         self.assertIn("tags", response.data)
         self.assertEqual(
             response.data["participants"],
-            [{"user_id": self.user_a.id, "role": None}],
+            [{"user_id": self.user_a.id, "role": None, "username": self.user_a.username, "avatar": None}],
         )
         self.assertEqual(response.data["tags"], [])
         links = ParticipantLink.objects.filter(meeting_id=meeting_id, user=self.user_a)
@@ -406,6 +407,98 @@ class TestMeetingAPI(TestCase):
         self.assertEqual(response.data["content"], "Collaborative content")
         doc = MeetingDocument.objects.get(meeting=meeting)
         self.assertEqual(doc.last_edited_by_id, self.user_a.id)
+
+    def test_patch_meeting_document_notifies_other_participant_doc_asset_update(self):
+        """Non-editor participant saves via REST PATCH → others receive DOC_ASSET_UPDATE."""
+        ProjectMember.objects.create(
+            user=self.user_b,
+            project=self.project_a,
+            is_active=True,
+        )
+        meeting = Meeting.objects.create(
+            project=self.project_a,
+            title="Shared Notes Meeting",
+            type_definition=self._meeting_type(self.project_a, slug="planning"),
+            objective="O",
+        )
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_a, is_accepted=True)
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
+
+        url = f"/api/projects/{self.project_a.id}/meetings/{meeting.id}/document/"
+
+        # Seed initial content directly through the service to avoid generating
+        # an unwanted notification for user_b before the assertion window.
+        from meetings.services import update_meeting_document_content
+        update_meeting_document_content(
+            meeting_id=meeting.id,
+            content="First draft body text",
+            user_id=self.user_a.id,
+            notify_collaborators=False,
+        )
+
+        # user_b edits → should notify user_a, but NOT user_b (self-edit)
+        self.client.force_authenticate(user=self.user_b)
+        response = self.client.patch(
+            url,
+            data={"content": "Second draft body text from user B"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        qs = Notification.objects.filter(
+            recipient=self.user_a,
+            actor=self.user_b,
+            event_type=NotificationEventType.DOC_ASSET_UPDATE,
+        )
+        self.assertEqual(qs.count(), 1)
+        n = qs.first()
+        self.assertEqual(n.related_object_type, "meeting")
+        self.assertEqual(n.related_object_id, str(meeting.id))
+        md = n.metadata
+        self.assertEqual(md.get("project_id"), self.project_a.id)
+        self.assertEqual(md.get("meeting_id"), meeting.id)
+        self.assertEqual(md.get("old_title"), "Shared Notes Meeting")
+        self.assertEqual(md.get("new_title"), "Shared Notes Meeting")
+        self.assertIn("First draft", md.get("old_agenda", ""))
+        self.assertIn("Second draft", md.get("new_agenda", ""))
+
+        # The editor (user_b) must NOT receive a notification for their own edit.
+        self.assertFalse(
+            Notification.objects.filter(
+                recipient=self.user_b,
+                actor=self.user_b,
+                event_type=NotificationEventType.DOC_ASSET_UPDATE,
+            ).exists()
+        )
+
+    def test_patch_meeting_document_no_notification_when_content_unchanged(self):
+        ProjectMember.objects.create(
+            user=self.user_b,
+            project=self.project_a,
+            is_active=True,
+        )
+        meeting = Meeting.objects.create(
+            project=self.project_a,
+            title="M",
+            type_definition=self._meeting_type(self.project_a, slug="planning"),
+            objective="O",
+        )
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_a)
+        ParticipantLink.objects.create(meeting=meeting, user=self.user_b)
+        url = f"/api/projects/{self.project_a.id}/meetings/{meeting.id}/document/"
+        body = "Same content"
+        self.client.force_authenticate(user=self.user_a)
+        self.client.patch(url, data={"content": body}, format="json")
+
+        before = Notification.objects.count()
+        self.client.force_authenticate(user=self.user_b)
+        r = self.client.patch(url, data={"content": body}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            Notification.objects.count(),
+            before,
+            "No new notification when content string is identical",
+        )
 
     def test_meeting_document_get_allowed_for_participant_without_project_membership(self):
         meeting = Meeting.objects.create(

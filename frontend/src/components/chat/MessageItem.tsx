@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { format } from 'date-fns';
 import { Copy, Edit2, Forward, Trash2 } from 'lucide-react';
 import type { MessageItemProps } from '@/types/chat';
@@ -8,10 +8,13 @@ import MessageStatus from './MessageStatus';
 import AttachmentDisplay from './AttachmentDisplay';
 import LinkPreview from './LinkPreview';
 import TaskSharePreview from './TaskSharePreview';
+import ReactionsDisplay from './ReactionsDisplay';
 import { extractUrls } from '@/lib/api/linkPreviewApi';
 
 const AGENT_BOT_EMAIL = 'agent-bot@system.local';
 const AGENT_BOT_USERNAME = 'agent-bot';
+const SELECT_MODE_CHECKBOX_SELECTED =
+  'bg-gradient-to-br from-[#3CCED7] to-[#A6E661] border-transparent shadow-sm';
 
 function isAgentBot(sender: { email?: string; username?: string }): boolean {
   return sender.email === AGENT_BOT_EMAIL || sender.username === AGENT_BOT_USERNAME;
@@ -66,6 +69,7 @@ function Avatar({
       />
     );
   }
+
   return (
     <div
       className={[
@@ -91,13 +95,14 @@ export default function MessageItem({
   isHighlighted = false,
   onEdit,
   onDelete,
+  isHovered: externalHovered = false,
+  renderActions,
+  onReactionClick,
 }: MessageItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
-  const [isHovered, setIsHovered] = useState(false);
+  const [localHovered, setLocalHovered] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
-  // Hide toolbar with a short delay so the cursor can travel from the message
-  // to the floating toolbar without it disappearing mid-move.
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -105,15 +110,6 @@ export default function MessageItem({
       if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
     };
   }, []);
-
-  const handleMouseEnter = () => {
-    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
-    setIsHovered(true);
-  };
-
-  const handleMouseLeave = () => {
-    leaveTimerRef.current = setTimeout(() => setIsHovered(false), 150);
-  };
 
   useEffect(() => {
     if (!isEditing) setEditContent(message.content);
@@ -132,12 +128,17 @@ export default function MessageItem({
   const forwardedFrom = message.forwarded_from?.sender_display?.trim() || '';
   const hasContent = Boolean(messageContent.trim());
   const hasAttachments = Boolean(message.attachments?.length);
+  const hasReplyTo = Boolean(message.reply_to?.id);
+  const replyToContent = message.reply_to
+    ? `${message.reply_to.sender.username}: ${message.reply_to.content || '[Attachment]'}`
+    : '';
+  const hasReactions = Boolean(message.reactions && message.reactions.length > 0);
 
   let hasUrls = false;
   try {
     hasUrls = hasContent && extractUrls(messageContent).length > 0;
   } catch {
-    // ignore
+    // ignore malformed content
   }
 
   const taskIds = extractTaskIds(messageContent);
@@ -146,6 +147,17 @@ export default function MessageItem({
   const showLinkPreview = hasUrls && !showTaskPreview;
   const bot = isAgentBot(message.sender);
   const time = formatTime(message.created_at);
+  const initials = bot ? 'AI' : (message.sender.username[0] ?? '?').toUpperCase();
+  const isHovering = localHovered || externalHovered;
+
+  const handleMouseEnter = () => {
+    if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    setLocalHovered(true);
+  };
+
+  const handleMouseLeave = () => {
+    leaveTimerRef.current = setTimeout(() => setLocalHovered(false), 150);
+  };
 
   const handleSaveEdit = () => {
     const trimmed = editContent.trim();
@@ -174,161 +186,8 @@ export default function MessageItem({
     if (isSelectMode) onToggleSelect?.(message.id);
   };
 
-  // Avatar rows keep a real gap (mt-4) above so groups stay separated; only small
-  // vertical padding is used for the hover highlight. Consecutive rows have no
-  // margin so the ring highlight looks continuous across a group.
-  const rowPadding = showSender ? 'mt-4 py-1' : 'py-1';
-
-  // ── Own messages (left-aligned, same style as others) ────────────────────────
-  if (isOwnMessage) {
-    return (
-      <div
-        id={`message-${message.id}`}
-        className={[
-          rowPadding,
-          'transition-colors',
-          isHighlighted ? 'bg-amber-50/40 scroll-mt-24' : isHovered ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md' : '',
-          isSelectMode ? 'relative pl-8' : '',
-        ].join(' ')}
-      >
-        {isSelectMode && (
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={handleToggleSelect}
-            className="absolute left-0 top-2 h-4 w-4 rounded border-gray-300 text-[#3CCED7]"
-          />
-        )}
-
-        <div
-          className={[
-            'flex gap-2 pl-3 pr-4 relative',
-            isHighlighted ? 'rounded-lg ring-2 ring-amber-200' : '',
-            isSelectMode ? 'cursor-pointer' : '',
-          ].join(' ')}
-          onClick={handleToggleSelect}
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          {/* Avatar column */}
-          <div className="w-8 shrink-0 flex items-end pb-0.5">
-            {showSender ? (
-              <Avatar
-                src={message.sender.avatar}
-                username={message.sender.username}
-                userId={message.sender.id}
-                initials={(message.sender.username[0] ?? 'Y').toUpperCase()}
-              />
-            ) : (
-              <div className="w-8" />
-            )}
-          </div>
-
-          {/* Content column */}
-          <div className="min-w-0 flex-1">
-            {showSender && (
-              <div className="mb-0.5 flex items-baseline gap-1.5 px-0.5">
-                <span className="text-sm font-semibold text-gray-900">You</span>
-                <span className="text-[11px] text-gray-400">{time}</span>
-                {message.is_edited && (
-                  <span className="text-[9px] text-gray-400">edited</span>
-                )}
-                <MessageStatus message={message} />
-              </div>
-            )}
-
-            {isForwarded && (
-              <div className="mb-1 flex items-center gap-1 text-[11px] text-gray-500">
-                <Forward className="h-3 w-3 shrink-0" />
-                <span className="truncate">Forwarded from {forwardedFrom}</span>
-              </div>
-            )}
-
-            {isEditing ? (
-              <div className="flex flex-col gap-1">
-                <textarea
-                  ref={editRef}
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  onKeyDown={handleEditKeyDown}
-                  rows={3}
-                  className="w-full rounded-lg border border-[#3CCED7] bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-[#3CCED7]/30 resize-none"
-                />
-                <div className="flex items-center justify-end gap-1.5 text-xs">
-                  <span className="text-gray-400">Enter to save · Esc to cancel</span>
-                  <button
-                    type="button"
-                    onClick={() => { setEditContent(message.content); setIsEditing(false); }}
-                    className="rounded px-2 py-0.5 text-gray-500 hover:bg-gray-100"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveEdit}
-                    className="rounded bg-[#3CCED7] px-2 py-0.5 text-white hover:bg-[#33b8c0]"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                {hasContent && (
-                  <p className="text-sm whitespace-pre-wrap text-gray-900 [overflow-wrap:anywhere]">{messageContent}</p>
-                )}
-                {showTaskPreview && taskPreviewId ? (
-                  <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
-                ) : null}
-                {showLinkPreview && <LinkPreview content={messageContent} />}
-                {hasAttachments && (
-                  <AttachmentDisplay attachments={message.attachments!} isOwnMessage />
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Toolbar — Slack-style, anchored to right edge of row */}
-          {isHovered && !isEditing && (
-            <div className={`absolute right-2 -top-5 ${TOOLBAR_BASE}`}>
-              <button
-                type="button"
-                onClick={() => setIsEditing(true)}
-                className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                title="Edit message"
-                aria-label="Edit message"
-              >
-                <Edit2 className="h-3.5 w-3.5" />
-              </button>
-              {hasContent && (
-                <button
-                  type="button"
-                  onClick={handleCopy}
-                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                  title="Copy text"
-                  aria-label="Copy text"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => onDelete?.(message.id)}
-                className="rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
-                title="Delete message"
-                aria-label="Delete message"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // ── Other users' messages (left-aligned with avatar) ───────────────────────
-  const initials = bot ? 'AI' : (message.sender.username[0] ?? '?').toUpperCase();
+  const rowPadding = showSender && !isCompact ? 'mt-4 py-1' : 'py-1';
+  const senderLabel = isOwnMessage ? 'You' : bot ? 'AI Agent' : message.sender.username;
 
   return (
     <div
@@ -336,31 +195,39 @@ export default function MessageItem({
       className={[
         rowPadding,
         'transition-colors',
-        isHighlighted ? 'bg-amber-50/40 scroll-mt-24' : isHovered ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md' : '',
+        isHighlighted ? 'bg-amber-50/40 scroll-mt-24' : isHovering ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md' : '',
         isSelectMode ? 'relative pl-8' : '',
       ].join(' ')}
     >
       {isSelectMode && (
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={handleToggleSelect}
-          className="absolute left-0 top-2 h-4 w-4 rounded border-gray-300 text-[#3CCED7]"
-        />
+        <button
+          type="button"
+          onClick={handleToggleSelect}
+          className={`absolute left-0 top-2 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-all ${
+            isSelected ? SELECT_MODE_CHECKBOX_SELECTED : 'border-gray-300 bg-white'
+          }`}
+          aria-label={isSelected ? 'Deselect message' : 'Select message'}
+        >
+          {isSelected && (
+            <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </button>
       )}
 
       <div
         className={[
-          'flex gap-2 pl-3 pr-4 relative',
+          'relative flex gap-2 pl-3 pr-4',
           isHighlighted ? 'rounded-lg ring-2 ring-amber-200' : '',
           isSelectMode ? 'cursor-pointer' : '',
+          'border-l-2 border-transparent',
         ].join(' ')}
         onClick={handleToggleSelect}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
-        {/* Avatar column */}
-        <div className="w-8 shrink-0 flex items-end pb-0.5">
+        <div className="flex w-8 shrink-0 items-end pb-0.5">
           {showSender ? (
             <Avatar
               src={bot ? null : message.sender.avatar}
@@ -374,13 +241,10 @@ export default function MessageItem({
           )}
         </div>
 
-        {/* Content column */}
         <div className="min-w-0 flex-1">
           {showSender && (
             <div className="mb-0.5 flex items-baseline gap-1.5 px-0.5">
-              <span className="text-sm font-semibold text-gray-900">
-                {bot ? 'AI Agent' : message.sender.username}
-              </span>
+              <span className="text-sm font-semibold text-gray-900">{senderLabel}</span>
               {bot ? (
                 <span className="rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700">
                   AI
@@ -391,6 +255,8 @@ export default function MessageItem({
                 </span>
               ) : null}
               <span className="text-[11px] text-gray-400">{time}</span>
+              {message.is_edited && <span className="text-[9px] text-gray-400">edited</span>}
+              {isOwnMessage && <MessageStatus message={message} />}
             </div>
           )}
 
@@ -401,31 +267,120 @@ export default function MessageItem({
             </div>
           )}
 
-          {hasContent && (
-            <p className="text-sm whitespace-pre-wrap text-gray-900 [overflow-wrap:anywhere]">{messageContent}</p>
-          )}
-          {showTaskPreview && taskPreviewId ? (
-            <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
-          ) : null}
-          {showLinkPreview && <LinkPreview content={messageContent} />}
-          {hasAttachments && (
-            <AttachmentDisplay attachments={message.attachments!} isOwnMessage={false} />
+          {isEditing ? (
+            <div className="flex flex-col gap-1">
+              <textarea
+                ref={editRef}
+                value={editContent}
+                onChange={(e) => setEditContent(e.target.value)}
+                onKeyDown={handleEditKeyDown}
+                rows={3}
+                className="w-full resize-none rounded-lg border border-[#3CCED7] bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
+              />
+              <div className="flex items-center justify-end gap-1.5 text-xs">
+                <span className="text-gray-400">Enter to save · Esc to cancel</span>
+                <button
+                  type="button"
+                  onClick={() => { setEditContent(message.content); setIsEditing(false); }}
+                  className="rounded px-2 py-0.5 text-gray-500 hover:bg-gray-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  className="rounded bg-[#3CCED7] px-2 py-0.5 text-white hover:bg-[#33b8c0]"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {hasContent && (
+                <p className="whitespace-pre-wrap text-sm text-gray-900 [overflow-wrap:anywhere]">
+                  {messageContent}
+                </p>
+              )}
+
+              {showTaskPreview && taskPreviewId ? (
+                <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
+              ) : null}
+
+              {showLinkPreview && <LinkPreview content={messageContent} />}
+
+              {hasAttachments && (
+                <AttachmentDisplay attachments={message.attachments!} isOwnMessage={isOwnMessage} />
+              )}
+
+              {hasReplyTo && (
+                <div className="mt-1 rounded border border-gray-200 bg-gray-50 px-2 py-1">
+                  <span className="block max-w-[280px] truncate text-xs text-gray-500">
+                    {replyToContent}
+                  </span>
+                </div>
+              )}
+
+              {hasReactions && (
+                <ReactionsDisplay
+                  reactions={message.reactions!}
+                  onReactionClick={onReactionClick}
+                  align="left"
+                />
+              )}
+            </>
           )}
         </div>
 
-        {/* Toolbar — Slack-style, anchored to right edge of row */}
-        {isHovered && hasContent && (
-          <div className={`absolute right-2 -top-5 ${TOOLBAR_BASE}`}>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-              title="Copy text"
-              aria-label="Copy text"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-          </div>
+        {isHovering && !isEditing && (
+          renderActions ? (
+            renderActions()
+          ) : (
+            <div className={`absolute right-2 -top-5 ${TOOLBAR_BASE}`}>
+              {isOwnMessage && onEdit && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsEditing(true);
+                  }}
+                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                  title="Edit message"
+                  aria-label="Edit message"
+                >
+                  <Edit2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {hasContent && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCopy();
+                  }}
+                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+                  title="Copy text"
+                  aria-label="Copy text"
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {isOwnMessage && onDelete && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(message.id);
+                  }}
+                  className="rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
+                  title="Delete message"
+                  aria-label="Delete message"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )
         )}
       </div>
     </div>

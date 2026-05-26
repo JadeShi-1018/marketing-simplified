@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
 import { useChatData } from '@/hooks/useChatData';
-import { useChatSocket } from '@/hooks/useChatSocket';
 import { useProjectMemberRoles } from '@/hooks/useProjectMemberRoles';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
 import { useProjectStore } from '@/lib/projectStore';
@@ -22,7 +21,6 @@ const isMessagesMobileViewport = () =>
 export default function MessagePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const user = useAuthStore(state => state.user);
   const isAuthenticated = useAuthStore(state => state.isAuthenticated);
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
@@ -31,9 +29,6 @@ export default function MessagePageContent() {
   const [isCreateChannelDialogOpen, setIsCreateChannelDialogOpen] = useState(false);
   const [isConversationDrawerOpen, setIsConversationDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Ensure userId is a number for consistent comparison in addMessage
-  const userId = user?.id ? Number(user.id) : null;
   
   // Chat store state
   const currentChatId = useChatStore(state => state.currentChatId);
@@ -54,20 +49,22 @@ export default function MessagePageContent() {
     autoFetch: false,
   });
   
-  // Connect to WebSocket for real-time updates
-  const { connected } = useChatSocket(userId, {
-    enabled: true,
-    onMessage: (message) => {
-      console.log('[MessagePage] New message received:', message);
-    },
-    onOpen: () => {
-      console.log('[MessagePage] WebSocket connected');
-    },
-    onClose: () => {
-      console.warn('[MessagePage] WebSocket disconnected');
-    },
-  });
-  
+  // Real-time updates are handled by useNotificationSSE (mounted in ChatWidget).
+  // When a chat SSE event arrives, chatStore.lastChatActivity is bumped and the
+  // widget's fetchChats runs.  Here we only need to fetch on project change.
+  const lastChatActivity = useChatStore(state => state.lastChatActivity);
+  const hasFetchedRef = useRef<string | null>(null);
+
+  // Re-fetch the chat list when the project changes or an SSE chat event arrives.
+  useEffect(() => {
+    if (isAuthenticated && selectedProjectId) {
+      const fetchKey = `${selectedProjectId}-${lastChatActivity}`;
+      if (hasFetchedRef.current !== fetchKey) {
+        hasFetchedRef.current = fetchKey;
+        fetchChats();
+      }
+    }
+  }, [isAuthenticated, selectedProjectId, lastChatActivity, fetchChats]);
 
   useEffect(() => {
     const projectIdParam = searchParams.get('projectId');
@@ -123,16 +120,7 @@ export default function MessagePageContent() {
     [router, searchParams]
   );
   
-  // Fetch chats whenever the project, auth state, or WebSocket connection changes.
-  // isAuthenticated is used (not userId) because it is a guaranteed boolean flip
-  // on every logout→login cycle, even when the same account re-logs in.
-  useEffect(() => {
-    if (isAuthenticated && selectedProjectId) {
-      fetchChats();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedProjectId, connected, isAuthenticated]);
-  
+
   // Get current chat from store
   const currentChat = chats.find(chat => chat.id === currentChatId);
   

@@ -73,5 +73,22 @@ describe("TaskFilterPanel", () => {
     expect(screen.getByRole("button", { name: /Close/i })).toBeInTheDocument();
     expect(screen.getByLabelText("Draft")).toBeChecked();
   });
-});
 
+  it("shows task tags as filter options", () => {
+    const onChange = jest.fn();
+    render(
+      <TaskFilterPanel
+        filters={{ ...baseFilters }}
+        onChange={onChange}
+        onClearAll={() => {}}
+        tagOptions={[{ name: "Launch", color: "#123ABC" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Filter/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Tags/i }));
+    fireEvent.click(screen.getByLabelText("Launch"));
+
+    expect(onChange).toHaveBeenCalledWith({ tag_names: ["Launch"] });
+  });
+});

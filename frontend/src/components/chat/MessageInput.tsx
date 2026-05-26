@@ -1,6 +1,15 @@
 'use client';
 
-import { useState, useRef, useEffect, KeyboardEvent, ChangeEvent } from 'react';
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  type KeyboardEvent,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type DragEvent,
+} from 'react';
 import { Send, Smile, Paperclip, X, Image as ImageIcon, FileText, Film, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import toast from 'react-hot-toast';
@@ -11,9 +20,6 @@ import {
   getFileTypeFromMime,
   formatFileSize,
 } from '@/lib/api/attachmentApi';
-import { sendTypingEvent } from '@/hooks/useChatSocket';
-
-const TYPING_STOP_DELAY_MS = 3000;
 
 const MOBILE_QUERY = '(max-width: 640px)';
 
@@ -42,15 +48,19 @@ interface PendingAttachment {
 
 interface ExtendedMessageInputProps extends MessageInputProps {
   onSendWithAttachments?: (content: string, attachmentIds: number[]) => void;
-  /** When set, MessageInput broadcasts typing_start / typing_stop for this chat over the WS. */
-  chatId?: number;
+  chatId?: number | null;
+  onTypingStart?: () => void;
+  onTypingStop?: () => void;
 }
 
 export default function MessageInput({
   onSend,
   onSendWithAttachments,
   disabled = false,
+  variant = 'default',
   chatId,
+  onTypingStart,
+  onTypingStop,
 }: ExtendedMessageInputProps) {
   const [content, setContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -58,40 +68,16 @@ export default function MessageInput({
   const [isUploading, setIsUploading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  
+  const [shouldRefocus, setShouldRefocus] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Typing-event bookkeeping.
+  // Typing indicator refs
   const isTypingRef = useRef(false);
-  const typingStopTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastTypingChatIdRef = useRef<number | null>(null);
-
-  const stopTypingNow = () => {
-    if (typingStopTimeoutRef.current) {
-      clearTimeout(typingStopTimeoutRef.current);
-      typingStopTimeoutRef.current = null;
-    }
-    if (isTypingRef.current && lastTypingChatIdRef.current != null) {
-      sendTypingEvent(lastTypingChatIdRef.current, false);
-    }
-    isTypingRef.current = false;
-  };
-
-  const noteTyping = () => {
-    if (!chatId) return;
-    if (!isTypingRef.current) {
-      sendTypingEvent(chatId, true);
-      isTypingRef.current = true;
-      lastTypingChatIdRef.current = chatId;
-    }
-    if (typingStopTimeoutRef.current) {
-      clearTimeout(typingStopTimeoutRef.current);
-    }
-    typingStopTimeoutRef.current = setTimeout(stopTypingNow, TYPING_STOP_DELAY_MS);
-  };
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_QUERY);
@@ -129,22 +115,107 @@ export default function MessageInput({
     };
   }, [pendingAttachments]);
 
-  // Stop any in-flight typing event when the chat changes or the input unmounts.
+  // Refocus input after sending message
+  useEffect(() => {
+    if (shouldRefocus) {
+      textareaRef.current?.focus();
+      setShouldRefocus(false);
+    }
+  }, [shouldRefocus]);
+
+  // Cleanup typing timers on unmount
   useEffect(() => {
     return () => {
-      stopTypingNow();
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (typingDebounceRef.current) {
+        clearTimeout(typingDebounceRef.current);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId]);
+  }, []);
+
+  /**
+   * Stop typing indicator
+   */
+  const stopTyping = useCallback(() => {
+    if (!chatId || !onTypingStop) return;
+
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      onTypingStop();
+    }
+
+    // Clear all timers
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+      typingDebounceRef.current = null;
+    }
+  }, [chatId, onTypingStop]);
+
+  /**
+   * Start typing indicator with debounce
+   */
+  const startTyping = useCallback(() => {
+    if (!chatId || !onTypingStart) return;
+
+    // Clear existing debounce timer
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+    }
+
+    // If not already typing, send typing_start
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      onTypingStart();
+    }
+
+    // Clear existing auto-stop timer
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Auto-stop after 3 seconds of no typing
+    typingTimeoutRef.current = setTimeout(() => {
+      stopTyping();
+    }, 3000);
+  }, [chatId, onTypingStart, stopTyping]);
+
+  /**
+   * Handle content change with typing indicator
+   */
+  const handleContentChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+    const newContent = e.target.value;
+    setContent(newContent);
+
+    // Don't send typing if input is empty or disabled
+    if (!newContent.trim() || disabled) {
+      stopTyping();
+      return;
+    }
+
+    // Debounce typing_start to avoid sending too frequently (300ms)
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+    }
+
+    typingDebounceRef.current = setTimeout(() => {
+      startTyping();
+    }, 300);
+  }, [disabled, startTyping, stopTyping]);
 
   const handleSend = async () => {
     const trimmedContent = content.trim();
     const uploadedAttachments = pendingAttachments.filter(a => a.uploaded);
-    
+
     // Must have content or attachments
     if (!trimmedContent && uploadedAttachments.length === 0) return;
     if (disabled) return;
-    
+
     // Check if still uploading
     if (pendingAttachments.some(a => a.uploading)) {
       toast.error('Please wait for uploads to complete');
@@ -158,22 +229,26 @@ export default function MessageInput({
       return;
     }
 
+    // Stop typing indicator before sending
+    stopTyping();
+
+    // Clear state first to provide immediate feedback
+    setContent('');
+    setPendingAttachments([]);
+    setShowEmojiPicker(false);
+
+    // Send the message
     if (uploadedAttachments.length > 0 && onSendWithAttachments) {
       const attachmentIds = uploadedAttachments
         .map(a => a.uploaded?.id)
         .filter((id): id is number => id !== undefined);
-      onSendWithAttachments(trimmedContent, attachmentIds);
+      await Promise.resolve(onSendWithAttachments(trimmedContent, attachmentIds));
     } else {
-      onSend(trimmedContent);
+      await Promise.resolve(onSend(trimmedContent));
     }
 
-    // A sent message implicitly ends a typing session.
-    stopTypingNow();
-
-    // Clear state
-    setContent('');
-    setPendingAttachments([]);
-    setShowEmojiPicker(false);
+    // Trigger refocus after next render cycle
+    setShouldRefocus(true);
   };
 
   const handleKeyPress = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -255,7 +330,7 @@ export default function MessageInput({
     setIsUploading(false);
   };
 
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const files = Array.from(e.clipboardData.files);
     if (files.length > 0) {
       e.preventDefault();
@@ -263,18 +338,18 @@ export default function MessageInput({
     }
   };
 
-  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(true);
   };
 
-  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
       setIsDragOver(false);
     }
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
     const files = Array.from(e.dataTransfer.files);
@@ -308,7 +383,8 @@ export default function MessageInput({
   return (
     <div
       className={[
-        'relative border-t border-gray-200 bg-white px-3 py-2 sm:px-4 sm:py-3 transition-colors',
+        'relative bg-white px-3 py-2 sm:px-4 sm:py-3 transition-colors',
+        variant === 'drawer' ? '' : 'border-t border-gray-200',
         isDragOver ? 'bg-[#3CCED7]/5' : '',
       ].join(' ')}
       onDragOver={handleDragOver}
@@ -426,16 +502,9 @@ export default function MessageInput({
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(e) => {
-            setContent(e.target.value);
-            if (e.target.value.length > 0) {
-              noteTyping();
-            } else {
-              stopTypingNow();
-            }
-          }}
-          onBlur={stopTypingNow}
+          onChange={handleContentChange}
           onKeyPress={handleKeyPress}
+          onBlur={stopTyping}
           onPaste={handlePaste}
           placeholder={inputPlaceholder}
           disabled={disabled}
@@ -451,7 +520,11 @@ export default function MessageInput({
         <button
           onClick={handleSend}
           disabled={!canSend || disabled}
-          className="bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg p-2 transition-colors flex-shrink-0"
+          className={`flex-shrink-0 rounded-lg p-2 text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50 ${
+            variant === 'drawer'
+              ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] shadow-sm'
+              : 'bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:opacity-100'
+          }`}
           aria-label="Send message"
         >
           <Send className="w-5 h-5" />

@@ -8,7 +8,8 @@ import { MeetingsAPI } from '@/lib/api/meetingsApi';
 import type { MeetingActionItem } from '@/types/meeting';
 import type { TaskData } from '@/types/task';
 import InlineSelect from '@/components/tasks/detail/InlineSelect';
-import { TASK_TYPES, PRIORITY_OPTIONS, PRIORITY_META } from '@/components/tasks/TYPE_META';
+import { TASK_PRIORITY_BY_VALUE, TASK_PRIORITY_OPTIONS } from '@/lib/tasks/taskPriorities';
+import { TASK_TYPE_DEFINITIONS } from '@/lib/tasks/taskTypes';
 
 interface Member {
   id: number;
@@ -158,7 +159,7 @@ export default function BulkConvertActionItemDialog({
                   ariaLabel="Task priority"
                   value={priority}
                   onValueChange={setPriority}
-                  options={PRIORITY_OPTIONS.map((p) => ({ value: p, label: PRIORITY_META[p].label }))}
+                  options={TASK_PRIORITY_OPTIONS.map((p) => ({ value: p, label: TASK_PRIORITY_BY_VALUE[p].label }))}
                 />
               </div>
               <div>
@@ -180,7 +181,7 @@ export default function BulkConvertActionItemDialog({
                   ariaLabel="Task type"
                   value={taskType}
                   onValueChange={setTaskType}
-                  options={TASK_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+                  options={TASK_TYPE_DEFINITIONS.map((t) => ({ value: t.value, label: t.label }))}
                 />
               </div>
             </div>
