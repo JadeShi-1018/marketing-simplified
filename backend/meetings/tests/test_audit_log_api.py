@@ -47,13 +47,15 @@ class TestMeetingAuditLogListEndpoint(APITestCase):
             email="user_a@example.com",
             password="password",
             username="user_a",
-            display_name="User A"
+            first_name="User",
+            last_name="A"
         )
         self.user_b = CustomUser.objects.create_user(
             email="user_b@example.com",
             password="password",
             username="user_b",
-            display_name="User B"
+            first_name="User",
+            last_name="B"
         )
 
         # Add users to project
@@ -206,13 +208,15 @@ class TestMeetingAuditLogFiltering(APITestCase):
             email="user_a@example.com",
             password="password",
             username="user_a",
-            display_name="User A"
+            first_name="User",
+            last_name="A"
         )
         self.user_b = CustomUser.objects.create_user(
             email="user_b@example.com",
             password="password",
             username="user_b",
-            display_name="User B"
+            first_name="User",
+            last_name="B"
         )
 
         ProjectMember.objects.create(
@@ -431,8 +435,7 @@ class TestMeetingAuditLogPagination(APITestCase):
         self.user = CustomUser.objects.create_user(
             email="user@example.com",
             password="password",
-            username="user",
-            display_name="Test User"
+            username="user"
         )
 
         ProjectMember.objects.create(
@@ -564,14 +567,12 @@ class TestMeetingAuditLogPermissions(APITestCase):
         self.user_in_project = CustomUser.objects.create_user(
             email="user_in@example.com",
             password="password",
-            username="user_in",
-            display_name="User In Project"
+            username="user_in"
         )
         self.user_not_in_project = CustomUser.objects.create_user(
             email="user_out@example.com",
             password="password",
-            username="user_out",
-            display_name="User Not In Project"
+            username="user_out"
         )
 
         ProjectMember.objects.create(
@@ -673,8 +674,7 @@ class TestMeetingAuditLogErrorHandling(APITestCase):
         self.user = CustomUser.objects.create_user(
             email="user@example.com",
             password="password",
-            username="user",
-            display_name="Test User"
+            username="user"
         )
 
         ProjectMember.objects.create(
