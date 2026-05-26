@@ -626,7 +626,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         """Tasks anchored to this meeting via ``MeetingTaskOrigin`` (paginated)."""
         meeting = self.get_object()
         _ensure_project_membership(request.user, meeting.project)
-        from meetings.models import Meeting, MeetingDecisionOriginTaskOrigin
+        from meetings.models import Meeting, MeetingTaskOrigin
         from task.models import Task
         from task.serializers import TaskListSerializer
 
