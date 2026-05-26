@@ -10,7 +10,7 @@ import json
 from uuid import uuid4
 
 from django.db import connection, transaction
-from django.db.utils import OperationalError
+from django.db.utils import InternalError
 from django.test import TestCase
 from django.utils import timezone
 
@@ -217,21 +217,21 @@ class TestMeetingAuditLogImmutability(TestCase):
         )
 
     def test_update_via_orm_raises_program_error(self):
-        """Test that UPDATE via ORM raises OperationalError with immutability message."""
+        """Test that UPDATE via ORM raises InternalError with immutability message."""
         with transaction.atomic():
             self.audit_log.context = {"modified": True}
-            with self.assertRaises(OperationalError) as context:
+            with self.assertRaises(InternalError) as context:
                 self.audit_log.save()
 
             # Verify error message contains immutability indicator
             self.assertIn("immutable", str(context.exception).lower())
 
     def test_delete_via_orm_raises_program_error(self):
-        """Test that DELETE via ORM raises OperationalError with immutability message."""
+        """Test that DELETE via ORM raises InternalError with immutability message."""
         audit_log_id = self.audit_log.id
 
         with transaction.atomic():
-            with self.assertRaises(OperationalError) as context:
+            with self.assertRaises(InternalError) as context:
                 self.audit_log.delete()
 
             # Verify error message contains immutability indicator
@@ -241,9 +241,9 @@ class TestMeetingAuditLogImmutability(TestCase):
         self.assertTrue(MeetingAuditLog.objects.filter(id=audit_log_id).exists())
 
     def test_update_via_queryset_raises_program_error(self):
-        """Test that UPDATE via queryset raises OperationalError."""
+        """Test that UPDATE via queryset raises InternalError."""
         with transaction.atomic():
-            with self.assertRaises(OperationalError) as context:
+            with self.assertRaises(InternalError) as context:
                 MeetingAuditLog.objects.filter(id=self.audit_log.id).update(
                     context={"modified": True}
                 )
@@ -251,9 +251,9 @@ class TestMeetingAuditLogImmutability(TestCase):
             self.assertIn("immutable", str(context.exception).lower())
 
     def test_update_via_raw_sql_raises_program_error(self):
-        """Test that UPDATE via raw SQL raises OperationalError."""
+        """Test that UPDATE via raw SQL raises InternalError."""
         with transaction.atomic():
-            with self.assertRaises(OperationalError) as context:
+            with self.assertRaises(InternalError) as context:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "UPDATE meetings_meetingauditlog SET context = %s WHERE id = %s",
@@ -263,11 +263,11 @@ class TestMeetingAuditLogImmutability(TestCase):
             self.assertIn("immutable", str(context.exception).lower())
 
     def test_delete_via_raw_sql_raises_program_error(self):
-        """Test that DELETE via raw SQL raises OperationalError."""
+        """Test that DELETE via raw SQL raises InternalError."""
         audit_log_id = self.audit_log.id
 
         with transaction.atomic():
-            with self.assertRaises(OperationalError) as context:
+            with self.assertRaises(InternalError) as context:
                 with connection.cursor() as cursor:
                     cursor.execute(
                         "DELETE FROM meetings_meetingauditlog WHERE id = %s",
@@ -301,13 +301,13 @@ class TestMeetingAuditLogImmutability(TestCase):
         # First entry remains immutable
         with transaction.atomic():
             self.audit_log.context = {"modified": True}
-            with self.assertRaises(OperationalError):
+            with self.assertRaises(InternalError):
                 self.audit_log.save()
 
         # Second entry is also immutable
         with transaction.atomic():
             audit_log_2.context = {"modified": True}
-            with self.assertRaises(OperationalError):
+            with self.assertRaises(InternalError):
                 audit_log_2.save()
 
 
