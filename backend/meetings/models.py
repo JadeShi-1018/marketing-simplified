@@ -561,7 +561,7 @@ class MeetingAuditLog(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     before = models.JSONField(null=True, blank=True)
     after = models.JSONField(null=True, blank=True)
-    context = models.JSONField(default=dict)
+    context = models.JSONField(null=True, blank=True, default=dict)
 
     class Meta:
         indexes = [
