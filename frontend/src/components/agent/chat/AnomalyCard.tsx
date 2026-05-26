@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { AlertTriangle, TrendingDown, Info, ChevronDown, ChevronRight, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { AnomalyItem } from "@/types/agent"
+import { AgentMessageBoardText } from "./AgentMessageBoardText"
 
 const severityConfig = {
   critical: { icon: AlertTriangle, color: "text-red-400", bg: "bg-red-500/20", label: "Critical" },
@@ -25,10 +26,28 @@ function handleAddToPanel(anomaly: AnomalyItem) {
   window.dispatchEvent(new CustomEvent("agent:add-alert", { detail: anomaly }))
 }
 
-function AnomalyItemRow({ anomaly }: { anomaly: AnomalyItem }) {
+function buildAnomalyTitle(anomaly: AnomalyItem): string {
+  let title = anomaly.metric
+  if (anomaly.campaign) title += `: ${anomaly.campaign}`
+  if (anomaly.ad_set) title += ` / ${anomaly.ad_set}`
+  return title
+}
+
+function AnomalyItemRow({
+  anomaly,
+  messageId,
+  blockId,
+  index,
+}: {
+  anomaly: AnomalyItem
+  messageId?: string
+  blockId?: string
+  index: number
+}) {
   const severity = getSeverity(anomaly)
   const config = severityConfig[severity]
   const Icon = config.icon
+  const title = buildAnomalyTitle(anomaly)
 
   return (
     <Card className="bg-card border-border">
@@ -39,13 +58,19 @@ function AnomalyItemRow({ anomaly }: { anomaly: AnomalyItem }) {
           </div>
           <div className="flex-1 min-w-0">
             <CardTitle className="text-sm font-semibold text-card-foreground truncate">
-              {anomaly.metric}
-              {anomaly.campaign && `: ${anomaly.campaign}`}
-              {anomaly.ad_set && ` / ${anomaly.ad_set}`}
+              <AgentMessageBoardText
+                target={title}
+                partId={`${messageId ?? "anomaly"}-${index}-title`}
+                blockId={blockId}
+              />
             </CardTitle>
           </div>
           <span className={cn("text-xs font-medium px-2 py-0.5 rounded-full shrink-0", config.bg, config.color)}>
-            {config.label}
+            <AgentMessageBoardText
+              target={config.label}
+              partId={`${messageId ?? "anomaly"}-${index}-severity`}
+              blockId={blockId}
+            />
           </span>
           <Button
             size="sm"
@@ -54,12 +79,22 @@ function AnomalyItemRow({ anomaly }: { anomaly: AnomalyItem }) {
             onClick={() => handleAddToPanel(anomaly)}
           >
             <Plus className="h-3 w-3 mr-0.5" />
-            Add
+            <AgentMessageBoardText
+              target="Add"
+              partId={`${messageId ?? "anomaly"}-${index}-add`}
+              blockId={blockId}
+            />
           </Button>
         </div>
       </CardHeader>
       <CardContent className="px-4 pb-3 pt-0">
-        <p className="text-sm text-muted-foreground">{anomaly.description}</p>
+        <p className="text-sm text-muted-foreground">
+          <AgentMessageBoardText
+            target={anomaly.description}
+            partId={`${messageId ?? "anomaly"}-${index}-desc`}
+            blockId={blockId}
+          />
+        </p>
       </CardContent>
     </Card>
   )
@@ -69,11 +104,23 @@ interface CollapsibleSectionProps {
   title: string
   count: number
   defaultExpanded: boolean
+  messageId?: string
+  blockId?: string
+  partId: string
   children: React.ReactNode
 }
 
-function CollapsibleSection({ title, count, defaultExpanded, children }: CollapsibleSectionProps) {
+function CollapsibleSection({
+  title,
+  count,
+  defaultExpanded,
+  messageId,
+  blockId,
+  partId,
+  children,
+}: CollapsibleSectionProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
+  const headerTarget = `${title} (${count})`
 
   return (
     <div>
@@ -87,7 +134,11 @@ function CollapsibleSection({ title, count, defaultExpanded, children }: Collaps
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
         )}
         <span className="text-sm font-semibold text-foreground">
-          {title} ({count})
+          <AgentMessageBoardText
+            target={headerTarget}
+            partId={`${messageId ?? "anomaly"}-${partId}`}
+            blockId={blockId}
+          />
         </span>
       </button>
       {expanded && <div className="flex flex-col gap-2 mt-1">{children}</div>}
@@ -97,9 +148,11 @@ function CollapsibleSection({ title, count, defaultExpanded, children }: Collaps
 
 interface AnomalyCardProps {
   anomalies: AnomalyItem[]
+  messageId?: string
+  blockId?: string
 }
 
-export function AnomalyCard({ anomalies }: AnomalyCardProps) {
+export function AnomalyCard({ anomalies, messageId, blockId }: AnomalyCardProps) {
   if (!anomalies.length) return null
 
   const alerts = anomalies.filter((a) => {
@@ -111,16 +164,42 @@ export function AnomalyCard({ anomalies }: AnomalyCardProps) {
   return (
     <div className="flex flex-col gap-3">
       {alerts.length > 0 && (
-        <CollapsibleSection title="Alerts" count={alerts.length} defaultExpanded={true}>
+        <CollapsibleSection
+          title="Alerts"
+          count={alerts.length}
+          defaultExpanded={true}
+          messageId={messageId}
+          blockId={blockId}
+          partId="anomaly-alerts-header"
+        >
           {alerts.map((anomaly, i) => (
-            <AnomalyItemRow key={`alert-${i}`} anomaly={anomaly} />
+            <AnomalyItemRow
+              key={`alert-${i}`}
+              anomaly={anomaly}
+              messageId={messageId}
+              blockId={blockId}
+              index={i}
+            />
           ))}
         </CollapsibleSection>
       )}
       {signals.length > 0 && (
-        <CollapsibleSection title="Signals" count={signals.length} defaultExpanded={false}>
+        <CollapsibleSection
+          title="Signals"
+          count={signals.length}
+          defaultExpanded={false}
+          messageId={messageId}
+          blockId={blockId}
+          partId="anomaly-signals-header"
+        >
           {signals.map((anomaly, i) => (
-            <AnomalyItemRow key={`signal-${i}`} anomaly={anomaly} />
+            <AnomalyItemRow
+              key={`signal-${i}`}
+              anomaly={anomaly}
+              messageId={messageId}
+              blockId={blockId}
+              index={alerts.length + i}
+            />
           ))}
         </CollapsibleSection>
       )}

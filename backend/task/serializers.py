@@ -1,6 +1,7 @@
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from rest_framework import serializers
+from rest_framework.serializers import empty
 
 from meetings.knowledge_links import serialize_origin_meeting, serialize_origin_action_item
 from meetings.models import MeetingTaskOrigin
@@ -13,6 +14,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.db.utils import OperationalError, ProgrammingError
 import logging
 import mimetypes
+import json
+import re
 import traceback
 
 logger = logging.getLogger(__name__)
@@ -20,8 +23,22 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+DEFAULT_TASK_TAG_COLOR = '#6B7280'
+TASK_TAG_HEX_COLOR_RE = re.compile(r'^#[0-9A-F]{6}$')
+TASK_TAG_MAX_COUNT = 10
+TASK_TAG_MAX_NAME_LENGTH = 15
+
+
+def _normalize_task_tag_color(value):
+    color = str(value or DEFAULT_TASK_TAG_COLOR).strip().upper()
+    if not color.startswith('#'):
+        color = f'#{color}'
+    return color if TASK_TAG_HEX_COLOR_RE.fullmatch(color) else None
+
+
 class UserSummarySerializer(serializers.ModelSerializer):
     """Serializer for user summary information"""
+    avatar = serializers.SerializerMethodField()
     name = serializers.SerializerMethodField()
 
     def get_name(self, obj):
@@ -30,7 +47,14 @@ class UserSummarySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'name']
+        fields = ['id', 'username', 'email', 'name', 'avatar']
+
+    def get_avatar(self, obj):
+        if obj.avatar:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.avatar.url)
+        return None
 
 
 class ProjectSummarySerializer(serializers.ModelSerializer):
@@ -72,6 +96,8 @@ class TaskSerializer(serializers.ModelSerializer):
     origin_action_item = serializers.SerializerMethodField()
     linked_object = serializers.SerializerMethodField()
 
+    tags = serializers.JSONField(required=False, allow_null=True, default=list)
+
     class Meta:
         model = Task
         fields = [
@@ -89,6 +115,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'origin_meeting',
             'origin_meeting_id',
             'origin_action_item',
+            'tags',
             'linear_issue_id',
             'created_at',
             'updated_at',
@@ -104,6 +131,47 @@ class TaskSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # project_id is write-only on input; expose FK for clients that expect it on GET.
+        data['project_id'] = instance.project_id
+        # GET /api/tasks/:id/ — always serialize tags from the DB column for UI echo.
+        data['tags'] = self._normalize_tags_representation(instance.tags)
+        return data
+
+    @staticmethod
+    def _normalize_tags_representation(raw):
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                raw = raw.split(',')
+        if not isinstance(raw, list):
+            return []
+        out = []
+        seen = set()
+        for item in raw:
+            if isinstance(item, str):
+                name = item.strip().lstrip('#').strip()
+                color = DEFAULT_TASK_TAG_COLOR
+            elif isinstance(item, dict):
+                name = str(item.get('name', '') or '').strip().lstrip('#').strip()
+                color = _normalize_task_tag_color(item.get('color', DEFAULT_TASK_TAG_COLOR))
+                if color is None:
+                    color = DEFAULT_TASK_TAG_COLOR
+            else:
+                continue
+            if not name:
+                continue
+            key = name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({'name': name[:TASK_TAG_MAX_NAME_LENGTH], 'color': color})
+        return out
 
     def get_is_pinned(self, obj):
         annotated = getattr(obj, "_is_pinned", None)
@@ -226,6 +294,43 @@ class TaskSerializer(serializers.ModelSerializer):
         except MeetingActionItem.DoesNotExist:
             return None
         return serialize_origin_action_item(ai)
+
+    def validate_tags(self, value):
+        if value is None or value == '':
+            return []
+        if isinstance(value, str):
+            raw_tags = value.split(',')
+        elif isinstance(value, list):
+            raw_tags = value
+        else:
+            raise serializers.ValidationError('tags must be a JSON array')
+
+        if len(raw_tags) > TASK_TAG_MAX_COUNT:
+            raise serializers.ValidationError(f'At most {TASK_TAG_MAX_COUNT} tags')
+
+        out = []
+        seen = set()
+        for idx, item in enumerate(raw_tags):
+            if isinstance(item, str):
+                name = item.strip().lstrip('#').strip()
+                color = DEFAULT_TASK_TAG_COLOR
+            elif isinstance(item, dict):
+                name = str(item.get('name', '')).strip().lstrip('#').strip()
+                color = _normalize_task_tag_color(item.get('color', DEFAULT_TASK_TAG_COLOR))
+            else:
+                raise serializers.ValidationError({'tags': f'Item {idx} must be an object or string'})
+            if not name:
+                continue
+            if len(name) > TASK_TAG_MAX_NAME_LENGTH:
+                raise serializers.ValidationError({'tags': f'Tag name too long at index {idx}'})
+            if color is None:
+                raise serializers.ValidationError({'tags': f'Unsupported color at index {idx}'})
+            key = name.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append({'name': name, 'color': color})
+        return out
 
     def get_approval_chain_progress(self, obj):
         """
@@ -457,6 +562,7 @@ class TaskSerializer(serializers.ModelSerializer):
             if not create_as_draft:
                 try:
                     task.submit()
+                    task._suppress_status_notification = True
                     task.save()
                     logger.debug(
                         f"DEBUG: Task {task.id} status changed from DRAFT to SUBMITTED"
@@ -482,7 +588,7 @@ class TaskSerializer(serializers.ModelSerializer):
                 )
                 self._ensure_project_membership(self.context['request'].user, project)
                 validated_data['project'] = project
-        
+
         # Determine project for owner and approver validation (updated or existing)
         project = validated_data.get('project', getattr(self.instance, 'project', None))
 
@@ -513,7 +619,7 @@ class TaskSerializer(serializers.ModelSerializer):
                 validated_data['owner'] = owner
             else:
                 validated_data['owner'] = None
-        
+
         # Handle current_approver_id if provided
         if 'current_approver_id' in validated_data:
             current_approver_id = validated_data.pop('current_approver_id')
@@ -542,8 +648,9 @@ class TaskSerializer(serializers.ModelSerializer):
                 validated_data['current_approver'] = current_approver
             else:
                 validated_data['current_approver'] = None
-        
-        return super().update(instance, validated_data)
+
+        instance = super().update(instance, validated_data)
+        return instance
     
     def validate(self, attrs):
         """Validate the data"""
@@ -611,6 +718,19 @@ class TaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 'type': 'Task type cannot be modified after creation.'
             })
+
+        start_date = attrs['start_date'] if 'start_date' in attrs else getattr(
+            self.instance, 'start_date', None
+        )
+        due_date = attrs['due_date'] if 'due_date' in attrs else getattr(
+            self.instance, 'due_date', None
+        )
+        if start_date is not None and due_date is not None and start_date > due_date:
+            raise serializers.ValidationError({
+                'start_date': 'Start date must be on or before due date.',
+                'due_date': 'Due date must be on or after start date.',
+            })
+
         return attrs
 
 

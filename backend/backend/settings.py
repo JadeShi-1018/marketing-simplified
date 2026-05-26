@@ -90,6 +90,7 @@ INSTALLED_APPS = [
     'slack_integration.apps.SlackIntegrationConfig',
     'agent.apps.AgentConfig',
     'meetings.apps.MeetingsConfig',
+    'notifications.apps.NotificationsConfig',
     'zoom_integration.apps.ZoomIntegrationConfig',
     'linear_integration.apps.LinearIntegrationConfig',
     'google_docs_integration.apps.GoogleDocsIntegrationConfig',
@@ -411,6 +412,32 @@ CELERY_BEAT_SCHEDULE = {
     'purge-old-tracking-data': {
         'task': 'tracking.tasks.purge_old_data',
         'schedule': crontab(hour=3, minute=0),
+        'options': {'timezone': 'UTC'},
+    },
+    # Notification tasks
+    'fire-calendar-reminders': {
+        'task': 'notifications.tasks.fire_calendar_reminders',
+        'schedule': timedelta(minutes=1),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-task-overdue-notifications': {
+        'task': 'notifications.tasks.fire_task_overdue_notifications',
+        'schedule': timedelta(hours=1),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-decision-deadline-notifications': {
+        'task': 'notifications.tasks.fire_decision_deadline_notifications',
+        'schedule': timedelta(hours=12),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-meeting-starting-soon-notifications': {
+        'task': 'notifications.tasks.fire_meeting_starting_soon_notifications',
+        'schedule': timedelta(minutes=5),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-message-reminders': {
+        'task': 'notifications.tasks.fire_message_reminders',
+        'schedule': timedelta(minutes=1),
         'options': {'timezone': 'UTC'},
     },
 }

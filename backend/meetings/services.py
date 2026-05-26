@@ -1,6 +1,11 @@
 import datetime
+import logging
+import re
 from typing import Iterable, List, Tuple
 
+from django.core.cache import cache as django_cache
+
+logger = logging.getLogger(__name__)
 from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone as dj_timezone
@@ -9,7 +14,13 @@ from django.utils.text import slugify
 from rest_framework import serializers as drf_serializers
 
 from core.models import Project, ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink
+from meetings.models import (
+    AgendaItem,
+    Meeting,
+    MeetingDocument,
+    MeetingTypeDefinition,
+    ParticipantLink,
+)
 
 
 def validate_meeting_for_origin_link(*, meeting_id: int, project: Project, user) -> Meeting:
@@ -216,8 +227,6 @@ def ensure_meeting_type_definition(project: Project, label: str) -> MeetingTypeD
         if created or mtd.label == safe_label:
             return mtd
     raise ValueError("Could not allocate meeting type slug")  # pragma: no cover - defensive
-from core.models import ProjectMember
-from meetings.models import AgendaItem, Meeting, MeetingDocument, ParticipantLink
 
 
 def user_has_meeting_document_access(user_id: int, meeting: Meeting) -> bool:
@@ -275,14 +284,276 @@ def get_or_create_meeting_document(meeting_id: int) -> MeetingDocument:
     return document
 
 
+def _meeting_document_text_preview(text: str, *, max_len: int = 50) -> str:
+    s = (text or "").strip()
+    if len(s) <= max_len:
+        return s
+    return s[:max_len] + "…"
+
+
+def normalize_text(text: str) -> str:
+    """Strip leading/trailing whitespace and collapse internal runs to a single space."""
+    return re.sub(r'\s+', ' ', (text or '').strip())
+
+
+# Updates arriving within this window are merged into one notification record.
+# Set to 3 s: 1 s frontend debounce + up to 2 s of network / processing jitter.
+_AGENDA_NOTIF_DEDUP_TTL = 3
+
+
+def upsert_agenda_item_notification(
+    *,
+    meeting: Meeting,
+    item_id: int,
+    old_content: str,
+    new_content: str,
+    actor_id: int,
+    recipient_id: int,
+) -> None:
+    """
+    Create-or-update a ``MEETING_AGENDA_CHANGED`` notification within a dedup window.
+
+    Strategy
+    --------
+    * **data key** ``notif_debounce:{item_id}:{recipient_id}`` — stores the DB notification ID
+      once it has been created, letting subsequent requests *merge* rather than create.
+    * **lock key** ``notif_lock:{item_id}:{recipient_id}`` — set with ``cache.add()`` so only
+      ONE concurrent request may reach the DB create path; others are suppressed atomically.
+    * ``old_content`` is preserved from the very first call so the notification always shows
+      what the item looked like *before* the edit session started.
+    * ``new_content`` is updated on every merge so the recipient sees the latest text.
+    """
+    from notifications.models import Notification, NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+    from notifications.action_urls import meeting_action_url
+    from notifications.sse import publish_notification_to_redis
+
+    data_key = f"notif_debounce:{item_id}:{recipient_id}"
+    lock_key = f"notif_lock:{item_id}:{recipient_id}"
+
+    existing_id = django_cache.get(data_key)
+
+    if existing_id:
+        # MERGE PATH — update the existing notification with the latest content.
+        try:
+            notif = Notification.objects.get(id=existing_id)
+            # Only update if the content is substantively different (normalised comparison).
+            current_new = notif.metadata.get("new_agenda", "")
+            if normalize_text(current_new) == normalize_text(new_content):
+                logger.warning(
+                    "NOTIF_SUPPRESSED: item=%s recipient=%s — content unchanged after normalisation",
+                    item_id, recipient_id,
+                )
+                return
+            notif.metadata["new_agenda"] = new_content
+            notif.save(update_fields=["metadata"])
+            publish_notification_to_redis(recipient_id, notif)
+            django_cache.set(data_key, existing_id, timeout=_AGENDA_NOTIF_DEDUP_TTL)
+            logger.warning(
+                "NOTIF_MERGED: item=%s recipient=%s — updated new_agenda to '%.50s'",
+                item_id, recipient_id, new_content,
+            )
+            return
+        except Notification.DoesNotExist:
+            pass  # stale cache — fall through to create a fresh notification
+
+    # CREATION PATH — use cache.add() so only one concurrent request wins.
+    acquired = django_cache.add(lock_key, "1", timeout=_AGENDA_NOTIF_DEDUP_TTL)
+    if not acquired:
+        logger.warning(
+            "NOTIF_SUPPRESSED: item=%s recipient=%s — concurrent duplicate blocked by lock",
+            item_id, recipient_id,
+        )
+        return
+
+    notif = create_notification(
+        recipient_id=recipient_id,
+        actor_id=actor_id,
+        category=NotificationCategory.MEETINGS,
+        event_type=NotificationEventType.MEETING_UPDATED,
+        title=f"Meeting updated: {meeting.title}",
+        body="Meeting details were changed.",
+        related_object_type="meeting",
+        related_object_id=str(meeting.id),
+        action_url=meeting_action_url(meeting.id, meeting.project_id),
+        metadata={
+            "project_id": meeting.project_id,
+            "item_id": item_id,
+            "change_type": "agenda_item",
+            "old_agenda": old_content,
+            "new_agenda": new_content,
+        },
+    )
+    if notif:
+        # create_notification already publishes SSE notification internally
+        django_cache.set(data_key, str(notif.id), timeout=_AGENDA_NOTIF_DEDUP_TTL)
+    else:
+        # create_notification returned None — preferences/settings blocked it.
+        # Release the lock so the next update within the TTL can attempt again.
+        django_cache.delete(lock_key)
+        logger.warning(
+            "NOTIF_BLOCKED (upsert): meeting=%s item=%s recipient=%s — "
+            "create_notification returned None (check preferences or user existence)",
+            meeting.id, item_id, recipient_id,
+        )
+
+
+def notify_agenda_event(
+    *,
+    meeting: Meeting,
+    actor_id: int,
+    recipient_id: int,
+    change_type: str,
+    item_id: int | None = None,
+    old_content: str = "",
+    new_content: str = "",
+) -> None:
+    """
+    Dedup-aware ``MEETING_UPDATED`` notification for agenda-item create / delete events.
+
+    Cache-key scope
+    ---------------
+    When ``item_id`` is provided the dedup window is *per-item*, so creating /
+    deleting two different items in quick succession each produces their own
+    notification.  This prevents the "meeting-wide" key from accidentally
+    suppressing legitimate events for unrelated items.
+
+    Lock safety
+    -----------
+    The lock key is released (deleted) if ``create_notification`` fails so that
+    callers are not silently blocked for the full TTL on a transient error.
+    """
+    from notifications.models import NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+    from notifications.action_urls import meeting_action_url
+
+    scope = str(item_id) if item_id is not None else "meeting"
+    data_key = f"notif_debounce:{meeting.id}:{change_type}:{scope}:{recipient_id}"
+    lock_key = f"notif_lock:{meeting.id}:{change_type}:{scope}:{recipient_id}"
+
+    logger.info(
+        "NOTIF_AGENDA_EVENT: meeting=%s change_type=%s item=%s recipient=%s",
+        meeting.id, change_type, item_id, recipient_id,
+    )
+
+    # Pure dedup: within the TTL window, skip duplicate events for the same item.
+    if django_cache.get(data_key):
+        logger.warning(
+            "NOTIF_SUPPRESSED: meeting=%s change_type=%s item=%s recipient=%s — within dedup window",
+            meeting.id, change_type, item_id, recipient_id,
+        )
+        return
+
+    # Atomic lock so only one concurrent request reaches the DB create path.
+    acquired = django_cache.add(lock_key, "1", timeout=_AGENDA_NOTIF_DEDUP_TTL)
+    if not acquired:
+        logger.warning(
+            "NOTIF_SUPPRESSED: meeting=%s change_type=%s item=%s recipient=%s — concurrent duplicate blocked",
+            meeting.id, change_type, item_id, recipient_id,
+        )
+        return
+
+    metadata: dict = {"project_id": meeting.project_id, "change_type": change_type}
+    if old_content:
+        metadata["old_agenda"] = old_content
+    if new_content:
+        metadata["new_agenda"] = new_content
+
+    try:
+        notif = create_notification(
+            recipient_id=recipient_id,
+            actor_id=actor_id,
+            category=NotificationCategory.MEETINGS,
+            event_type=NotificationEventType.MEETING_UPDATED,
+            title=f"Meeting updated: {meeting.title}",
+            body="Meeting details were changed.",
+            related_object_type="meeting",
+            related_object_id=str(meeting.id),
+            action_url=meeting_action_url(meeting.id, meeting.project_id),
+            metadata=metadata,
+        )
+        if notif:
+            django_cache.set(data_key, str(notif.id), timeout=_AGENDA_NOTIF_DEDUP_TTL)
+            logger.info(
+                "NOTIF_CREATED: id=%s meeting=%s change_type=%s item=%s recipient=%s",
+                notif.id, meeting.id, change_type, item_id, recipient_id,
+            )
+        else:
+            # create_notification returned None — release the lock so retries are possible.
+            django_cache.delete(lock_key)
+            logger.warning(
+                "NOTIF_FAILED: create_notification returned None for meeting=%s change_type=%s item=%s recipient=%s",
+                meeting.id, change_type, item_id, recipient_id,
+            )
+    except Exception:
+        django_cache.delete(lock_key)
+        logger.exception(
+            "NOTIF_ERROR: exception in create_notification for meeting=%s change_type=%s item=%s recipient=%s",
+            meeting.id, change_type, item_id, recipient_id,
+        )
+        raise
+
+
+def notify_participants_meeting_document_updated(
+    *,
+    meeting: Meeting,
+    editor_id: int,
+    old_content: str,
+    new_content: str,
+    document_id: int | None = None,
+) -> None:
+    """
+    Notify meeting participants (except the editor) that collaborative notes changed.
+    Uses DOC_ASSET_UPDATE + metadata keys compatible with DrawerWhatChanged.
+    """
+    if old_content == new_content:
+        return
+
+    from notifications.models import NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+    from notifications.action_urls import meeting_action_url
+
+    title_label = meeting.title
+    meta = {
+        "project_id": meeting.project_id,
+        "meeting_id": meeting.id,
+        "meeting_title": title_label,
+        "old_title": title_label,
+        "new_title": title_label,
+        "old_agenda": _meeting_document_text_preview(old_content),
+        "new_agenda": _meeting_document_text_preview(new_content),
+    }
+    if document_id is not None:
+        meta["asset_id"] = document_id
+
+    participant_ids = meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
+    for uid in participant_ids:
+        if uid == editor_id:
+            continue
+        create_notification(
+            recipient_id=uid,
+            actor_id=editor_id,
+            category=NotificationCategory.COLLABORATION,
+            event_type=NotificationEventType.DOC_ASSET_UPDATE,
+            title=f"Meeting notes updated: {meeting.title}",
+            body="The collaborative document for this meeting was edited.",
+            related_object_type="meeting",
+            related_object_id=str(meeting.id),
+            action_url=meeting_action_url(meeting.id, meeting.project_id),
+            metadata=meta,
+        )
+
+
 def update_meeting_document_content(
     *,
     meeting_id: int,
     content: str,
     yjs_state: str | None = None,
     user_id: int | None = None,
+    notify_collaborators: bool = False,
 ) -> MeetingDocument:
     document = get_or_create_meeting_document(meeting_id)
+    old_content = document.content
     document.content = content
     if isinstance(yjs_state, str):
         document.yjs_state = yjs_state
@@ -291,5 +562,20 @@ def update_meeting_document_content(
     if isinstance(yjs_state, str):
         update_fields.append("yjs_state")
     document.save(update_fields=update_fields)
+
+    if (
+        notify_collaborators
+        and user_id
+        and old_content != content
+    ):
+        meeting = Meeting.objects.select_related("project").get(pk=meeting_id)
+        notify_participants_meeting_document_updated(
+            meeting=meeting,
+            editor_id=user_id,
+            old_content=old_content,
+            new_content=content,
+            document_id=document.id,
+        )
+
     return document
 

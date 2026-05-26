@@ -1759,6 +1759,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         {...({
           messages,
           sessionId,
+          isStreaming,
           approvalDisabled: isStreaming,
           approvalRequired,
           generatedTaskIndexes,

@@ -725,7 +725,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
         )
         self.assertEqual(row["meeting_type"], "Planning")
         self.assertEqual(row["meeting_type_slug"], "planning")
-        self.assertEqual(row["participants"], [{"user_id": self.user.id, "role": "host"}])
+        self.assertEqual(row["participants"], [{"user_id": self.user.id, "role": "host", "username": self.user.username, "avatar": None}])
         self.assertEqual(
             row["tags"],
             [{"slug": "strategy", "label": "Strategy"}],

@@ -122,6 +122,8 @@ export interface Meeting {
 export interface MeetingListParticipant {
   user_id: number;
   role: string | null;
+  username?: string;
+  avatar?: string | null;
 }
 
 export interface MeetingListTag {

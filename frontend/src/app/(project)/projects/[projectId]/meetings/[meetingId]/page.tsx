@@ -411,15 +411,25 @@ function SortableNestedItem({
   item,
   onToggle,
   onTextChange,
+  onSave,
   onDurationChange,
   onDelete,
+  isSaving,
 }: {
   sectionId: string;
   item: NestedSection['items'][number];
   onToggle: () => void;
+  /**
+   * Called ONCE on blur/Enter commit to update the parent nestedSections state.
+   * NOT called on every keystroke — that was the source of repeated layout PATCHes.
+   */
   onTextChange: (text: string) => void;
+  /** Called ONCE on blur/Enter commit to PATCH the agenda-item API. */
+  onSave: (text: string) => void;
   onDurationChange: (duration: string) => void;
   onDelete: () => void;
+  /** True while the PATCH request is in flight (network round-trip). */
+  isSaving?: boolean;
 }) {
   const { setNodeRef, attributes, listeners, transform, transition } = useSortable({
     id: `item:${item.id}`,
@@ -430,6 +440,39 @@ function SortableNestedItem({
   });
   const [editingText, setEditingText] = useState(false);
   const [editingDuration, setEditingDuration] = useState(false);
+
+  // Local draft — keeps typing isolated from parent state so that onChange does NOT
+  // trigger setNestedSections on every keystroke (which was causing repeated layout PATCHes).
+  const [localText, setLocalText] = useState(item.text);
+
+  // Value recorded when the input receives focus; used for dirty-check on blur.
+  const initialTextRef = useRef(item.text);
+
+  // Guard against double-commit (e.g. rapid Enter + synthetic blur in the same tick).
+  const isProcessingRef = useRef(false);
+
+  // Sync parent → local only while the user is NOT actively editing.
+  // This picks up external changes (DnD reorder, template apply) without overwriting live typing.
+  useEffect(() => {
+    if (!editingText) setLocalText(item.text);
+  }, [item.text, editingText]);
+
+  /** Commit the current draft: push to parent state and fire the API save — exactly once. */
+  const commitText = (text: string) => {
+    if (isProcessingRef.current) return;
+    isProcessingRef.current = true;
+    // Reset the guard after all synchronous React work and any immediate re-renders settle.
+    requestAnimationFrame(() => { isProcessingRef.current = false; });
+
+    const trimmed = text.trim();
+    // Dirty check: if the text hasn't changed since the user focused, skip all network work.
+    if (trimmed === initialTextRef.current) return;
+
+    // Propagate to nestedSections (layout) — ONE update → ONE debounced layout PATCH.
+    onTextChange(trimmed);
+    // Propagate to the agenda-item API — ONE PATCH.
+    onSave(trimmed);
+  };
 
   return (
     <div
@@ -454,9 +497,20 @@ function SortableNestedItem({
       {editingText ? (
         <input
           autoFocus
-          value={item.text}
-          onChange={(e) => onTextChange(e.target.value)}
-          onBlur={() => setEditingText(false)}
+          value={localText}
+          onFocus={() => { initialTextRef.current = localText; }}
+          onChange={(e) => setLocalText(e.target.value)}
+          onBlur={(e) => {
+            setEditingText(false);
+            commitText(e.currentTarget.value);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              // blur triggers onBlur → commitText; no separate call needed.
+              (e.currentTarget as HTMLInputElement).blur();
+            }
+          }}
           className={`min-w-0 flex-1 border-none bg-transparent px-1 py-0.5 text-sm outline-none ${
             item.completed ? 'line-through text-slate-400' : 'text-slate-700'
           }`}
@@ -469,7 +523,7 @@ function SortableNestedItem({
             item.completed ? 'line-through text-slate-400' : 'text-slate-700'
           }`}
         >
-          {item.text || 'Empty item'}
+          {localText || 'Empty item'}
         </button>
       )}
       {editingDuration ? (
@@ -488,6 +542,12 @@ function SortableNestedItem({
         >
           {item.duration}
         </button>
+      )}
+      {isSaving && (
+        <span className="flex shrink-0 items-center gap-0.5 text-xs text-slate-400">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Saving…
+        </span>
       )}
       <button
         type="button"
@@ -521,7 +581,9 @@ export default function MeetingWorkspacePage() {
   const [savingAgendaIds, setSavingAgendaIds] = useState<Set<number>>(new Set());
   const [savingAgendaPriorityIds, setSavingAgendaPriorityIds] = useState<Set<number>>(new Set());
   const [deletingAgendaIds, setDeletingAgendaIds] = useState<Set<number>>(new Set());
-  const saveTimersRef = useRef<Record<number, number | null>>({});
+  // Tracks the last value successfully submitted to the server so that a blur
+  // that fires while a PATCH is still in-flight doesn't send the same value twice.
+  const lastSubmittedAgendaRef = useRef<Record<number, string>>({});
 
   const [projectMembers, setProjectMembers] = useState<ProjectMemberData[]>([]);
   const [project, setProject] = useState<ProjectData | null>(null);
@@ -1630,7 +1692,17 @@ export default function MeetingWorkspacePage() {
     const trimmed = nextContent.trim();
     const current = agendaItems.find((a) => a.id === agendaItemId);
     const currentContent = (current?.content ?? '').trim();
+
+    // Skip if unchanged relative to last-confirmed server state
     if (trimmed === currentContent) return;
+
+    // Skip if we already submitted this exact value and the response hasn't come
+    // back yet — prevents a debounce timer and a blur handler from both firing
+    // the same PATCH while React state is still stale.
+    const lastSubmitted = (lastSubmittedAgendaRef.current[agendaItemId] ?? '').trim();
+    if (trimmed === lastSubmitted) return;
+
+    lastSubmittedAgendaRef.current[agendaItemId] = trimmed;
 
     setSavingAgendaIds((prev) => new Set([...prev, agendaItemId]));
     try {
@@ -1642,6 +1714,8 @@ export default function MeetingWorkspacePage() {
     } catch (err: unknown) {
       console.error('Failed to save agenda item:', err);
       toast.error(getApiErrorMessage(err, 'Failed to save agenda item'));
+      // On failure reset the submitted tracker so the user can retry
+      delete lastSubmittedAgendaRef.current[agendaItemId];
       if (current) setAgendaDrafts((prev) => ({ ...prev, [agendaItemId]: current.content ?? '' }));
     } finally {
       setSavingAgendaIds((prev) => {
@@ -1674,16 +1748,6 @@ export default function MeetingWorkspacePage() {
         return next;
       });
     }
-  };
-
-  const queueAgendaSave = (agendaItemId: number, nextContent: string) => {
-    const existing = saveTimersRef.current[agendaItemId];
-    if (existing) window.clearTimeout(existing);
-
-    saveTimersRef.current[agendaItemId] = window.setTimeout(() => {
-      saveTimersRef.current[agendaItemId] = null;
-      void saveAgendaItem(agendaItemId, nextContent, { silent: true });
-    }, 500);
   };
 
   const reorderBlocks = (activeId: string, overId: string) => {
@@ -1861,7 +1925,28 @@ export default function MeetingWorkspacePage() {
     setTemplateDirty(true);
   };
 
-  const addItemToSection = (sectionId: string) => {
+  /**
+   * Add a new agenda item to a nested section.
+   *
+   * We immediately POST to /agenda-items/ so the item gets a real numeric
+   * database ID.  This is critical for two reasons:
+   *   1. `onSave` (blur-commit) skips UUID items — only numeric IDs call
+   *      `patchAgendaItem`, which in turn fires backend notifications.
+   *   2. Backend notifications for create are triggered in
+   *      `AgendaItemViewSet.perform_create`, which is only reached via this
+   *      POST — never via the layout-config PATCH.
+   *
+   * Flow:
+   *   optimistic UUID add → POST /agenda-items/ → swap UUID → real numeric ID
+   *   On failure: rollback optimistic item + show error.
+   */
+  const addItemToSection = async (sectionId: string) => {
+    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+
+    const tempId = `item-${crypto.randomUUID()}`;
+    const defaultText = 'New item';
+
+    // 1. Optimistic add so the UI is instant.
     setNestedSections((prev) =>
       prev.map((section) =>
         section.id === sectionId
@@ -1869,18 +1954,56 @@ export default function MeetingWorkspacePage() {
               ...section,
               items: [
                 ...section.items,
-                {
-                  id: `item-${crypto.randomUUID()}`,
-                  text: 'New item',
-                  completed: false,
-                  duration: '5m',
-                },
+                { id: tempId, text: defaultText, completed: false, duration: '5m' },
               ],
             }
           : section,
       ),
     );
     setTemplateDirty(true);
+
+    // 2. Create the real backend record.
+    try {
+      const nextOrderIndex =
+        orderedAgenda.length > 0
+          ? orderedAgenda[orderedAgenda.length - 1].order_index + 1
+          : 0;
+
+      const created = await MeetingsAPI.createAgendaItem(projectId, meetingId, {
+        content: defaultText,
+        order_index: nextOrderIndex,
+        is_priority: false,
+      });
+
+      // 3. Swap the temp UUID for the real numeric ID so subsequent edits
+      //    go through patchAgendaItem (and trigger update notifications).
+      setNestedSections((prev) =>
+        prev.map((section) =>
+          section.id === sectionId
+            ? {
+                ...section,
+                items: section.items.map((i) =>
+                  i.id === tempId ? { ...i, id: String(created.id) } : i,
+                ),
+              }
+            : section,
+        ),
+      );
+
+      // 4. Keep the flat agendaItems list in sync (orderedAgenda, saveAgendaItem, etc.).
+      setAgendaItems((prev) => [...prev, created]);
+    } catch (err: unknown) {
+      // Rollback the optimistic item on failure.
+      setNestedSections((prev) =>
+        prev.map((section) =>
+          section.id === sectionId
+            ? { ...section, items: section.items.filter((i) => i.id !== tempId) }
+            : section,
+        ),
+      );
+      console.error('Failed to create agenda item:', err);
+      toast.error(getApiErrorMessage(err, 'Failed to add agenda item'));
+    }
   };
 
   const saveTemplateLayout = async () => {
@@ -2338,12 +2461,22 @@ export default function MeetingWorkspacePage() {
                                             updateNestedItem(section.id, item.id, { completed: !item.completed })
                                           }
                                           onTextChange={(text) => {
+                                            // Called once on blur/Enter — updates nestedSections
+                                            // (layout_config) exactly once per edit session.
                                             updateNestedItem(section.id, item.id, { text });
+                                          }}
+                                          onSave={(text) => {
                                             const numericId = Number(item.id);
-                                            if (Number.isFinite(numericId)) queueAgendaSave(numericId, text);
+                                            if (Number.isFinite(numericId)) {
+                                              void saveAgendaItem(numericId, text, { silent: true });
+                                            }
                                           }}
                                           onDurationChange={(duration) => updateNestedItem(section.id, item.id, { duration })}
                                           onDelete={() => void deleteNestedItem(section.id, item.id)}
+                                          isSaving={(() => {
+                                            const numericId = Number(item.id);
+                                            return Number.isFinite(numericId) && savingAgendaIds.has(numericId);
+                                          })()}
                                         />
                                       ))}
                                     </div>

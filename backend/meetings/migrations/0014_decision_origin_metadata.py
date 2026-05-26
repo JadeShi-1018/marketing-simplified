@@ -44,7 +44,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ("meetings", "0011_change_layout_config_default_to_dict"),
+        ("meetings", "0013_participantlink_is_accepted"),
     ]
 
     operations = [

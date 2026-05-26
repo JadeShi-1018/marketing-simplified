@@ -14,7 +14,8 @@ type FilterKey =
   | "project"
   | "subtasks"
   | "due_date"
-  | "created_date";
+  | "created_date"
+  | "tags";
 
 export interface SimpleOption {
   value: string | number;
@@ -29,6 +30,7 @@ export interface TaskFilterPanelProps {
   ownerOptions?: { id: number; name: string }[];
   approverOptions?: { id: number; name: string }[];
   typeOptions?: SimpleOption[];
+  tagOptions?: { name: string; color: string }[];
 }
 
 const STATUS_OPTIONS: SimpleOption[] = [
@@ -55,6 +57,7 @@ const FILTER_LIST: { key: FilterKey; label: string }[] = [
   { key: "type", label: "Work type" },
   { key: "status", label: "Status" },
   { key: "priority", label: "Priority" },
+  { key: "tags", label: "Tags" },
   { key: "project", label: "Project" },
   { key: "subtasks", label: "Subtasks" },
   { key: "due_date", label: "Due date" },
@@ -69,6 +72,7 @@ export function TaskFilterPanel({
   ownerOptions,
   approverOptions,
   typeOptions,
+  tagOptions = [],
 }: TaskFilterPanelProps) {
   const [open, setOpen] = useState(false);
   const [activeKey, setActiveKey] = useState<FilterKey>("assignee");
@@ -90,7 +94,9 @@ export function TaskFilterPanel({
     return keys.reduce((acc, key) => {
       const v = filters[key];
       return acc + (v === undefined || v === null || v === "" ? 0 : 1);
-    }, 0) + (filters.has_subtasks !== undefined ? 1 : 0);
+    }, 0) +
+      (filters.has_subtasks !== undefined ? 1 : 0) +
+      (filters.tag_names?.length ? 1 : 0);
   }, [filters]);
 
   useEffect(() => {
@@ -132,6 +138,8 @@ export function TaskFilterPanel({
         return len(filters.priority);
       case "project":
         return len(filters.project_id);
+      case "tags":
+        return filters.tag_names?.length ?? 0;
       case "subtasks":
         return filters.has_subtasks !== undefined ? 1 : 0;
       case "due_date":
@@ -354,6 +362,49 @@ export function TaskFilterPanel({
                       }
                     />
                     <span>{o.label}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        );
+      case "tags":
+        return (
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground">Tags</label>
+            <div className="max-h-56 overflow-auto rounded-md border border-input bg-background">
+              <button
+                type="button"
+                className="w-full px-3 py-2 text-left text-sm hover:bg-muted"
+                onClick={() => handlePartialChange({ tag_names: undefined })}
+              >
+                Any tag
+              </button>
+              {tagOptions.length === 0 && (
+                <p className="px-3 py-2 text-xs text-muted-foreground">No tags in this project yet.</p>
+              )}
+              {tagOptions.map((opt) => {
+                const selected = (filters.tag_names ?? []).includes(opt.name);
+                return (
+                  <label
+                    key={opt.name}
+                    data-testid={`task-filter-option-tag-${opt.name}`}
+                    className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-muted"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() =>
+                        handlePartialChange({
+                          tag_names: toggleMulti(opt.name, filters.tag_names) as string[] | undefined,
+                        })
+                      }
+                    />
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10"
+                      style={{ backgroundColor: opt.color }}
+                    />
+                    <span>{opt.name}</span>
                   </label>
                 );
               })}
