@@ -299,6 +299,7 @@ const CommentInlineChipSelection = Extension.create({
             const { from, to, empty } = state.selection;
             if (empty) return null;
 
+            // Multi-node selections need explicit styling for atomic media/smart-link chips.
             const decorations: Decoration[] = [];
             state.doc.nodesBetween(from, to, (node, pos) => {
               if (!isCommentInlineChipNodeType(node.type.name)) return;
@@ -323,6 +324,7 @@ const CommentPanel = Node.create({
   name: 'commentPanel',
   group: 'block',
   content: 'block+',
+  // Panels act as standalone blocks so normal joins/lifts do not leak through the wrapper.
   defining: true,
   isolating: true,
 
@@ -369,7 +371,7 @@ function normalizeStoredCodeLanguage(value: unknown) {
 }
 
 function focusInputRuleCodeBlock(pos: number) {
-  // Wait for React NodeView mount before focusing the CodeMirror editor.
+  // CodeMirror may mount a frame after the input rule runs, so focus gets a second chance.
   window.requestAnimationFrame(() => {
     window.requestAnimationFrame(() => {
       dispatchCommentCodeBlockFocus({ pos, placement: 'start' });
@@ -563,6 +565,7 @@ function createCommentBaseExtensions(
     }),
     Link.configure({
       autolink: true,
+      // CommentLinkInteractionLayer owns link activation so native navigation cannot bypass the menu.
       openOnClick: false,
       defaultProtocol: 'https',
       HTMLAttributes: {
@@ -665,6 +668,7 @@ export function createCommentEditorExtensions({
 
         return {
           onStart: (props: any) => {
+            // Render outside the editor tree so mention results are not clipped by scroll containers.
             component = new ReactRenderer(MentionPicker, {
               props,
               editor: props.editor,

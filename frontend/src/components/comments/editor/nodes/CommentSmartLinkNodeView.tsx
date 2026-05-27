@@ -95,6 +95,7 @@ export default function CommentSmartLinkNodeView(props: ReactNodeViewProps) {
     const position = typeof props.getPos === 'function' ? props.getPos() : null;
     if (typeof position !== 'number') return;
 
+    // If preview resolution fails during edit, downgrade the chip to a normal link.
     const { state, view } = props.editor;
     const link = state.schema.marks.link?.create({
       href: url,

@@ -32,6 +32,7 @@ const MentionPicker = forwardRef<MentionPickerRef, MentionPickerProps>(
     };
 
     useImperativeHandle(ref, () => ({
+      // Tiptap's suggestion plugin forwards keyboard control through this imperative ref.
       onKeyDown: ({ event }) => {
         if (items.length === 0) {
           return ['ArrowUp', 'ArrowDown', 'Enter'].includes(event.key);

@@ -151,7 +151,7 @@ export default function CommentMediaNodeView(props: ReactNodeViewProps) {
   const deleteMedia = () => {
     const onDeleteAttachment = props.extension.options.onDeleteAttachment;
     if (attrs.attachmentId && typeof onDeleteAttachment === 'function') {
-      // The composer only deletes staged IDs; saved comment media is unbound on submit.
+      // The composer deletes staged uploads only; saved media is unbound when submit omits its attachment id.
       onDeleteAttachment(attrs.attachmentId);
     }
     closeMenu();

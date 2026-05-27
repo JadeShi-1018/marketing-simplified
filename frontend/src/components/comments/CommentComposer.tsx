@@ -1,6 +1,6 @@
 'use client';
 
-import { EditorContent, useEditor, type Editor } from '@tiptap/react';
+import { EditorContent, useEditor } from '@tiptap/react';
 import { TextSelection } from '@tiptap/pm/state';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
@@ -20,10 +20,11 @@ import {
   extractMentionUserIds,
   getCommentMediaKind,
   hasUploadingCommentMedia,
-  isCommentInlineChipNodeType,
   isEmptyDoc,
   isSupportedCommentUploadFile,
   parseCommentApiError,
+  shouldInsertLeadingInlineChipSpace,
+  shouldInsertTrailingInlineChipSpace,
 } from './commentUtils';
 import {
   COMMENT_EDITOR_CONTENT_CLASS,
@@ -45,28 +46,6 @@ const SHORTCUT_KEY_CLASS =
 
 function createUploadId() {
   return `upload-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
-}
-
-function nodeEndsWithWhitespace(node: { isText?: boolean; text?: string | null } | null) {
-  return Boolean(node?.isText && /\s$/.test(node.text ?? ''));
-}
-
-function nodeStartsWithWhitespace(node: { isText?: boolean; text?: string | null } | null) {
-  return Boolean(node?.isText && /^\s/.test(node.text ?? ''));
-}
-
-function shouldInsertLeadingInlineChipSpace(editor: Editor) {
-  const nodeBefore = editor.state.selection.$from.nodeBefore;
-  if (!nodeBefore) return false;
-  if (nodeBefore.isText) return !nodeEndsWithWhitespace(nodeBefore);
-  return isCommentInlineChipNodeType(nodeBefore.type.name);
-}
-
-function shouldInsertTrailingInlineChipSpace(editor: Editor) {
-  const nodeAfter = editor.state.selection.$to.nodeAfter;
-  if (!nodeAfter) return true;
-  if (nodeAfter.isText) return !nodeStartsWithWhitespace(nodeAfter);
-  return isCommentInlineChipNodeType(nodeAfter.type.name);
 }
 
 type PendingCommentMediaUpload = {
@@ -106,6 +85,7 @@ export default function CommentComposer({
   const [uploadingCount, setUploadingCount] = useState(0);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [sendShortcutModifier, setSendShortcutModifier] = useState<'command' | 'ctrl'>('ctrl');
+  // Tiptap's key handler can keep an old closure, so this ref points to the latest submit.
   const submitRef = useRef<() => void>(() => {});
   const deleteAttachmentRef = useRef(onDeleteAttachment);
   // Prevent abandon-draft cleanup from racing with a submit that is binding staged files.
@@ -226,6 +206,7 @@ export default function CommentComposer({
           ? (nodeAfter.text?.match(/^\s+/)?.[0].length ?? 0)
           : 0;
         if (leadingWhitespaceLength > 0) {
+          // Skip the spacer inserted after the media chip so typing resumes after it.
           selectionPos += leadingWhitespaceLength;
         }
         return false;
@@ -294,6 +275,7 @@ export default function CommentComposer({
 
     moveCursorAfterMedia(pendingUploads[pendingUploads.length - 1].uploadId);
 
+    // Uploads finish independently, so uploadId ties each result back to its placeholder.
     pendingUploads.forEach(({ file, uploadId }) => {
       setUploadingCount((count) => count + 1);
       void onUploadAttachment(file, { is_inline: true })

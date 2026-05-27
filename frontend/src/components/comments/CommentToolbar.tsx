@@ -429,6 +429,7 @@ function applyList(editor: Editor, type: ListType) {
     return;
   }
 
+  // Tiptap list toggles are not mutually exclusive across bullet/ordered/task lists.
   const chain = editor.chain().focus();
   if (currentType === 'bullet') chain.toggleBulletList();
   if (currentType === 'ordered') chain.toggleOrderedList();
@@ -440,6 +441,7 @@ function applyList(editor: Editor, type: ListType) {
 }
 
 function insertInfoPanel(editor: Editor) {
+  // Panels are kept flat so selection and the NodeView action menu stay predictable.
   if (isSelectionInsideCommentPanel(editor)) return;
 
   const insertFrom = editor.state.selection.from;
@@ -452,6 +454,7 @@ function insertInfoPanel(editor: Editor) {
         attrs: { type: 'info' },
         content: [{ type: 'paragraph' }],
       },
+      // The trailing paragraph gives the cursor a landing spot outside the isolating panel.
       { type: 'paragraph' },
     ])
     .run();
@@ -479,6 +482,7 @@ function findCodeBlockPosNearSelection(editor: Editor, anchorPos: number) {
   const { doc, selection } = editor.state;
   const { $from } = selection;
 
+  // History can recreate a code NodeView, so resolve from the current doc instead of stale refs.
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     if ($from.node(depth).type.name === 'codeBlock') {
       return $from.before(depth);
@@ -518,7 +522,7 @@ function focusCommentCodeBlock(editor: Editor, pos: number) {
     }
   };
 
-  // Focus after the inserted NodeView has rendered.
+  // CodeMirror may mount a frame after the NodeView, so focus gets a second chance.
   window.requestAnimationFrame(() => {
     requestFocus();
     window.requestAnimationFrame(requestFocus);
@@ -694,6 +698,7 @@ function clearInlineFormatting(editor: Editor) {
     .unsetSuperscript();
 
   if (editor.isActive('link')) {
+    // Remove the whole link mark even when the cursor is only inside part of it.
     chain.extendMarkRange('link');
   }
 
@@ -998,6 +1003,7 @@ export default function CommentToolbar({
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkLoading, setLinkLoading] = useState(false);
   const [activeCodeBlockPos, setActiveCodeBlockPos] = useState<number | null>(null);
+  // Keep the latest focused snippet in a ref so toolbar mousedown can read it before blur updates state.
   const activeCodeBlockPosRef = useRef<number | null>(null);
   const codeSnippetMouseDownHandledRef = useRef(false);
 

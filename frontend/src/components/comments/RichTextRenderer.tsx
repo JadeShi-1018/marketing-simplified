@@ -34,6 +34,7 @@ export default function RichTextRenderer({ body }: { body: TiptapJSONContent }) 
   return (
     <>
       <EditorContent editor={editor} />
+      {/* Read-only comments still use the controlled link menu instead of native anchor activation. */}
       <CommentLinkInteractionLayer editor={editor} />
     </>
   );

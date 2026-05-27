@@ -1,3 +1,4 @@
+import type { Editor } from '@tiptap/react';
 import type {
   CommentMediaKind,
   CommentUserSummary,
@@ -16,8 +17,42 @@ export function isCommentInlineChipNodeType(type: unknown): boolean {
   return type === 'commentMedia' || type === 'smartLink';
 }
 
+// Inline atom chips need text gaps so cursor movement and typing stay predictable.
+// Two spaces leave an editable cursor position on both sides when chips sit together.
+export function nodeEndsWithWhitespace(
+  node: { isText?: boolean; text?: string | null } | null,
+) {
+  return Boolean(node?.isText && /\s$/.test(node.text ?? ''));
+}
+
+export function nodeStartsWithWhitespace(
+  node: { isText?: boolean; text?: string | null } | null,
+) {
+  return Boolean(node?.isText && /^\s/.test(node.text ?? ''));
+}
+
+export function shouldInsertLeadingInlineChipSpace(editor: Editor, position?: number) {
+  const nodeBefore =
+    typeof position === 'number'
+      ? editor.state.doc.resolve(position).nodeBefore
+      : editor.state.selection.$from.nodeBefore;
+  if (!nodeBefore) return false;
+  if (nodeBefore.isText) return !nodeEndsWithWhitespace(nodeBefore);
+  return isCommentInlineChipNodeType(nodeBefore.type.name);
+}
+
+export function shouldInsertTrailingInlineChipSpace(editor: Editor, position?: number) {
+  const nodeAfter =
+    typeof position === 'number'
+      ? editor.state.doc.resolve(position).nodeAfter
+      : editor.state.selection.$to.nodeAfter;
+  if (!nodeAfter) return true;
+  if (nodeAfter.isText) return !nodeStartsWithWhitespace(nodeAfter);
+  return isCommentInlineChipNodeType(nodeAfter.type.name);
+}
+
 function createCommentTextSpace(): TiptapJSONContent {
-  // Inline atom chips need real text gaps so the cursor can land before/after them.
+  // Real text nodes give atom chips editable landing spots on both sides when chips are adjacent.
   return { type: 'text', text: '  ' };
 }
 
@@ -237,6 +272,7 @@ export function isEmptyDoc(doc: TiptapJSONContent | null | undefined): boolean {
   if (!doc) return true;
   let hasContent = false;
   const meaningfulLeafNodes = new Set([
+    // Whitespace-only text is empty, but atomic/legacy rich nodes should still submit.
     'image',
     'mention',
     'inlineMedia',

@@ -149,6 +149,7 @@ function replaceCodeBlockText(props: ReactNodeViewProps, nextText: string) {
 
   const from = pos + 1;
   const to = from + currentNode.content.size;
+  // Update only the node text so language/wrapping attrs and the NodeView instance survive.
   view.dispatch(state.tr.insertText(nextText, from, to));
   return true;
 }
@@ -170,7 +171,7 @@ function setSelectionInParagraphNear(tr: Transaction, pos: number) {
   const targetPos = Math.max(0, Math.min(pos, doc.content.size));
   const targetNode = doc.nodeAt(targetPos);
 
-  // Prefer real paragraph positions after deleting a CodeMirror-backed block.
+  // After deleting a CodeMirror-backed block, keep the cursor in an editable paragraph.
   if (targetNode?.type.name === 'paragraph') {
     return tr.setSelection(TextSelection.create(doc, targetPos + 1));
   }
@@ -425,6 +426,7 @@ export default function CommentCodeBlockNodeView(props: ReactNodeViewProps) {
   const [languageOpen, setLanguageOpen] = useState(false);
   const copyButtonRef = useRef<HTMLSpanElement | null>(null);
 
+  // CodeMirror handlers outlive React renders, so read fresh node/getPos/editor props from a ref.
   propsRef.current = props;
 
   const getCurrentCodeText = useCallback(() => {
@@ -503,6 +505,7 @@ export default function CommentCodeBlockNodeView(props: ReactNodeViewProps) {
   useEffect(() => {
     if (!containerRef.current || viewRef.current) return;
 
+    // CodeMirror owns code editing; Tiptap keeps the enclosing node for persistence/history.
     const view = new EditorView({
       parent: containerRef.current,
       state: EditorState.create({

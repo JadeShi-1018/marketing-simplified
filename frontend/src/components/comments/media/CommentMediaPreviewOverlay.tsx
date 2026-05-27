@@ -226,6 +226,7 @@ function PreviewContent({
   }
 
   if (preview.status === 'ready' && preview.preview_pages.length > 0) {
+    // Documents render generated pages; images can use the original file directly below.
     return <GeneratedPreviewPages pages={preview.preview_pages} filename={filename} />;
   }
 

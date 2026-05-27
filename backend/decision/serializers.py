@@ -558,6 +558,39 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
     contextSummary = serializers.CharField(source="context_summary", read_only=True)
     riskLevel = serializers.CharField(source="risk_level", read_only=True)
     confidenceScore = serializers.IntegerField(source="confidence", read_only=True)
+    originMeeting = serializers.SerializerMethodField()
+    origin_meeting = serializers.SerializerMethodField()
+
+    def get_originMeeting(self, obj):
+        try:
+            origin = obj.meeting_origin
+        except ObjectDoesNotExist:
+            return None
+
+        meeting = origin.meeting
+        if meeting is None:
+            return None
+
+        return {
+            "id": meeting.id,
+            "title": meeting.title,
+            "originTimestamp": origin.origin_timestamp,
+            "createdBy": origin.created_by_id,
+            "creationContext": origin.creation_context,
+        }
+
+    def get_origin_meeting(self, obj):
+        try:
+            origin = obj.meeting_origin
+        except ObjectDoesNotExist:
+            return None
+
+        meeting = origin.meeting
+        if meeting is None:
+            return None
+
+        return serialize_origin_meeting(meeting)
+
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     createdBy = serializers.IntegerField(source="author_id", read_only=True)
     committedAt = serializers.DateTimeField(source="committed_at", read_only=True)
@@ -572,8 +605,6 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
     reviews = CommittedReviewSerializer(many=True, read_only=True)
     commitRecord = CommittedCommitRecordSerializer(read_only=True)
     stateTransitions = CommittedStateTransitionSerializer(many=True, read_only=True)
-    origin_meeting = serializers.SerializerMethodField()
-
     class Meta:
         model = Decision
         fields = [
@@ -599,18 +630,8 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
             "commitRecord",
             "stateTransitions",
             "origin_meeting",
+            "originMeeting",
         ]
-
-    def get_origin_meeting(self, obj):
-        try:
-            origin = obj.meeting_origin
-        except ObjectDoesNotExist:
-            return None
-        meeting = origin.meeting
-        if meeting is None:
-            return None
-        return serialize_origin_meeting(meeting)
-
 
 class DecisionCommitActionSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, allow_null=True)

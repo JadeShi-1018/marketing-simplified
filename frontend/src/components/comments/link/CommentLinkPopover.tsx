@@ -29,6 +29,7 @@ export default function CommentLinkPopover({
   }, [initialUrl]);
 
   useEffect(() => {
+    // Delay focus until the popover content has mounted and its focus handling has settled.
     const id = window.setTimeout(() => inputRef.current?.focus(), 0);
     return () => window.clearTimeout(id);
   }, []);

@@ -7,7 +7,10 @@ import { ExternalLink, Pencil, Trash2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { isCommentInlineChipNodeType } from '../commentUtils';
+import {
+  shouldInsertLeadingInlineChipSpace,
+  shouldInsertTrailingInlineChipSpace,
+} from '../commentUtils';
 import CommentLinkPopover from './CommentLinkPopover';
 import {
   isCommentLinkTextUrlLike,
@@ -17,28 +20,6 @@ import {
 } from './commentLinkUtils';
 
 const SELECTED_LINK_CLASS = 'comment-link-selected';
-
-function nodeEndsWithWhitespace(node: { isText?: boolean; text?: string | null } | null) {
-  return Boolean(node?.isText && /\s$/.test(node.text ?? ''));
-}
-
-function nodeStartsWithWhitespace(node: { isText?: boolean; text?: string | null } | null) {
-  return Boolean(node?.isText && /^\s/.test(node.text ?? ''));
-}
-
-function shouldInsertLeadingInlineChipSpace(editor: Editor, from: number) {
-  const nodeBefore = editor.state.doc.resolve(from).nodeBefore;
-  if (!nodeBefore) return false;
-  if (nodeBefore.isText) return !nodeEndsWithWhitespace(nodeBefore);
-  return isCommentInlineChipNodeType(nodeBefore.type.name);
-}
-
-function shouldInsertTrailingInlineChipSpace(editor: Editor, to: number) {
-  const nodeAfter = editor.state.doc.resolve(to).nodeAfter;
-  if (!nodeAfter) return true;
-  if (nodeAfter.isText) return !nodeStartsWithWhitespace(nodeAfter);
-  return isCommentInlineChipNodeType(nodeAfter.type.name);
-}
 
 type LinkRange = {
   from: number;
@@ -92,6 +73,7 @@ export default function CommentLinkInteractionLayer({ editor }: { editor: Editor
       const href = anchor.getAttribute('href');
       if (!href) return null;
 
+      // Map the clicked DOM anchor back to its ProseMirror mark range for edit/delete.
       const candidateNodes = [anchor.firstChild, anchor].filter(Boolean) as Node[];
       const positions = candidateNodes.flatMap((node) => {
         try {
@@ -225,6 +207,7 @@ export default function CommentLinkInteractionLayer({ editor }: { editor: Editor
       }
 
       if (!menu.range) {
+        // DOM-to-ProseMirror range mapping can fail, so fall back to Tiptap's active link range.
         editor
           .chain()
           .focus()

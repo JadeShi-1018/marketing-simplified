@@ -53,6 +53,8 @@ function restoreScroll(snapshots: ScrollSnapshot[]) {
 export function withPreservedScroll<T>(anchor: HTMLElement, action: () => T): T {
   const snapshots = getScrollSnapshots(anchor);
   const result = action();
+  // ProseMirror/CodeMirror focus can trigger scroll in later frames, so restore
+  // nested containers immediately and after layout settles.
   restoreScroll(snapshots);
   window.requestAnimationFrame(() => {
     restoreScroll(snapshots);

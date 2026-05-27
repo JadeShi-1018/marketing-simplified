@@ -1,5 +1,6 @@
 .env
 .DS_Store
+.superpowers/
 /Dockerfile.dev
 docker-compose.dev*.yml
 backend/backend/settings.py

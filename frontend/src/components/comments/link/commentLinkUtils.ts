@@ -5,33 +5,12 @@ import { fetchLinkPreview, isPreviewableUrl } from '@/lib/api/linkPreviewApi';
 import type { CommentSmartLinkAttrs } from '@/types/comment';
 import {
   createCommentInlineChipInsertionContent,
-  isCommentInlineChipNodeType,
+  shouldInsertLeadingInlineChipSpace,
+  shouldInsertTrailingInlineChipSpace,
 } from '../commentUtils';
 
 const LINK_REL = 'noopener noreferrer nofollow';
 const LINK_TARGET = '_blank';
-
-function nodeEndsWithWhitespace(node: { isText?: boolean; text?: string | null } | null) {
-  return Boolean(node?.isText && /\s$/.test(node.text ?? ''));
-}
-
-function nodeStartsWithWhitespace(node: { isText?: boolean; text?: string | null } | null) {
-  return Boolean(node?.isText && /^\s/.test(node.text ?? ''));
-}
-
-function shouldInsertLeadingInlineChipSpace(editor: Editor) {
-  const nodeBefore = editor.state.selection.$from.nodeBefore;
-  if (!nodeBefore) return false;
-  if (nodeBefore.isText) return !nodeEndsWithWhitespace(nodeBefore);
-  return isCommentInlineChipNodeType(nodeBefore.type.name);
-}
-
-function shouldInsertTrailingInlineChipSpace(editor: Editor) {
-  const nodeAfter = editor.state.selection.$to.nodeAfter;
-  if (!nodeAfter) return true;
-  if (nodeAfter.isText) return !nodeStartsWithWhitespace(nodeAfter);
-  return isCommentInlineChipNodeType(nodeAfter.type.name);
-}
 
 export function normalizeCommentLinkUrl(input: string): string | null {
   const trimmed = input.trim();
@@ -109,6 +88,7 @@ export async function insertCommentLink(editor: Editor, rawUrl: string) {
   if (!url) return false;
 
   const { empty } = editor.state.selection;
+  // Existing selected text stays as a normal link mark; only empty inserts become smart chips.
   const preview = empty ? await resolveCommentSmartLink(url) : null;
 
   if (empty && preview) {

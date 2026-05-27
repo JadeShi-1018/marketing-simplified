@@ -49,6 +49,7 @@ export function isCommentZipFile(file: CommentMediaFileDescriptor): boolean {
 export function getCommentMediaPreviewKind(
   file: CommentMediaFileDescriptor,
 ): CommentMediaPreviewKind {
+  // The overlay previews rendered images/doc pages; videos and archives stay download-only.
   if (isVideoFile(file) || isCommentZipFile(file)) return 'none';
   if (isImageFile(file)) return 'image';
   if (isPdfFile(file)) return 'pdf';

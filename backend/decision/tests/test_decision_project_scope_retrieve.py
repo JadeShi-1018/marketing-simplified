@@ -12,6 +12,7 @@ from decision.models import Decision
 from meetings.models import Meeting, MeetingDecisionOrigin, MeetingTypeDefinition
 
 from django.contrib.auth import get_user_model
+from meetings.tests.decision_origin_helpers import create_meeting_decision_origin
 
 User = get_user_model()
 
@@ -76,7 +77,7 @@ def test_draft_retrieve_wrong_project_returns_404_without_origin_meeting():
         type_definition=mtd,
         objective="o",
     )
-    MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+    create_meeting_decision_origin(meeting=m, decision=d)
 
     url = f"/api/decisions/drafts/{d.id}/"
     response = client_wrong.get(url, {"project_id": project_b.id})
@@ -133,7 +134,7 @@ def test_committed_retrieve_wrong_project_returns_404_without_origin_meeting():
         objective="o",
     )
     d = Decision.objects.get(pk=decision_id)
-    MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+    create_meeting_decision_origin(meeting=m, decision=d)
 
     url = f"/api/decisions/{decision_id}/"
     response = client_wrong.get(url, {"project_id": project_b.id})
@@ -164,7 +165,7 @@ def test_draft_retrieve_matching_project_returns_origin_meeting():
         type_definition=mtd,
         objective="o",
     )
-    MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+    create_meeting_decision_origin(meeting=m, decision=d)
 
     r = client.get(f"/api/decisions/drafts/{d.id}/", {"project_id": project_a.id})
     assert r.status_code == status.HTTP_200_OK

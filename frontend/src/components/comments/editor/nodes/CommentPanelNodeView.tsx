@@ -37,6 +37,7 @@ function deletePanel(props: ReactNodeViewProps) {
   const paragraph = state.schema.nodes.paragraph.create();
 
   if (state.doc.childCount === 1) {
+    // Keep a valid cursor target when deleting the only top-level node.
     const tr = state.tr.replaceWith(position, position + props.node.nodeSize, paragraph);
     tr.setSelection(TextSelection.create(tr.doc, position + 1));
     view.dispatch(tr.scrollIntoView());
@@ -194,6 +195,7 @@ export default function CommentPanelNodeView(props: ReactNodeViewProps) {
       }
 
       const { from, to } = props.editor.state.selection;
+      // Show panel controls only when the cursor is inside the panel content, not on the wrapper node.
       setActive(from > position && to < position + props.node.nodeSize);
     };
 

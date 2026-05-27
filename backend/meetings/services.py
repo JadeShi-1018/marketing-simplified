@@ -1,7 +1,7 @@
 import datetime
 import logging
 import re
-from typing import Iterable, List, Tuple
+from typing import Iterable, List, Optional, Tuple
 
 from django.core.cache import cache as django_cache
 
@@ -11,16 +11,14 @@ from django.db.models import Count, Q
 from django.utils import timezone as dj_timezone
 from django.utils.text import slugify
 
+from django.contrib.auth import get_user_model
 from rest_framework import serializers as drf_serializers
 
 from core.models import Project, ProjectMember
-from meetings.models import (
-    AgendaItem,
-    Meeting,
-    MeetingDocument,
-    MeetingTypeDefinition,
-    ParticipantLink,
-)
+from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink, MeetingDocument, MeetingActionItem, MeetingTagAssignment, MeetingTemplate
+from meetings.audit import record_audit_entry
+
+User = get_user_model()
 
 
 def validate_meeting_for_origin_link(*, meeting_id: int, project: Project, user) -> Meeting:
@@ -227,6 +225,148 @@ def ensure_meeting_type_definition(project: Project, label: str) -> MeetingTypeD
         if created or mtd.label == safe_label:
             return mtd
     raise ValueError("Could not allocate meeting type slug")  # pragma: no cover - defensive
+
+
+def transition_meeting_status(
+    meeting: Meeting,
+    new_status: str,
+    actor: Optional[User],
+    reason: str = 'user_initiated',
+) -> None:
+    """
+    Transition a meeting to a new status.
+    Records an audit entry if transition succeeds.
+    """
+    old_status = meeting.status
+    meeting.status = new_status
+    meeting.save(update_fields=['status'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.status_changed',
+        before={'status': old_status},
+        after={'status': new_status},
+        context={'reason': reason},
+    )
+
+
+def update_meeting_title(meeting: Meeting, new_title: str, actor: Optional[User]) -> None:
+    """Update meeting title and record audit entry."""
+    old_title = meeting.title
+    meeting.title = new_title
+    meeting.save(update_fields=['title'])
+    record_audit_entry(
+        meeting=meeting, actor=actor, event_type='meeting.title_changed',
+        before={'title': old_title}, after={'title': new_title},
+    )
+
+
+def update_meeting_objective(meeting: Meeting, new_objective: str, actor: Optional[User]) -> None:
+    """Update meeting objective and record audit entry."""
+    old_objective = meeting.objective
+    meeting.objective = new_objective
+    meeting.save(update_fields=['objective'])
+    record_audit_entry(
+        meeting=meeting, actor=actor, event_type='meeting.objective_changed',
+        before={'objective': old_objective}, after={'objective': new_objective},
+    )
+
+
+def update_meeting_summary(meeting: Meeting, new_summary: str, actor: Optional[User]) -> None:
+    """Update meeting summary and record audit entry."""
+    old_summary = meeting.summary
+    meeting.summary = new_summary
+    meeting.save(update_fields=['summary'])
+    record_audit_entry(
+        meeting=meeting, actor=actor, event_type='meeting.summary_changed',
+        before={'summary': old_summary}, after={'summary': new_summary},
+    )
+
+
+@transaction.atomic
+def add_participant(
+    meeting: Meeting,
+    user: User,
+    role: str,
+    actor: Optional[User],
+) -> ParticipantLink:
+    """
+    Add a user to a meeting as a participant.
+    Records an audit entry if creation succeeds.
+
+    Args:
+        meeting: The Meeting to add the participant to.
+        user: The User to add as a participant.
+        role: The participant role (e.g., 'attendee', 'facilitator').
+        actor: The User adding the participant (for audit recording).
+
+    Returns:
+        The created ParticipantLink instance.
+    """
+    link = ParticipantLink.objects.create(
+        meeting=meeting,
+        user=user,
+        role=role,
+    )
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.participant_added',
+        after={
+            'user_id': user.id,
+            'user_name': (f"{user.first_name} {user.last_name}".strip() or user.username),
+            'role': role,
+        },
+        context={
+            'participant_count_after': meeting.participant_links.count(),
+        },
+    )
+
+    return link
+
+
+@transaction.atomic
+def remove_participant(
+    meeting: Meeting,
+    user: User,
+    actor: Optional[User],
+) -> None:
+    """
+    Remove a user from a meeting.
+    Records an audit entry if removal succeeds.
+
+    Args:
+        meeting: The Meeting from which to remove the participant.
+        user: The User to remove.
+        actor: The User performing the removal (for audit recording).
+
+    Raises:
+        ValueError: If the user is not a participant of the meeting.
+    """
+    try:
+        link = ParticipantLink.objects.get(meeting=meeting, user=user)
+    except ParticipantLink.DoesNotExist:
+        raise ValueError(f"User {user.id} is not a participant of meeting {meeting.id}")
+
+    user_name = (f"{user.first_name} {user.last_name}".strip() or user.username)
+    user_id = user.id
+
+    link.delete()
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.participant_removed',
+        after={
+            'user_id': user_id,
+            'user_name': user_name,
+        },
+        context={
+            'participant_count_after': meeting.participant_links.count(),
+        },
+    )
 
 
 def user_has_meeting_document_access(user_id: int, meeting: Meeting) -> bool:
@@ -578,4 +718,455 @@ def update_meeting_document_content(
         )
 
     return document
+
+
+@transaction.atomic
+def update_document_content(
+    document: MeetingDocument,
+    new_content: str,
+    actor: Optional[User],
+) -> MeetingDocument:
+    """
+    Update meeting document content and record audit entry.
+
+    Args:
+        document: The MeetingDocument to update.
+        new_content: The new document content.
+        actor: The User updating the document (for audit recording).
+
+    Returns:
+        The updated MeetingDocument instance.
+    """
+    old_content = document.content
+    document.content = new_content
+    document.save(update_fields=['content'])
+
+    char_diff = len(new_content) - len(old_content)
+
+    record_audit_entry(
+        meeting=document.meeting,
+        actor=actor,
+        event_type='meeting.document_edited',
+        context={
+            'char_count_before': len(old_content),
+            'char_count_after': len(new_content),
+            'char_diff': char_diff,
+        },
+    )
+
+    return document
+
+
+@transaction.atomic
+def create_agenda_item(
+    meeting: Meeting,
+    content: str,
+    order_index: int,
+    is_priority: bool,
+    actor: Optional[User],
+) -> AgendaItem:
+    """
+    Create agenda item and record audit entry.
+
+    Args:
+        meeting: The Meeting to add the agenda item to.
+        content: The agenda item content/text.
+        order_index: The position in the agenda (0-indexed).
+        is_priority: Whether this item is marked as priority.
+        actor: The User creating the agenda item (for audit recording).
+
+    Returns:
+        The created AgendaItem instance.
+    """
+    item = AgendaItem.objects.create(
+        meeting=meeting,
+        content=content,
+        order_index=order_index,
+        is_priority=is_priority,
+    )
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.agenda_item_added',
+        after={
+            'content': content,
+            'order_index': order_index,
+            'is_priority': is_priority,
+        },
+    )
+
+    return item
+
+
+@transaction.atomic
+def update_agenda_item(
+    item: AgendaItem,
+    content: str,
+    is_priority: bool,
+    actor: Optional[User],
+) -> AgendaItem:
+    """
+    Update agenda item and record audit entry.
+
+    Args:
+        item: The AgendaItem to update.
+        content: The new agenda item content.
+        is_priority: Whether the item is marked as priority.
+        actor: The User updating the agenda item (for audit recording).
+
+    Returns:
+        The updated AgendaItem instance.
+    """
+    old_content = item.content
+    old_priority = item.is_priority
+
+    item.content = content
+    item.is_priority = is_priority
+    item.save(update_fields=['content', 'is_priority'])
+
+    record_audit_entry(
+        meeting=item.meeting,
+        actor=actor,
+        event_type='meeting.agenda_item_edited',
+        before={
+            'content': old_content,
+            'is_priority': old_priority,
+        },
+        after={
+            'content': content,
+            'is_priority': is_priority,
+        },
+        context={'order_index': item.order_index},
+    )
+
+    return item
+
+
+@transaction.atomic
+def delete_agenda_item(item: AgendaItem, actor: Optional[User]) -> None:
+    """
+    Delete agenda item and record audit entry.
+
+    Args:
+        item: The AgendaItem to delete.
+        actor: The User deleting the agenda item (for audit recording).
+    """
+    meeting = item.meeting
+    content = item.content
+    order_index = item.order_index
+
+    item.delete()
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.agenda_item_deleted',
+        before={
+            'content': content,
+            'order_index': order_index,
+        },
+    )
+
+
+@transaction.atomic
+def create_action_item(
+    meeting: Meeting,
+    title: str,
+    description: str,
+    order_index: int,
+    actor: Optional[User],
+) -> MeetingActionItem:
+    """
+    Create action item and record audit entry.
+
+    Args:
+        meeting: The Meeting to add the action item to.
+        title: The action item title.
+        description: The action item description.
+        order_index: The position in the action items list.
+        actor: The User creating the action item (for audit recording).
+
+    Returns:
+        The created MeetingActionItem instance.
+    """
+    item = MeetingActionItem.objects.create(
+        meeting=meeting,
+        title=title,
+        description=description,
+        order_index=order_index,
+    )
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.action_item_added',
+        after={
+            'title': title,
+            'description': description,
+            'order_index': order_index,
+        },
+    )
+
+    return item
+
+
+@transaction.atomic
+def update_action_item(
+    item: MeetingActionItem,
+    title: str,
+    description: str,
+    is_resolved: bool,
+    actor: Optional[User],
+) -> MeetingActionItem:
+    """
+    Update action item and record audit entry.
+
+    Args:
+        item: The MeetingActionItem to update.
+        title: The new action item title.
+        description: The new action item description.
+        is_resolved: Whether the action item is marked as resolved.
+        actor: The User updating the action item (for audit recording).
+
+    Returns:
+        The updated MeetingActionItem instance.
+    """
+    old_title = item.title
+    old_resolved = item.is_resolved
+
+    item.title = title
+    item.description = description
+    item.is_resolved = is_resolved
+    item.save(update_fields=['title', 'description', 'is_resolved'])
+
+    just_resolved = is_resolved and not old_resolved
+
+    record_audit_entry(
+        meeting=item.meeting,
+        actor=actor,
+        event_type='meeting.action_item_resolved' if just_resolved else 'meeting.action_item_edited',
+        before={
+            'title': old_title,
+            'is_resolved': old_resolved,
+        },
+        after={
+            'title': title,
+            'is_resolved': is_resolved,
+        },
+    )
+
+    return item
+
+
+@transaction.atomic
+def resolve_action_item(
+    item: MeetingActionItem,
+    actor: Optional[User],
+) -> MeetingActionItem:
+    """
+    Mark action item as resolved and record audit entry.
+
+    Args:
+        item: The MeetingActionItem to resolve.
+        actor: The User resolving the action item (for audit recording).
+
+    Returns:
+        The updated MeetingActionItem instance.
+    """
+    item.is_resolved = True
+    item.save(update_fields=['is_resolved'])
+
+    record_audit_entry(
+        meeting=item.meeting,
+        actor=actor,
+        event_type='meeting.action_item_resolved',
+        after={
+            'title': item.title,
+            'id': item.id,
+        },
+    )
+
+    return item
+
+
+@transaction.atomic
+def update_meeting_type(
+    meeting: Meeting,
+    new_type: MeetingTypeDefinition,
+    actor: Optional[User],
+) -> None:
+    """Update meeting type and record audit entry."""
+    old_type_id = meeting.type_definition_id
+    meeting.type_definition = new_type
+    meeting.save(update_fields=['type_definition'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.type_changed',
+        before={'type_definition_id': old_type_id},
+        after={'type_definition_id': new_type.id},
+    )
+
+
+@transaction.atomic
+def update_meeting_datetime(
+    meeting: Meeting,
+    scheduled_date,
+    scheduled_time,
+    actor: Optional[User],
+) -> None:
+    """Update meeting date and time and record audit entry."""
+    old_date = meeting.scheduled_date
+    old_time = meeting.scheduled_time
+
+    meeting.scheduled_date = scheduled_date
+    meeting.scheduled_time = scheduled_time
+    meeting.save(update_fields=['scheduled_date', 'scheduled_time'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.datetime_changed',
+        before={
+            'scheduled_date': str(old_date) if old_date else None,
+            'scheduled_time': str(old_time) if old_time else None,
+        },
+        after={
+            'scheduled_date': str(scheduled_date) if scheduled_date else None,
+            'scheduled_time': str(scheduled_time) if scheduled_time else None,
+        },
+    )
+
+
+@transaction.atomic
+def update_meeting_tags(
+    meeting: Meeting,
+    tag_definition_ids: list,
+    actor: Optional[User],
+) -> None:
+    """Update meeting tags and record audit entry."""
+    old_tags = list(meeting.tag_assignments.values_list('tag_definition_id', flat=True))
+
+    meeting.tag_assignments.all().delete()
+    for tag_id in tag_definition_ids:
+        MeetingTagAssignment.objects.create(meeting=meeting, tag_definition_id=tag_id)
+
+    new_tags = tag_definition_ids
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.tags_changed',
+        before={'tag_ids': old_tags},
+        after={'tag_ids': new_tags},
+        context={'count_before': len(old_tags), 'count_after': len(new_tags)},
+    )
+
+
+@transaction.atomic
+def apply_template(
+    meeting: Meeting,
+    template: MeetingTemplate,
+    actor: Optional[User],
+) -> None:
+    """Apply a template to meeting and record audit entry."""
+    meeting.layout_config = template.layout_config
+    meeting.save(update_fields=['layout_config'])
+
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.template_applied',
+        context={
+            'template_id': template.id,
+            'template_name': template.name,
+            'blocks_applied': list(template.layout_config.keys()) if template.layout_config else [],
+        },
+    )
+
+
+def record_decision_created(
+    meeting: Meeting,
+    decision_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a decision is created from a meeting."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.decision_created',
+        context={'decision_id': decision_id},
+    )
+
+
+def record_decision_updated(
+    meeting: Meeting,
+    decision_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a decision linked to a meeting is modified."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.decision_updated',
+        context={'decision_id': decision_id},
+    )
+
+
+def record_decision_deleted(
+    meeting: Meeting,
+    decision_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a decision linked to a meeting is deleted."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.decision_deleted',
+        context={'decision_id': decision_id},
+    )
+
+
+def record_task_created(
+    meeting: Meeting,
+    task_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a task is created from a meeting."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.task_created',
+        context={'task_id': task_id},
+    )
+
+
+def record_task_updated(
+    meeting: Meeting,
+    task_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a task linked to a meeting is modified."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.task_updated',
+        context={'task_id': task_id},
+    )
+
+
+def record_task_deleted(
+    meeting: Meeting,
+    task_id: int,
+    actor: Optional[User],
+) -> None:
+    """Record audit entry when a task linked to a meeting is deleted."""
+    record_audit_entry(
+        meeting=meeting,
+        actor=actor,
+        event_type='meeting.task_deleted',
+        context={'task_id': task_id},
+    )
 
