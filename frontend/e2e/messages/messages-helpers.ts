@@ -88,6 +88,17 @@ export async function mockProjectShellApis(page: Page) {
 		});
 	});
 
+	// DashboardLayout mounts useNotificationSSE which immediately fetches this.
+	// Without a mock, the fake e2e token returns 401 from the real backend,
+	// triggering the axios interceptor's hard redirect to /login.
+	await page.route('**/api/notifications/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+		});
+	});
+
 	await page.route('**/api/chat/starred/**', async (route) => {
 		await route.fulfill({
 			status: 200,
