@@ -121,6 +121,11 @@ export default function MessageList({
   firstUnreadMessageId = null,
   onEditMessage,
   onDeleteMessage,
+  onReactionAdd,
+  onReactionRemove,
+  onQuoteReply,
+  onForwardSingle,
+  onEnterSelectMode,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -541,6 +546,11 @@ export default function MessageList({
                             isHighlighted={highlightMessageId === item.message.id}
                             onEdit={onEditMessage}
                             onDelete={onDeleteMessage}
+                            onReactionAdd={onReactionAdd ? (emoji) => onReactionAdd(item.message.id, emoji) : undefined}
+                            onReactionRemove={onReactionRemove ? (emoji) => onReactionRemove(item.message.id, emoji) : undefined}
+                            onQuoteReply={onQuoteReply ? () => onQuoteReply(item.message) : undefined}
+                            onForwardSingle={onForwardSingle ? () => onForwardSingle(item.message.id) : undefined}
+                            onEnterSelectMode={onEnterSelectMode}
                           />
                         )}
                       </div>

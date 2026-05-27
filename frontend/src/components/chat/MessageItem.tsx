@@ -2,13 +2,15 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { format } from 'date-fns';
-import { Copy, Edit2, Forward, Trash2 } from 'lucide-react';
+import { Forward } from 'lucide-react';
+import toast from 'react-hot-toast';
 import type { MessageItemProps } from '@/types/chat';
 import MessageStatus from './MessageStatus';
 import AttachmentDisplay from './AttachmentDisplay';
 import LinkPreview from './LinkPreview';
 import TaskSharePreview from './TaskSharePreview';
 import ReactionsDisplay from './ReactionsDisplay';
+import MessageHoverActions from './MessageHoverActions';
 import { extractUrls } from '@/lib/api/linkPreviewApi';
 
 const AGENT_BOT_EMAIL = 'agent-bot@system.local';
@@ -43,8 +45,6 @@ function extractTaskIds(content: string): number[] {
     .filter((id) => !Number.isNaN(id));
 }
 
-const TOOLBAR_BASE =
-  'flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white shadow-md px-1 py-0.5 z-10';
 
 function Avatar({
   src,
@@ -98,12 +98,18 @@ export default function MessageItem({
   isHovered: externalHovered = false,
   renderActions,
   onReactionClick,
+  onReactionAdd,
+  onReactionRemove,
+  onQuoteReply,
+  onForwardSingle,
+  onEnterSelectMode,
 }: MessageItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
   const [localHovered, setLocalHovered] = useState(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const menuOpenRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -156,7 +162,9 @@ export default function MessageItem({
   };
 
   const handleMouseLeave = () => {
-    leaveTimerRef.current = setTimeout(() => setLocalHovered(false), 150);
+    leaveTimerRef.current = setTimeout(() => {
+      if (!menuOpenRef.current) setLocalHovered(false);
+    }, 150);
   };
 
   const handleSaveEdit = () => {
@@ -178,8 +186,38 @@ export default function MessageItem({
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(messageContent).catch(() => {});
+  const handleCopyText = () => {
+    if (!messageContent.trim()) {
+      toast.error('No message text to copy');
+      return;
+    }
+    navigator.clipboard
+      .writeText(messageContent)
+      .then(() => toast.success('Message text copied'))
+      .catch(() => toast.error('Could not copy message text'));
+  };
+
+  const handleCopyLink = () => {
+    if (typeof window === 'undefined') return;
+
+    const params = new URLSearchParams(window.location.search);
+    const messageChatId = message.chat_id ?? message.chat;
+    if (messageChatId) params.set('chatId', String(messageChatId));
+    params.set('messageId', String(message.id));
+
+    const messagesPath = window.location.pathname.includes('/messages')
+      ? window.location.pathname
+      : '/messages';
+    const url = `${window.location.origin}${messagesPath}?${params.toString()}`;
+
+    navigator.clipboard
+      .writeText(url)
+      .then(() => toast.success('Message link copied'))
+      .catch(() => toast.error('Could not copy message link'));
+  };
+
+  const handlePlaceholderAction = (label: string) => {
+    toast(`${label} is not ready yet`);
   };
 
   const handleToggleSelect = () => {
@@ -237,7 +275,11 @@ export default function MessageItem({
               initials={initials}
             />
           ) : (
-            <div className="w-8" />
+            <div className="flex w-8 items-center justify-end">
+              <span className={`whitespace-nowrap text-[10px] leading-none text-gray-400 transition-opacity ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
+                {time}
+              </span>
+            </div>
           )}
         </div>
 
@@ -255,7 +297,6 @@ export default function MessageItem({
                 </span>
               ) : null}
               <span className="text-[11px] text-gray-400">{time}</span>
-              {message.is_edited && <span className="text-[9px] text-gray-400">edited</span>}
               {isOwnMessage && <MessageStatus message={message} />}
             </div>
           )}
@@ -300,6 +341,9 @@ export default function MessageItem({
               {hasContent && (
                 <p className="whitespace-pre-wrap text-sm text-gray-900 [overflow-wrap:anywhere]">
                   {messageContent}
+                  {message.is_edited && (
+                    <span className="ml-1 text-[10px] text-gray-400">(edited)</span>
+                  )}
                 </p>
               )}
 
@@ -324,7 +368,11 @@ export default function MessageItem({
               {hasReactions && (
                 <ReactionsDisplay
                   reactions={message.reactions!}
-                  onReactionClick={onReactionClick}
+                  onReactionClick={(emoji, isReactedByMe) => {
+                    onReactionClick?.(emoji, isReactedByMe);
+                    if (isReactedByMe) onReactionRemove?.(emoji);
+                    else onReactionAdd?.(emoji);
+                  }}
                   align="left"
                 />
               )}
@@ -336,50 +384,37 @@ export default function MessageItem({
           renderActions ? (
             renderActions()
           ) : (
-            <div className={`absolute right-2 -top-5 ${TOOLBAR_BASE}`}>
-              {isOwnMessage && onEdit && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsEditing(true);
-                  }}
-                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                  title="Edit message"
-                  aria-label="Edit message"
-                >
-                  <Edit2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {hasContent && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCopy();
-                  }}
-                  className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800"
-                  title="Copy text"
-                  aria-label="Copy text"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {isOwnMessage && onDelete && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(message.id);
-                  }}
-                  className="rounded p-1 text-gray-500 hover:bg-red-50 hover:text-red-600"
-                  title="Delete message"
-                  aria-label="Delete message"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
+            <MessageHoverActions
+              isOwnMessage={isOwnMessage}
+              onEmojiReaction={(emoji) => {
+                const existing = message.reactions?.find(r => r.emoji === emoji);
+                if (existing?.reacted_by_me) {
+                  onReactionRemove?.(emoji);
+                } else {
+                  onReactionAdd?.(emoji);
+                }
+              }}
+              onQuoteReply={() => onQuoteReply?.()}
+              onCopy={handleCopyText}
+              onCopyLink={handleCopyLink}
+              onEdit={isOwnMessage && onEdit ? () => setIsEditing(true) : undefined}
+              onForward={() => onForwardSingle?.()}
+              onPin={() => handlePlaceholderAction('Pin')}
+              onSave={() => handlePlaceholderAction('Save')}
+              onRemind={() => handlePlaceholderAction('Remind me')}
+              onMultiSelect={() => onEnterSelectMode?.()}
+              onDelete={isOwnMessage && onDelete ? () => onDelete(message.id) : undefined}
+              onMenuOpenChange={(open) => {
+                menuOpenRef.current = open;
+                if (open) {
+                  if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+                  setLocalHovered(true);
+                } else {
+                  // Menu closed — start a short grace period before hiding toolbar
+                  leaveTimerRef.current = setTimeout(() => setLocalHovered(false), 200);
+                }
+              }}
+            />
           )
         )}
       </div>

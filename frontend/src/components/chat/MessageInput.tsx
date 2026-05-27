@@ -13,7 +13,7 @@ import {
 import { Send, Smile, Paperclip, X, Image as ImageIcon, FileText, Film, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import toast from 'react-hot-toast';
-import type { MessageInputProps, MessageAttachment } from '@/types/chat';
+import type { MessageInputProps, MessageAttachment, Message } from '@/types/chat';
 import {
   uploadAttachment,
   validateFile,
@@ -51,6 +51,8 @@ interface ExtendedMessageInputProps extends MessageInputProps {
   chatId?: number | null;
   onTypingStart?: () => void;
   onTypingStop?: () => void;
+  replyingTo?: Message | null;
+  onClearReply?: () => void;
 }
 
 export default function MessageInput({
@@ -61,6 +63,8 @@ export default function MessageInput({
   chatId,
   onTypingStart,
   onTypingStop,
+  replyingTo,
+  onClearReply,
 }: ExtendedMessageInputProps) {
   const [content, setContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -394,6 +398,23 @@ export default function MessageInput({
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-[#3CCED7] bg-[#3CCED7]/5">
           <p className="text-sm font-medium text-[#3CCED7]">Drop files to attach</p>
+        </div>
+      )}
+      {/* Reply preview bar */}
+      {replyingTo && (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-medium text-[#3CCED7]">Replying to {replyingTo.sender.username}</p>
+            <p className="truncate text-xs text-gray-500">{replyingTo.content || '[Attachment]'}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClearReply}
+            className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+            aria-label="Cancel reply"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
       {/* Attachment Previews */}

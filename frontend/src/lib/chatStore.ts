@@ -337,6 +337,68 @@ export const useChatStore = create<ChatState>()(
         });
       },
 
+      applyReactionUpdate: (messageId, emoji, action, user, currentUserId) => {
+        set(state => {
+          const newMessages = { ...state.messages };
+          const actorId = Number(user.id);
+          const currentId = currentUserId !== null ? Number(currentUserId) : null;
+          Object.keys(newMessages).forEach(chatIdStr => {
+            const chatId = parseInt(chatIdStr);
+            newMessages[chatId] = newMessages[chatId].map(msg => {
+              if (msg.id !== messageId) return msg;
+              const existing = msg.reactions ?? [];
+              if (action === 'added') {
+                const idx = existing.findIndex(r => r.emoji === emoji);
+                if (idx >= 0) {
+                  if (existing[idx].users.some(u => Number(u.id) === actorId)) return msg;
+                  const updated = existing.map((r, i) => i !== idx ? r : {
+                    ...r,
+                    count: r.count + 1,
+                    users: [...r.users, user],
+                    reacted_by_me: r.reacted_by_me || actorId === currentId,
+                  });
+                  return { ...msg, reactions: updated };
+                } else {
+                  return {
+                    ...msg,
+                    reactions: [
+                      ...existing,
+                      {
+                        emoji,
+                        count: 1,
+                        users: [user],
+                        reacted_by_me: actorId === currentId,
+                      },
+                    ],
+                  };
+                }
+              }
+
+              const reaction = existing.find(r => r.emoji === emoji);
+              if (!reaction || !reaction.users.some(u => Number(u.id) === actorId)) {
+                return msg;
+              }
+
+              const updated = existing
+                .map(r => {
+                  if (r.emoji !== emoji) return r;
+                  const users = r.users.filter(u => Number(u.id) !== actorId);
+                  return {
+                    ...r,
+                    count: users.length,
+                    users,
+                    reacted_by_me: actorId === currentId ? false : r.reacted_by_me,
+                  };
+                })
+                .filter(r => r.count > 0);
+
+              return { ...msg, reactions: updated };
+            });
+          });
+          return { messages: newMessages };
+        });
+      },
+
       // ==================== Unread Count Actions ====================
       
       updateUnreadCount: (chatId: number, count: number) => {

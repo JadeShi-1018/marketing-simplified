@@ -129,7 +129,7 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   }, [chatId, hasMore, isLoadingMessages, currentMessages, limit]);
 
   // Send new message
-  const send = useCallback(async (content: string): Promise<Message | null> => {
+  const send = useCallback(async (content: string, replyToId?: number | null): Promise<Message | null> => {
     if (!chatId || !content.trim()) return null;
 
     const { addMessage } = useChatStore.getState();
@@ -141,6 +141,7 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
       const data: SendMessageRequest = {
         chat_id: chatId,
         content: content.trim(),
+        ...(replyToId ? { reply_to_id: replyToId } : {}),
       };
 
       const newMessage = await sendMessage(data);
@@ -168,7 +169,8 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   // Send message with attachments
   const sendWithAttachments = useCallback(async (
     content: string,
-    attachmentIds: number[]
+    attachmentIds: number[],
+    replyToId?: number | null,
   ): Promise<Message | null> => {
     if (!chatId) return null;
     // Must have content OR attachments
@@ -182,8 +184,9 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
 
       const data: SendMessageRequest = {
         chat_id: chatId,
-        content: content.trim() || '', // Allow empty content if attachments exist
+        content: content.trim() || '',
         attachment_ids: attachmentIds,
+        ...(replyToId ? { reply_to_id: replyToId } : {}),
       };
 
       const newMessage = await sendMessage(data);

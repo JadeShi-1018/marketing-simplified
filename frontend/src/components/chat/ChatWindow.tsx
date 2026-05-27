@@ -8,8 +8,8 @@ import { useMessageData } from '@/hooks/useMessageData';
 import { useForwardMessages } from '@/hooks/useForwardMessages';
 import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useChatStore } from '@/lib/chatStore';
-import { editMessage, deleteMessage } from '@/lib/api/chatApi';
-import type { Chat } from '@/types/chat';
+import { editMessage, deleteMessage, addReaction, removeReaction } from '@/lib/api/chatApi';
+import type { Chat, Message } from '@/types/chat';
 import MessageList from './MessageList';
 import MessageInput from './MessageInput';
 import ForwardMessagesDialog from './ForwardMessagesDialog';
@@ -40,6 +40,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const [isForwardDialogOpen, setIsForwardDialogOpen] = useState(false);
   const [showSwitchLoadingSkeleton, setShowSwitchLoadingSkeleton] = useState(false);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<number | null>(null);
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const unreadCapturedForChatRef = useRef<number | null>(null);
   const { forward, isForwarding } = useForwardMessages();
 
@@ -73,10 +74,17 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     });
   }, []);
 
+  const handleSocketReactionUpdate = useCallback((event: ChatWsEvent) => {
+    const r = event.reaction;
+    if (!r) return;
+    useChatStore.getState().applyReactionUpdate(r.message_id, r.emoji, r.action, r.user, currentUserId);
+  }, [currentUserId]);
+
   const { sendTypingStart, sendTypingStop } = useChatWebSocket(currentUserId, {
     onChatMessage: handleSocketChatMessage,
     onTypingIndicator: handleSocketTypingIndicator,
     onMessageStatusUpdate: handleSocketMessageStatusUpdate,
+    onReactionUpdate: handleSocketReactionUpdate,
   });
 
   const {
@@ -115,6 +123,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setSelectedMessageIds([]);
     setIsForwardDialogOpen(false);
     setFirstUnreadMessageId(null);
+    setReplyingTo(null);
     unreadCapturedForChatRef.current = null;
     jumpLoadAttemptsRef.current = 0;
     jumpedToMessageRef.current = null;
@@ -275,12 +284,50 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     }
   };
 
+  const handleReactionAdd = useCallback(async (messageId: number, emoji: string) => {
+    if (!currentUserId) return;
+    const { applyReactionUpdate, updateMessage } = useChatStore.getState();
+    const actor = { id: currentUserId, username: user?.username ?? '' };
+    applyReactionUpdate(messageId, emoji, 'added', actor, currentUserId);
+    try {
+      const response = await addReaction(messageId, emoji);
+      updateMessage(messageId, { reactions: response.message.reactions ?? [] });
+    } catch {
+      applyReactionUpdate(messageId, emoji, 'removed', actor, currentUserId);
+    }
+  }, [currentUserId, user]);
+
+  const handleReactionRemove = useCallback(async (messageId: number, emoji: string) => {
+    if (!currentUserId) return;
+    const { applyReactionUpdate, updateMessage } = useChatStore.getState();
+    const actor = { id: currentUserId, username: user?.username ?? '' };
+    applyReactionUpdate(messageId, emoji, 'removed', actor, currentUserId);
+    try {
+      const response = await removeReaction(messageId, emoji);
+      updateMessage(messageId, { reactions: response.message.reactions ?? [] });
+    } catch {
+      applyReactionUpdate(messageId, emoji, 'added', actor, currentUserId);
+    }
+  }, [currentUserId, user]);
+
+  const handleQuoteReply = useCallback((message: Message) => {
+    setReplyingTo(message);
+  }, []);
+
+  const handleForwardSingle = useCallback((messageId: number) => {
+    setIsSelectMode(true);
+    setSelectedMessageIds([messageId]);
+    setIsForwardDialogOpen(true);
+  }, []);
+
   const handleSendMessage = async (content: string) => {
-    await send(content);
+    await send(content, replyingTo?.id);
+    setReplyingTo(null);
   };
 
   const handleSendWithAttachments = async (content: string, attachmentIds: number[]) => {
-    await sendWithAttachments(content, attachmentIds);
+    await sendWithAttachments(content, attachmentIds, replyingTo?.id);
+    setReplyingTo(null);
   };
 
   const toggleSelectMode = () => {
@@ -434,6 +481,11 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           firstUnreadMessageId={firstUnreadMessageId}
           onEditMessage={handleEditMessage}
           onDeleteMessage={handleDeleteMessage}
+          onReactionAdd={handleReactionAdd}
+          onReactionRemove={handleReactionRemove}
+          onQuoteReply={handleQuoteReply}
+          onForwardSingle={handleForwardSingle}
+          onEnterSelectMode={toggleSelectMode}
         />
       </div>
 
@@ -449,6 +501,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           chatId={chat.id}
           onTypingStart={handleTypingStart}
           onTypingStop={handleTypingStop}
+          replyingTo={replyingTo}
+          onClearReply={() => setReplyingTo(null)}
         />
       </div>
 

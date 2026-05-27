@@ -304,6 +304,7 @@ export interface ChatState {
   prependMessages: (chatId: number, messages: Message[]) => void;
   updateMessage: (messageId: number, updates: Partial<Message>) => void;
   removeMessage: (messageId: number) => void;
+  applyReactionUpdate: (messageId: number, emoji: string, action: 'added' | 'removed', user: ReactionUser, currentUserId: number | null) => void;
   
   updateUnreadCount: (chatId: number, count: number) => void;
   decrementUnreadCount: (chatId: number) => void;
@@ -402,6 +403,11 @@ export interface MessageItemProps {
   renderActions?: () => ReactNode;
   /** Callback when a reaction is clicked (toggle reaction). */
   onReactionClick?: (emoji: string, isReactedByMe: boolean) => void;
+  onReactionAdd?: (emoji: string) => void;
+  onReactionRemove?: (emoji: string) => void;
+  onQuoteReply?: () => void;
+  onForwardSingle?: () => void;
+  onEnterSelectMode?: () => void;
 }
 
 export interface MessageListProps {
@@ -420,6 +426,11 @@ export interface MessageListProps {
   firstUnreadMessageId?: number | null;
   onEditMessage?: (messageId: number, newContent: string) => void;
   onDeleteMessage?: (messageId: number) => void;
+  onReactionAdd?: (messageId: number, emoji: string) => void;
+  onReactionRemove?: (messageId: number, emoji: string) => void;
+  onQuoteReply?: (message: Message) => void;
+  onForwardSingle?: (messageId: number) => void;
+  onEnterSelectMode?: () => void;
 }
 
 export interface MessageInputProps {
@@ -427,6 +438,8 @@ export interface MessageInputProps {
   disabled?: boolean;
   /** Drawer-style input: brand top border handled by parent; gradient send button. */
   variant?: 'default' | 'drawer';
+  replyingTo?: Message | null;
+  onClearReply?: () => void;
 }
 
 export interface CreateChatDialogProps {
