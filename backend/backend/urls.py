@@ -46,6 +46,7 @@ urlpatterns = [
     path('api/core/', include('core.urls')),
     path('api/alerting/', include('alerting.urls')),
     path('api/report/', include('report.urls')),
+    path('api/', include('comments.urls')),
     # Must be before any path("api/", include(...)) so /api/google-*/ is not routed to task.urls.
     path("api/google-docs/", include("google_docs_integration.urls")),
     path("api/google-calendar/", include("google_calendar_integration.urls")),

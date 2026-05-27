@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     'chat.apps.ChatConfig',
     'experiment.apps.ExperimentConfig',
     'client_communication.apps.ClientCommunicationConfig',
+    'comments.apps.CommentsConfig',
     'calendars.apps.CalendarConfig',
     'miro.apps.MiroConfig',
     'ad_copy_variation',

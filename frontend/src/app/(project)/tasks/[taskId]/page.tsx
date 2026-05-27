@@ -18,13 +18,13 @@ import TaskTypeBlock from '@/components/tasks/detail/TaskTypeBlock';
 import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
 import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
-import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
 import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
 import { useAuthStore } from '@/lib/authStore';
 import { useTaskStore } from '@/lib/taskStore';
 import EngagementPanel from '@/components/tasks/detail/EngagementPanel';
+import CommentSection from '@/components/comments/CommentSection';
 
 export default function TaskV2DetailPage() {
   const params = useParams();
@@ -202,14 +202,13 @@ export default function TaskV2DetailPage() {
                   />
                 )}
                 {(task?.id || loading) && (
-                  <TaskActivityBlock
-                    taskId={task?.id ?? 0}
-                    readOnly={task?.status === 'LOCKED'}
-                    refreshKey={refreshKey}
-                    loading={loading}
-                    onMutated={onMutated}
-                    onFirstInteraction={() => markInteraction('comment_box', 'click')}
-                  />
+                  task?.id ? (
+                    <CommentSection
+                      entityType="task"
+                      entityId={task.id}
+                      readOnlyComposer={Boolean(readOnly)}
+                    />
+                  ) : null
                 )}
                 </>)}
                 {activeTab === 'history' && (task?.id || loading) && (

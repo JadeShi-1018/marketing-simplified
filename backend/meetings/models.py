@@ -291,13 +291,20 @@ class MeetingDecisionOrigin(models.Model):
 
     meeting = models.ForeignKey(
         Meeting,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="decision_origins",
     )
     decision = models.OneToOneField(
         "decision.Decision",
         on_delete=models.CASCADE,
         related_name="meeting_origin",
+    )
+    origin_timestamp = models.DateTimeField()
+    creation_context = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="meeting_decision_origins",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -313,6 +320,10 @@ class MeetingDecisionOrigin(models.Model):
             models.Index(
                 fields=["meeting", "decision"],
                 name="mtgs_dcor_mtg_dec",
+            ),
+            models.Index(
+                fields=["meeting", "origin_timestamp"],
+                name="mtgs_dcor_mtg_time",
             ),
         ]
 
