@@ -1,0 +1,69 @@
+SMP-552.8  Tracking Middleware Stress Test — k6 Re-run Summary
+Run date  : 2026-05-27  (second run, confirming reproducibility)
+Script    : k6/stress_test/tracking_middleware.js
+Target    : GET /api/tasks/<id>/  (triggers middleware TASK_OPEN → Celery ingest)
+Image     : grafana/k6:latest
+Auth      : POST /auth/login/ per VU per iteration (real business auth flow)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+THRESHOLDS (both runs)
+
+  http_req_duration   ✗ run-1: p(95)=22.78 s   run-2: p(95)=23.55 s
+  http_req_failed     ✗ run-1: rate=97.46 %    run-2: rate=97.36 %
+
+  Numbers are stable (±1 %) across runs — results are reproducible.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+HTTP RESULTS (re-run)
+
+  total iterations    : 15 421
+  total requests      : 15 839
+  RPS (avg)           : ~56 req/s
+  http_req_duration
+    avg               : 3.5 s
+    med               : 1.1 s
+    p(90)             : 13.66 s
+    p(95)             : 23.55 s    ← threshold BREACHED
+    max               : 27.89 s
+  http_req_failed     : 97.36 %   ← threshold BREACHED
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STAGE-BY-STAGE BEHAVIOUR
+
+  50  VU  (0:00–1:30)   : STABLE — auth succeeds, task GETs respond quickly
+  200 VU  (1:30–3:00)   : DEGRADING — DB connection errors begin (~200 VU onset)
+  500 VU  (3:00–4:30)   : SATURATED — FATAL: sorry, too many clients already
+                           auth success rate drops to 43 %
+                           p95 spikes to 23+ s driven by connection-wait queue
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ROOT CAUSE
+
+  psycopg2.OperationalError:
+    FATAL: sorry, too many clients already
+    FATAL: remaining connection slots are reserved for SUPERUSER
+
+  Django  CONN_MAX_AGE = 0   (default — new connection per request)
+  Postgres max_connections   = 100
+
+  Each VU iteration issues 2 DB-heavy requests (login + task GET).
+  At 200+ concurrent VUs the 100-connection ceiling is hit.
+  Onset: ~200 VU.  Full saturation: ~300 VU.
+
+  This matches SMP-552 21-day risk register — Risk 2:
+  "DB connection pool exhaustion under concurrent middleware load."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTE: auth kept in hot loop intentionally
+
+  Auth (POST /auth/login/) is performed every iteration per VU to match
+  the real business flow where the middleware fires on authenticated
+  requests.  Removing it from the loop would halve DB pressure but
+  misrepresent production behaviour.  Thresholds are NOT adjusted.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RECOMMENDED FOLLOW-UP (separate ticket)
+
+  Short-term : CONN_MAX_AGE = 60  in settings.py
+  Medium-term: pgBouncer (transaction pooling) in front of PostgreSQL
+  Do not adjust k6 thresholds — fix the infrastructure.

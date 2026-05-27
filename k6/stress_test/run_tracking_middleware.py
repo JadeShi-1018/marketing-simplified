@@ -4,7 +4,7 @@ Tracking Middleware Stress Test Runner — SMP-552.8
 Runs tracking_middleware.js against the dev stack via Docker.
 
 Usage:
-    python k6/run_tracking_middleware.py
+    python k6/stress_test/run_tracking_middleware.py
 
 Environment (optional .env or shell exports):
     K6_TEST_USER_EMAIL     test user email (must exist in DB)
@@ -118,15 +118,18 @@ def main():
     ]
     if abort_on_fail:
         k6_args.append('--abort-on-fail')
-    k6_args.append('/scripts/scenarios/tracking_middleware.js')
+    k6_args.append('/k6/stress_test/tracking_middleware.js')
 
+    # Mount the entire k6 directory so stress_test/ imports from ../scripts/ resolve.
+    k6_dir = str(script_dir.parent)
     docker_cmd = [
-        'docker', 'compose', '-f', str(compose_file),
-        'run', '--rm', '--no-deps',
+        'docker', 'run', '--rm',
+        '--network', 'marketing-simplified_default',
+        '-v', f'{k6_dir}:/k6:ro',
         '-e', f'K6_BASE_URL={container_url}',
         '-e', f'K6_TEST_USER_EMAIL={k6_email}',
         '-e', f'K6_TEST_USER_PASSWORD={k6_password}',
-        'k6',
+        'grafana/k6:latest',
     ] + k6_args
 
     print("=" * 60)

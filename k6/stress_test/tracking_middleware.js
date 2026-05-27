@@ -14,9 +14,9 @@
 
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { config } from '../config.js';
-import { authenticate, getAuthHeaders } from '../utils/auth.js';
-import { endpoints } from '../utils/endpoints.js';
+import { config } from '../scripts/config.js';
+import { authenticate, getAuthHeaders } from '../scripts/utils/auth.js';
+import { endpoints } from '../scripts/utils/endpoints.js';
 
 // ---------------------------------------------------------------------------
 // Test options
