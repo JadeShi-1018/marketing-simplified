@@ -295,9 +295,7 @@ test.describe('Messages and main layout', () => {
 
 		const mockMessage = `Mocked send ${Date.now()}`;
 		await trySendMessage(page, mockMessage);
-		await expect(
-			page.locator('div.flex-1.overflow-y-auto p.text-sm.whitespace-pre-wrap', { hasText: mockMessage }).first()
-		).toBeVisible();
+		await expect(page.getByText(mockMessage, { exact: true })).toBeVisible();
 	});
 
 	test('Create chat (mocked): New Chat → pick participant → create → appears in list', async ({
@@ -483,7 +481,7 @@ test.describe('Messages edge cases without mock', () => {
 		await expect(page.getByText('Select a project to view chats')).toBeVisible();
 		await expect(page.getByRole('heading', { name: 'Select a project to start' })).toBeVisible();
 		await expect(
-			page.getByText('Choose a project from the dropdown above to view and manage your team conversations.')
+			page.getByText('Select a project from the workspace navigation to view and manage team conversations.')
 		).toBeVisible();
 		await expect(getMessagesNewChatButton(page)).toHaveCount(0);
 

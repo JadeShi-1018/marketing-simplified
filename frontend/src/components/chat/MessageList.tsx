@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import { format, isSameDay } from 'date-fns';
 import { ChevronDown } from 'lucide-react';
 import type { Message, MessageListProps } from '@/types/chat';
@@ -83,6 +82,11 @@ type FlatItem =
   | { type: 'unread-divider' }
   | { type: 'message'; message: Message; showSender: boolean; senderRole?: string };
 
+type PrependAnchor = {
+  messageId: number;
+  offsetTop: number;
+};
+
 function formatDateHeader(dateStr: string): string {
   const date = new Date(dateStr + 'T00:00:00');
   const today = new Date();
@@ -91,6 +95,12 @@ function formatDateHeader(dateStr: string): string {
   yesterday.setDate(yesterday.getDate() - 1);
   if (isSameDay(date, yesterday)) return 'Yesterday';
   return format(date, 'MMMM d, yyyy');
+}
+
+function flatItemKey(item: FlatItem, index: number): string {
+  if (item.type === 'message') return `message-${item.message.id}`;
+  if (item.type === 'date-header') return `date-${item.date}`;
+  return `unread-${index}`;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -118,7 +128,10 @@ export default function MessageList({
 
   // Refs that survive re-renders without triggering effects
   const isLoadingMoreRef = useRef(false);
-  const firstVisibleMsgIdRef = useRef<number | null>(null);
+  const prependAnchorRef = useRef<PrependAnchor | null>(null);
+  const restoreFrameRef = useRef<number | null>(null);
+  const loadMoreFrameRef = useRef<number | null>(null);
+  const isRestoringPrependRef = useRef(false);
   const lastMessageIdRef = useRef<number | null>(null);
   const unreadScrollDoneRef = useRef(false);
   const scrollPendingRef = useRef<'bottom' | 'unread' | null>(null);
@@ -138,7 +151,7 @@ export default function MessageList({
     return groups;
   }, [messages]);
 
-  // ── Flatten into a single list for the virtualizer ──────────────────────────
+  // ── Flatten into a single list ──────────────────────────────────────────────
   const flatItems = useMemo<FlatItem[]>(() => {
     const items: FlatItem[] = [];
     messageGroups.forEach((group) => {
@@ -156,41 +169,65 @@ export default function MessageList({
     return items;
   }, [messageGroups, firstUnreadMessageId, isGroupChat, roleByUserId]);
 
-  // ── Virtualizer ──────────────────────────────────────────────────────────────
-  const virtualizer = useVirtualizer({
-    count: flatItems.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => {
-      const item = flatItems[index];
-      if (!item) return 40;
-      if (item.type === 'date-header') return 48;
-      if (item.type === 'unread-divider') return 36;
-      // Messages with sender header are taller than compact rows
-      return item.showSender ? 64 : 36;
-    },
-    overscan: 20,
-  });
-
-  // Keep a stable ref so callbacks don't go stale
-  const virtualizerRef = useRef(virtualizer);
-  virtualizerRef.current = virtualizer;
-
-
   // ── Scroll helpers ───────────────────────────────────────────────────────────
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'instant') => {
     if (!scrollRef.current) return;
-    // The virtual container sets height = getTotalSize(), so scrolling to
-    // scrollHeight always lands at the very last item.
     scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior });
   }, []);
 
   const scrollToUnreadDivider = useCallback((): boolean => {
-    const idx = flatItems.findIndex((item) => item.type === 'unread-divider');
-    if (idx < 0) return false;
-    virtualizerRef.current.scrollToIndex(idx, { behavior: 'instant', align: 'start' });
+    const container = scrollRef.current;
+    const divider = document.getElementById('new-messages-divider');
+    if (!container || !divider) return false;
+
+    const containerRect = container.getBoundingClientRect();
+    const dividerRect = divider.getBoundingClientRect();
+    container.scrollTo({
+      top: container.scrollTop + dividerRect.top - containerRect.top,
+      behavior: 'instant',
+    });
     unreadScrollDoneRef.current = true;
     return true;
-  }, [flatItems]);
+  }, []);
+
+  const restorePrependAnchor = useCallback((): void => {
+    const anchor = prependAnchorRef.current;
+    const container = scrollRef.current;
+    if (!anchor || !container) return;
+
+    const anchorEl = container.querySelector<HTMLElement>(
+      `[data-message-id="${anchor.messageId}"]`,
+    );
+    if (!anchorEl) return;
+
+    const currentOffset =
+      anchorEl.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    const delta = currentOffset - anchor.offsetTop;
+
+    if (Math.abs(delta) > 0.5) {
+      container.scrollTop += delta;
+    }
+  }, []);
+
+  const schedulePrependAnchorRestore = useCallback((framesRemaining = 6): void => {
+    if (restoreFrameRef.current !== null) {
+      window.cancelAnimationFrame(restoreFrameRef.current);
+    }
+
+    isRestoringPrependRef.current = true;
+    restoreFrameRef.current = window.requestAnimationFrame(() => {
+      restorePrependAnchor();
+
+      if (framesRemaining > 1) {
+        schedulePrependAnchorRestore(framesRemaining - 1);
+        return;
+      }
+
+      restoreFrameRef.current = null;
+      prependAnchorRef.current = null;
+      isRestoringPrependRef.current = false;
+    });
+  }, [restorePrependAnchor]);
 
   // ── Jump-to-message event (cross-component) ──────────────────────────────────
   useEffect(() => {
@@ -198,17 +235,28 @@ export default function MessageList({
       const ce = e as CustomEvent<{ messageId?: number }>;
       const messageId = ce.detail?.messageId;
       if (!messageId || !Number.isFinite(messageId)) return;
-      const idx = flatItems.findIndex(
-        (item) => item.type === 'message' && item.message.id === messageId,
+      const container = scrollRef.current;
+      const messageEl = container?.querySelector<HTMLElement>(
+        `[data-message-id="${messageId}"]`,
       );
-      if (idx >= 0) {
-        virtualizerRef.current.scrollToIndex(idx, { behavior: 'smooth', align: 'center' });
+      if (container && messageEl) {
+        const containerRect = container.getBoundingClientRect();
+        const messageRect = messageEl.getBoundingClientRect();
+        container.scrollTo({
+          top:
+            container.scrollTop +
+            messageRect.top -
+            containerRect.top -
+            container.clientHeight / 2 +
+            messageRect.height / 2,
+          behavior: 'smooth',
+        });
       }
       setHighlightMessageId(messageId);
     };
     window.addEventListener('mj:chat:jumpToMessage', handler as EventListener);
     return () => window.removeEventListener('mj:chat:jumpToMessage', handler as EventListener);
-  }, [flatItems]);
+  }, []);
 
   // Clear highlight after 4 s
   useEffect(() => {
@@ -217,15 +265,20 @@ export default function MessageList({
     return () => window.clearTimeout(t);
   }, [highlightMessageId]);
 
-  // stickyBottomRef: when true, every size/content change scrolls to the real bottom.
-  // This handles both the initial scroll AND post-measurement corrections in one place,
-  // so we never land at the wrong position after the virtualizer re-measures items.
-  const stickyBottomRef = useRef(true);
+  useEffect(() => {
+    return () => {
+      if (restoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(restoreFrameRef.current);
+      }
+      if (loadMoreFrameRef.current !== null) {
+        window.cancelAnimationFrame(loadMoreFrameRef.current);
+      }
+    };
+  }, []);
 
-  // The virtualizer's total height — changes when items are first estimated AND again
-  // after each measurement pass. We use this as a trigger so we always scroll to the
-  // real DOM scrollHeight (not a stale estimate).
-  const totalSize = virtualizer.getTotalSize();
+  // stickyBottomRef: when true, every size/content change scrolls to the real bottom.
+  // This handles both the initial scroll and chat-switch correction in one place.
+  const stickyBottomRef = useRef(true);
 
   // ── Detect chat switch / initial load ───────────────────────────────────────
   useLayoutEffect(() => {
@@ -251,11 +304,7 @@ export default function MessageList({
     lastMessageIdRef.current = lastMessageId;
   }, [messages]);
 
-  // ── Scroll to bottom (or unread divider) on every content/size change ────────
-  // Fires when flatItems change (new messages) OR when totalSize changes (after
-  // the virtualizer re-measures items). The stickyBottomRef flag ensures we only
-  // auto-scroll during the initial load / chat switch window, not when the user
-  // has scrolled up to read history.
+  // ── Scroll to bottom (or unread divider) on content changes ─────────────────
   useLayoutEffect(() => {
     if (showSwitchLoadingSkeleton) return;
     if (flatItems.length === 0 || !scrollRef.current) return;
@@ -272,7 +321,7 @@ export default function MessageList({
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalSize, flatItems.length, showSwitchLoadingSkeleton]);
+  }, [flatItems.length, showSwitchLoadingSkeleton]);
 
   // ── firstUnreadMessageId arrives after initial render ────────────────────────
   useLayoutEffect(() => {
@@ -285,20 +334,36 @@ export default function MessageList({
   }, [firstUnreadMessageId, scrollToUnreadDivider]);
 
   // ── Restore scroll position after prepending older messages ──────────────────
-  useEffect(() => {
+  // Must be useLayoutEffect (not useEffect) so the position is corrected before
+  // the browser paints — otherwise the user sees a jump as the DOM shifts first.
+  useLayoutEffect(() => {
     if (!isLoadingMoreRef.current) return;
-    const targetId = firstVisibleMsgIdRef.current;
-    firstVisibleMsgIdRef.current = null;
+    const anchor = prependAnchorRef.current;
     isLoadingMoreRef.current = false;
 
-    if (!targetId) return;
-    const idx = flatItems.findIndex(
-      (item) => item.type === 'message' && item.message.id === targetId,
+    if (!anchor) return;
+
+    const anchorStillExists = flatItems.some(
+      (item) => item.type === 'message' && item.message.id === anchor.messageId,
     );
-    if (idx >= 0) {
-      virtualizerRef.current.scrollToIndex(idx, { behavior: 'instant', align: 'start' });
+    if (!anchorStillExists) {
+      prependAnchorRef.current = null;
+      isRestoringPrependRef.current = false;
+      return;
     }
-  }, [flatItems]);
+
+    isRestoringPrependRef.current = true;
+    schedulePrependAnchorRestore(10);
+  }, [flatItems, schedulePrependAnchorRestore]);
+
+  useEffect(() => {
+    if (isLoadingMoreMessages || !isLoadingMoreRef.current) return;
+    // If the backend says there are no older rows, flatItems will not change, so
+    // the prepend restore effect above never gets a chance to clear this guard.
+    isLoadingMoreRef.current = false;
+    prependAnchorRef.current = null;
+    isRestoringPrependRef.current = false;
+  }, [isLoadingMoreMessages]);
 
   // ── Auto-scroll to bottom on new incoming messages ───────────────────────────
   useEffect(() => {
@@ -310,20 +375,69 @@ export default function MessageList({
   }, [messages.length, isAtBottom]);
 
   // ── Load more (older messages) ───────────────────────────────────────────────
+  const capturePrependAnchor = useCallback((): PrependAnchor | null => {
+    const container = scrollRef.current;
+    if (!container) return null;
+
+    const containerRect = container.getBoundingClientRect();
+    const messageEls = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-message-id]'),
+    );
+
+    const visibleMessage = messageEls
+      .map((el) => {
+        const messageId = Number(el.dataset.messageId);
+        if (!Number.isFinite(messageId)) return null;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom <= containerRect.top || rect.top >= containerRect.bottom) return null;
+        return {
+          messageId,
+          offsetTop: rect.top - containerRect.top,
+          distanceFromTop: Math.abs(rect.top - containerRect.top),
+        };
+      })
+      .filter(
+        (anchor): anchor is { messageId: number; offsetTop: number; distanceFromTop: number } =>
+          anchor !== null,
+      )
+      .sort((a, b) => a.distanceFromTop - b.distanceFromTop)[0];
+
+    if (visibleMessage) {
+      return {
+        messageId: visibleMessage.messageId,
+        offsetTop: visibleMessage.offsetTop,
+      };
+    }
+
+    const firstMessageEl = messageEls[0];
+    const firstMessageId = firstMessageEl ? Number(firstMessageEl.dataset.messageId) : NaN;
+    if (Number.isFinite(firstMessageId) && firstMessageEl) {
+      return {
+        messageId: firstMessageId,
+        offsetTop: firstMessageEl.getBoundingClientRect().top - containerRect.top,
+      };
+    }
+
+    return null;
+  }, []);
+
   const handleLoadMore = useCallback(() => {
     if (isLoadingMoreRef.current) return;
-    // Remember the first visible message so we can restore scroll after prepend
-    const virtualItems = virtualizerRef.current.getVirtualItems();
-    for (const vItem of virtualItems) {
-      const item = flatItems[vItem.index];
-      if (item?.type === 'message') {
-        firstVisibleMsgIdRef.current = item.message.id;
-        break;
-      }
-    }
+    prependAnchorRef.current = capturePrependAnchor();
+
+    if (!prependAnchorRef.current) return;
+
     isLoadingMoreRef.current = true;
     onLoadMore();
-  }, [flatItems, onLoadMore]);
+  }, [capturePrependAnchor, onLoadMore]);
+
+  const scheduleLoadMore = useCallback(() => {
+    if (loadMoreFrameRef.current !== null) return;
+    loadMoreFrameRef.current = window.requestAnimationFrame(() => {
+      loadMoreFrameRef.current = null;
+      handleLoadMore();
+    });
+  }, [handleLoadMore]);
 
   // ── Scroll event ─────────────────────────────────────────────────────────────
   const handleScroll = useCallback(() => {
@@ -337,13 +451,19 @@ export default function MessageList({
     // Only trigger load-more when the user has actually scrolled up (not at
     // bottom). This prevents firing on initial mount when content is short
     // enough that scrollTop stays 0 and the container isn't overflowing.
-    if (!isBottom && scrollTop < 100 && hasMore && !isLoading && !isLoadingMoreRef.current) {
-      handleLoadMore();
+    if (
+      !isBottom &&
+      scrollTop < 100 &&
+      hasMore &&
+      !isLoading &&
+      !isLoadingMoreRef.current &&
+      !isRestoringPrependRef.current
+    ) {
+      scheduleLoadMore();
     }
-  }, [hasMore, isLoading, handleLoadMore]);
+  }, [hasMore, isLoading, scheduleLoadMore]);
 
   const shouldShowFullSwitchSkeleton = showSwitchLoadingSkeleton && !isLoadingMoreMessages;
-  const virtualItems = virtualizer.getVirtualItems();
 
   return (
     <div className="h-full flex flex-col">
@@ -351,13 +471,6 @@ export default function MessageList({
         <MessageListLoadingSkeleton />
       ) : (
         <>
-          {/* Loading indicator for older messages */}
-          {isLoadingMoreMessages && hasMore && messages.length > 0 && (
-            <div className="px-4 pt-3 flex-shrink-0">
-              <MessageListLoadingSkeleton compact />
-            </div>
-          )}
-
           {/* Initial loading */}
           {messages.length === 0 && isLoading && !showSwitchLoadingSkeleton && (
             <MessageListLoadingSkeleton />
@@ -370,32 +483,28 @@ export default function MessageList({
             </div>
           )}
 
-          {/* Virtual message list */}
+          {/* Message list */}
           {messages.length > 0 && (
             <div className="relative flex-1 min-h-0">
+              {isLoadingMoreMessages && hasMore && (
+                <div className="pointer-events-none absolute left-0 right-0 top-2 z-10 flex justify-center">
+                  <span className="rounded-full border border-gray-200 bg-white/95 px-3 py-1 text-[11px] font-medium text-gray-500 shadow-sm">
+                    Loading older messages...
+                  </span>
+                </div>
+              )}
               <div
                 ref={scrollRef}
                 onScroll={handleScroll}
                 className="h-full overflow-y-auto"
               >
-                <div
-                  style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}
-                >
-                  {virtualItems.map((virtualRow) => {
-                    const item = flatItems[virtualRow.index];
-                    if (!item) return null;
+                <div className="min-h-full pb-3">
+                  {flatItems.map((item, index) => {
                     return (
                       <div
-                        key={virtualRow.key}
-                        data-index={virtualRow.index}
-                        ref={virtualizer.measureElement}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          width: '100%',
-                          transform: `translateY(${virtualRow.start}px)`,
-                        }}
+                        key={flatItemKey(item, index)}
+                        data-index={index}
+                        data-message-id={item.type === 'message' ? item.message.id : undefined}
                       >
                         {item.type === 'date-header' && (
                           <div className="flex justify-center py-4">

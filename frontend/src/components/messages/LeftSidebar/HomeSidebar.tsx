@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
-import { Bell, FolderOpen, Hash, Home, MessageSquare, MessagesSquare, Plus, Star, User, Users } from 'lucide-react';
+import { Bell, FolderOpen, Hash, Home, MessageSquare, MessagesSquare, Plus, Search, Star, User, Users } from 'lucide-react';
 import type { Chat } from '@/types/chat';
 import { useAuthStore } from '@/lib/authStore';
 import {
@@ -46,6 +46,7 @@ interface HomeSidebarProps {
   projectMembers: ProjectMemberData[];
   isLoadingMembers: boolean;
   onStartDM: (userId: number) => void;
+  isSearchActive?: boolean;
 }
 
 function Section({
@@ -110,6 +111,14 @@ function SidebarRowsSkeleton({
   );
 }
 
+function SearchEmptyIcon() {
+  return (
+    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-gray-100 text-gray-400">
+      <Search className="h-4 w-4" />
+    </span>
+  );
+}
+
 export default function HomeSidebar({
   view,
   onChangeView,
@@ -125,9 +134,9 @@ export default function HomeSidebar({
   projectMembers,
   isLoadingMembers,
   onStartDM,
+  isSearchActive = false,
 }: HomeSidebarProps) {
   const currentUserId = useAuthStore((s) => (s.user?.id ? Number(s.user.id) : null));
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [starredOrder, setStarredOrder] = useState<number[]>([]);
   const [starLoading, setStarLoading] = useState(false);
   const [hasLoadedStarred, setHasLoadedStarred] = useState(false);
@@ -382,36 +391,12 @@ export default function HomeSidebar({
       return <FilesSidebarView selectedProjectId={selectedProjectId} />;
     }
 
-    if (showDmsOnly && privateChats.length === 0 && !selectedProjectId) {
-      return <div className="p-4 text-sm text-gray-500">No direct messages</div>;
-    }
-
-    if (isCollapsed) {
-      const collapsedSource = showDmsOnly ? privateChats : chats;
+    if ((showHome || showDmsOnly) && isSearchActive && chats.length === 0) {
       return (
-        <div className="p-2 space-y-2">
-          {collapsedSource.slice(0, 12).map((chat) => (
-            <button
-              key={chat.id}
-              type="button"
-              onClick={() => onSelectChat(chat.id)}
-              className={[
-                'w-full h-10 rounded-lg border flex items-center justify-center',
-                chat.id === currentChatId
-                  ? 'bg-[#3CCED7]/10 border-[#3CCED7]/40 text-[#3CCED7]'
-                  : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50',
-              ].join(' ')}
-              title={chat.type === 'private' ? getPrivateChatDisplayName(chat) : chat.name || 'Group chat'}
-              data-testid="messages-chat-sidebar-collapsed-item"
-              data-chat-id={String(chat.id)}
-            >
-              {chat.type === 'group' ? (
-                <Hash className="w-4 h-4" />
-              ) : (
-                <Users className="w-4 h-4" />
-              )}
-            </button>
-          ))}
+        <div className="flex flex-col items-center justify-center px-5 py-10 text-center text-sm text-gray-500">
+          <SearchEmptyIcon />
+          <p className="mt-3 font-medium text-gray-700">No matching conversations</p>
+          <p className="mt-1 text-xs text-gray-500">Try another channel, DM, participant, or recent message.</p>
         </div>
       );
     }
@@ -489,16 +474,18 @@ export default function HomeSidebar({
               {groupChats.length === 0 ? (
                 <div className="px-3 py-4 text-center text-xs text-gray-500">
                   <Hash className="mx-auto mb-1 h-5 w-5 text-gray-300" />
-                  <p className="mb-2">No channels yet</p>
-                  <button
-                    type="button"
-                    onClick={onCreateChannel}
-                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
-                    data-testid="messages-empty-create-channel"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Create channel
-                  </button>
+                  <p className="mb-2">{isSearchActive ? 'No matching channels' : 'No channels yet'}</p>
+                  {!isSearchActive && (
+                    <button
+                      type="button"
+                      onClick={onCreateChannel}
+                      className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                      data-testid="messages-empty-create-channel"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Create channel
+                    </button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-0.5">
@@ -544,17 +531,19 @@ export default function HomeSidebar({
             {privateChats.length === 0 ? (
               <div className="px-3 py-4 text-center text-sm text-gray-500">
                 <MessagesSquare className="mx-auto mb-1 h-5 w-5 text-gray-300" />
-                <p className="mb-2 text-xs">No direct messages yet</p>
-                <button
-                  type="button"
-                  onClick={onCreateChat}
-                  disabled={!selectedProjectId}
-                  className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  data-testid="messages-empty-new-chat"
-                >
-                  <Plus className="h-3 w-3" />
-                  New chat
-                </button>
+                <p className="mb-2 text-xs">{isSearchActive ? 'No matching direct messages' : 'No direct messages yet'}</p>
+                {!isSearchActive && (
+                  <button
+                    type="button"
+                    onClick={onCreateChat}
+                    disabled={!selectedProjectId}
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    data-testid="messages-empty-new-chat"
+                  >
+                    <Plus className="h-3 w-3" />
+                    New chat
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-0.5 mx-1">

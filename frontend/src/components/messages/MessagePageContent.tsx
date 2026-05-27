@@ -125,6 +125,7 @@ export default function MessagePageContent() {
   const currentChat = chats.find(chat => chat.id === currentChatId);
   
   // Filter chats by search query
+  const isSearchingConversations = searchQuery.trim().length > 0;
   const filteredChats = chats.filter(chat => {
     if (!searchQuery.trim()) return true;
     
@@ -172,15 +173,7 @@ export default function MessagePageContent() {
   const handleBackToList = () => {
     if (isMessagesMobileViewport()) {
       setIsConversationDrawerOpen(true);
-      return;
     }
-
-    setCurrentChat(null);
-    replaceMessagesQuery({
-      projectId: selectedProjectId,
-      chatId: null,
-      messageId: null,
-    });
   };
   
   const handleCreateChat = () => {
@@ -293,6 +286,7 @@ export default function MessagePageContent() {
         mobileSidebarOpen={isConversationDrawerOpen}
         onMobileSidebarOpenChange={setIsConversationDrawerOpen}
         mobileSidebarHeader={renderSearchInput('messages-mobile-search')}
+        isSearchActive={isSearchingConversations}
         chatListEmptyState={
           selectedProjectId ? (
             <div className="p-6 text-sm text-gray-500">No chats yet</div>
@@ -316,7 +310,7 @@ export default function MessagePageContent() {
                   Select a project to start
                 </h3>
                 <p className="text-gray-500 text-sm max-w-sm">
-                  Choose a project from the dropdown above to view and manage your team conversations.
+                  Select a project from the workspace navigation to view and manage team conversations.
                 </p>
               </div>
             </div>

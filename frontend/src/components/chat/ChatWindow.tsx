@@ -95,7 +95,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const lastMessageCountRef = useRef<number>(0);
   const lastReadChatIdRef = useRef<number | null>(null);
   const markAsReadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const jumpInFlightRef = useRef(false);
+  const jumpLoadAttemptsRef = useRef(0);
+  const jumpedToMessageRef = useRef<string | null>(null);
   const previousChatIdRef = useRef<number | null>(null);
 
   const chatProjectId = useMemo(() => {
@@ -115,6 +116,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setIsForwardDialogOpen(false);
     setFirstUnreadMessageId(null);
     unreadCapturedForChatRef.current = null;
+    jumpLoadAttemptsRef.current = 0;
+    jumpedToMessageRef.current = null;
   }, [chat.id]);
 
   useEffect(() => {
@@ -131,56 +134,58 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     }
   }, [isLoadingMessages]);
 
-  useEffect(() => {
-    // If URL includes a messageId, try to load history until it exists, then scroll + highlight it.
+  const targetMessageId = useMemo(() => {
     const raw = searchParams.get('messageId');
-    const targetMessageId = raw ? Number(raw) : NaN;
-    if (!Number.isFinite(targetMessageId) || targetMessageId <= 0) return;
-    if (jumpInFlightRef.current) return;
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [searchParams]);
 
-    jumpInFlightRef.current = true;
-    const maxPages = 12; // safety cap: 12 * 50 = 600 messages
-    let cancelled = false;
+  useEffect(() => {
+    jumpLoadAttemptsRef.current = 0;
+    jumpedToMessageRef.current = null;
+  }, [chat.id, targetMessageId]);
 
-    (async () => {
-      try {
-        // Give initial fetch a moment to populate, then iteratively load older pages if needed.
-        for (let i = 0; i < maxPages && !cancelled; i++) {
-          const exists = useChatStore.getState().messages?.[chat.id]?.some((m) => m.id === targetMessageId);
-          if (exists) break;
-          if (!hasMore) break;
-          // eslint-disable-next-line no-await-in-loop
-          await loadMoreMessages();
-        }
+  useEffect(() => {
+    // If URL includes a messageId, load older history one page at a time until
+    // the message exists in the rendered list, then ask MessageList to focus it.
+    if (!targetMessageId) return;
 
-        if (cancelled) return;
-        const exists = useChatStore.getState().messages?.[chat.id]?.some((m) => m.id === targetMessageId);
-        if (!exists) return;
+    const jumpKey = `${chat.id}:${targetMessageId}`;
+    const hasTargetMessage = messages.some((message) => Number(message.id) === targetMessageId);
 
+    if (hasTargetMessage) {
+      if (jumpedToMessageRef.current === jumpKey) return;
+      jumpedToMessageRef.current = jumpKey;
+
+      const frame = window.requestAnimationFrame(() => {
         window.dispatchEvent(
           new CustomEvent('mj:chat:jumpToMessage', { detail: { messageId: targetMessageId } })
         );
-      } finally {
-        jumpInFlightRef.current = false;
-      }
-    })();
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
 
-    return () => {
-      cancelled = true;
-      jumpInFlightRef.current = false;
-    };
-  }, [chat.id, searchParams, hasMore, loadMoreMessages]);
+    if (isLoadingMessages || isLoadingMoreMessages || !hasMore) return;
+    if (jumpLoadAttemptsRef.current >= 12) return; // safety cap: 12 * 50 = 600 older messages
+
+    jumpLoadAttemptsRef.current += 1;
+    void loadMoreMessages();
+  }, [
+    chat.id,
+    hasMore,
+    isLoadingMessages,
+    isLoadingMoreMessages,
+    loadMoreMessages,
+    messages,
+    targetMessageId,
+  ]);
   
   // Mark messages as read when viewing - both on open AND when new messages arrive
   useEffect(() => {
     if (!chat.id || messages.length === 0) return;
 
-    // Reset the per-chat counter when switching chats so the next compare
-    // always sees a fresh open and fires markAllAsRead.
-    if (lastReadChatIdRef.current !== chat.id) {
-      lastMessageCountRef.current = 0;
-      lastReadChatIdRef.current = chat.id;
-    }
+    const isOpeningChat = lastReadChatIdRef.current !== chat.id;
+    if (isOpeningChat) lastReadChatIdRef.current = chat.id;
 
     // Get store actions
     const { updateChat, updateUnreadCount, fetchGlobalUnreadCount } = useChatStore.getState();
@@ -194,8 +199,9 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       clearTimeout(markAsReadTimeoutRef.current);
     }
 
-    // Only call API if this is initial load OR new messages arrived
-    if (messages.length > lastMessageCountRef.current) {
+    // Always call the backend on first open, even if the message list came from
+    // cache and its count did not grow. After that, only call when new messages arrive.
+    if (isOpeningChat || messages.length > lastMessageCountRef.current) {
       markAsReadTimeoutRef.current = setTimeout(() => {
         markAllAsRead().then(() => {
           // Refetch global unread count from backend to ensure accuracy
