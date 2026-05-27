@@ -13,20 +13,48 @@ from .views import (
     FileUploadAnalyzeView,
     AnomalyLatestView,
     WorkflowStepView,
+    WorkflowStepDetailView,
     StepReorderView,
     WorkflowRunDetailView,
+    WorkflowRunListView,
+    AgentWorkflowTemplateViewSet,
+    AgentProjectWorkflowBindingViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'sessions', AgentSessionViewSet, basename='agent-session')
 router.register(r'workflows', AgentWorkflowDefinitionViewSet, basename='agent-workflow')
+router.register(r'templates', AgentWorkflowTemplateViewSet, basename='agent-template')
 
 urlpatterns = [
     path('', include(router.urls)),
     path('sessions/<uuid:session_id>/chat/', ChatView.as_view(), name='agent-chat'),
     path('workflows/<uuid:workflow_id>/steps/', WorkflowStepView.as_view(), name='agent-workflow-steps'),
+    path(
+        'workflows/<uuid:workflow_id>/steps/<uuid:step_id>/',
+        WorkflowStepDetailView.as_view(),
+        name='agent-workflow-step-detail',
+    ),
     path('workflows/<uuid:workflow_id>/steps/reorder/', StepReorderView.as_view(), name='agent-workflow-steps-reorder'),
+    path(
+        'workflows/<uuid:workflow_id>/runs/',
+        WorkflowRunListView.as_view(),
+        name='agent-workflow-runs-list',
+    ),
     path('workflow-runs/<uuid:run_id>/', WorkflowRunDetailView.as_view(), name='agent-workflow-run-detail'),
+
+    # Project workflow bindings (nested under projects)
+    path(
+        'projects/<uuid:project_id>/workflows/bindings/',
+        AgentProjectWorkflowBindingViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='agent-project-binding-list'
+    ),
+    path(
+        'projects/<uuid:project_id>/workflows/bindings/<uuid:pk>/',
+        AgentProjectWorkflowBindingViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}),
+        name='agent-project-binding-detail'
+    ),
+
     path('spreadsheets/', SpreadsheetListView.as_view(), name='agent-spreadsheets'),
     path('data/reports/', DataReportListView.as_view(), name='agent-data-reports'),
     path('data/reports/summary/', DataReportSummaryView.as_view(), name='agent-data-reports-summary'),

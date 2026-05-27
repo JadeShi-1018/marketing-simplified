@@ -228,7 +228,10 @@ export type WorkflowStepType =
   | 'custom_api'
   | 'await_confirmation'
   | 'detect_columns'
-  | 'normalize_data';
+  | 'normalize_data'
+  | 'generate_criteria'
+  | 'generate_miro_snapshot'
+  | 'create_miro_board';
 
 export interface AgentWorkflowStep {
   id: string;
@@ -285,4 +288,84 @@ export interface AgentWorkflowRun {
   step_executions?: AgentStepExecution[];
   created_at: string;
   updated_at: string;
+}
+
+// ==================== Template & Binding Types ====================
+
+export type TemplateCategory = 'review' | 'optimization' | 'analysis' | 'reporting' | 'other';
+export type TemplateShareScope = 'private' | 'organization' | 'public';
+export type TriggerMode = 'file_upload' | 'analyze_action' | 'message_keyword';
+
+export interface AgentWorkflowTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  category: TemplateCategory;
+  share_scope: TemplateShareScope;
+  workflow_definition?: string;
+  workflow_name?: string;
+  workflow_step_count?: number;
+  created_by: string;
+  organization?: string;
+  applied_project_count?: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CreateTemplateRequest {
+  source_workflow_id: string;
+  name: string;
+  description?: string;
+  category: TemplateCategory;
+  share_scope: TemplateShareScope;
+}
+
+export interface UpdateTemplateRequest {
+  name?: string;
+  description?: string;
+  category?: TemplateCategory;
+  share_scope?: TemplateShareScope;
+}
+
+export interface AgentProjectWorkflowBinding {
+  id: string;
+  project: string;
+  project_name?: string;
+  template: string;
+  template_detail?: AgentWorkflowTemplate;
+  trigger_mode: TriggerMode;
+  trigger_keywords?: string[];
+  priority: number;
+  is_default: boolean;
+  is_active: boolean;
+  applied_by?: string;
+  applied_by_name?: string;
+  applied_at: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CreateBindingRequest {
+  template_id: string;
+  trigger_mode: TriggerMode;
+  trigger_keywords?: string[];
+  priority?: number;
+  is_default?: boolean;
+}
+
+export interface UpdateBindingRequest {
+  trigger_mode?: TriggerMode;
+  trigger_keywords?: string[];
+  priority?: number;
+  is_default?: boolean;
+  is_active?: boolean;
+}
+
+export interface LightweightBinding {
+  id: string;
+  template_name: string;
+  template_category: TemplateCategory;
+  trigger_mode: TriggerMode;
+  trigger_keywords?: string[];
+  is_default: boolean;
 }

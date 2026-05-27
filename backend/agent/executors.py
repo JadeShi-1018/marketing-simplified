@@ -62,6 +62,7 @@ class AnalyzeDataExecutor(BaseStepExecutor):
                 spreadsheet_data,
                 user_id=user_id,
                 success_criteria=success_criteria,
+                column_mapping=input_data.get('column_mapping'),
             )
 
             self.workflow_run.analysis_result = analysis

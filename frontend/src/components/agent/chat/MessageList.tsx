@@ -12,6 +12,7 @@ import { MiroGenerateCard } from "./MiroGenerateCard"
 import { DistributeMessageCard } from "./DistributeMessageCard"
 import { TaskListCard } from "./TaskListCard"
 import { RecommendedMiroBoardCard } from "./RecommendedMiroBoardCard"
+import { ActiveWorkflowTags } from "./ActiveWorkflowTags"
 import type { AnomalyItem, RecommendedTask, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
 import { StepProgress, type StepProgressItem } from "./StepProgress"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
@@ -61,6 +62,7 @@ export interface MessageListProps {
   onConfirmColumns?: (mapping: Record<string, string>) => void
   onReupload?: () => void
   sessionId?: string | null
+  projectId?: string
   approvalDisabled?: boolean
   approvalRequired?: boolean
   generatedTaskIndexes?: number[]
@@ -92,6 +94,7 @@ export function MessageList({
   onConfirmColumns,
   onReupload,
   sessionId,
+  projectId,
   approvalDisabled,
   approvalRequired,
   generatedTaskIndexes,
@@ -193,6 +196,7 @@ export function MessageList({
       boardMessageIds={boardMessageIds}
       extraPartIdsOnQuit={extraPartIdsOnQuit}
     >
+      {projectId && <ActiveWorkflowTags projectId={projectId} />}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.map((message) => (
           message.type === "approval_request" ? null : (

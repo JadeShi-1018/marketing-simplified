@@ -262,6 +262,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const router = useRouter()
   const { setActiveView, floatingChat, toggleMaximize, setFloatingSessionId } = useAgentLayout()
   const [sessionId, setSessionIdState] = useState<string | null>(null)
+  const [projectId, setProjectId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [hasStarted, setHasStarted] = useState(false)
@@ -414,6 +415,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   const applySessionState = useCallback((session: Awaited<ReturnType<typeof AgentAPI.getSession>>) => {
     setSessionId(String(session.id))
+    setProjectId(session.project_id ? String(session.project_id) : null)
 
     // Restore messages and back-fill recommendedTasks onto analysis messages when needed.
     const restored = session.messages.map(restoreMessage)
@@ -686,6 +688,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       invalidateActiveStreams()
       resetTransientChatUiState()
       setSessionId(null)
+      setProjectId(null)
       sessionStorage.removeItem("agent-session-calendar-context")
       setMessages([])
       setSessionCalendarContext(null)
@@ -1759,6 +1762,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         {...({
           messages,
           sessionId,
+          projectId,
           isStreaming,
           approvalDisabled: isStreaming,
           approvalRequired,

@@ -3,7 +3,8 @@ from rest_framework import serializers
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowRun, ImportedCSVFile,
     AgentWorkflowDefinition, AgentWorkflowStep, AgentStepExecution,
-    AgentPendingExternalApproval,
+    AgentPendingExternalApproval, AgentWorkflowTemplate,
+    AgentProjectWorkflowBinding,
 )
 
 
@@ -159,6 +160,11 @@ class AgentWorkflowStepSerializer(serializers.ModelSerializer):
         model = AgentWorkflowStep
         fields = ['id', 'name', 'step_type', 'order', 'config', 'description', 'created_at']
         read_only_fields = ['id', 'created_at']
+        extra_kwargs = {
+            'order': {'required': False},
+            'config': {'required': False},
+            'description': {'required': False},
+        }
 
 
 class AgentWorkflowDefinitionListSerializer(serializers.ModelSerializer):
@@ -205,3 +211,153 @@ class AgentStepExecutionSerializer(serializers.ModelSerializer):
 
 class StepReorderSerializer(serializers.Serializer):
     step_ids = serializers.ListField(child=serializers.UUIDField())
+
+
+class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for AgentWorkflowTemplate with validation for share_scope.
+    """
+    workflow_name = serializers.CharField(source='workflow_definition.name', read_only=True)
+    workflow_step_count = serializers.SerializerMethodField()
+    applied_project_count = serializers.SerializerMethodField()
+    source_workflow_id = serializers.UUIDField(write_only=True, required=False)
+
+    class Meta:
+        model = AgentWorkflowTemplate
+        fields = [
+            'id', 'name', 'description', 'category', 'share_scope',
+            'workflow_definition', 'workflow_name', 'workflow_step_count',
+            'created_by', 'organization', 'applied_project_count',
+            'source_workflow_id', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'workflow_definition', 'created_by', 'organization', 'created_at', 'updated_at']
+
+    def get_workflow_step_count(self, obj):
+        """Return the number of active steps in the template's workflow."""
+        if obj.workflow_definition:
+            return obj.workflow_definition.steps.filter(is_deleted=False).count()
+        return 0
+
+    def get_applied_project_count(self, obj):
+        """Return the number of projects using this template."""
+        return obj.project_bindings.filter(is_active=True, is_deleted=False).count()
+
+    def validate(self, attrs):
+        """Validate share_scope and organization constraints."""
+        request = self.context.get('request')
+        share_scope = attrs.get('share_scope', self.instance.share_scope if self.instance else 'private')
+
+        # Public scope not supported in MVP
+        if share_scope == 'public':
+            raise serializers.ValidationError({
+                'share_scope': 'Public templates are not supported in this version.'
+            })
+
+        # Organization scope requires organization field
+        if share_scope == 'organization':
+            if not request or not request.user:
+                raise serializers.ValidationError({
+                    'share_scope': 'Cannot create organization template without user context.'
+                })
+
+            # Check if user has organization
+            if not hasattr(request.user, 'organization') or not request.user.organization:
+                raise serializers.ValidationError({
+                    'share_scope': 'User does not belong to an organization.'
+                })
+
+            # Set organization automatically
+            attrs['organization'] = request.user.organization
+        else:
+            # Private scope should have no organization
+            attrs['organization'] = None
+
+        return attrs
+
+    def validate_source_workflow_id(self, value):
+        """Validate that source workflow exists and is accessible."""
+        from .models import AgentWorkflowDefinition
+
+        workflow = AgentWorkflowDefinition.objects.filter(
+            id=value,
+            is_deleted=False
+        ).first()
+
+        if not workflow:
+            raise serializers.ValidationError('Source workflow not found.')
+
+        return value
+
+
+class AgentProjectWorkflowBindingSerializer(serializers.ModelSerializer):
+    """
+    Serializer for AgentProjectWorkflowBinding with nested template details.
+    """
+    template_detail = AgentWorkflowTemplateSerializer(source='template', read_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    applied_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AgentProjectWorkflowBinding
+        fields = [
+            'id', 'project', 'project_name', 'template', 'template_detail',
+            'trigger_mode', 'trigger_keywords', 'priority', 'is_default',
+            'is_active', 'applied_by', 'applied_by_name', 'applied_at',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'applied_by', 'applied_at', 'created_at', 'updated_at']
+
+    def get_applied_by_name(self, obj):
+        """Return the name of the user who applied this binding."""
+        if obj.applied_by:
+            return f"{obj.applied_by.first_name} {obj.applied_by.last_name}".strip() or obj.applied_by.username
+        return None
+
+    def validate(self, attrs):
+        """Validate binding constraints."""
+        project = attrs.get('project', self.instance.project if self.instance else None)
+        template = attrs.get('template', self.instance.template if self.instance else None)
+        trigger_mode = attrs.get('trigger_mode', self.instance.trigger_mode if self.instance else None)
+
+        # Validate template visibility
+        request = self.context.get('request')
+        if request and template:
+            user = request.user
+
+            # Check if user can access this template
+            if template.share_scope == 'private':
+                if template.created_by != user:
+                    raise serializers.ValidationError({
+                        'template': 'You do not have access to this private template.'
+                    })
+            elif template.share_scope == 'organization':
+                if not hasattr(user, 'organization') or user.organization != template.organization:
+                    raise serializers.ValidationError({
+                        'template': 'You do not have access to this organization template.'
+                    })
+
+        # Validate trigger_keywords only for message_keyword mode
+        if trigger_mode == 'message_keyword':
+            keywords = attrs.get('trigger_keywords', [])
+            if not keywords or not isinstance(keywords, list) or len(keywords) == 0:
+                raise serializers.ValidationError({
+                    'trigger_keywords': 'At least one keyword is required for message_keyword trigger mode.'
+                })
+
+        return attrs
+
+
+class AgentProjectWorkflowBindingListSerializer(serializers.ModelSerializer):
+    """
+    Lightweight serializer for listing active bindings (used in chat interface).
+    """
+    template_name = serializers.CharField(source='template.name', read_only=True)
+    template_category = serializers.CharField(source='template.category', read_only=True)
+
+    class Meta:
+        model = AgentProjectWorkflowBinding
+        fields = [
+            'id', 'template_name', 'template_category',
+            'trigger_mode', 'trigger_keywords', 'is_default',
+        ]
+        read_only_fields = fields

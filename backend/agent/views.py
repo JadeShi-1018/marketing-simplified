@@ -7,6 +7,7 @@ from django.db.models import Max, Q, OuterRef, Prefetch, Subquery
 from django.http import StreamingHttpResponse
 from django.utils.translation import activate as activate_language
 from rest_framework import viewsets, status
+from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
@@ -31,6 +32,7 @@ from spreadsheet.models import Spreadsheet
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowDefinition,
     AgentWorkflowStep, AgentWorkflowRun, AgentStepExecution,
+    AgentWorkflowTemplate, AgentProjectWorkflowBinding,
 )
 from .serializers import (
     AgentSessionListSerializer,
@@ -42,6 +44,9 @@ from .serializers import (
     AgentStepExecutionSerializer,
     AgentWorkflowRunSerializer,
     StepReorderSerializer,
+    AgentWorkflowTemplateSerializer,
+    AgentProjectWorkflowBindingSerializer,
+    AgentProjectWorkflowBindingListSerializer,
 )
 from .services import AgentOrchestrator
 from . import data_service
@@ -636,6 +641,28 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
         instance.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=['post'])
+    def duplicate(self, request, pk=None):
+        """Clone a workflow (system or custom) into a new project-scoped draft."""
+        source = self.get_object()
+        project = _get_user_project(request)
+        if not project:
+            return Response(
+                {'detail': 'An active project is required to duplicate a workflow.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        custom_name = (request.data.get('name') or '').strip()
+        new_workflow = _clone_workflow_definition(
+            source,
+            project=project,
+            created_by=request.user,
+            name=custom_name or f"{source.name} (Copy)",
+            status='draft',
+        )
+        serializer = AgentWorkflowDefinitionDetailSerializer(new_workflow)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
 
 def _get_workflow_or_404(request, workflow_id):
     """Fetch workflow with project-level access check. Returns (workflow, error_response)."""
@@ -720,6 +747,32 @@ class WorkflowStepView(EnglishResponseMixin, APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class WorkflowStepDetailView(EnglishResponseMixin, APIView):
+    """PATCH a single step within a workflow definition."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, workflow_id, step_id):
+        workflow, err = _get_workflow_or_404(request, workflow_id)
+        if err:
+            return err
+        if workflow.is_system:
+            return Response(
+                {"detail": "Cannot modify system workflow steps."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            step = workflow.steps.get(id=step_id, is_deleted=False)
+        except AgentWorkflowStep.DoesNotExist:
+            return Response(
+                {"detail": "Step not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = AgentWorkflowStepSerializer(step, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class StepReorderView(EnglishResponseMixin, APIView):
     """POST reorder steps within a workflow."""
     permission_classes = [IsAuthenticated]
@@ -757,6 +810,30 @@ class StepReorderView(EnglishResponseMixin, APIView):
         return Response(
             AgentWorkflowStepSerializer(updated_steps, many=True).data,
         )
+
+
+class WorkflowRunListView(EnglishResponseMixin, APIView):
+    """GET recent workflow runs for a workflow definition."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, workflow_id):
+        workflow, err = _get_workflow_or_404(request, workflow_id)
+        if err:
+            return err
+
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, 50))
+
+        runs = AgentWorkflowRun.objects.filter(
+            workflow_definition_id=workflow.id,
+            session__user=request.user,
+            is_deleted=False,
+        ).order_by('-created_at')[:limit]
+
+        return Response(AgentWorkflowRunSerializer(runs, many=True).data)
 
 
 class WorkflowRunDetailView(EnglishResponseMixin, APIView):
@@ -799,3 +876,282 @@ class AgentConfigStatusView(EnglishResponseMixin, APIView):
             val = getattr(django_settings, settings_attr, None) or os.environ.get(env_var, '')
             result[key] = bool(val and val.strip())
         return Response(result)
+
+
+def _clone_workflow_definition(
+    source_workflow,
+    *,
+    project=None,
+    created_by=None,
+    name=None,
+    status='active',
+):
+    """
+    Clone a workflow definition and all its steps.
+
+    Returns a new AgentWorkflowDefinition with:
+    - project as provided (None for template-owned copies)
+    - is_system=False
+    - is_default=False
+    - All steps cloned with same order and config
+    """
+    from django.db import transaction
+
+    with transaction.atomic():
+        # Clone workflow definition
+        new_workflow = AgentWorkflowDefinition.objects.create(
+            name=name or f"{source_workflow.name} (Copy)",
+            description=source_workflow.description,
+            project=project,
+            is_default=False,
+            is_system=False,
+            status=status,
+            created_by=created_by or source_workflow.created_by,
+        )
+
+        # Clone all steps
+        source_steps = source_workflow.steps.filter(is_deleted=False).order_by('order')
+        for step in source_steps:
+            AgentWorkflowStep.objects.create(
+                workflow=new_workflow,
+                name=step.name,
+                step_type=step.step_type,
+                order=step.order,
+                config=step.config.copy() if step.config else {},
+                description=step.description,
+            )
+
+        return new_workflow
+
+
+class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
+    """
+    ViewSet for managing workflow templates.
+
+    - LIST: Filter by category, share_scope, search, and optionally project_id
+    - CREATE: Clone source workflow and create template
+    - UPDATE: Only creator can update (except system templates)
+    - DELETE: Check for active bindings, return 409 if in use
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AgentWorkflowTemplateSerializer
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = AgentWorkflowTemplate.objects.filter(is_deleted=False)
+
+        # Visibility filter: private (own) + organization (same org) + public (all)
+        visibility_q = Q(share_scope='private', created_by=user)
+        if hasattr(user, 'organization') and user.organization:
+            visibility_q |= Q(share_scope='organization', organization=user.organization)
+        # Add public scope when supported
+        # visibility_q |= Q(share_scope='public')
+
+        qs = qs.filter(visibility_q)
+
+        # Category filter
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category=category)
+
+        # Share scope filter
+        share_scope = self.request.query_params.get('share_scope')
+        if share_scope:
+            qs = qs.filter(share_scope=share_scope)
+
+        # Search by name
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(name__icontains=search)
+
+        # Check if applied to specific project (for UI "already applied" indicator)
+        project_id = self.request.query_params.get('project_id')
+        if project_id and self.action == 'list':
+            # Annotate with is_applied_to_project
+            from django.db.models import Exists
+            applied_subquery = AgentProjectWorkflowBinding.objects.filter(
+                template_id=OuterRef('pk'),
+                project_id=project_id,
+                is_active=True,
+                is_deleted=False,
+            )
+            qs = qs.annotate(is_applied_to_project=Exists(applied_subquery))
+
+        return qs.select_related('workflow_definition', 'created_by', 'organization').order_by('-created_at')
+
+    def perform_create(self, serializer):
+        """Clone source workflow and create template."""
+        source_workflow_id = serializer.validated_data.pop('source_workflow_id', None)
+
+        if not source_workflow_id:
+            # If no source specified, create empty workflow
+            # (This should normally not happen as we require source_workflow_id)
+            new_workflow = AgentWorkflowDefinition.objects.create(
+                name=f"{serializer.validated_data['name']} Workflow",
+                project=None,
+                is_system=False,
+                is_default=False,
+                status='active',
+                created_by=self.request.user,
+            )
+        else:
+            # Get source workflow
+            try:
+                source_workflow = AgentWorkflowDefinition.objects.get(
+                    id=source_workflow_id,
+                    is_deleted=False
+                )
+            except AgentWorkflowDefinition.DoesNotExist:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({'source_workflow_id': 'Source workflow not found.'})
+
+            # Clone workflow
+            new_workflow = _clone_workflow_definition(source_workflow)
+            new_workflow.created_by = self.request.user
+            new_workflow.name = f"{serializer.validated_data['name']} Workflow"
+            new_workflow.save()
+
+        # Create template
+        serializer.save(
+            created_by=self.request.user,
+            workflow_definition=new_workflow,
+        )
+
+    def perform_update(self, serializer):
+        """Only allow creator to update their templates."""
+        if serializer.instance.created_by != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You can only edit templates you created.')
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Check for active bindings before deletion."""
+        # Check if template is being used
+        active_bindings = instance.project_bindings.filter(
+            is_active=True,
+            is_deleted=False
+        ).select_related('project')
+
+        if active_bindings.exists():
+            # Return 409 Conflict with binding details
+            binding_list = [
+                {
+                    'project_id': str(binding.project.id),
+                    'project_name': binding.project.name
+                }
+                for binding in active_bindings[:10]  # Limit to 10 for response size
+            ]
+
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({
+                'error': 'Template is in use',
+                'active_bindings': binding_list,
+                'message': 'Please remove bindings from projects before deleting this template.'
+            })
+
+        # Only creator can delete
+        if instance.created_by != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You can only delete templates you created.')
+
+        # Soft delete
+        instance.is_deleted = True
+        instance.save()
+
+
+class IsProjectMember:
+    """Permission class to check if user is a project member."""
+    def has_permission(self, request, view):
+        project_id = view.kwargs.get('project_id')
+        if not project_id:
+            return False
+
+        return ProjectMember.objects.filter(
+            project_id=project_id,
+            user=request.user,
+            # Add status='active' if ProjectMember has such field
+        ).exists()
+
+
+class AgentProjectWorkflowBindingViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
+    """
+    ViewSet for managing project workflow bindings.
+
+    Nested under /api/agent/projects/{project_id}/workflows/bindings/
+
+    - LIST: All active bindings for the project
+    - CREATE: Apply a template to the project
+    - UPDATE: Modify trigger conditions, priority, is_default
+    - DELETE: Remove binding
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AgentProjectWorkflowBindingSerializer
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        project_id = self.kwargs.get('project_id')
+        if not project_id:
+            return AgentProjectWorkflowBinding.objects.none()
+
+        # Check project membership
+        if not ProjectMember.objects.filter(
+            project_id=project_id,
+            user=self.request.user
+        ).exists():
+            return AgentProjectWorkflowBinding.objects.none()
+
+        return AgentProjectWorkflowBinding.objects.filter(
+            project_id=project_id,
+            is_deleted=False
+        ).select_related('template', 'template__workflow_definition', 'applied_by').order_by('-priority', 'applied_at')
+
+    def get_serializer_class(self):
+        if self.action == 'list' and self.request.query_params.get('lightweight') == 'true':
+            # For chat interface lightweight listing
+            return AgentProjectWorkflowBindingListSerializer
+        return AgentProjectWorkflowBindingSerializer
+
+    def perform_create(self, serializer):
+        """Apply a template to the project."""
+        project_id = self.kwargs.get('project_id')
+
+        # Verify project membership
+        try:
+            project = Project.objects.get(id=project_id, is_deleted=False)
+            if not ProjectMember.objects.filter(project=project, user=self.request.user).exists():
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied('You are not a member of this project.')
+        except Project.DoesNotExist:
+            from rest_framework.exceptions import NotFound
+            raise NotFound('Project not found.')
+
+        serializer.save(
+            project=project,
+            applied_by=self.request.user,
+        )
+
+    def perform_update(self, serializer):
+        """Update binding (any project member can update)."""
+        project_id = self.kwargs.get('project_id')
+
+        # Verify project membership
+        if not ProjectMember.objects.filter(project_id=project_id, user=self.request.user).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You are not a member of this project.')
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Remove binding (soft delete)."""
+        project_id = self.kwargs.get('project_id')
+
+        # Verify project membership
+        if not ProjectMember.objects.filter(project_id=project_id, user=self.request.user).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You are not a member of this project.')
+
+        # Soft delete
+        instance.is_deleted = True
+        instance.save()

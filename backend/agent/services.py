@@ -202,7 +202,67 @@ def _build_criteria_text(success_criteria) -> tuple[str, list]:
         return '', []
 
 
-def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
+def _resolve_analysis_columns(key_cols, sheet_columns, column_mapping=None):
+    """Map success_criteria key_columns onto normalized spreadsheet column keys.
+
+    After normalize_data, row keys are canonical names (e.g. amount_spent) while
+    Gemini criteria often reference display headers (e.g. Amount Spent (USD)).
+    """
+    if not sheet_columns:
+        return list(key_cols or [])
+
+    actual = set(sheet_columns)
+    if not key_cols:
+        return list(sheet_columns)
+
+    direct = [k for k in key_cols if k in actual]
+    if direct:
+        return direct
+
+    if not column_mapping:
+        logger.warning(
+            "success_criteria key_columns do not match sheet columns; using all columns",
+        )
+        return list(sheet_columns)
+
+    resolved = []
+    seen = set()
+    for kc in key_cols:
+        candidates = []
+        if kc in actual:
+            candidates = [kc]
+        elif kc in column_mapping:
+            canon = column_mapping[kc]
+            if canon in actual:
+                candidates = [canon]
+        else:
+            kc_lower = kc.lower().strip()
+            for orig, canon in column_mapping.items():
+                if orig.lower().strip() == kc_lower and canon in actual:
+                    candidates = [canon]
+                    break
+            if not candidates:
+                kc_norm = kc.lower().replace(' ', '_').replace('(', '').replace(')', '')
+                for col in actual:
+                    if col.lower() == kc_norm:
+                        candidates = [col]
+                        break
+
+        for col in candidates:
+            if col not in seen:
+                resolved.append(col)
+                seen.add(col)
+
+    if resolved:
+        return resolved
+
+    logger.warning(
+        "Could not resolve success_criteria key_columns; falling back to all sheet columns",
+    )
+    return list(sheet_columns)
+
+
+def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None, column_mapping=None):
     """Mirror the Dify code-node preprocessing: return (column_summary, cleaned_data, criteria_text)."""
     criteria_text, key_cols = _build_criteria_text(success_criteria)
 
@@ -211,11 +271,20 @@ def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
     for sheet in spreadsheet_data.get('sheets', []):
         columns = sheet.get('columns', [])
         columns_info.extend(columns)
-        key_cols_to_use = key_cols if key_cols else columns
+        key_cols_to_use = _resolve_analysis_columns(key_cols, columns, column_mapping)
         for row in sheet.get('rows', []):
             clean_row = {k: v for k, v in row.items() if k in key_cols_to_use}
             if clean_row:
                 all_rows.append(clean_row)
+
+        if not all_rows and key_cols:
+            logger.warning(
+                "No rows matched key_columns after resolution; retrying with all sheet columns",
+            )
+            for row in sheet.get('rows', []):
+                clean_row = {k: v for k, v in row.items() if k in columns}
+                if clean_row:
+                    all_rows.append(clean_row)
 
     limited = all_rows[:50]
     column_summary = (
@@ -226,12 +295,17 @@ def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
     return column_summary, json.dumps(limited, default=str), criteria_text
 
 
-def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None):
+def _call_gemini_analysis(
+    spreadsheet_data,
+    user_id=None,
+    success_criteria=None,
+    column_mapping=None,
+):
     """Call Gemini to analyze spreadsheet data."""
     from .gemini_client import call_gemini_json
 
     column_summary, cleaned_data, criteria_text = _preprocess_spreadsheet(
-        spreadsheet_data, success_criteria
+        spreadsheet_data, success_criteria, column_mapping=column_mapping,
     )
 
     criteria_block = (
@@ -254,7 +328,12 @@ def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None)
     )
 
 
-def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None):
+def _run_analysis(
+    spreadsheet_data,
+    user_id=None,
+    success_criteria=None,
+    column_mapping=None,
+):
     """Run analysis using Gemini, with Claude as fallback.
 
     Raises RuntimeError if no provider is configured or all providers fail.
@@ -263,7 +342,12 @@ def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None):
     from .gemini_client import _get_api_key as _gemini_key
     if _gemini_key():
         try:
-            return _call_gemini_analysis(spreadsheet_data, user_id, success_criteria=success_criteria)
+            return _call_gemini_analysis(
+                spreadsheet_data,
+                user_id,
+                success_criteria=success_criteria,
+                column_mapping=column_mapping,
+            )
         except Exception as e:
             logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
 
@@ -818,7 +902,12 @@ class AgentOrchestrator:
 
         # --- Start a new workflow ---
         if file_id or spreadsheet_id or csv_filename or (action == 'analyze'):
-            workflow_def = self._resolve_workflow(workflow_id)
+            workflow_def = self._resolve_workflow(
+                workflow_id=workflow_id,
+                action=action,
+                file_id=file_id,
+                user_message=message
+            )
             if workflow_def:
                 yield from self._start_workflow(
                     workflow_def,
@@ -1477,8 +1566,23 @@ class AgentOrchestrator:
     # Workflow engine methods (AGENT-9)
     # ------------------------------------------------------------------
 
-    def _resolve_workflow(self, workflow_id=None):
-        """Find workflow definition: explicit ID > project default > system default."""
+    def _resolve_workflow(self, workflow_id=None, action=None, file_id=None, user_message=''):
+        """
+        Find workflow definition using unified resolution logic.
+
+        Fallback chain:
+        1. Explicit workflow_id (highest priority)
+        2. Project binding - file_upload trigger
+        3. Project binding - analyze_action trigger
+        4. Project binding - message_keyword trigger
+        5. Project binding - is_default=True (fallback)
+        6. Project workflow - is_default=True (backward compatibility)
+        7. System workflow - is_default=True
+        8. None (no workflow configured)
+        """
+        from .models import AgentProjectWorkflowBinding
+
+        # 1. Explicit workflow ID (highest priority)
         if workflow_id:
             try:
                 return AgentWorkflowDefinition.objects.get(
@@ -1487,7 +1591,44 @@ class AgentOrchestrator:
             except AgentWorkflowDefinition.DoesNotExist:
                 return None
 
-        # Project-level default
+        # If no session or project, skip to system default
+        if not self.session or not self.project:
+            return self._get_system_default_workflow()
+
+        # 2-5. Project template bindings (ordered by priority)
+        bindings = AgentProjectWorkflowBinding.objects.filter(
+            project=self.project,
+            is_active=True,
+            is_deleted=False
+        ).select_related('template__workflow_definition').order_by('-priority', 'applied_at')
+
+        # 2. File upload trigger
+        if file_id:
+            for binding in bindings:
+                if binding.trigger_mode == 'file_upload':
+                    return binding.template.workflow_definition
+
+        # 3. Analyze action trigger
+        if action == 'analyze':
+            for binding in bindings:
+                if binding.trigger_mode == 'analyze_action':
+                    return binding.template.workflow_definition
+
+        # 4. Message keyword trigger (same mode, highest priority wins)
+        if user_message:
+            message_lower = user_message.lower()
+            for binding in bindings:
+                if binding.trigger_mode == 'message_keyword':
+                    keywords = binding.trigger_keywords or []
+                    if any(kw.lower() in message_lower for kw in keywords):
+                        return binding.template.workflow_definition
+
+        # 5. Project binding default (explicit fallback)
+        default_binding = bindings.filter(is_default=True).first()
+        if default_binding:
+            return default_binding.template.workflow_definition
+
+        # 6. Project-level workflow default (backward compatibility)
         project_default = AgentWorkflowDefinition.objects.filter(
             project=self.project, is_default=True,
             status='active', is_deleted=False,
@@ -1495,7 +1636,11 @@ class AgentOrchestrator:
         if project_default:
             return project_default
 
-        # System-level default
+        # 7. System-level default
+        return self._get_system_default_workflow()
+
+    def _get_system_default_workflow(self):
+        """Get system default workflow."""
         return AgentWorkflowDefinition.objects.filter(
             project__isnull=True, is_system=True, is_default=True,
             status='active', is_deleted=False,

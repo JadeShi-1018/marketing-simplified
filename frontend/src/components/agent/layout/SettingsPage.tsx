@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { RotateCcw, Workflow, ChevronDown, ChevronRight } from "lucide-react"
+import { RotateCcw, Workflow, ChevronDown, ChevronRight, FileText } from "lucide-react"
 import { AgentAPI } from "@/lib/api/agentApi"
 import type { AgentWorkflowDefinition, AgentWorkflowStep } from "@/types/agent"
 import {
@@ -9,6 +9,7 @@ import {
   AgentWorkflowListSkeleton,
   AgentWorkflowStepsSkeleton,
 } from "@/components/agent/skeletons/AgentSkeletons"
+import { TemplatesList } from "@/components/agent/templates/TemplatesList"
 
 interface ConfigStatus {
   dify_api: boolean
@@ -233,6 +234,21 @@ export function SettingsPage() {
               ))}
             </div>
           )}
+        </section>
+
+        {/* Workflow Templates */}
+        <section className="space-y-4">
+          <div className="flex items-center gap-2">
+            <FileText className="w-4 h-4 text-muted-foreground" />
+            <h2 className="text-sm font-medium text-foreground uppercase tracking-wider">
+              Workflow Templates
+            </h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Create and manage reusable workflow templates for your projects.
+          </p>
+
+          <TemplatesList />
         </section>
       </div>
     </div>

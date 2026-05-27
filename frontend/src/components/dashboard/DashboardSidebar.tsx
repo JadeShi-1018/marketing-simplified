@@ -65,7 +65,7 @@ const navGroups: NavGroup[] = [
     title: 'OVERVIEW',
     items: [
       { label: 'Overview', href: '/overview', icon: LayoutDashboard },
-      { label: 'AI Agent', href: '/agent', icon: Bot },
+      { label: 'AI Agent', href: '#agent-chat', icon: Bot },
     ],
   },
   {
@@ -155,6 +155,14 @@ export default function DashboardSidebar() {
   const authInitialized = useAuthStore((state) => state.initialized);
   const { logout } = useAuth();
   const { toggle: toggleAgentPanel, isOpen: isAgentPanelOpen } = useAgentSidePanelStore();
+
+  const handleAgentNav = (href: string) => {
+    if (href === '#agent-chat') {
+      toggleAgentPanel();
+      return;
+    }
+    router.push(href);
+  };
 
   const userDisplayName = useMemo(() => {
     if (!user) return null;
@@ -283,8 +291,15 @@ export default function DashboardSidebar() {
             {group.items.map((item) => {
               const hasChildren = !!item.children?.length;
               const isOpen = hasChildren && expanded.includes(item.label);
-              const isActive = !hasChildren && pathname === item.href;
-              const childActive = hasChildren && item.children!.some((c) => pathname === c.href);
+              const isAgentNav = item.href === '#agent-chat';
+              const isActive = isAgentNav
+                ? isAgentPanelOpen || pathname === '/agent'
+                : !hasChildren && pathname === item.href;
+              const childActive = hasChildren && item.children!.some((c) => {
+                if (c.href === '#agent-chat') return isAgentPanelOpen;
+                if (c.href.startsWith('/agent')) return pathname === '/agent';
+                return pathname === c.href;
+              });
 
               return (
                 <div key={item.label}>
@@ -347,7 +362,7 @@ export default function DashboardSidebar() {
                                 className={`gap-2 px-2 py-1.5 text-[13px] [&>svg]:size-3.5 ${
                                   childIsActive ? 'text-[#3CCED7]' : ''
                                 }`}
-                                onSelect={() => router.push(child.href)}
+                                onSelect={() => handleAgentNav(child.href)}
                               >
                                 <child.icon className="text-gray-500" />
                                 <span>{child.label}</span>
@@ -359,22 +374,18 @@ export default function DashboardSidebar() {
                     </>
                   ) : (
                     <button
-                      onClick={() => {
-                        if (item.href === '/agent') {
-                          toggleAgentPanel();
-                        } else {
-                          router.push(item.href);
-                        }
-                      }}
+                      onClick={() =>
+                        isAgentNav ? handleAgentNav(item.href) : router.push(item.href)
+                      }
                       title={item.label}
                       aria-label={item.label}
                       className={`relative flex h-10 w-full items-center justify-center rounded-md text-sm font-medium transition-colors sm:h-auto sm:justify-start sm:gap-3 sm:px-3 sm:py-2 ${
-                        (item.href === '/agent' ? isAgentPanelOpen : isActive)
+                        isActive
                           ? 'bg-[#3CCED7]/8 text-[#3CCED7]'
                           : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                       }`}
                     >
-                      {(item.href === '/agent' ? isAgentPanelOpen : isActive) && (
+                      {isActive && (
                         <div className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-[#3CCED7]" />
                       )}
                       <item.icon className="h-[18px] w-[18px] shrink-0" />
@@ -385,11 +396,16 @@ export default function DashboardSidebar() {
                   {hasChildren && isOpen && (
                     <div className="ml-8 mt-1 mb-1 hidden space-y-0.5 sm:block">
                       {item.children!.map((child) => {
-                        const childIsActive = pathname === child.href;
+                        const childIsActive =
+                          child.href === '#agent-chat'
+                            ? isAgentPanelOpen
+                            : child.href.startsWith('/agent')
+                              ? pathname === '/agent'
+                              : pathname === child.href;
                         return (
                           <button
                             key={child.href}
-                            onClick={() => router.push(child.href)}
+                            onClick={() => handleAgentNav(child.href)}
                             className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-[13px] transition-colors ${
                               childIsActive
                                 ? 'bg-[#3CCED7]/8 text-[#3CCED7] font-medium'

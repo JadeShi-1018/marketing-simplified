@@ -606,3 +606,185 @@ class AgentPendingExternalApproval(TimeStampedModel):
 
     def __str__(self):
         return f"PendingExternalApproval {self.id} ({self.kind}) {self.status}"
+
+
+class AgentWorkflowTemplate(TimeStampedModel):
+    """
+    Reusable workflow template that wraps an AgentWorkflowDefinition.
+
+    Templates provide a named, categorized, shareable abstraction layer on top of
+    workflow definitions. The same template can be applied to multiple projects,
+    enabling consistent "Agent takes care of the project" behavior.
+
+    When created, the template clones the source workflow definition + steps to
+    ensure isolation (changes to the template don't affect other workflows).
+    """
+
+    CATEGORY_CHOICES = [
+        ('review', 'Review'),
+        ('optimization', 'Optimization'),
+        ('analysis', 'Analysis'),
+        ('reporting', 'Reporting'),
+        ('other', 'Other'),
+    ]
+
+    SHARE_SCOPE_CHOICES = [
+        ('private', 'Private'),
+        ('organization', 'Organization'),
+        # ('public', 'Public'),  # Reserved for future use
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200, help_text='Template name, e.g. "Q4 Campaign Review"')
+    description = models.TextField(blank=True, default='')
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default='other',
+        help_text='Predefined category for organizing templates',
+    )
+
+    # References a cloned workflow definition (project=None, is_system=False)
+    workflow_definition = models.ForeignKey(
+        AgentWorkflowDefinition,
+        on_delete=models.PROTECT,
+        related_name='templates',
+        help_text='Cloned workflow owned by this template',
+    )
+
+    # Sharing scope (replaces organization + is_public pattern)
+    share_scope = models.CharField(
+        max_length=20,
+        choices=SHARE_SCOPE_CHOICES,
+        default='private',
+        help_text='Visibility: private (creator only), organization (same org), public (all users)',
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='created_workflow_templates',
+    )
+
+    organization = models.ForeignKey(
+        'core.Organization',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='workflow_templates',
+        help_text='Required when share_scope=organization',
+    )
+
+    class Meta:
+        db_table = 'agent_workflow_template'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['category', 'share_scope']),
+            models.Index(fields=['organization', 'is_deleted']),
+            models.Index(fields=['created_by', 'is_deleted']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    ~models.Q(share_scope='organization', organization__isnull=True)
+                ),
+                name='agent_template_org_scope_needs_org',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_category_display()})"
+
+
+class AgentProjectWorkflowBinding(TimeStampedModel):
+    """
+    Links a workflow template to a project with trigger conditions.
+
+    Defines WHEN the Agent should run a specific template for a project:
+    - file_upload: When user uploads a file
+    - analyze_action: When action='analyze' is triggered
+    - message_keyword: When user message contains specific keywords
+
+    Priority determines which binding wins when multiple bindings match.
+    is_default marks the fallback template when no trigger conditions match.
+    """
+
+    TRIGGER_MODE_CHOICES = [
+        ('file_upload', 'File Upload'),
+        ('analyze_action', 'Analyze Action'),
+        ('message_keyword', 'Message Keyword'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        'core.Project',
+        on_delete=models.CASCADE,
+        related_name='workflow_bindings',
+    )
+    template = models.ForeignKey(
+        AgentWorkflowTemplate,
+        on_delete=models.CASCADE,
+        related_name='project_bindings',
+    )
+
+    # Trigger mechanism
+    trigger_mode = models.CharField(
+        max_length=20,
+        choices=TRIGGER_MODE_CHOICES,
+        help_text='How this workflow should be triggered',
+    )
+    trigger_keywords = models.JSONField(
+        default=list,
+        help_text='Keywords for message_keyword mode, e.g. ["analyze", "review"]',
+    )
+
+    # Priority and default
+    priority = models.IntegerField(
+        default=0,
+        help_text='Higher priority wins when multiple bindings match (same trigger_mode)',
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text='Fallback template when no trigger conditions match (only one per project)',
+    )
+    is_active = models.BooleanField(default=True)
+
+    applied_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    applied_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'agent_project_workflow_binding'
+        unique_together = [('project', 'template')]
+        ordering = ['-priority', 'applied_at']
+        indexes = [
+            models.Index(fields=['project', 'is_active', 'priority']),
+            models.Index(fields=['project', 'is_default']),
+            models.Index(fields=['trigger_mode']),
+        ]
+
+    def save(self, *args, **kwargs):
+        """
+        Atomic operation: When setting is_default=True, unset all other bindings
+        for the same project to ensure only one default exists.
+        """
+        from django.db import transaction
+
+        if self.is_default:
+            with transaction.atomic():
+                # Unset other defaults for this project
+                AgentProjectWorkflowBinding.objects.filter(
+                    project=self.project,
+                    is_default=True,
+                ).exclude(pk=self.pk).update(is_default=False)
+                super().save(*args, **kwargs)
+        else:
+            super().save(*args, **kwargs)
+
+    def __str__(self):
+        default_marker = ' [Default]' if self.is_default else ''
+        return f"{self.project.name} → {self.template.name}{default_marker}"
