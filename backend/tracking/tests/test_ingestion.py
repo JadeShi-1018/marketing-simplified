@@ -89,7 +89,7 @@ class IngestEventTests(TestCase):
         )
         self.assertEqual(TrackingEvent.objects.filter(client_event_id=dedup_id).count(), 1)
 
-    @patch('tracking.services.ingestion._ingest_counter')
+    @patch('tracking.metrics.tracking_events_total')
     def test_validate_fail_emits_schema_invalid_metric_and_does_not_insert(self, mock_counter):
         class RequiredMeta(BaseModel):
             must_have: str  # no default — missing key raises ValidationError
@@ -110,6 +110,87 @@ class IngestEventTests(TestCase):
         mock_counter.labels.assert_called_with(
             source=str(Source.MIDDLEWARE),
             event_type='STRICT_EVENT',
+            reason='schema_invalid',
+        )
+        mock_counter.labels.return_value.inc.assert_called_once()
+
+
+@override_settings(CACHES=LOCMEM_CACHE)
+class MetricCounterTests(TestCase):
+    """Assert tracking_events_total and latency histogram are called correctly."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email='metrics@test.com', username='metrics', password='pw'
+        )
+
+    @patch('tracking.metrics.tracking_events_total')
+    def test_duplicate_counter_on_repeated_client_event_id(self, mock_counter):
+        dedup_id = uuid.uuid4()
+        # First call → 'ok'
+        ingest_event(
+            source=Source.MIDDLEWARE,
+            event_type=EventType.TASK_OPEN,
+            user=self.user,
+            metadata=dict(BASE_META),
+            client_event_id=dedup_id,
+        )
+        # Second call with same id → 'duplicate'
+        ingest_event(
+            source=Source.MIDDLEWARE,
+            event_type=EventType.TASK_OPEN,
+            user=self.user,
+            metadata=dict(BASE_META),
+            client_event_id=dedup_id,
+        )
+        calls = [str(c) for c in mock_counter.labels.call_args_list]
+        self.assertTrue(
+            any("reason='ok'" in c for c in calls),
+            "Expected at least one 'ok' label call",
+        )
+        self.assertTrue(
+            any("reason='duplicate'" in c for c in calls),
+            "Expected at least one 'duplicate' label call",
+        )
+
+    @patch('tracking.metrics.tracking_events_total')
+    @patch('tracking.metrics.tracking_ingest_latency_seconds')
+    def test_ok_counter_and_latency_on_success(self, mock_hist, mock_counter):
+        ingest_event(
+            source=Source.MIDDLEWARE,
+            event_type=EventType.TASK_OPEN,
+            user=self.user,
+            metadata=dict(BASE_META),
+        )
+        mock_counter.labels.assert_called_with(
+            source=str(Source.MIDDLEWARE),
+            event_type=str(EventType.TASK_OPEN),
+            reason='ok',
+        )
+        mock_counter.labels.return_value.inc.assert_called_once()
+        mock_hist.labels.assert_called_with(source=str(Source.MIDDLEWARE))
+        mock_hist.labels.return_value.observe.assert_called_once()
+
+    @patch('tracking.metrics.tracking_events_total')
+    def test_schema_invalid_counter_on_validation_failure(self, mock_counter):
+        from pydantic import BaseModel
+
+        class StrictMeta(BaseModel):
+            required_field: str
+
+        local_registry = SchemaRegistry()
+        local_registry.register('STRICT', StrictMeta)
+
+        with patch('tracking.services.ingestion.registry', local_registry):
+            ingest_event(
+                source=Source.MIDDLEWARE,
+                event_type='STRICT',
+                user=self.user,
+                metadata={},
+            )
+        mock_counter.labels.assert_called_with(
+            source=str(Source.MIDDLEWARE),
+            event_type='STRICT',
             reason='schema_invalid',
         )
         mock_counter.labels.return_value.inc.assert_called_once()

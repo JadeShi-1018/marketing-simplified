@@ -1,22 +1,17 @@
 import logging
+import time
 import uuid
 
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone
-from prometheus_client import Counter
 from pydantic import ValidationError
 
+from tracking import metrics as _metrics
 from tracking.models import TrackingEvent
 from tracking.schema_registry import registry
 from tracking.services.session_lookup import SessionLookup
 
 logger = logging.getLogger(__name__)
-
-_ingest_counter = Counter(
-    'tracking_ingest_events_total',
-    'Total tracking events processed',
-    ['source', 'event_type', 'reason'],
-)
 
 
 def ingest_event(
@@ -43,7 +38,10 @@ def ingest_event(
     client_event_id: UUID; auto-generated when None (unique_together dedup key)
 
     Returns the TrackingEvent instance on success, None when validation drops the event.
+    reason labels: ok (inserted) | schema_invalid (validation failed) | duplicate (deduped)
     """
+    _t0 = time.perf_counter()
+
     # 1. Schema validation — drops the event on failure, emits metric, never raises.
     try:
         metadata = registry.validate(event_type, metadata)
@@ -53,7 +51,7 @@ def ingest_event(
             event_type,
             exc,
         )
-        _ingest_counter.labels(
+        _metrics.tracking_events_total.labels(
             source=str(source), event_type=str(event_type), reason='schema_invalid'
         ).inc()
         return None
@@ -73,22 +71,29 @@ def ingest_event(
         ct = None
         object_id = None
 
-    # 4. Build event and insert with conflict-safe dedup.
-    event = TrackingEvent(
-        session_id=session_id,
+    # 4. Insert with idempotent dedup via get_or_create on the (user, client_event_id)
+    #    unique key. created=False → 'duplicate' metric; created=True → 'ok'.
+    _client_event_id = client_event_id or uuid.uuid4()
+    event, created = TrackingEvent.objects.get_or_create(
         user=user,
-        content_type=ct,
-        object_id=object_id,
-        event_type=event_type,
-        source=source,
-        occurred_at=occurred_at or timezone.now(),
-        metadata=metadata if isinstance(metadata, dict) else {},
-        project_id=metadata.get('project_id') if isinstance(metadata, dict) else None,
-        client_event_id=client_event_id or uuid.uuid4(),
+        client_event_id=_client_event_id,
+        defaults={
+            'session_id': session_id,
+            'content_type': ct,
+            'object_id': object_id,
+            'event_type': event_type,
+            'source': source,
+            'occurred_at': occurred_at or timezone.now(),
+            'metadata': metadata if isinstance(metadata, dict) else {},
+            'project_id': metadata.get('project_id') if isinstance(metadata, dict) else None,
+        },
     )
-    TrackingEvent.objects.bulk_create([event], ignore_conflicts=True)
 
-    _ingest_counter.labels(
-        source=str(source), event_type=str(event_type), reason='ok'
+    reason = 'ok' if created else 'duplicate'
+    _metrics.tracking_events_total.labels(
+        source=str(source), event_type=str(event_type), reason=reason
     ).inc()
+    _metrics.tracking_ingest_latency_seconds.labels(source=str(source)).observe(
+        time.perf_counter() - _t0
+    )
     return event
