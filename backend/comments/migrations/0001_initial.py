@@ -1,0 +1,85 @@
+import comments.models
+import uuid
+from django.conf import settings
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+
+    initial = True
+
+    dependencies = [
+        ("contenttypes", "0002_remove_content_type_name"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        migrations.CreateModel(
+            name="Comment",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("object_id", models.CharField(max_length=255)),
+                ("body", models.JSONField(default=dict)),
+                ("body_text", models.TextField(blank=True)),
+                ("body_format", models.CharField(default="rich_text_json", max_length=50)),
+                ("metadata", models.JSONField(blank=True, default=dict)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("deleted_at", models.DateTimeField(blank=True, null=True)),
+                ("author", models.ForeignKey(on_delete=django.db.models.deletion.PROTECT, related_name="comments", to=settings.AUTH_USER_MODEL)),
+                ("content_type", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="comments", to="contenttypes.contenttype")),
+                ("deleted_by", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name="deleted_comments", to=settings.AUTH_USER_MODEL)),
+            ],
+            options={
+                "ordering": ["created_at"],
+            },
+        ),
+        migrations.CreateModel(
+            name="CommentMention",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("comment", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="mentions", to="comments.comment")),
+                ("mentioned_user", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="comment_mentions", to=settings.AUTH_USER_MODEL)),
+            ],
+            options={
+                "ordering": ["created_at"],
+                "unique_together": {("comment", "mentioned_user")},
+            },
+        ),
+        migrations.CreateModel(
+            name="CommentAttachment",
+            fields=[
+                ("id", models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ("file", models.FileField(max_length=500, upload_to=comments.models.comment_attachment_upload_to)),
+                ("filename", models.CharField(max_length=255)),
+                ("content_type", models.CharField(blank=True, max_length=100)),
+                ("size", models.PositiveIntegerField(default=0)),
+                ("is_inline", models.BooleanField(default=False)),
+                ("metadata", models.JSONField(blank=True, default=dict)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("comment", models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name="attachments", to="comments.comment")),
+                ("uploaded_by", models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name="comment_attachments", to=settings.AUTH_USER_MODEL)),
+            ],
+            options={
+                "ordering": ["created_at"],
+            },
+        ),
+        migrations.AddIndex(
+            model_name="comment",
+            index=models.Index(fields=["content_type", "object_id", "deleted_at", "created_at"], name="comment_target_alive_idx"),
+        ),
+        migrations.AddIndex(
+            model_name="comment",
+            index=models.Index(fields=["author", "created_at"], name="comment_author_idx"),
+        ),
+        migrations.AddIndex(
+            model_name="commentmention",
+            index=models.Index(fields=["mentioned_user", "created_at"], name="comment_mention_user_idx"),
+        ),
+        migrations.AddIndex(
+            model_name="commentattachment",
+            index=models.Index(fields=["uploaded_by", "comment", "created_at"], name="comment_attach_user_idx"),
+        ),
+    ]

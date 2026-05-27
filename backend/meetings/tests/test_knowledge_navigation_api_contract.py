@@ -18,6 +18,7 @@ from meetings.models import (
     MeetingTypeDefinition,
 )
 from task.models import Task
+from meetings.tests.decision_origin_helpers import create_meeting_decision_origin
 
 
 class TestKnowledgeNavigationAPIContract(TestCase):
@@ -57,7 +58,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             author=self.user,
             title="Linked D",
         )
-        MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+        create_meeting_decision_origin(meeting=m, decision=d)
 
         url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
         response = self.client.get(url)
@@ -89,7 +90,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             author=self.user,
             title="Will delete",
         )
-        MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+        create_meeting_decision_origin(meeting=m, decision=d)
         d.is_deleted = True
         d.save(update_fields=["is_deleted", "updated_at"])
 
@@ -111,7 +112,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             author=self.user,
             title="Same D",
         )
-        MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+        create_meeting_decision_origin(meeting=m, decision=d)
         ArtifactLink.objects.create(
             meeting=m,
             artifact_type="decision",
@@ -221,7 +222,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             author=self.user,
             title="Committed with origin",
         )
-        MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+        create_meeting_decision_origin(meeting=m, decision=d)
         Decision.objects.filter(pk=d.pk).update(status=Decision.Status.COMMITTED)
 
         url = f"/api/decisions/{d.id}/"
@@ -285,7 +286,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             author=self.user,
             title="Still draft",
         )
-        MeetingDecisionOrigin.objects.create(meeting=m, decision=d)
+        create_meeting_decision_origin(meeting=m, decision=d)
 
         url = f"/api/decisions/drafts/{d.id}/"
         response = self.client.get(url, {"project_id": self.project.id})

@@ -21,11 +21,11 @@ export default function DecisionOriginMeetingBlock({ origin, projectId }: Props)
 
   const meetingId = origin.id;
   const href = projectId
-    ? `/projects/${projectId}/meetings/${meetingId}`
-    : `/projects/meetings/${meetingId}`;
+    ? `/meetings/${meetingId}?project_id=${projectId}`
+    : `/meetings/${meetingId}`;
 
   const title = origin.title?.trim() || 'Meeting';
-  const dateLabel = formatDate((origin as any).scheduled_date ?? (origin as any).scheduled_start);
+  const dateLabel = formatDate((origin as any).originTimestamp ?? (origin as any).scheduled_date ?? (origin as any).scheduled_start);
 
   return (
     <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:rounded-xl">

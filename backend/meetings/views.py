@@ -1,9 +1,16 @@
 import json
+
+from django.db.models import Max
+from django.utils import timezone
+from decision.models import Decision
+from decision.serializers import DecisionCommittedSerializer, DecisionListSerializer
 import logging
+from datetime import datetime
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -12,17 +19,21 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.filters import OrderingFilter
+from django_filters.rest_framework import DjangoFilterBackend
 
 from core.models import Project, ProjectMember
 from meetings.lifecycle import execute_transition, get_available_transitions
 from meetings.models import (
     Meeting,
+    MeetingDecisionOrigin,
     AgendaItem,
     ParticipantLink,
     ArtifactLink,
     MeetingTemplate,
     MeetingDocument,
     MeetingActionItem,
+    MeetingAuditLog,
 )
 from meetings.serializers import (
     MeetingSerializer,
@@ -37,6 +48,7 @@ from meetings.serializers import (
     MeetingActionItemSerializer,
     ActionItemConvertSerializer,
     BulkActionItemConvertSerializer,
+    MeetingAuditLogSerializer,
 )
 from meetings.services import (
     reorder_agenda_items,
@@ -50,6 +62,20 @@ from meetings.services import (
     apply_meeting_knowledge_filters,
     meeting_list_order_by_fields,
     hub_split_meeting_pks_for_project,
+    update_meeting_title,
+    update_meeting_objective,
+    update_meeting_summary,
+    add_participant,
+    remove_participant,
+    create_agenda_item,
+    update_agenda_item,
+    delete_agenda_item,
+    create_action_item,
+    update_action_item,
+    update_meeting_type,
+    update_meeting_datetime,
+    update_meeting_tags,
+    ensure_meeting_type_definition,
 )
 from notifications.models import NotificationCategory, NotificationEventType
 from notifications.services import create_notification
@@ -79,6 +105,26 @@ def _ensure_meeting_document_access(user, meeting: Meeting) -> None:
     if user_has_meeting_document_access(user.id, meeting):
         return
     raise PermissionDenied("You do not have access to this meeting document.")
+
+
+class AuditLogPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+    page_size_query_description = "Number of audit log entries per page (max 200)"
+
+    def paginate_queryset(self, queryset, request, view=None):
+        # Return empty page instead of 404 when page is out of range.
+        try:
+            return super().paginate_queryset(queryset, request, view)
+        except Exception:
+            self.page = None
+            return []
+
+    def get_paginated_response(self, data):
+        if self.page is None:
+            return Response({'count': 0, 'next': None, 'previous': None, 'results': []})
+        return super().get_paginated_response(data)
 
 
 class MeetingViewSet(viewsets.ModelViewSet):
@@ -145,6 +191,85 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["get", "post"], url_path="decisions")
+    def decisions(self, request, project_id=None, pk=None):
+        project = self.get_project()
+        meeting = self.get_object()
+
+        if request.method == "GET":
+            origins = (
+                MeetingDecisionOrigin.objects
+                .filter(meeting=meeting, decision__is_deleted=False)
+                .select_related("decision", "created_by")
+                .order_by("-origin_timestamp", "-created_at")
+            )
+            decisions = [origin.decision for origin in origins]
+            serializer = DecisionListSerializer(
+                decisions,
+                many=True,
+                context=self.get_serializer_context(),
+            )
+            return Response({"items": serializer.data})
+
+        title = (request.data.get("title") or "").strip() or meeting.title
+        context_summary = (
+            request.data.get("contextSummary")
+            or request.data.get("context_summary")
+            or ""
+        ).strip()
+        if not context_summary:
+            context_summary = meeting.summary or meeting.objective or meeting.title
+
+        with transaction.atomic():
+            project = Project.objects.select_for_update().get(pk=project.pk)
+            meeting = (
+                Meeting.objects
+                .select_for_update()
+                .get(pk=meeting.pk, project=project)
+            )
+
+            max_seq = (
+                Decision.objects.filter(project=project)
+                .aggregate(max_seq=Max("project_seq"))
+                .get("max_seq")
+            )
+            next_seq = (max_seq or 0) + 1
+
+            decision = Decision.objects.create(
+                title=title,
+                context_summary=context_summary,
+                author=request.user,
+                last_edited_by=request.user,
+                project=project,
+                project_seq=next_seq,
+            )
+
+            MeetingDecisionOrigin.objects.create(
+                meeting=meeting,
+                decision=decision,
+                origin_timestamp=timezone.now(),
+                creation_context={
+                    "source": "meeting_decisions_endpoint",
+                    "meeting_id": meeting.id,
+                    "meeting_title": meeting.title,
+                    "meeting_summary": meeting.summary,
+                    "meeting_objective": meeting.objective,
+                    "artifact_links": list(
+                        meeting.artifact_links.values(
+                            "artifact_type",
+                            "artifact_id",
+                        )
+                    ),
+                },
+                created_by=request.user,
+            )
+
+        serializer = DecisionCommittedSerializer(
+            decision,
+            context=self.get_serializer_context(),
+        )
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
         project = self.get_project()
@@ -229,7 +354,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         meeting = serializer.instance
         project = meeting.project
 
-        # Use raw SQL to absolutely bypass any ORM caching - get CURRENT database state
+        # Capture before state from DB for notification diffing
         from django.db import connection
         with connection.cursor() as cursor:
             cursor.execute(
@@ -261,8 +386,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 "external_reference": None, "layout_config": None,
             }
 
-        # Build "after" from INCOMING data (what frontend is sending), NOT from database after save
-        # This ensures we compare what's in DB vs what frontend wants to save
+        # Build "after" from INCOMING data for notification diffing (before popping audit fields)
         validated = serializer.validated_data
         after = {
             "title": validated.get("title", before["title"]),
@@ -280,8 +404,50 @@ class MeetingViewSet(viewsets.ModelViewSet):
             and serializer.validated_data.get("minutes_published") is True
         )
 
-        # Save to database
-        serializer.save()
+        # Extract fields that need audit service function calls
+        validated_data = dict(serializer.validated_data)
+        new_title = validated_data.pop("title", None)
+        new_objective = validated_data.pop("objective", None)
+        new_summary = validated_data.pop("summary", None)
+        new_meeting_type_label = validated_data.pop("meeting_type", None)
+        new_scheduled_date = validated_data.pop("scheduled_date", None)
+        new_scheduled_time = validated_data.pop("scheduled_time", None)
+        new_tags = validated_data.pop("tag_definition_ids", None)
+
+        if new_title is not None and new_title != meeting.title:
+            update_meeting_title(meeting, new_title, self.request.user)
+
+        if new_objective is not None and new_objective != meeting.objective:
+            update_meeting_objective(meeting, new_objective, self.request.user)
+
+        if new_summary is not None and new_summary != meeting.summary:
+            update_meeting_summary(meeting, new_summary, self.request.user)
+
+        if new_meeting_type_label is not None:
+            new_type_obj = ensure_meeting_type_definition(meeting.project, new_meeting_type_label)
+            if new_type_obj != meeting.type_definition:
+                update_meeting_type(meeting, new_type_obj, self.request.user)
+
+        date_changed = (
+            new_scheduled_date is not None and new_scheduled_date != meeting.scheduled_date
+        ) or (
+            new_scheduled_time is not None and new_scheduled_time != meeting.scheduled_time
+        )
+        if date_changed:
+            update_meeting_datetime(
+                meeting,
+                new_scheduled_date if new_scheduled_date is not None else meeting.scheduled_date,
+                new_scheduled_time if new_scheduled_time is not None else meeting.scheduled_time,
+                self.request.user,
+            )
+
+        if new_tags is not None:
+            update_meeting_tags(meeting, new_tags, self.request.user)
+
+        # Save remaining fields via serializer
+        if validated_data:
+            serializer._validated_data = validated_data
+            serializer.save()
 
         # Meeting minutes published notification
         if becoming_published:
@@ -308,13 +474,11 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     },
                 )
 
-        # Check if anything changed
+        # Check if anything changed for notification
         if json.dumps(before, sort_keys=True, default=str) == json.dumps(after, sort_keys=True, default=str):
             return
 
-        # Helper function to extract agenda items from layout_config.nestedSections
         def extract_agenda_items(layout_config):
-            """Extract all agenda item texts from nestedSections."""
             if not layout_config or not isinstance(layout_config, dict):
                 return {}
             nested_sections = layout_config.get("nestedSections", [])
@@ -334,7 +498,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
             return items
 
         def extract_sections(layout_config):
-            """Extract {section_id: title} from layout_config.nestedSections."""
             if not layout_config or not isinstance(layout_config, dict):
                 return {}
             nested = layout_config.get("nestedSections", [])
@@ -348,7 +511,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
                         result[str(sec_id)] = section.get("title", "").strip()
             return result
 
-        # Build change details for notification metadata
         changes = {}
         if before["scheduled_date"] != after["scheduled_date"] or before["scheduled_time"] != after["scheduled_time"]:
             old_time = None
@@ -373,7 +535,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
             changes["old_title"] = before["title"]
             changes["new_title"] = after["title"]
 
-        # Detect agenda changes within layout_config.nestedSections
         old_layout = before["layout_config"]
         new_layout = after["layout_config"]
         if isinstance(old_layout, str):
@@ -389,29 +550,14 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
         old_items = extract_agenda_items(old_layout)
         new_items = extract_agenda_items(new_layout)
-
         old_item_ids = set(old_items.keys())
         new_item_ids = set(new_items.keys())
-
-        added_ids = new_item_ids - old_item_ids
-        removed_ids = old_item_ids - new_item_ids
         common_ids = old_item_ids & new_item_ids
 
-        modified_items = []
         section_changes = []
         for item_id in common_ids:
-            old_text = old_items[item_id]["text"]
-            new_text = new_items[item_id]["text"]
             old_section = old_items[item_id]["section"]
             new_section = new_items[item_id]["section"]
-
-            if old_text.strip() != new_text.strip():
-                modified_items.append({
-                    "id": item_id,
-                    "old_text": old_text.strip(),
-                    "new_text": new_text.strip(),
-                })
-
             if old_section.strip() != new_section.strip():
                 section_changes.append({
                     "id": item_id,
@@ -419,7 +565,6 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     "new_section": new_section.strip(),
                 })
 
-        # Detect title changes in EMPTY sections that the item loop above cannot see.
         old_sections_map = extract_sections(old_layout)
         new_sections_map = extract_sections(new_layout)
         already_seen_old_titles = {sc["old_section"] for sc in section_changes}
@@ -433,27 +578,15 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     "new_section": new_t,
                 })
 
-        # NOTE: item *text* changes (modified_items) are intentionally NOT notified here —
-        # they are already handled by AgendaItemViewSet.perform_update via
-        # upsert_agenda_item_notification, which creates a MEETING_UPDATED notification
-        # with change_type="agenda_item". Emitting a second notification from the layout
-        # PATCH would produce duplicates for the same logical edit.
         if section_changes:
             first_sec = section_changes[0]
             changes["old_agenda"] = first_sec["old_section"]
             changes["new_agenda"] = first_sec["new_section"]
             changes["change_type"] = "agenda_section"
 
-        # NOTE: added_ids and removed_ids are intentionally NOT notified here.
-        # Item creation is handled by AgendaItemViewSet.perform_create and deletion by
-        # perform_destroy — both now emit a dedup-aware MEETING_UPDATED notification via
-        # notify_agenda_event. Emitting a second notification from the layout PATCH would
-        # produce duplicates for the same logical event.
-
         if not changes:
             return
 
-        # Send notifications to participants (only those who accepted the meeting invite)
         participant_ids = meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
         for uid in participant_ids:
             if uid == self.request.user.id:
@@ -470,6 +603,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 action_url=meeting_action_url(meeting.id, project.id),
                 metadata={"project_id": project.id, **changes},
             )
+
 
     def destroy(self, request, *args, **kwargs):
         """
@@ -492,7 +626,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         """Tasks anchored to this meeting via ``MeetingTaskOrigin`` (paginated)."""
         meeting = self.get_object()
         _ensure_project_membership(request.user, meeting.project)
-        from meetings.models import MeetingTaskOrigin
+        from meetings.models import Meeting, MeetingTaskOrigin
         from task.models import Task
         from task.serializers import TaskListSerializer
 
@@ -524,11 +658,30 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="lifecycle/transition")
     def transition(self, request, project_id=None, pk=None):
-        """Execute a lifecycle transition."""
+        """Transition meeting status via state machine (validates rules, then audits)."""
         meeting = self.get_object()
-        serializer = TransitionRequestSerializer(data=request.data)
+
+        serializer = TransitionRequestSerializer(data=request.data, context={'meeting': meeting})
         serializer.is_valid(raise_exception=True)
-        updated = execute_transition(meeting, serializer.validated_data["to_state"])
+
+        to_state = serializer.validated_data["to_state"]
+        old_status = meeting.status
+
+        # Step 1: Execute transition (validates state machine rules, saves meeting)
+        updated = execute_transition(meeting, to_state)
+
+        # Step 2: Record audit entry (after successful transition)
+        from meetings.audit import record_audit_entry
+        record_audit_entry(
+            meeting=updated,
+            actor=request.user,
+            event_type='meeting.status_changed',
+            before={'status': old_status},
+            after={'status': to_state},
+            context={'reason': 'api_request'},
+        )
+
+        # Return updated meeting state with available transitions
         return Response(
             {
                 "status": updated.status,
@@ -559,16 +712,22 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
+        vd = serializer.validated_data
         try:
-            agenda_item = serializer.save(meeting=meeting)
+            agenda_item = create_agenda_item(
+                meeting=meeting,
+                content=vd.get("content", ""),
+                order_index=vd.get("order_index", 0),
+                is_priority=vd.get("is_priority", False),
+                actor=self.request.user,
+            )
+            serializer.instance = agenda_item
         except IntegrityError:
             from rest_framework.exceptions import ValidationError
-
             raise ValidationError(
                 {"order_index": ["This order_index is already used for this meeting."]}
             )
 
-        # Notify participants about the new agenda item (dedup-aware, keyed per item).
         actor_id = self.request.user.id
         participant_ids = list(meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True))
         recipients = [uid for uid in participant_ids if uid != actor_id]
@@ -589,21 +748,21 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         agenda_item = serializer.instance
         meeting = agenda_item.meeting
+        vd = serializer.validated_data
 
-        # Fetch original content from database BEFORE save
-        original_values = AgendaItem.objects.filter(pk=agenda_item.pk).values('content').first()
-        old_content = normalize_text(original_values["content"] if original_values else "")
+        old_content = normalize_text(agenda_item.content or "")
 
-        # Save the changes
-        serializer.save()
+        update_agenda_item(
+            item=agenda_item,
+            content=vd.get("content", agenda_item.content),
+            is_priority=vd.get("is_priority", agenda_item.is_priority),
+            actor=self.request.user,
+        )
+
         new_content = normalize_text(agenda_item.content)
-
-        # Only notify if content substantively changed (normalised comparison)
         if old_content == new_content:
             return
 
-        # Upsert notifications for each participant (2-second dedup window prevents
-        # duplicate records when the user makes several rapid edits to the same item).
         actor_id = self.request.user.id
         participant_ids = list(
             meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
@@ -626,13 +785,11 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         meeting = instance.meeting
         removed_content = instance.content
+        item_pk = instance.pk
 
-        # Delete the agenda item
-        instance.delete()
+        delete_agenda_item(item=instance, actor=self.request.user)
 
-        # Notify participants about the deleted agenda item (dedup-aware, keyed per item).
         actor_id = self.request.user.id
-        item_pk = instance.pk  # capture before instance is deleted
         participant_ids = list(
             meeting.participant_links.filter(is_accepted=True).values_list("user_id", flat=True)
         )
@@ -712,11 +869,21 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
-        # Self-addition (organiser adding themselves) auto-accepts; inviting others is pending.
-        # validated_data["user"] is a User object (ForeignKey), so compare via .pk
         invited_user = serializer.validated_data.get("user")
+        role = serializer.validated_data.get("role")
         is_self = bool(invited_user and invited_user.pk == self.request.user.id)
-        link = serializer.save(meeting=meeting, is_accepted=is_self)
+
+        link = add_participant(
+            meeting=meeting,
+            user=invited_user,
+            role=role,
+            actor=self.request.user,
+        )
+
+        if is_self and not link.is_accepted:
+            link.is_accepted = True
+            link.save(update_fields=['is_accepted'])
+
         if link.user_id != self.request.user.id:
             create_notification(
                 recipient_id=link.user_id,
@@ -736,10 +903,16 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
             )
 
     def perform_destroy(self, instance):
-        # Capture data before deletion; get_meeting() already select_related("project").
         meeting = self.get_meeting()
+        user = instance.user
         removed_user_id = instance.user_id
-        instance.delete()
+
+        remove_participant(
+            meeting=meeting,
+            user=user,
+            actor=self.request.user,
+        )
+
         if removed_user_id != self.request.user.id:
             create_notification(
                 recipient_id=removed_user_id,
@@ -755,10 +928,9 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
                     "meeting_title": meeting.title,
                     "project_name": meeting.project.name,
                     "project_id": meeting.project_id,
-                    "revoked_access": True,  # User no longer has access to this meeting
+                    "revoked_access": True,
                 },
             )
-            # Revoke access to all historical meeting notifications
             from notifications.services import revoke_access_to_resource
             revoke_access_to_resource(
                 user_id=removed_user_id,
@@ -901,7 +1073,24 @@ class MeetingActionItemViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         meeting = self.get_meeting()
-        serializer.save(meeting=meeting)
+        vd = serializer.validated_data
+        serializer.instance = create_action_item(
+            meeting=meeting,
+            title=vd.get("title", ""),
+            description=vd.get("description", ""),
+            order_index=vd.get("order_index", 0),
+            actor=self.request.user,
+        )
+
+    def perform_update(self, serializer):
+        vd = serializer.validated_data
+        update_action_item(
+            item=serializer.instance,
+            title=vd.get("title", serializer.instance.title),
+            description=vd.get("description", serializer.instance.description),
+            is_resolved=vd.get("is_resolved", serializer.instance.is_resolved),
+            actor=self.request.user,
+        )
 
     @action(detail=True, methods=["post"], url_path="convert-to-task")
     def convert_to_task(self, request, project_id=None, meeting_id=None, pk=None):
@@ -989,6 +1178,74 @@ class MeetingDocumentAPIView(APIView):
             user_id=request.user.id,
             notify_collaborators=True,
         )
+        from meetings.audit import record_audit_entry
+        record_audit_entry(
+            meeting=meeting,
+            actor=request.user,
+            event_type='meeting.document_edited',
+            context={'char_count_after': len(content)},
+        )
+        if isinstance(yjs_state, str):
+            document.yjs_state = yjs_state
+            document.save(update_fields=['yjs_state'])
         serializer = MeetingDocumentSerializer(document)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class MeetingAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = MeetingAuditLogSerializer
+    pagination_class = AuditLogPagination
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, OrderingFilter]
+    ordering_fields = ['timestamp']
+    ordering = ['-timestamp']
+
+    def get_queryset(self):
+        meeting_id = self.kwargs.get('meeting_id')
+        project_id = self.kwargs.get('project_id')
+
+        # Verify project membership
+        project = get_object_or_404(Project, id=project_id)
+        _ensure_project_membership(self.request.user, project)
+
+        # Get meeting and verify it belongs to project
+        meeting = get_object_or_404(Meeting, id=meeting_id, project=project)
+
+        queryset = MeetingAuditLog.objects.filter(meeting=meeting).select_related('actor')
+
+        # Handle event_type filtering (multi-value with OR logic)
+        event_types = self.request.query_params.getlist('event_type')
+        if event_types:
+            valid_types = [choice[0] for choice in MeetingAuditLog.EVENT_TYPE_CHOICES]
+            for event_type in event_types:
+                if event_type not in valid_types:
+                    raise ValidationError({
+                        'event_type': f'Invalid event type. Must be one of: {", ".join(valid_types)}'
+                    })
+            queryset = queryset.filter(Q(event_type__in=event_types))
+
+        # Handle actor_id filtering
+        actor_id = self.request.query_params.get('actor_id')
+        if actor_id:
+            queryset = queryset.filter(actor_id=actor_id)
+
+        # Handle date range filtering
+        from_date = self.request.query_params.get('from')
+        to_date = self.request.query_params.get('to')
+
+        if from_date:
+            try:
+                from_datetime = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
+                queryset = queryset.filter(timestamp__gte=from_datetime)
+            except ValueError:
+                raise ValidationError({'from': 'Invalid ISO 8601 date format'})
+
+        if to_date:
+            try:
+                to_datetime = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
+                queryset = queryset.filter(timestamp__lte=to_datetime)
+            except ValueError:
+                raise ValidationError({'to': 'Invalid ISO 8601 date format'})
+
+        return queryset
 

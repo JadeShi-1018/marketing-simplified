@@ -7,9 +7,13 @@ COPY requirements.txt .
 
 COPY . .
 
-# Install system dependencies including ffmpeg
+# Install system dependencies for media inspection and comment attachment previews.
 RUN apt-get update && apt-get install -y \
+    fontconfig \
+    fonts-dejavu \
+    libreoffice \
     mediainfo \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir -r requirements.txt
@@ -23,4 +27,4 @@ RUN chown -R appuser:appuser /app
 RUN chmod +x /app/entrypoint
 USER appuser
 
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "backend.asgi:application"] 
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "backend.asgi:application"]

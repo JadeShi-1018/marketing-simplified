@@ -191,4 +191,59 @@ export const authAPI = {
   },
 };
 
+export type CreateDecisionFromMeetingPayload = {
+  title?: string;
+  contextSummary?: string;
+  context_summary?: string;
+};
+
+export type DecisionOriginResponse = {
+  decisionId: number;
+  meeting: {
+    id: number;
+    title: string;
+  };
+  originTimestamp: string;
+  createdBy: number;
+  creationContext: Record<string, unknown>;
+};
+
+export const decisionCaptureAPI = {
+  createDecisionFromMeeting: async (
+    projectId: number | string,
+    meetingId: number | string,
+    payload: CreateDecisionFromMeetingPayload
+  ) => {
+    const response = await api.post(
+      `/api/projects/${projectId}/meetings/${meetingId}/decisions/`,
+      payload
+    );
+    return response.data;
+  },
+
+  getMeetingDecisions: async (
+    projectId: number | string,
+    meetingId: number | string
+  ) => {
+    const response = await api.get(
+      `/api/projects/${projectId}/meetings/${meetingId}/decisions/`
+    );
+    return response.data;
+  },
+
+  getDecisionOrigin: async (
+    decisionId: number | string,
+    projectId?: number | string
+  ): Promise<DecisionOriginResponse> => {
+    const response = await api.get(
+      `/api/decisions/${decisionId}/origin/`,
+      {
+        params: projectId ? { project_id: projectId } : undefined,
+      }
+    );
+    return response.data;
+  },
+};
+
+
 export default api; 
