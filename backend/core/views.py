@@ -288,14 +288,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def perform_create(self, serializer):
-        """Create project and add user as owner."""
+        """Create project and add user as owner.
+
+        If the user has no Organization yet, one is auto-created from their
+        email prefix and they become its admin (via CustomerUser).
+        """
         user = self.request.user
         organization = getattr(user, 'organization', None)
 
         if not organization:
-            raise ValidationError({
-                'organization': 'User must belong to an organization to create projects'
-            })
+            organization = self._auto_create_organization(user)
 
         project = serializer.save(
             organization=organization,
@@ -318,6 +320,46 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ensure_project_calendar(project)
 
         return project
+
+    @staticmethod
+    def _auto_create_organization(user):
+        """Auto-create an Organization for a user who doesn't have one yet."""
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser
+
+        # Derive a readable org name from the email
+        local_part = user.email.split('@')[0]
+        org_name = f"{local_part}'s Organisation"
+
+        # Ensure uniqueness
+        base_name = org_name
+        counter = 1
+        while Organization.objects.filter(name=org_name).exists():
+            counter += 1
+            org_name = f"{base_name} ({counter})"
+
+        organization = Organization.objects.create(name=org_name)
+
+        # Link user to the new organization
+        user.organization = organization
+        user.save(update_fields=['organization'])
+
+        # Also create a CustomerOrganisation so CSM features work
+        cust_org = CustomerOrganisation.objects.create(
+            name=org_name,
+            organization=organization,
+        )
+
+        # Make user the admin (and creator) of the CSM org
+        CustomerUser.objects.create(
+            user=user,
+            organisation=cust_org,
+            user_type='admin',
+            is_active=True,
+            is_creator=True,
+        )
+
+        return organization
 
     def perform_destroy(self, instance):
         """Delete project and soft-delete related calendars."""
