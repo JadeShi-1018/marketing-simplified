@@ -30,6 +30,9 @@ export default function ChatListItem({
   // Use selector for stable reference
   const currentUser = useAuthStore(state => state.user);
   const removeChat = useChatStore(state => state.removeChat);
+  const hasMention = useChatStore(state =>
+    Boolean(state.mentionedChatIds[chat.id]) || (chat.mention_unread_count ?? 0) > 0
+  );
   
   // Get the other participant (not current user) for private chats
   const getOtherParticipant = () => {
@@ -259,6 +262,12 @@ export default function ChatListItem({
                 </p>
                 
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* Mention Badge - shown when current user was @-mentioned */}
+                  {hasMention && (
+                    <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white shadow-sm">
+                      @
+                    </span>
+                  )}
                   {/* Unread Badge - only show when count > 0 */}
                   {(chat.unread_count ?? 0) > 0 && (
                     <span className="bg-[#3CCED7] text-white text-xs font-bold rounded-full min-w-[22px] h-[22px] flex items-center justify-center px-1.5 shadow-sm">

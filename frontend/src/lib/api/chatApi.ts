@@ -14,6 +14,7 @@ import type {
   GetMessagesParams,
   PaginatedResponse,
 } from '@/types/chat';
+import type { TiptapJSONContent } from '@/types/comment';
 
 // ==================== Chat Endpoints ====================
 
@@ -160,12 +161,34 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
     payload.reply_to_id = data.reply_to_id;
   }
 
+  // Include rich_body if present
+  if (data.rich_body != null) {
+    payload.rich_body = data.rich_body;
+  }
+
+  // Include mention_ids if present
+  if (data.mention_ids && data.mention_ids.length > 0) {
+    payload.mention_ids = data.mention_ids;
+  }
+
   const response = await api.post('/api/chat/messages/', payload);
   return response.data;
 };
 
-export const editMessage = async (messageId: number, content: string): Promise<Message> => {
-  const response = await api.patch(`/api/chat/messages/${messageId}/`, { content });
+export const editMessage = async (
+  messageId: number,
+  content: string,
+  richBody?: TiptapJSONContent | null,
+  mentionIds?: number[]
+): Promise<Message> => {
+  const payload: Record<string, any> = { content };
+  if (richBody !== undefined) {
+    payload.rich_body = richBody;
+  }
+  if (mentionIds !== undefined) {
+    payload.mention_ids = mentionIds;
+  }
+  const response = await api.patch(`/api/chat/messages/${messageId}/`, payload);
   return response.data;
 };
 

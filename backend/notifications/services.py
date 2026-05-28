@@ -42,6 +42,7 @@ PREFERENCE_SECTION_KEYS = (
 _EVENT_PREFERENCE_KEY: dict[str, tuple[str, str]] = {
     NotificationEventType.CHAT_NEW_MESSAGE: ("collaboration_assets", "chat_in_app"),
     NotificationEventType.CHAT_NEW_CONVERSATION: ("collaboration_assets", "chat_new_session"),
+    NotificationEventType.CHAT_MENTION: ("collaboration_assets", "chat_in_app"),
     NotificationEventType.MESSAGE_REMINDER: ("collaboration_assets", "message_reminder"),
     NotificationEventType.PROJECT_INVITE: ("collaboration_assets", "project_invite"),
     NotificationEventType.CALENDAR_REMINDER: ("collaboration_assets", "calendar_reminders"),

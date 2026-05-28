@@ -15,7 +15,8 @@ import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useAuthStore } from '@/lib/authStore';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages, { type DrawerChatMessagesHandle } from './DrawerChatMessages';
-import MessageInput from '@/components/chat/MessageInput';
+import ChatComposer from '@/components/chat/ChatComposer';
+import type { RichSendData } from '@/components/chat/ChatComposer';
 import ReminderPickerSheet from '@/components/chat/ReminderPickerSheet';
 import ForwardMessageSheet from '@/components/chat/ForwardMessageSheet';
 
@@ -47,8 +48,7 @@ export default function DrawerChatView({
     isLoading,
     isLoadingMessages,
     error,
-    sendMessage,
-    sendWithAttachments,
+    sendRich,
     isSending,
     highlightMessageId,
     currentUserId,
@@ -315,35 +315,17 @@ export default function DrawerChatView({
     }
   };
 
-  // Handle send message
-  const handleSendMessage = async (content: string) => {
-    const replyToId = quoteMessage?.id ?? null;
-    await sendMessage(content, replyToId);
-    // Clear quote after sending
-    if (quoteMessage) {
-      setQuoteMessage(null);
-    }
-    // Scroll to bottom after sending message
-    setTimeout(() => {
-      messagesRef.current?.scrollToBottom('smooth');
-    }, 100);
-  };
-
-  // Handle send with attachments
-  const handleSendWithAttachments = async (
-    content: string,
-    attachmentIds: number[]
-  ) => {
-    const replyToId = quoteMessage?.id ?? null;
-    await sendWithAttachments(content, attachmentIds, replyToId);
-    // Clear quote after sending
-    if (quoteMessage) {
-      setQuoteMessage(null);
-    }
-    // Scroll to bottom after sending message
-    setTimeout(() => {
-      messagesRef.current?.scrollToBottom('smooth');
-    }, 100);
+  // Handle rich send (from ChatComposer)
+  const handleSendRich = async (data: RichSendData) => {
+    await sendRich(
+      data.content,
+      data.rich_body,
+      data.mention_ids,
+      data.attachment_ids,
+      data.reply_to_id ?? quoteMessage?.id ?? null,
+    );
+    if (quoteMessage) setQuoteMessage(null);
+    setTimeout(() => { messagesRef.current?.scrollToBottom('smooth'); }, 100);
   };
 
   // Error state - no chat ID in notification
@@ -446,14 +428,14 @@ export default function DrawerChatView({
 
       {/* Input area */}
       <div className="flex-shrink-0 border-t border-[#3CCED7]/25 bg-white">
-        <MessageInput
+        <ChatComposer
           variant="drawer"
-          onSend={handleSendMessage}
-          onSendWithAttachments={handleSendWithAttachments}
+          onSendRich={handleSendRich}
           disabled={isSending || isLoading || isSelectMode}
           chatId={chatId}
           onTypingStart={handleTypingStart}
           onTypingStop={handleTypingStop}
+          participants={chat?.participants ?? []}
         />
       </div>
 

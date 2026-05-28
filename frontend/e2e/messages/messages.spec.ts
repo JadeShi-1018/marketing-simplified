@@ -163,8 +163,9 @@ test.describe('Messages and main layout', () => {
 			return;
 		}
 
-		const messageInput = page.getByPlaceholder(/Type a message|Add a message/);
-		await expect(messageInput).toBeVisible({ timeout: 15_000 });
+		// ChatComposer uses a Tiptap contenteditable editor — find it via data-testid.
+		const composerWrapper = page.getByTestId('chat-composer-input');
+		await expect(composerWrapper).toBeVisible({ timeout: 15_000 });
 	});
 
 	test('Send message with mocked chat APIs → message appears in thread', async ({ page }) => {

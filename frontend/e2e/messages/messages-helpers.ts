@@ -302,16 +302,24 @@ export async function openFirstChatIfPresent(page: Page) {
 }
 
 export async function trySendMessage(page: Page, content: string) {
-	const messageInput = page.getByPlaceholder(/Type a message|Add a message/);
-	await expect(messageInput).toBeVisible({ timeout: 10_000 });
-	await messageInput.fill(content);
-	await page.getByRole('button', { name: 'Send message' }).click();
+	// ChatComposer uses a Tiptap contenteditable editor, not a textarea.
+	// Use the data-testid wrapper to find it reliably.
+	const composerWrapper = page.getByTestId('chat-composer-input');
+	await expect(composerWrapper).toBeVisible({ timeout: 10_000 });
+	const messageInput = composerWrapper.locator('[contenteditable]');
+	await messageInput.click();
+	// pressSequentially fires real keyboard events so ProseMirror updates its state.
+	await messageInput.pressSequentially(content, { delay: 10 });
+	// Wait for the Send button to become enabled once ProseMirror detects content.
+	const sendButton = page.getByRole('button', { name: 'Send message' });
+	await expect(sendButton).toBeEnabled({ timeout: 5_000 });
+	await sendButton.click();
 
 	await expect
 		.poll(async () => {
 			const sentVisible = await page.getByText(content, { exact: false }).isVisible().catch(() => false);
-			const inputHasText = await messageInput.inputValue().catch(() => content);
-			return sentVisible || inputHasText.trim().length === 0;
+			const inputText = await messageInput.textContent().catch(() => content);
+			return sentVisible || (inputText ?? '').trim().length === 0;
 		}, { timeout: 15_000 })
 		.toBeTruthy();
 }

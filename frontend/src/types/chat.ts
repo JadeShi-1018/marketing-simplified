@@ -2,6 +2,7 @@
 // Based on OpenAPI spec: /openapi/openapi_spec/chat.yaml
 
 import type { DragEvent, MouseEvent, ReactNode } from 'react';
+import type { TiptapJSONContent } from '@/types/comment';
 
 // ==================== User Types ====================
 
@@ -41,6 +42,7 @@ export interface Chat {
   updated_at: string;
   last_message?: Message | null;
   unread_count?: number;
+  mention_unread_count?: number;
 }
 
 // ==================== Message Types ====================
@@ -66,6 +68,8 @@ export interface MessageAttachment {
   file_size_display: string;
   original_filename: string;
   mime_type: string;
+  /** AI-generated transcript for audio attachments. Null = not yet generated. */
+  transcript?: string | null;
   created_at: string;
 }
 
@@ -125,6 +129,10 @@ export interface Message {
   attachment_count?: number;
   attachments?: MessageAttachment[];
   is_hidden_by_me?: boolean;
+  /** Tiptap JSON document, present when the message was composed with the rich editor. */
+  rich_body?: TiptapJSONContent | null;
+  /** IDs of users @-mentioned in the message. */
+  mentioned_user_ids?: number[];
 }
 
 // ==================== API Request/Response Types ====================
@@ -143,6 +151,10 @@ export interface SendMessageRequest {
   content: string;
   attachment_ids?: number[];
   reply_to_id?: number | null;
+  /** Tiptap JSON for rich messages. */
+  rich_body?: TiptapJSONContent | null;
+  /** IDs of @-mentioned users. */
+  mention_ids?: number[];
 }
 
 export interface SendMessageResponse extends Message {}
@@ -333,6 +345,11 @@ export interface ChatState {
   lastChatActivity: number;
   /** Called by useNotificationSSE when a chat-related event arrives. */
   triggerChatActivity: () => void;
+
+  // Mention badges: chat IDs where the current user has an unread @-mention
+  mentionedChatIds: Record<number, true>;
+  addMentionedChat: (chatId: number) => void;
+  clearMentionedChat: (chatId: number) => void;
 
   // Helpers
   getCurrentChat: () => Chat | undefined;

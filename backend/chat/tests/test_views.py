@@ -9,6 +9,7 @@ from core.models import Project, Organization, Team, TeamMember, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType
 from chat.services import MessageService
 from chat.serializers import MessageSerializer
+from notifications.models import Notification, NotificationEventType
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 User = get_user_model()
@@ -350,6 +351,50 @@ class MessageAPITest(TestCase):
         # Verify message status was created for recipient
         msg_status = MessageStatus.objects.filter(message=message, user=self.user2)
         self.assertEqual(msg_status.count(), 1)
+
+    @patch('chat.tasks.notify_new_message.delay')
+    def test_send_rich_message_with_mention_creates_chat_mention_notification(self, mock_notify):
+        """Sending a rich @mention stores mention data and routes a mention notification."""
+        url = reverse('message-list')
+        rich_body = {
+            'type': 'doc',
+            'content': [
+                {
+                    'type': 'paragraph',
+                    'content': [
+                        {'type': 'text', 'text': 'Hi '},
+                        {
+                            'type': 'mention',
+                            'attrs': {'id': self.user2.id, 'label': self.user2.username},
+                        },
+                    ],
+                }
+            ],
+        }
+        data = {
+            'chat': self.chat.id,
+            'content': '',
+            'rich_body': rich_body,
+            'mention_ids': [self.user2.id],
+        }
+
+        response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['rich_body'], rich_body)
+        self.assertEqual(response.data['content'], 'Hi @user2')
+        self.assertEqual(response.data['mentioned_user_ids'], [self.user2.id])
+
+        message = Message.objects.get(id=response.data['id'])
+        self.assertEqual(message.mentions.get().mentioned_user_id, self.user2.id)
+        mention_notification = Notification.objects.get(
+            recipient=self.user2,
+            event_type=NotificationEventType.CHAT_MENTION,
+        )
+        self.assertEqual(mention_notification.metadata['chat_id'], self.chat.id)
+        self.assertEqual(mention_notification.metadata['message_id'], message.id)
+        self.assertIn(f'messageId={message.id}', mention_notification.action_url)
+        mock_notify.assert_called_once_with(message.id)
     
     def test_send_empty_message_fails(self):
         """Test sending an empty message fails"""

@@ -33,6 +33,7 @@ export const useChatStore = create<ChatState>()(
       unreadCounts: {},
       capturedUnreadCounts: {}, // Snapshot of unread_count at the moment each chat is opened
       typingUsersByChat: {},    // chatId -> userIds currently typing (ephemeral, not persisted)
+      mentionedChatIds: {},     // chatId -> true when current user has unread @-mention
       globalUnreadCount: 0,     // Total unread across ALL projects
       isWidgetOpen: false,
       isMessagePageOpen: false,
@@ -217,6 +218,20 @@ export const useChatStore = create<ChatState>()(
               ...state.capturedUnreadCounts,
               [numericChatId]: capturedCount,
             };
+
+            // Clear mention badge when opening the chat
+            const nextMentionedChatIds = { ...state.mentionedChatIds };
+            delete nextMentionedChatIds[numericChatId];
+            updates.mentionedChatIds = nextMentionedChatIds;
+
+            const nextChatsByProject = { ...state.chatsByProject };
+            Object.keys(nextChatsByProject).forEach(projectIdStr => {
+              const projectId = parseInt(projectIdStr);
+              nextChatsByProject[projectId] = nextChatsByProject[projectId].map(chat =>
+                Number(chat.id) === numericChatId ? { ...chat, mention_unread_count: 0 } : chat
+              );
+            });
+            updates.chatsByProject = nextChatsByProject;
           }
           
           return updates;
@@ -260,6 +275,10 @@ export const useChatStore = create<ChatState>()(
           
           // Should NOT increment if: viewing this chat OR it's our own message
           const shouldIncrementUnread = !isViewingChat && !isOwnMessage;
+          const mentionedCurrentUser =
+            shouldIncrementUnread &&
+            userId !== null &&
+            (message.mentioned_user_ids ?? []).some(id => Number(id) === userId);
           
           const currentUnreadCount = state.unreadCounts[numericChatId] || 0;
           const newUnreadCount = shouldIncrementUnread 
@@ -272,7 +291,14 @@ export const useChatStore = create<ChatState>()(
             const projectId = parseInt(projectIdStr);
             newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
               Number(chat.id) === numericChatId 
-                ? { ...chat, last_message: message, unread_count: newUnreadCount } 
+                ? {
+                    ...chat,
+                    last_message: message,
+                    unread_count: newUnreadCount,
+                    mention_unread_count: mentionedCurrentUser
+                      ? (chat.mention_unread_count ?? 0) + 1
+                      : chat.mention_unread_count,
+                  }
                 : chat
             );
           });
@@ -288,6 +314,9 @@ export const useChatStore = create<ChatState>()(
             },
             chatsByProject: newChatsByProject,
             unreadCounts: newUnreadCounts,
+            ...(mentionedCurrentUser
+              ? { mentionedChatIds: { ...state.mentionedChatIds, [numericChatId]: true } }
+              : {}),
           };
         });
       },
@@ -411,9 +440,20 @@ export const useChatStore = create<ChatState>()(
           Object.keys(newChatsByProject).forEach(projectIdStr => {
             const projectId = parseInt(projectIdStr);
             newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
-              chat.id === chatId ? { ...chat, unread_count: safeCount } : chat
+              chat.id === chatId
+                ? {
+                    ...chat,
+                    unread_count: safeCount,
+                    mention_unread_count: safeCount === 0 ? 0 : chat.mention_unread_count,
+                  }
+                : chat
             );
           });
+
+          const nextMentionedChatIds = { ...state.mentionedChatIds };
+          if (safeCount === 0) {
+            delete nextMentionedChatIds[chatId];
+          }
           
           return {
             unreadCounts: {
@@ -421,6 +461,7 @@ export const useChatStore = create<ChatState>()(
               [chatId]: safeCount,
             },
             chatsByProject: newChatsByProject,
+            mentionedChatIds: nextMentionedChatIds,
           };
         });
       },
@@ -504,6 +545,19 @@ export const useChatStore = create<ChatState>()(
               ...state.capturedUnreadCounts,
               [numericChatId]: capturedCount,
             };
+
+            const nextMentionedChatIds = { ...state.mentionedChatIds };
+            delete nextMentionedChatIds[numericChatId];
+            updates.mentionedChatIds = nextMentionedChatIds;
+
+            const nextChatsByProject = { ...state.chatsByProject };
+            Object.keys(nextChatsByProject).forEach(projectIdStr => {
+              const projectId = parseInt(projectIdStr);
+              nextChatsByProject[projectId] = nextChatsByProject[projectId].map(chat =>
+                Number(chat.id) === numericChatId ? { ...chat, mention_unread_count: 0 } : chat
+              );
+            });
+            updates.chatsByProject = nextChatsByProject;
           }
 
           return updates;
@@ -597,12 +651,32 @@ export const useChatStore = create<ChatState>()(
           capturedUnreadCounts: {},
           globalUnreadCount: 0,
           typingUsersByChat: {},
+          mentionedChatIds: {},
         });
       },
 
       // ── SSE-driven chat activity signal ──────────────────────────────
       lastChatActivity: 0,
       triggerChatActivity: () => set({ lastChatActivity: Date.now() }),
+
+      // ── Mention badges ───────────────────────────────────────────────
+      addMentionedChat: (chatId) =>
+        set((state) => ({
+          mentionedChatIds: { ...state.mentionedChatIds, [chatId]: true },
+        })),
+      clearMentionedChat: (chatId) =>
+        set((state) => {
+          const next = { ...state.mentionedChatIds };
+          delete next[chatId];
+          const newChatsByProject = { ...state.chatsByProject };
+          Object.keys(newChatsByProject).forEach(projectIdStr => {
+            const projectId = parseInt(projectIdStr);
+            newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
+              Number(chat.id) === Number(chatId) ? { ...chat, mention_unread_count: 0 } : chat
+            );
+          });
+          return { mentionedChatIds: next, chatsByProject: newChatsByProject };
+        }),
     }),
     {
       name: 'chat-storage',

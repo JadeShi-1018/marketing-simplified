@@ -8,11 +8,56 @@ from django.db import transaction
 from django.db.models import Q, Prefetch, Max
 from django.core.cache import cache
 from django.utils import timezone
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType
 from core.models import ProjectMember
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+def extract_message_plain_text(rich_body) -> str:
+    """Extract searchable plain text from a Tiptap JSON document."""
+    if rich_body is None:
+        return ""
+    if isinstance(rich_body, str):
+        return rich_body.strip()
+    parts = []
+
+    def visit(value):
+        if isinstance(value, dict):
+            # mention nodes render as @username
+            if value.get("type") == "mention":
+                attrs = value.get("attrs") or {}
+                label = attrs.get("label") or attrs.get("id") or ""
+                if label:
+                    parts.append(f"@{label}")
+                return
+            text = value.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+            for child in value.get("content", []):
+                visit(child)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(rich_body)
+    return " ".join(p.strip() for p in parts if p and p.strip())
+
+
+def sync_message_mentions(message: Message, mention_ids: list[int]) -> None:
+    """Sync MessageMention rows for an edited message and return new mention user ids."""
+    existing = set(message.mentions.values_list('mentioned_user_id', flat=True))
+    new_ids = set(mention_ids) - existing
+    removed_ids = existing - set(mention_ids)
+    if removed_ids:
+        message.mentions.filter(mentioned_user_id__in=removed_ids).delete()
+    if new_ids:
+        MessageMention.objects.bulk_create(
+            [MessageMention(message=message, mentioned_user_id=uid) for uid in new_ids],
+            ignore_conflicts=True,
+        )
+    return list(new_ids)
 
 
 class OnlineStatusService:

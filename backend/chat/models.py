@@ -209,6 +209,19 @@ class ChatParticipant(TimeStampedModel):
             is_revoked=False
         ).exclude(sender=self.user).count()
 
+    def get_unread_mention_count(self):
+        """Get count of unread messages where this participant was @-mentioned."""
+        query = self.chat.messages.filter(
+            mentions__mentioned_user=self.user,
+            is_deleted=False,
+            is_revoked=False,
+        ).exclude(sender=self.user)
+
+        if self.last_read_at:
+            query = query.filter(created_at__gt=self.last_read_at)
+
+        return query.distinct().count()
+
 
 class AttachmentType:
     """Attachment type constants"""
@@ -283,6 +296,11 @@ class Message(TimeStampedModel):
         null=True,
         blank=True,
         help_text="Snapshot of original message creation time at forward time"
+    )
+    rich_body = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Tiptap JSON document for rich rendering. content holds the searchable plain-text copy."
     )
     is_edited = models.BooleanField(default=False, help_text="True after content has been edited")
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag")
@@ -402,6 +420,32 @@ class MessageStatus(TimeStampedModel):
             self.save(update_fields=['status', 'delivered_at', 'read_at', 'updated_at'])
 
 
+class MessageMention(TimeStampedModel):
+    """
+    Structured mention relation for chat messages.
+    Enables mention notifications, search, and unread badge logic.
+    """
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='mentions',
+    )
+    mentioned_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='chat_mentions',
+    )
+
+    class Meta:
+        unique_together = ['message', 'mentioned_user']
+        indexes = [
+            models.Index(fields=['mentioned_user', 'created_at'], name='chat_mention_user_idx'),
+        ]
+
+    def __str__(self):
+        return f"Mention {self.mentioned_user_id} in message {self.message_id}"
+
+
 class MessageReaction(TimeStampedModel):
     """
     Emoji reactions on messages.
@@ -494,6 +538,13 @@ class MessageAttachment(TimeStampedModel):
         default='',
         help_text="MIME type of the file"
     )
+    # AI-generated transcript for audio clips
+    transcript = models.TextField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text="AI-generated transcript for audio attachments"
+    )
     # Optional thumbnail for images/videos
     thumbnail = models.ImageField(
         upload_to='chat/thumbnails/',
@@ -576,6 +627,11 @@ class MessageAttachment(TimeStampedModel):
                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                 'application/vnd.ms-powerpoint',
                 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                'audio/mp4',
+                'audio/mpeg',
+                'audio/ogg',
+                'audio/wav',
+                'audio/webm',
                 'text/plain',
                 'text/csv',
             ],

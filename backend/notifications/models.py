@@ -38,6 +38,7 @@ class NotificationEventType(models.TextChoices):
     TASK_DEADLINE_SOON = "task_deadline_soon", "Deadline approaching"
     TASK_OVERDUE = "task_overdue", "Task overdue"
     TASK_COMMENT_MENTION = "task_comment_mention", "Mentioned in comment"
+    CHAT_MENTION = "chat_mention", "Mentioned in chat"
     TASK_ANOMALY = "task_anomaly", "Task anomaly alert"
     # Decisions
     DECISION_REVIEW_NEEDED = "decision_review_needed", "Decision needs review"
@@ -58,6 +59,7 @@ class NotificationEventType(models.TextChoices):
 MENTION_TAB_EVENT_TYPES = frozenset(
     {
         NotificationEventType.TASK_COMMENT_MENTION,
+        NotificationEventType.CHAT_MENTION,
     }
 )
 

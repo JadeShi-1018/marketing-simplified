@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageStatus, ChatType, MessageAttachment, MessageReaction
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageMention, MessageStatus, ChatType, MessageAttachment, MessageReaction
 from core.models import ProjectMember
 
 User = get_user_model()
@@ -17,23 +17,35 @@ logger = logging.getLogger(__name__)
 
 class ChatUnreadCountMixin:
     """Mixin providing get_unread_count for Chat serializers"""
-    
-    def get_unread_count(self, obj):
-        """Get unread message count for current user using model method"""
+
+    def _get_current_participant(self, obj):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
-            return 0
-        
+            return None
+
         try:
-            participant = ChatParticipant.objects.get(
+            return ChatParticipant.objects.get(
                 chat=obj,
                 user=request.user,
                 is_active=True
             )
-            # Delegate to model method (single source of truth)
-            return participant.get_unread_count()
         except ChatParticipant.DoesNotExist:
+            return None
+
+    def get_unread_count(self, obj):
+        """Get unread message count for current user using model method"""
+        participant = self._get_current_participant(obj)
+        if not participant:
             return 0
+        # Delegate to model method (single source of truth)
+        return participant.get_unread_count()
+
+    def get_mention_unread_count(self, obj):
+        """Get unread @-mention count for current user in this chat."""
+        participant = self._get_current_participant(obj)
+        if not participant:
+            return 0
+        return participant.get_unread_mention_count()
 
 
 class MessageContentValidationMixin:
@@ -145,17 +157,21 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     reactions = serializers.SerializerMethodField()
     can_revoke = serializers.SerializerMethodField()
     is_hidden_by_me = serializers.SerializerMethodField()
+    mentioned_user_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = Message
         fields = [
-            'id', 'chat', 'sender', 'content', 'status', 'statuses',
+            'id', 'chat', 'sender', 'content', 'rich_body', 'status', 'statuses',
             'created_at', 'updated_at', 'is_edited', 'is_deleted', 'is_revoked', 'revoked_at',
             'has_attachments', 'attachment_count',
             'is_forwarded', 'forwarded_from', 'reply_to', 'reactions', 'can_revoke',
-            'is_hidden_by_me'
+            'is_hidden_by_me', 'mentioned_user_ids',
         ]
         read_only_fields = ['id', 'sender', 'created_at', 'updated_at']
+
+    def get_mentioned_user_ids(self, obj):
+        return list(obj.mentions.values_list('mentioned_user_id', flat=True))
     
     def get_status(self, obj):
         """Get message status for the current user"""
@@ -310,12 +326,13 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     participants = ChatParticipantSerializer(many=True, read_only=True)
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
+    mention_unread_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Chat
         fields = [
             'id', 'project', 'type', 'name', 
-            'participants', 'last_message', 'unread_count',
+            'participants', 'last_message', 'unread_count', 'mention_unread_count',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -340,13 +357,14 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     last_message_time = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
+    mention_unread_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Chat
         fields = [
             'id', 'project', 'type', 'name',
             'participants', 'participant_count', 'last_message', 
-            'last_message_time', 'unread_count',
+            'last_message_time', 'unread_count', 'mention_unread_count',
             'updated_at'
         ]
     
@@ -665,10 +683,10 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
         model = MessageAttachment
         fields = [
             'id', 'message', 'file_type', 'file_url', 'thumbnail_url',
-            'file_size', 'file_size_display', 'original_filename', 
-            'mime_type', 'created_at'
+            'file_size', 'file_size_display', 'original_filename',
+            'mime_type', 'transcript', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'transcript', 'created_at']
     
     def get_file_url(self, obj):
         """Return the full URL for the file"""
@@ -831,32 +849,73 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         allow_null=True,
         help_text="ID of the message being replied to (quote reply)"
     )
+    rich_body = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text="Tiptap JSON document. When provided, content is derived automatically."
+    )
+    mention_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        write_only=True,
+        default=list,
+        help_text="User IDs mentioned in this message."
+    )
     attachments = MessageAttachmentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Message
-        fields = ['id', 'chat', 'content', 'attachment_ids', 'reply_to_id', 'attachments', 'created_at']
+        fields = ['id', 'chat', 'content', 'rich_body', 'mention_ids', 'attachment_ids', 'reply_to_id', 'attachments', 'created_at']
         read_only_fields = ['id', 'attachments', 'created_at']
-    
+
     def validate_content(self, value):
-        """Allow empty content if attachments are provided"""
-        # Content validation will be done in validate() method
+        """Allow empty content if attachments or rich_body are provided"""
         return value.strip() if value else ''
-    
+
     def validate(self, data):
-        """Validate that either content or attachments are provided"""
+        """Validate that either content, rich_body, or attachments are provided.
+        If rich_body is present without content, derive plain text automatically."""
+        from .services import extract_message_plain_text
+
+        rich_body = data.get('rich_body')
         content = data.get('content', '')
         attachment_ids = data.get('attachment_ids', [])
-        
+
+        # Derive plain text from rich_body when content not explicitly supplied
+        if rich_body and not content:
+            data['content'] = extract_message_plain_text(rich_body)
+            content = data['content']
+
         if not content and not attachment_ids:
             raise serializers.ValidationError(
-                "Either content or attachments must be provided"
+                "Either content, rich_body, or attachments must be provided"
             )
-        
+
+        mention_ids = data.get('mention_ids') or []
+        if mention_ids:
+            if len(mention_ids) != len(set(mention_ids)):
+                raise serializers.ValidationError({
+                    'mention_ids': 'Duplicate mentioned users are not allowed.'
+                })
+
+            chat = data.get('chat')
+            valid_ids = set(
+                ChatParticipant.objects.filter(
+                    chat=chat,
+                    is_active=True,
+                    user_id__in=mention_ids,
+                ).values_list('user_id', flat=True)
+            )
+            invalid_ids = sorted(set(mention_ids) - valid_ids)
+            if invalid_ids:
+                raise serializers.ValidationError({
+                    'mention_ids': 'Mentioned users must be active participants in this chat.'
+                })
+
         return data
-    
+
     def validate_reply_to_id(self, value):
-        """Validate reply_to message exists and is in the same chat"""
+        """Validate reply_to message exists"""
         if value is None:
             return None
         try:
@@ -876,7 +935,15 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
             validated_data['reply_to_id'] = reply_to_id
 
         attachment_ids = validated_data.pop('attachment_ids', [])
+        mention_ids = validated_data.pop('mention_ids', [])
         message = super().create(validated_data)
+
+        # Persist mention relations
+        if mention_ids:
+            MessageMention.objects.bulk_create(
+                [MessageMention(message=message, mentioned_user_id=uid) for uid in mention_ids],
+                ignore_conflicts=True,
+            )
         
         # Link attachments to the message
         if attachment_ids:

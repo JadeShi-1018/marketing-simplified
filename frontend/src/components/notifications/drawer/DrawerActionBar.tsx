@@ -65,6 +65,7 @@ function getActionType(notification: NotificationItem): ActionType {
   if (
     et === "chat_new_message" ||
     et === "chat_new_conversation" ||
+    et === "chat_mention" ||
     et === "task_comment_mention"
   ) {
     return "quick_reply";

@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIRequestFactory
 from core.models import Project, Organization
-from chat.models import Chat, ChatParticipant, Message, MessageAttachment, ChatType
+from chat.models import Chat, ChatParticipant, Message, MessageAttachment, MessageMention, ChatType
 from chat.serializers import (
     MessageAttachmentSerializer,
     AttachmentUploadSerializer,
@@ -197,6 +197,28 @@ class AttachmentUploadSerializerTest(TestCase):
         
         self.assertEqual(attachment.file_type, 'video')
 
+    def test_upload_audio_recording(self):
+        """Test uploading a browser-recorded audio attachment."""
+        audio_file = SimpleUploadedFile(
+            'audio-recording.webm',
+            b'audio content',
+            content_type='audio/webm'
+        )
+
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = AttachmentUploadSerializer(
+            data={'file': audio_file},
+            context={'request': request}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        attachment = serializer.save()
+
+        self.assertEqual(attachment.file_type, 'document')
+        self.assertEqual(attachment.mime_type, 'audio/webm')
+
 
 class MessageWithAttachmentsSerializerTest(TestCase):
     """Test cases for MessageWithAttachmentsSerializer"""
@@ -295,12 +317,23 @@ class MessageCreateWithAttachmentsSerializerTest(TestCase):
             username='testuser',
             password='testpass123'
         )
+        self.mentioned_user = User.objects.create_user(
+            email='mentioned@example.com',
+            username='mentioned',
+            password='testpass123'
+        )
+        self.unrelated_user = User.objects.create_user(
+            email='unrelated@example.com',
+            username='unrelated',
+            password='testpass123'
+        )
         
         self.chat = Chat.objects.create(
             project=self.project,
             type=ChatType.PRIVATE
         )
         ChatParticipant.objects.create(chat=self.chat, user=self.user, is_active=True)
+        ChatParticipant.objects.create(chat=self.chat, user=self.mentioned_user, is_active=True)
         
         # Create unlinked attachment
         self.unlinked_attachment = MessageAttachment.objects.create(
@@ -333,6 +366,68 @@ class MessageCreateWithAttachmentsSerializerTest(TestCase):
         
         self.assertEqual(message.content, 'Test message content')
         self.assertEqual(message.sender, self.user)
+
+    def test_create_rich_message_derives_plain_text_and_mentions(self):
+        """Rich messages store Tiptap JSON plus searchable plain text and mention rows."""
+        request = self.factory.post('/')
+        request.user = self.user
+        rich_body = {
+            'type': 'doc',
+            'content': [
+                {
+                    'type': 'paragraph',
+                    'content': [
+                        {'type': 'text', 'text': 'Hello '},
+                        {
+                            'type': 'mention',
+                            'attrs': {
+                                'id': self.mentioned_user.id,
+                                'label': self.mentioned_user.username,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': '',
+                'rich_body': rich_body,
+                'mention_ids': [self.mentioned_user.id],
+            },
+            context={'request': request}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        message = serializer.save()
+
+        self.assertEqual(message.rich_body, rich_body)
+        self.assertEqual(message.content, 'Hello @mentioned')
+        self.assertTrue(
+            MessageMention.objects.filter(
+                message=message,
+                mentioned_user=self.mentioned_user,
+            ).exists()
+        )
+
+    def test_mentions_must_be_active_chat_participants(self):
+        """Mention ids are limited to users who can see the chat."""
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': 'Hello @unrelated',
+                'mention_ids': [self.unrelated_user.id],
+            },
+            context={'request': request}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('mention_ids', serializer.errors)
     
     def test_create_message_with_attachments(self):
         """Test creating a message with attachments"""

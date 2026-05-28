@@ -143,6 +143,9 @@ export default function MessageList({
   const firstUnreadMessageIdRef = useRef(firstUnreadMessageId);
   firstUnreadMessageIdRef.current = firstUnreadMessageId;
   const previousCountRef = useRef(messages.length);
+  // stickyBottomRef: when true, size/content changes scroll to the real bottom.
+  // This handles initial scroll, chat switches, and composer height changes.
+  const stickyBottomRef = useRef(true);
 
   // ── Group messages by date ───────────────────────────────────────────────────
   const messageGroups = useMemo(() => {
@@ -177,6 +180,7 @@ export default function MessageList({
   // ── Scroll helpers ───────────────────────────────────────────────────────────
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'instant') => {
     if (!scrollRef.current) return;
+    stickyBottomRef.current = true;
     scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior });
   }, []);
 
@@ -281,9 +285,28 @@ export default function MessageList({
     };
   }, []);
 
-  // stickyBottomRef: when true, every size/content change scrolls to the real bottom.
-  // This handles both the initial scroll and chat-switch correction in one place.
-  const stickyBottomRef = useRef(true);
+  // Keep the newest messages anchored when the composer changes height
+  // (for example, Slack-style Aa toolbar show/hide).
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    if (!container || typeof ResizeObserver === 'undefined') return;
+
+    let frame: number | null = null;
+    const observer = new ResizeObserver(() => {
+      if (!stickyBottomRef.current && !isAtBottom) return;
+      if (isRestoringPrependRef.current || isLoadingMoreRef.current) return;
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
+      });
+    });
+
+    observer.observe(container);
+    return () => {
+      observer.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [isAtBottom]);
 
   // ── Detect chat switch / initial load ───────────────────────────────────────
   useLayoutEffect(() => {

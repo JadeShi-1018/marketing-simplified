@@ -591,6 +591,33 @@ class MessageViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 logger.exception(f"Failed to create in-app notifications for message {message.id}: {e}")
 
+            # Fire mention notifications for users @mentioned in this message
+            try:
+                from notifications.services import create_notification
+                from notifications.models import NotificationCategory, NotificationEventType
+                for mention in message.mentions.select_related('mentioned_user').all():
+                    if mention.mentioned_user_id == request.user.id:
+                        continue  # never self-notify
+                    create_notification(
+                        recipient_id=mention.mentioned_user_id,
+                        actor_id=request.user.id,
+                        category=NotificationCategory.COLLABORATION,
+                        event_type=NotificationEventType.CHAT_MENTION,
+                        title=f"{request.user.username or request.user.email} mentioned you",
+                        body=message.content[:200] or "",
+                        related_object_type="chat",
+                        related_object_id=message.chat_id,
+                        action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&messageId={message.id}",
+                        metadata={
+                            "chat_id": message.chat_id,
+                            "message_id": message.id,
+                            "project_id": message.chat.project_id,
+                            "message_preview": message.content[:200] or "",
+                        },
+                    )
+            except Exception as e:
+                logger.exception(f"Failed to create mention notifications for message {message.id}: {e}")
+
             # Trigger async notification task (for WebSocket delivery)
             notify_new_message.delay(message.id)
 
@@ -609,12 +636,53 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     def partial_update(self, request, *args, **kwargs):
+        from .services import extract_message_plain_text, sync_message_mentions
         message = self.get_object()
         if message.sender != request.user:
             return Response({'error': 'You can only edit your own messages'}, status=status.HTTP_403_FORBIDDEN)
-        serializer = self.get_serializer(message, data=request.data, partial=True)
+
+        data = request.data.copy()
+
+        # If rich_body supplied, re-derive plain content automatically
+        rich_body = data.get('rich_body')
+        if rich_body and not data.get('content'):
+            data['content'] = extract_message_plain_text(rich_body)
+
+        normalized_mention_ids = None
+        if 'mention_ids' in request.data:
+            mention_ids = request.data.get('mention_ids', [])
+            if not isinstance(mention_ids, list):
+                return Response(
+                    {'mention_ids': 'Mentioned users must be sent as a list.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            normalized_mention_ids = [int(uid) for uid in mention_ids]
+            if len(normalized_mention_ids) != len(set(normalized_mention_ids)):
+                return Response(
+                    {'mention_ids': 'Duplicate mentioned users are not allowed.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            valid_ids = set(
+                ChatParticipant.objects.filter(
+                    chat=message.chat,
+                    is_active=True,
+                    user_id__in=normalized_mention_ids,
+                ).values_list('user_id', flat=True)
+            )
+            if set(normalized_mention_ids) - valid_ids:
+                return Response(
+                    {'mention_ids': 'Mentioned users must be active participants in this chat.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        serializer = self.get_serializer(message, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save(is_edited=True)
+
+        # Sync mentions only when the edit request intentionally supplies them.
+        if normalized_mention_ids is not None:
+            sync_message_mentions(message, normalized_mention_ids)
+
         return Response(serializer.data)
 
     def retrieve(self, request, *args, **kwargs):
@@ -1205,6 +1273,82 @@ class AttachmentViewSet(viewsets.GenericViewSet):
             return Response(
                 {'error': 'Attachment not found or already linked to a message'},
                 status=status.HTTP_404_NOT_FOUND
+            )
+
+    @action(detail=True, methods=['post'], url_path='transcribe')
+    def transcribe(self, request, pk=None):
+        """
+        Generate (or return a cached) transcript for an audio attachment.
+
+        POST /api/chat/attachments/{id}/transcribe/
+
+        Returns:
+            { "transcript": "<text>" }
+
+        The transcript is generated once and stored on the attachment.
+        Subsequent calls return the cached value instantly.
+        """
+        # --- access check --------------------------------------------------
+        try:
+            attachment = MessageAttachment.objects.get(id=pk)
+        except MessageAttachment.DoesNotExist:
+            return Response({'error': 'Attachment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # The requester must be the uploader OR a participant in the chat.
+        if attachment.uploader != request.user:
+            if attachment.message:
+                is_participant = ChatParticipant.objects.filter(
+                    chat=attachment.message.chat,
+                    user=request.user,
+                    is_active=True,
+                ).exists()
+                if not is_participant:
+                    return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+            else:
+                return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        # --- serve cached transcript ----------------------------------------
+        if attachment.transcript is not None:
+            return Response({'transcript': attachment.transcript})
+
+        # --- validate it's audio -------------------------------------------
+        mime = (attachment.mime_type or '').lower()
+        if not mime.startswith('audio/'):
+            return Response(
+                {'error': 'Transcription is only supported for audio attachments'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- generate transcript -------------------------------------------
+        try:
+            from agent.gemini_client import transcribe_audio
+
+            audio_bytes = attachment.file.read()
+            transcript = transcribe_audio(audio_bytes, mime_type=mime)
+
+            # Persist so we never re-generate for the same clip.
+            attachment.transcript = transcript
+            attachment.save(update_fields=['transcript'])
+
+            logger.info(
+                "Transcribed attachment %s (%d bytes) → %d chars",
+                pk,
+                len(audio_bytes),
+                len(transcript),
+            )
+            return Response({'transcript': transcript})
+
+        except RuntimeError as exc:
+            logger.warning("Transcription failed for attachment %s: %s", pk, exc)
+            return Response(
+                {'error': str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception as exc:
+            logger.exception("Unexpected error transcribing attachment %s", pk)
+            return Response(
+                {'error': 'Transcription failed. Please try again.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
     @action(detail=False, methods=['get'], url_path='files')

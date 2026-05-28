@@ -11,7 +11,8 @@ import { useChatStore } from '@/lib/chatStore';
 import { editMessage, deleteMessage, addReaction, removeReaction } from '@/lib/api/chatApi';
 import type { Chat, Message } from '@/types/chat';
 import MessageList from './MessageList';
-import MessageInput from './MessageInput';
+import ChatComposer from './ChatComposer';
+import type { RichSendData } from './ChatComposer';
 import ForwardMessagesDialog from './ForwardMessagesDialog';
 import TypingIndicator from './TypingIndicator';
 
@@ -93,8 +94,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     isLoadingMoreMessages,
     isSending,
     hasMore,
-    send,
-    sendWithAttachments,
+    sendRich,
     loadMoreMessages,
     markAllAsRead,
   } = useMessageData({ chatId: chat.id, autoFetch: true });
@@ -265,12 +265,22 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const handleEditMessage = async (messageId: number, newContent: string) => {
     const { updateMessage } = useChatStore.getState();
     const original = messages.find((m) => m.id === messageId);
-    updateMessage(messageId, { content: newContent, is_edited: true });
+    updateMessage(messageId, { content: newContent, rich_body: null, mentioned_user_ids: [], is_edited: true });
     try {
-      const updated = await editMessage(messageId, newContent);
-      updateMessage(messageId, { content: updated.content, is_edited: updated.is_edited ?? true });
+      const updated = await editMessage(messageId, newContent, null, []);
+      updateMessage(messageId, {
+        content: updated.content,
+        rich_body: updated.rich_body ?? null,
+        mentioned_user_ids: updated.mentioned_user_ids ?? [],
+        is_edited: updated.is_edited ?? true,
+      });
     } catch {
-      updateMessage(messageId, { content: original?.content ?? newContent, is_edited: original?.is_edited ?? false });
+      updateMessage(messageId, {
+        content: original?.content ?? newContent,
+        rich_body: original?.rich_body ?? null,
+        mentioned_user_ids: original?.mentioned_user_ids ?? [],
+        is_edited: original?.is_edited ?? false,
+      });
     }
   };
 
@@ -320,13 +330,14 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setIsForwardDialogOpen(true);
   }, []);
 
-  const handleSendMessage = async (content: string) => {
-    await send(content, replyingTo?.id);
-    setReplyingTo(null);
-  };
-
-  const handleSendWithAttachments = async (content: string, attachmentIds: number[]) => {
-    await sendWithAttachments(content, attachmentIds, replyingTo?.id);
+  const handleSendRich = async (data: RichSendData) => {
+    await sendRich(
+      data.content,
+      data.rich_body,
+      data.mention_ids,
+      data.attachment_ids,
+      data.reply_to_id,
+    );
     setReplyingTo(null);
   };
 
@@ -492,17 +503,17 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       {/* Typing indicator */}
       <TypingIndicator chat={chat} currentUserId={currentUserId} />
 
-      {/* Message Input */}
+      {/* Message Composer */}
       <div className="flex-shrink-0">
-        <MessageInput
-          onSend={handleSendMessage}
-          onSendWithAttachments={handleSendWithAttachments}
+        <ChatComposer
+          onSendRich={handleSendRich}
           disabled={isSending || isSelectMode || isForwarding}
           chatId={chat.id}
           onTypingStart={handleTypingStart}
           onTypingStop={handleTypingStop}
           replyingTo={replyingTo}
           onClearReply={() => setReplyingTo(null)}
+          participants={chat.participants}
         />
       </div>
 

@@ -2,6 +2,7 @@
 export const NOTIFICATION_EVENT = {
   CHAT_NEW_MESSAGE: "chat_new_message",
   CHAT_NEW_CONVERSATION: "chat_new_conversation",
+  CHAT_MENTION: "chat_mention",
   DOC_ASSET_UPDATE: "doc_asset_update",
 } as const;
 

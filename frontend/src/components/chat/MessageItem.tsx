@@ -12,6 +12,7 @@ import TaskSharePreview from './TaskSharePreview';
 import ReactionsDisplay from './ReactionsDisplay';
 import MessageHoverActions from './MessageHoverActions';
 import { extractUrls } from '@/lib/api/linkPreviewApi';
+import ChatRichTextRenderer from './ChatRichTextRenderer';
 
 const AGENT_BOT_EMAIL = 'agent-bot@system.local';
 const AGENT_BOT_USERNAME = 'agent-bot';
@@ -339,12 +340,21 @@ export default function MessageItem({
           ) : (
             <>
               {hasContent && (
-                <p className="whitespace-pre-wrap text-sm text-gray-900 [overflow-wrap:anywhere]">
-                  {messageContent}
-                  {message.is_edited && (
-                    <span className="ml-1 text-[10px] text-gray-400">(edited)</span>
-                  )}
-                </p>
+                message.rich_body ? (
+                  <div className="[overflow-wrap:anywhere]">
+                    <ChatRichTextRenderer body={message.rich_body} />
+                    {message.is_edited && (
+                      <span className="text-[10px] text-gray-400">(edited)</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-wrap text-sm text-gray-900 [overflow-wrap:anywhere]">
+                    {messageContent}
+                    {message.is_edited && (
+                      <span className="ml-1 text-[10px] text-gray-400">(edited)</span>
+                    )}
+                  </p>
+                )
               )}
 
               {showTaskPreview && taskPreviewId ? (
