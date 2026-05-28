@@ -109,5 +109,9 @@ def execute_transition(meeting: Meeting, to_state: str) -> Meeting:
         validator(meeting)
 
     meeting.status = to_state
-    meeting.save(update_fields=["status"])
+    fields_to_update = ["status"]
+    if to_state == Meeting.STATUS_ARCHIVED:
+        meeting.is_archived = True
+        fields_to_update.append("is_archived")
+    meeting.save(update_fields=fields_to_update)
     return meeting

@@ -107,6 +107,34 @@ def _ensure_meeting_document_access(user, meeting: Meeting) -> None:
     raise PermissionDenied("You do not have access to this meeting document.")
 
 
+def _assert_meeting_not_archived(meeting: Meeting) -> None:
+    if meeting.status == Meeting.STATUS_ARCHIVED:
+        raise PermissionDenied("Archived meetings are read-only.")
+
+
+class ArchivedMeetingGuardMixin:
+    """Blocks all write operations (create/update/partial_update/destroy) if the meeting is archived."""
+
+    def _check_not_archived(self):
+        _assert_meeting_not_archived(self.get_meeting())
+
+    def create(self, request, *args, **kwargs):
+        self._check_not_archived()
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        self._check_not_archived()
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        self._check_not_archived()
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        self._check_not_archived()
+        return super().destroy(request, *args, **kwargs)
+
+
 class AuditLogPagination(PageNumberPagination):
     page_size = 50
     page_size_query_param = 'page_size'
@@ -352,6 +380,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         meeting = serializer.instance
+        _assert_meeting_not_archived(meeting)
         project = meeting.project
 
         # Capture before state from DB for notification diffing
@@ -611,6 +640,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         tasks keep immutable lineage via Task.origin_action_item (PROTECT).
         Return a clear API error instead of a 500.
         """
+        _assert_meeting_not_archived(self.get_object())
         try:
             return super().destroy(request, *args, **kwargs)
         except ProtectedError:
@@ -691,7 +721,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
         )
 
 
-class AgendaItemViewSet(viewsets.ModelViewSet):
+class AgendaItemViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
     serializer_class = AgendaItemSerializer
     permission_classes = [IsAuthenticated]
 
@@ -811,6 +841,7 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["patch"], url_path="reorder")
     def reorder(self, request, project_id=None, meeting_id=None):
         meeting = self.get_meeting()
+        _assert_meeting_not_archived(meeting)
         items = request.data.get("items", [])
         if not isinstance(items, list):
             return Response(
@@ -842,7 +873,7 @@ class AgendaItemViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class ParticipantLinkViewSet(viewsets.ModelViewSet):
+class ParticipantLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
     serializer_class = ParticipantLinkSerializer
     permission_classes = [IsAuthenticated]
 
@@ -939,7 +970,7 @@ class ParticipantLinkViewSet(viewsets.ModelViewSet):
             )
 
 
-class ArtifactLinkViewSet(viewsets.ModelViewSet):
+class ArtifactLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
     serializer_class = ArtifactLinkSerializer
     permission_classes = [IsAuthenticated]
 
@@ -1047,7 +1078,7 @@ class ArtifactLinkViewSet(viewsets.ModelViewSet):
             )
 
 
-class MeetingActionItemViewSet(viewsets.ModelViewSet):
+class MeetingActionItemViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
     """
     Meeting follow-up action items and conversion to executable tasks (SMP-489).
     """
@@ -1098,6 +1129,7 @@ class MeetingActionItemViewSet(viewsets.ModelViewSet):
         from task.serializers import TaskSerializer
 
         meeting = self.get_meeting()
+        _assert_meeting_not_archived(meeting)
         action_item = get_object_or_404(
             MeetingActionItem,
             pk=pk,
@@ -1128,6 +1160,7 @@ class MeetingActionItemViewSet(viewsets.ModelViewSet):
         from task.serializers import TaskSerializer
 
         meeting = self.get_meeting()
+        _assert_meeting_not_archived(meeting)
         sz = BulkActionItemConvertSerializer(data=request.data)
         sz.is_valid(raise_exception=True)
         items = [dict(x) for x in sz.validated_data["items"]]
@@ -1165,6 +1198,7 @@ class MeetingDocumentAPIView(APIView):
 
     def patch(self, request, project_id: int, meeting_id: int):
         meeting = self._get_meeting(project_id, meeting_id)
+        _assert_meeting_not_archived(meeting)
         content = request.data.get("content")
         if not isinstance(content, str):
             raise ValidationError({"content": ["This field is required and must be a string."]})
