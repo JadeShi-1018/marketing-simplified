@@ -1,45 +1,43 @@
 from rest_framework import viewsets, status
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from core.permissions import IsProjectMember
+from core.admin_permissions import IsCsmAccessAllowed
 from core.viewset_mixins import ProjectScopedViewSetMixin
 
 from .models import Customer, Region, CustomerOrganisation
-from .serializers import CustomerSerializer, RegionSerializer,CustomerOrganisationSerializer
+from .serializers import CustomerSerializer, RegionSerializer, CustomerOrganisationSerializer
 
 
-class RegionViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+class RegionViewSet(viewsets.ModelViewSet):
     queryset = Region.objects.all()
     serializer_class = RegionSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
-
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.action in ('list', 'create'):
-            context['project_id'] = self.get_required_project_id()
-        return context
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
 
     def get_queryset(self):
-        if self.action == 'list':
-            project_id = self.get_required_project_id()
-            return Region.objects.filter(project_id=project_id)
-        return self.filter_by_accessible_projects(Region.objects.all())
+        from core.admin_utils import get_csm_admin_org_ids
+        user = self.request.user
+        qs = Region.objects.all()
+
+        org_id = self.request.query_params.get('organisation')
+        if org_id:
+            qs = qs.filter(organisation_id=org_id)
+
+        admin_org_ids = get_csm_admin_org_ids(user)
+        return qs.filter(organisation_id__in=admin_org_ids)
 
     def perform_create(self, serializer):
-        project_id = self.get_required_project_id()
-        serializer.save(project_id=project_id)
+        serializer.save()
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
         customer_count = instance.customers.count()
-        org_count = instance.organisations.count()
-        if customer_count > 0 or org_count > 0:
+        if customer_count > 0:
             return Response(
                 {
                     'detail': (
-                        f'Cannot delete: {customer_count} customer(s) and '
-                        f'{org_count} organisation(s) are using this region. '
+                        f'Cannot delete: {customer_count} customer(s) are using this region. '
                         'Reassign them first.'
                     )
                 },
@@ -48,29 +46,52 @@ class RegionViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-class CustomerOrganisationViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
-    queryset = CustomerOrganisation.objects.all()
+class CustomerOrganisationViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerOrganisationSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.action in ('list', 'create'):
-            context['project_id'] = self.get_required_project_id()
-        return context
+    def get_permissions(self):
+        if self.action == 'create':
+            return [IsAuthenticated()]
+        if self.action == 'my_admin_orgs':
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsCsmAccessAllowed()]
 
     def get_queryset(self):
-        if self.action == 'list':
-            project_id = self.get_required_project_id()
-            return CustomerOrganisation.objects.filter(project_id=project_id)
-        return self.filter_by_accessible_projects(CustomerOrganisation.objects.all())
+        from core.admin_utils import get_csm_admin_org_ids
+        user = self.request.user
+        admin_org_ids = get_csm_admin_org_ids(user)
+        return CustomerOrganisation.objects.filter(id__in=admin_org_ids)
+
+    @action(detail=False, methods=['get'], url_path='my-admin-orgs')
+    def my_admin_orgs(self, request):
+        """Return organisations where current user is CSM admin."""
+        from core.admin_utils import get_csm_admin_org_ids
+        admin_org_ids = get_csm_admin_org_ids(request.user)
+        orgs = CustomerOrganisation.objects.filter(id__in=admin_org_ids)
+        data = [{'id': o.id, 'name': o.name} for o in orgs.order_by('name')]
+        return Response(data)
 
     def perform_create(self, serializer):
-        project_id = self.get_required_project_id()
-        serializer.save(project_id=project_id)
+        """Any authenticated user can create an org; auto-assign as admin creator."""
+        from csm.models import CustomerUser
+        org = serializer.save()
+        CustomerUser.objects.create(
+            user=self.request.user,
+            organisation=org,
+            user_type='admin',
+            is_active=True,
+            is_creator=True,
+        )
 
     def destroy(self, request, *args, **kwargs):
+        from core.admin_utils import get_csm_admin_org_ids
         instance = self.get_object()
+        admin_org_ids = get_csm_admin_org_ids(request.user)
+        if instance.id not in admin_org_ids:
+            return Response(
+                {'detail': 'You do not have permission to delete this organisation.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         customer_count = instance.customers.count()
         if customer_count > 0:
             return Response(
@@ -88,7 +109,7 @@ class CustomerOrganisationViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewS
 class CustomerViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
     queryset = Customer.objects.select_related('experience_group').all()
     serializer_class = CustomerSerializer
-    permission_classes = [IsAuthenticated, IsProjectMember]
+    permission_classes = [IsAuthenticated]
 
     def get_serializer_context(self):
         context = super().get_serializer_context()

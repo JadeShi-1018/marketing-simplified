@@ -51,7 +51,13 @@ class Customer(models.Model):
         return f"{self.full_name} <{self.email}>"
 class Region(models.Model):
     name = models.CharField(max_length=200)
-    project = models.ForeignKey('core.Project', on_delete=models.CASCADE, related_name='regions')
+    project = models.ForeignKey('core.Project', on_delete=models.CASCADE, null=True, blank=True, related_name='regions')
+    organisation = models.ForeignKey(
+        'CustomerOrganisation',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='regions',
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -61,12 +67,18 @@ class Region(models.Model):
         ordering = ['-created_at']
         constraints = [
             models.UniqueConstraint(
-                fields=['project','name'],
-                name = 'region_unique_name_per_project'
+                fields=['organisation', 'name'],
+                name='region_unique_name_per_org'
             )
         ]
 class CustomerOrganisation(models.Model):
     name = models.CharField(max_length=200)
+    organization = models.ForeignKey(
+        'core.Organization',
+        on_delete=models.CASCADE,
+        related_name='customer_organisations',
+        null=True, blank=True,
+    )
     domains = models.JSONField(default = list)
     industry = models.CharField(max_length = 200, blank = True, default = '')
     plan = models.CharField(max_length = 200, blank = True, default = '')
@@ -77,19 +89,14 @@ class CustomerOrganisation(models.Model):
         on_delete=models.SET_NULL,
         related_name='organisations'
     )
-    project=models.ForeignKey(
-        'core.Project',
-        on_delete=models.CASCADE,
-        related_name='customer_organisations'
-    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     class Meta:
         ordering = ['-created_at']
         constraints = [
             models.UniqueConstraint(
-                fields=['project','name'],
-                name = 'customerorganisation_unique_name_per_project'
+                fields=['organization', 'name'],
+                name = 'customerorganisation_unique_name_per_org'
             )
         ]
     def __str__(self):

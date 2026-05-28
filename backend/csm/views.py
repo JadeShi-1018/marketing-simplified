@@ -1,16 +1,17 @@
-from rest_framework import viewsets, status, serializers
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.utils import timezone
-from datetime import timedelta
+from django.db.models import Count, Q
 
-from .models import Queue, QueueAgent, QueueTeam, CSMInvitation
+from core.admin_permissions import IsCsmAccessAllowed
+
+from .models import Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification
 from .serializers import (
     QueueSerializer, QueueAgentSerializer,
-    QueueTeamSerializer, CSMInvitationSerializer,
+    QueueTeamSerializer, CustomerUserSerializer,
+    CsmNotificationSerializer,
 )
-from core.utils.invitations import generate_invitation_token
 
 
 class QueueViewSet(viewsets.ModelViewSet):
@@ -24,21 +25,20 @@ class QueueViewSet(viewsets.ModelViewSet):
     - DELETE /queues/{id}/               soft delete
     """
     serializer_class = QueueSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
 
     def get_queryset(self):
-        queryset = Queue.objects.filter(is_active=True)
+        from core.admin_utils import get_csm_admin_org_ids
 
-        project_id = self.kwargs.get('project_id')
-        if project_id:
-            # Project-scoped: show all queues in the project
-            queryset = queryset.filter(project_id=project_id)
-        elif not self.request.user.is_staff:
-            # No project scope + non-staff: only show assigned queues
-            my_queues = QueueAgent.objects.filter(user=self.request.user).values_list('queue_id', flat=True)
-            queryset = queryset.filter(id__in=my_queues)
+        queryset = Queue.objects.filter(is_active=True).select_related('organisation')
+        user = self.request.user
 
-        return queryset
+        org_id = self.request.query_params.get('organisation')
+        if org_id:
+            queryset = queryset.filter(organisation_id=org_id)
+
+        admin_org_ids = get_csm_admin_org_ids(user)
+        return queryset.filter(organisation_id__in=admin_org_ids)
 
     def perform_destroy(self, instance):
         """Soft delete: mark as inactive instead of removing from DB."""
@@ -47,23 +47,19 @@ class QueueViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def ticket_counts(self, request, pk=None):
-        """
-        GET /queues/{id}/ticket-counts/
-        Placeholder: returns zeros until Ticket model is built.
-        """
-        return Response({'todo': 0, 'in_progress': 0})
+        """GET /queues/{id}/ticket_counts/"""
+        queue = self.get_object()
+        counts = Ticket.objects.filter(queue=queue).aggregate(
+            todo=Count('id', filter=Q(status='todo')),
+            in_progress=Count('id', filter=Q(status='in_progress')),
+        )
+        return Response(counts)
 
 
 class QueueAgentViewSet(viewsets.ModelViewSet):
-    """
-    Manage agent assignments within a queue.
-
-    - GET    /queues/{queue_id}/agents/           list agents in queue
-    - POST   /queues/{queue_id}/agents/           assign agent
-    - DELETE /queues/{queue_id}/agents/{id}/       remove agent
-    """
+    """Manage agent assignments within a queue."""
     serializer_class = QueueAgentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
     http_method_names = ['get', 'post', 'delete']
 
     def get_queryset(self):
@@ -71,7 +67,6 @@ class QueueAgentViewSet(viewsets.ModelViewSet):
         return QueueAgent.objects.filter(queue_id=queue_id)
 
     def perform_create(self, serializer):
-        """Auto-fill queue from URL and assigned_by from current user."""
         queue_id = self.kwargs.get('queue_id')
         serializer.save(
             queue_id=queue_id,
@@ -80,15 +75,9 @@ class QueueAgentViewSet(viewsets.ModelViewSet):
 
 
 class QueueTeamViewSet(viewsets.ModelViewSet):
-    """
-    Manage team assignments within a queue.
-
-    - GET    /queues/{queue_id}/teams/            list teams in queue
-    - POST   /queues/{queue_id}/teams/            assign team
-    - DELETE /queues/{queue_id}/teams/{id}/        remove team
-    """
+    """Manage team assignments within a queue."""
     serializer_class = QueueTeamSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
     http_method_names = ['get', 'post', 'delete']
 
     def get_queryset(self):
@@ -100,92 +89,208 @@ class QueueTeamViewSet(viewsets.ModelViewSet):
         serializer.save(queue_id=queue_id)
 
 
-class CSMInvitationViewSet(viewsets.ModelViewSet):
+class CustomerUserViewSet(viewsets.ModelViewSet):
     """
-    Member invitation management.
+    CSM user management.
 
-    - GET    /projects/{pid}/invitations/          list pending invitations
-    - POST   /projects/{pid}/invitations/          send invitation
-    - DELETE /invitations/{id}/                    revoke invitation
-    - POST   /invitations/accept/                  accept invitation
+    - GET    /projects/{pid}/customer-users/     list
+    - POST   /projects/{pid}/customer-users/     create
+    - PATCH  /customer-users/{id}/               update
+    - DELETE /customer-users/{id}/               delete
     """
-    serializer_class = CSMInvitationSerializer
-    permission_classes = [IsAuthenticated]
-    http_method_names = ['get', 'post', 'delete']
+    serializer_class = CustomerUserSerializer
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
 
     def get_queryset(self):
-        project_id = self.kwargs.get('project_id')
-        queryset = CSMInvitation.objects.filter(accepted=False)
-        if project_id:
-            queryset = queryset.filter(project_id=project_id)
-        return queryset
+        from core.admin_utils import get_csm_admin_org_ids
+
+        qs = CustomerUser.objects.select_related('user', 'team', 'queue', 'organisation')
+        user = self.request.user
+
+        org_id = self.request.query_params.get('organisation')
+        if org_id:
+            qs = qs.filter(organisation_id=org_id)
+
+        admin_org_ids = get_csm_admin_org_ids(user)
+        return qs.filter(organisation_id__in=admin_org_ids)
 
     def perform_create(self, serializer):
-        """
-        Invitation creation logic:
-        1. Check for existing pending non-expired invitation
-        2. Generate secure token
-        3. Set 72-hour expiry
-        4. Save record
-        """
-        email = serializer.validated_data['email']
-        project = serializer.validated_data['project']
+        serializer.save()
 
-        existing = CSMInvitation.objects.filter(
-            email=email, project=project, accepted=False,
-        ).first()
-        if existing and not existing.is_expired():
-            raise serializers.ValidationError(
-                {'email': 'A pending invitation already exists for this email'}
-            )
-
-        serializer.save(
-            invited_by=self.request.user,
-            token=generate_invitation_token(),
-            expires_at=timezone.now() + timedelta(hours=72),
-        )
+    def perform_destroy(self, instance):
+        if instance.is_creator:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({'detail': 'Cannot delete the organisation creator.'})
+        instance.delete()
 
     @action(detail=False, methods=['post'])
-    def accept(self, request):
-        """
-        POST /invitations/accept/  {"token": "xxx"}
-        Validate token -> check expiry -> mark as accepted
-        """
-        token = request.data.get('token')
-        if not token:
+    def invite(self, request):
+        """Invite an existing user to a CSM organisation via in-app notification."""
+        from core.admin_utils import get_csm_admin_org_ids
+        from .models import CsmNotification
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        org_id = request.data.get('organisation')
+        user_id = request.data.get('user_id')
+        user_type = request.data.get('user_type', 'agent')
+        message = request.data.get('message', '')
+
+        if not org_id or not user_id:
             return Response(
-                {'error': 'token is required'},
+                {'detail': 'organisation and user_id are required.'},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        admin_org_ids = get_csm_admin_org_ids(request.user)
+        try:
+            org_id = int(org_id)
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'Invalid organisation ID.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if org_id not in admin_org_ids:
+            return Response(
+                {'detail': 'You are not an admin of this organisation.'},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         try:
-            invitation = CSMInvitation.objects.get(token=token, accepted=False)
-        except CSMInvitation.DoesNotExist:
+            target_user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
             return Response(
-                {'error': 'Invalid or already used invitation link'},
+                {'detail': 'User not found.'},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if invitation.is_expired():
+        if CustomerUser.objects.filter(user=target_user, organisation_id=org_id).exists():
             return Response(
-                {'error': 'Invitation link has expired, please contact admin to resend'},
+                {'detail': 'User is already a member of this organisation.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        invitation.accepted = True
-        invitation.accepted_at = timezone.now()
-        invitation.save()
-
-        # If invitation specified a team, add user to that team
-        if invitation.team:
-            from core.models import TeamMember, TeamRole
-            TeamMember.objects.get_or_create(
-                user=request.user,
-                team=invitation.team,
-                defaults={'role_id': TeamRole.MEMBER},
+        # Check for existing pending invitation
+        if CsmNotification.objects.filter(
+            recipient=target_user,
+            organisation_id=org_id,
+            notification_type='org_invitation',
+            action_status='pending',
+        ).exists():
+            return Response(
+                {'detail': 'A pending invitation already exists for this user.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        return Response(
-            CSMInvitationSerializer(invitation).data,
-            status=status.HTTP_200_OK,
+        from customer.models import CustomerOrganisation
+        try:
+            org = CustomerOrganisation.objects.get(id=org_id)
+        except CustomerOrganisation.DoesNotExist:
+            return Response(
+                {'detail': 'Organisation not found.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        CsmNotification.objects.create(
+            recipient=target_user,
+            sender=request.user,
+            notification_type='org_invitation',
+            title=f'Invitation to join {org.name}',
+            message=message,
+            metadata={'user_type': user_type, 'organisation_id': org_id},
+            organisation=org,
         )
+
+        return Response(
+            {'detail': f'Invitation sent to {target_user.email}.'},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+
+class CsmNotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Notification endpoints for the current user.
+
+    - GET  /notifications/           — list my notifications
+    - GET  /notifications/{id}/      — retrieve single notification
+    - GET  /notifications/unread_count/ — count of unread notifications
+    - POST /notifications/{id}/mark_read/ — mark as read
+    - POST /notifications/{id}/accept/   — accept org invitation
+    - POST /notifications/{id}/decline/  — decline org invitation
+    """
+    serializer_class = CsmNotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return CsmNotification.objects.filter(
+            recipient=self.request.user,
+        ).select_related('sender', 'organisation').order_by('-created_at')
+
+    @action(detail=False, methods=['get'])
+    def unread_count(self, request):
+        count = CsmNotification.objects.filter(
+            recipient=request.user,
+            is_read=False,
+        ).count()
+        return Response({'count': count})
+
+    @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save(update_fields=['is_read'])
+        return Response(CsmNotificationSerializer(notification).data)
+
+    @action(detail=True, methods=['post'])
+    def accept(self, request, pk=None):
+        notification = self.get_object()
+        if notification.notification_type != 'org_invitation':
+            return Response(
+                {'detail': 'This notification cannot be accepted.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if notification.action_status != 'pending':
+            return Response(
+                {'detail': f'Invitation already {notification.action_status}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user_type = notification.metadata.get('user_type', 'agent')
+        org_id = notification.metadata.get('organisation_id') or (
+            notification.organisation_id
+        )
+
+        # Create CustomerUser record
+        CustomerUser.objects.get_or_create(
+            user=request.user,
+            organisation_id=org_id,
+            defaults={
+                'user_type': user_type,
+                'is_active': True,
+            },
+        )
+
+        notification.action_status = 'accepted'
+        notification.is_read = True
+        notification.save(update_fields=['action_status', 'is_read'])
+        return Response(CsmNotificationSerializer(notification).data)
+
+    @action(detail=True, methods=['post'])
+    def decline(self, request, pk=None):
+        notification = self.get_object()
+        if notification.notification_type != 'org_invitation':
+            return Response(
+                {'detail': 'This notification cannot be declined.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if notification.action_status != 'pending':
+            return Response(
+                {'detail': f'Invitation already {notification.action_status}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        notification.action_status = 'declined'
+        notification.is_read = True
+        notification.save(update_fields=['action_status', 'is_read'])
+        return Response(CsmNotificationSerializer(notification).data)

@@ -253,8 +253,10 @@ class Project(TimeStampedModel):
     )
     organization = models.ForeignKey(
         Organization,
-        on_delete=models.CASCADE,
-        related_name="projects"
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="projects",
     )
     owner = models.ForeignKey(
         'core.CustomUser',

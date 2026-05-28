@@ -17,7 +17,7 @@ interface CsmState {
   invitationsError: string | null;
 
   // Actions
-  fetchQueues: (projectId: number) => Promise<void>;
+  fetchQueues: (params?: { organisation?: number }) => Promise<void>;
   fetchInvitations: (projectId: number) => Promise<void>;
   fetchTicketCounts: (queueId: number) => Promise<void>;
   fetchAllTicketCounts: () => Promise<void>;
@@ -33,10 +33,10 @@ export const useCsmStore = create<CsmState>((set, get) => ({
   queuesError: null,
   invitationsError: null,
 
-  fetchQueues: async (projectId: number) => {
+  fetchQueues: async (params?: { organisation?: number }) => {
     set({ queuesLoading: true, queuesError: null });
     try {
-      const queues = await CsmAPI.getQueues(projectId);
+      const queues = await CsmAPI.getQueues(params);
       set({ queues, queuesLoading: false });
     } catch (err: any) {
       set({

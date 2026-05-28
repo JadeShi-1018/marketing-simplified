@@ -43,7 +43,7 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, onSuccess, onCancel 
     setSubmitting(true);
     setServerError(null);
     try {
-      const res = await RegionAPI.create({ name: name.trim() }, projectId);
+      const res = await RegionAPI.create({ name: name.trim() });
       onSuccess(res.data);
     } catch (err: any) {
       const detail =
@@ -261,7 +261,7 @@ const RegionsPage: React.FC = () => {
         setLoading(true);                                                                                                               
         setError(null);
         try {                                                                                                                           
-          const res = await RegionAPI.list({ project: projectId });                                                                   
+          const res = await RegionAPI.list();                                                                   
           const data = res.data;                                                                                                        
           setRegions(Array.isArray(data) ? data : (data as any).results ?? []);
         } catch {                                                                                                                       
@@ -309,7 +309,7 @@ const RegionsPage: React.FC = () => {
 
   // ---- render ----
   return (
-    <ProtectedRoute requiredAuth={true} fallback="/unauthorized">
+    <ProtectedRoute requiredAuth={true} requireAdmin={true} fallback="/unauthorized">
       <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="p-8 flex flex-col gap-6">
 

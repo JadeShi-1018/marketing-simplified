@@ -16,6 +16,7 @@ from core.views import (
     RejectProjectInvitationView,
     ResendInvitationView,
 )
+from core.admin_views import AdminOrganizationViewSet
 
 router = DefaultRouter()
 router.register(r'projects', ProjectViewSet, basename='project')
@@ -24,6 +25,7 @@ router.register(
     ProjectMemberViewSet,
     basename='project-member'
 )
+router.register(r'admin/organizations', AdminOrganizationViewSet, basename='admin-organization')
 
 urlpatterns = [
     path('check-project-membership/', CheckProjectMembershipView.as_view(), name='check-project-membership'),

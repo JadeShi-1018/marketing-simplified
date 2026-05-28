@@ -9,6 +9,7 @@ import { OrganisationAPI } from '@/lib/api/organisationAPI';
 import { RegionAPI } from '@/lib/api/regionAPI';
 import { Organisation, CreateOrganisationData, UpdateOrganisationData } from '@/types/organisation';
 import { Region } from '@/types/region';
+import { useAuthStore } from '@/lib/authStore';
 import { Plus, Pencil, Trash2, AlertCircle, X, Building2, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
@@ -136,7 +137,7 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, regions, onSuccess, 
     setSubmitting(true);
     setServerError(null);
     try {
-      const res = await OrganisationAPI.create({ ...form, name: form.name.trim() }, projectId);
+      const res = await OrganisationAPI.create({ ...form, name: form.name.trim() });
       onSuccess(res.data);
     } catch (err: any) {
       const detail =
@@ -399,6 +400,12 @@ const OrganisationsPage: React.FC = () => {
   const projectId = Number(searchParams.get('project'));
   const projectValid = Number.isFinite(projectId) && projectId > 0;
 
+  const user = useAuthStore((s) => s.user);
+  const isCsmAdmin = user?.is_csm_admin ?? false;
+  const canCreate = true;
+  const canEdit = isCsmAdmin;
+  const canDelete = isCsmAdmin;
+
   const [orgs, setOrgs] = useState<Organisation[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
   const [loading, setLoading] = useState(true);
@@ -418,8 +425,8 @@ const OrganisationsPage: React.FC = () => {
     setError(null);
     try {
       const [orgRes, regRes] = await Promise.all([
-        OrganisationAPI.list({ project: projectId }),
-        RegionAPI.list({ project: projectId }),
+        OrganisationAPI.list(),
+        RegionAPI.list(),
       ]);
       const orgData = orgRes.data;
       setOrgs(Array.isArray(orgData) ? orgData : (orgData as any).results ?? []);
@@ -466,7 +473,7 @@ const OrganisationsPage: React.FC = () => {
   };
 
   return (
-    <ProtectedRoute requiredAuth={true} fallback="/unauthorized">
+    <ProtectedRoute requiredAuth={true} requireAdmin={true} fallback="/unauthorized">
       <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="p-8 flex flex-col gap-6">
 
@@ -482,11 +489,13 @@ const OrganisationsPage: React.FC = () => {
                 <p className="mt-1 text-sm text-gray-500">Manage B2B organisations and their associated customers.</p>
               </div>
             </div>
-            <button onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
-              <Plus className="h-4 w-4" />
-              Add Organisation
-            </button>
+            {canCreate && (
+              <button onClick={() => setIsCreateModalOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
+                <Plus className="h-4 w-4" />
+                Add Organisation
+              </button>
+            )}
           </div>
 
           {/* Action error */}
@@ -522,11 +531,13 @@ const OrganisationsPage: React.FC = () => {
             <div className="flex flex-col items-center justify-center min-h-[300px] gap-4 border-2 border-dashed border-gray-200 rounded-xl">
               <Building2 className="h-8 w-8 text-gray-300" />
               <p className="text-gray-400 text-sm">No organisations found.</p>
-              <button onClick={() => setIsCreateModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50">
-                <Plus className="h-4 w-4" />
-                Add your first organisation
-              </button>
+              {canCreate && (
+                <button onClick={() => setIsCreateModalOpen(true)}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50">
+                  <Plus className="h-4 w-4" />
+                  Add your first organisation
+                </button>
+              )}
             </div>
           ) : (
             <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -577,14 +588,18 @@ const OrganisationsPage: React.FC = () => {
                         </td>
                         <td className="px-5 py-4">
                           <div className="flex items-center justify-end gap-2">
-                            <button onClick={() => setEditingOrgId(org.id)} title="Edit"
-                              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors">
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <button onClick={() => handleDelete(org.id, org.name)} disabled={deletingId === org.id} title="Delete"
-                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-40">
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                            {canEdit && (
+                              <button onClick={() => setEditingOrgId(org.id)} title="Edit"
+                                className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors">
+                                <Pencil className="h-4 w-4" />
+                              </button>
+                            )}
+                            {canDelete && (
+                              <button onClick={() => handleDelete(org.id, org.name)} disabled={deletingId === org.id} title="Delete"
+                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-40">
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

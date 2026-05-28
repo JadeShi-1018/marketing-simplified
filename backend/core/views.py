@@ -254,16 +254,25 @@ class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Filter projects by user's memberships."""
+        """Filter projects by user's access level."""
+        from core.admin_utils import get_org_admin_org_ids
+
         user = self.request.user
 
-        # Get all projects where user is a member
-        project_ids = ProjectMember.objects.filter(
-            user=user,
-            is_active=True
+        # Base: projects where user has active membership
+        member_ids = ProjectMember.objects.filter(
+            user=user, is_active=True,
         ).values_list('project_id', flat=True)
 
-        queryset = Project.objects.filter(id__in=project_ids).select_related('organization', 'owner')
+        org_ids = get_org_admin_org_ids(user)
+        if org_ids:
+            queryset = Project.objects.filter(
+                Q(id__in=member_ids) | Q(organization_id__in=org_ids)
+            ).distinct()
+        else:
+            queryset = Project.objects.filter(id__in=member_ids)
+
+        queryset = queryset.select_related('organization', 'owner')
 
         # Filter by active_only query parameter
         active_only = self.request.query_params.get('active_only', 'false').lower() == 'true'
@@ -290,7 +299,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
         project = serializer.save(
             organization=organization,
-            owner=user
+            owner=user,
         )
 
         # Create project membership

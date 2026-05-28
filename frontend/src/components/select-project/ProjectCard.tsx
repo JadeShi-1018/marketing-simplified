@@ -233,30 +233,6 @@ export default function ProjectCard({ project, isDefault, onSetDefault, onSelect
           >
             <span>Customers</span>
           </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/admin/regions?project=${project.id}`), 0)}
-          >
-            <span>Regions</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/admin/organisations?project=${project.id}`), 0)}
-          >
-            <span>Organisations</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/csm/queues?project=${project.id}`), 0)}
-          >
-            <span>Queues</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/csm/invitations?project=${project.id}`), 0)}
-          >
-            <span>Invitations</span>
-          </DropdownMenuItem>
          </DropdownMenuContent>
           </DropdownMenu>
           <label

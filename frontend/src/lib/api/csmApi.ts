@@ -2,19 +2,22 @@ import api from '../api';
 import {
   Queue, CreateQueueData, UpdateQueueData,
   QueueAgent, QueueTeam, QueueTicketCounts,
-  CSMInvitation, CreateInvitationData,
+  CustomerUser, CreateCustomerUserData, UpdateCustomerUserData,
+  CsmNotification, InviteUserData,
 } from '@/types/csm';
 
 const BASE = '/api/csm';
 
+function unwrap<T>(data: any): T[] {
+  return Array.isArray(data) ? data : (data?.results ?? []);
+}
+
 export default class CsmAPI {
   // ── Queues ──────────────────────────────────────────────────────────────
 
-  static async getQueues(projectId: number) {
-    const res = await api.get(`${BASE}/projects/${projectId}/queues/`);
-    const data = res.data;
-    // Handle both paginated {results:[]} and plain array responses
-    return Array.isArray(data) ? data as Queue[] : (data?.results ?? []) as Queue[];
+  static async getQueues(params?: { organisation?: number }) {
+    const res = await api.get(`${BASE}/queues/`, { params });
+    return unwrap<Queue>(res.data);
   }
 
   static async getQueue(queueId: number) {
@@ -23,7 +26,7 @@ export default class CsmAPI {
   }
 
   static async createQueue(data: CreateQueueData) {
-    const res = await api.post<Queue>(`${BASE}/projects/${data.project}/queues/`, data);
+    const res = await api.post<Queue>(`${BASE}/queues/`, data);
     return res.data;
   }
 
@@ -45,8 +48,7 @@ export default class CsmAPI {
 
   static async getQueueAgents(queueId: number) {
     const res = await api.get(`${BASE}/queues/${queueId}/agents/`);
-    const data = res.data;
-    return Array.isArray(data) ? data as QueueAgent[] : (data?.results ?? []) as QueueAgent[];
+    return unwrap<QueueAgent>(res.data);
   }
 
   static async assignAgent(queueId: number, userId: number) {
@@ -62,8 +64,7 @@ export default class CsmAPI {
 
   static async getQueueTeams(queueId: number) {
     const res = await api.get(`${BASE}/queues/${queueId}/teams/`);
-    const data = res.data;
-    return Array.isArray(data) ? data as QueueTeam[] : (data?.results ?? []) as QueueTeam[];
+    return unwrap<QueueTeam>(res.data);
   }
 
   static async assignTeam(queueId: number, teamId: number) {
@@ -75,25 +76,56 @@ export default class CsmAPI {
     await api.delete(`${BASE}/queues/${queueId}/teams/${assignmentId}/`);
   }
 
-  // ── Invitations ─────────────────────────────────────────────────────────
+  // ── Customer Users ────────────────────────────────────────────────────
 
-  static async getInvitations(projectId: number) {
-    const res = await api.get(`${BASE}/projects/${projectId}/invitations/`);
-    const data = res.data;
-    return Array.isArray(data) ? data as CSMInvitation[] : (data?.results ?? []) as CSMInvitation[];
+  static async getCustomerUsers(params?: { organisation?: number }) {
+    const res = await api.get(`${BASE}/customer-users/`, { params });
+    return unwrap<CustomerUser>(res.data);
   }
 
-  static async sendInvitation(data: CreateInvitationData) {
-    const res = await api.post<CSMInvitation>(`${BASE}/projects/${data.project}/invitations/`, data);
+  static async createCustomerUser(data: CreateCustomerUserData) {
+    const res = await api.post<CustomerUser>(`${BASE}/customer-users/`, data);
     return res.data;
   }
 
-  static async revokeInvitation(invitationId: number) {
-    await api.delete(`${BASE}/invitations/${invitationId}/`);
+  static async updateCustomerUser(id: number, data: UpdateCustomerUserData) {
+    const res = await api.patch<CustomerUser>(`${BASE}/customer-users/${id}/`, data);
+    return res.data;
   }
 
-  static async acceptInvitation(token: string) {
-    const res = await api.post<CSMInvitation>(`${BASE}/invitations/accept/`, { token });
+  static async deleteCustomerUser(id: number) {
+    await api.delete(`${BASE}/customer-users/${id}/`);
+  }
+
+  // ── Notifications ──────────────────────────────────────────────────────
+
+  static async getNotifications() {
+    const res = await api.get(`${BASE}/notifications/`);
+    return unwrap<CsmNotification>(res.data);
+  }
+
+  static async getUnreadCount(): Promise<number> {
+    const res = await api.get<{ count: number }>(`${BASE}/notifications/unread_count/`);
+    return res.data.count;
+  }
+
+  static async markRead(notificationId: number) {
+    const res = await api.post<CsmNotification>(`${BASE}/notifications/${notificationId}/mark_read/`);
+    return res.data;
+  }
+
+  static async acceptNotification(notificationId: number) {
+    const res = await api.post<CsmNotification>(`${BASE}/notifications/${notificationId}/accept/`);
+    return res.data;
+  }
+
+  static async declineNotification(notificationId: number) {
+    const res = await api.post<CsmNotification>(`${BASE}/notifications/${notificationId}/decline/`);
+    return res.data;
+  }
+
+  static async inviteUser(data: InviteUserData) {
+    const res = await api.post(`${BASE}/customer-users/invite/`, data);
     return res.data;
   }
 }

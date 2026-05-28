@@ -9,7 +9,7 @@ import {
   Calendar, Users, MessageSquare, Workflow, Clock,
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
-  User as UserIcon, CreditCard, Plug, LogOut,
+  User as UserIcon, CreditCard, Plug, LogOut, Headset,
   Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
@@ -467,6 +467,13 @@ export default function DashboardSidebar() {
           >
             <UserIcon className="text-gray-500" />
             <span>Settings</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
+            onSelect={() => router.push('/csm')}
+          >
+            <Headset className="text-gray-500" />
+            <span>Customer Service</span>
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"

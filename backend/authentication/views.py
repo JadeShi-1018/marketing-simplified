@@ -834,7 +834,9 @@ class MeProjectsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from core.models import ProjectMember
+        from core.models import Project, ProjectMember
+        from core.admin_utils import get_org_admin_org_ids
+
         memberships = (
             ProjectMember.objects
             .filter(user=request.user, is_active=True)
@@ -849,6 +851,19 @@ class MeProjectsView(APIView):
             }
             for m in memberships
         ]
+        seen_ids = {m.project.id for m in memberships}
+
+        org_ids = get_org_admin_org_ids(request.user)
+        if org_ids:
+            for p in Project.objects.filter(
+                organization_id__in=org_ids,
+            ).exclude(id__in=seen_ids).order_by('name'):
+                data.append({
+                    'project_id': p.id,
+                    'project_name': p.name,
+                    'role': 'org_admin',
+                })
+
         return Response(data, status=status.HTTP_200_OK)
 
 

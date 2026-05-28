@@ -8,14 +8,14 @@ type PaginatedRegions = {
   results: Region[];
 };
 export const RegionAPI = {
-  list: (params?: { project?: number; is_active?: boolean }) =>
+  list: (params?: { organisation?: number; is_active?: boolean }) =>
     api.get<PaginatedRegions | Region[]>(`${BASE}/`, { params }),
 
   retrieve: (id: number) =>
     api.get<Region>(`${BASE}/${id}/`),
 
-  create: (data: CreateRegionData, projectId: number) =>
-    api.post<Region>(`${BASE}/`, data, { params: { project: projectId } }),
+  create: (data: CreateRegionData) =>
+    api.post<Region>(`${BASE}/`, data),
 
   update: (id: number, data: UpdateRegionData) =>
     api.patch<Region>(`${BASE}/${id}/`, data),

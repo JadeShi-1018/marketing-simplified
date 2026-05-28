@@ -56,6 +56,7 @@ const BREADCRUMB_ROOT: Record<string, string> = {
   settings: 'Tools',
   agent: 'Overview',
   profile: 'Account',
+  csm: 'Service',
 };
 
 const BREADCRUMB_LEAF: Record<string, string> = {
@@ -64,6 +65,7 @@ const BREADCRUMB_LEAF: Record<string, string> = {
   spreadsheet: 'Spreadsheets',
   'mailchimp-v2': 'Mailchimp',
   'klaviyo-v2': 'Klaviyo',
+  csm: 'Customer Service',
 };
 
 const getBreadcrumb = (pathname: string | null): { root: string; leaf: string } => {

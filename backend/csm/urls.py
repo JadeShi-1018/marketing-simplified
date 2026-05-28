@@ -2,30 +2,31 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     QueueViewSet, QueueAgentViewSet,
-    QueueTeamViewSet, CSMInvitationViewSet,
+    QueueTeamViewSet, CustomerUserViewSet,
+    CsmNotificationViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'queues', QueueViewSet, basename='queue')
-router.register(r'invitations', CSMInvitationViewSet, basename='invitation')
+router.register(r'customer-users', CustomerUserViewSet, basename='customer-user')
+router.register(r'notifications', CsmNotificationViewSet, basename='csm-notification')
 
 urlpatterns = [
-    # Standard routes: /queues/, /queues/{id}/, /invitations/, etc.
+    # Standard routes
     path('', include(router.urls)),
 
-    # Nested routes: project-scoped list & create
+    # Project-scoped routes
     path(
         'projects/<int:project_id>/queues/',
         QueueViewSet.as_view({'get': 'list', 'post': 'create'}),
         name='project-queues',
     ),
     path(
-        'projects/<int:project_id>/invitations/',
-        CSMInvitationViewSet.as_view({'get': 'list', 'post': 'create'}),
-        name='project-invitations',
+        'projects/<int:project_id>/customer-users/',
+        CustomerUserViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='project-customer-users',
     ),
-
-    # Nested routes: queue-scoped agent management
+    # Queue-scoped routes
     path(
         'queues/<int:queue_id>/agents/',
         QueueAgentViewSet.as_view({'get': 'list', 'post': 'create'}),
@@ -36,8 +37,6 @@ urlpatterns = [
         QueueAgentViewSet.as_view({'delete': 'destroy'}),
         name='queue-agent-detail',
     ),
-
-    # Nested routes: queue-scoped team management
     path(
         'queues/<int:queue_id>/teams/',
         QueueTeamViewSet.as_view({'get': 'list', 'post': 'create'}),

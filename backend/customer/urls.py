@@ -21,6 +21,7 @@ organisations_detial = CustomerOrganisationViewSet.as_view({
     'patch': 'partial_update',
     'delete': 'destroy',
 })
+organisations_my_admin = CustomerOrganisationViewSet.as_view({'get': 'my_admin_orgs'})
 
 urlpatterns = [
     path('customers/', customers_list, name='customer-list'),
@@ -28,6 +29,7 @@ urlpatterns = [
     path('regions/', regions_list, name='region-list'),
     path('regions/<int:pk>/', regions_detail, name='region-detail'),
     path('organisations/', organisations_lest, name='organisation-list'),
+    path('organisations/my-admin-orgs/', organisations_my_admin, name='organisation-my-admin-orgs'),
     path('organisations/<int:pk>/', organisations_detial, name='organisation-detail'),
 
 ]

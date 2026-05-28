@@ -31,7 +31,7 @@ const QueuesPageContent: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await CsmAPI.getQueues(projectId);
+      const data = await CsmAPI.getQueues();
       setQueues(Array.isArray(data) ? data : []);
       const counts: Record<number, QueueTicketCounts> = {};
       await Promise.all(
@@ -125,10 +125,10 @@ const QueuesPageContent: React.FC = () => {
               <TableHeader>
                 <TableRow>
                   <TableHead>Name</TableHead>
+                  <TableHead>Organisation</TableHead>
                   <TableHead>Tier</TableHead>
                   <TableHead className="text-center">To Do</TableHead>
                   <TableHead className="text-center">In Progress</TableHead>
-                  <TableHead className="text-center">Order</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -151,6 +151,15 @@ const QueuesPageContent: React.FC = () => {
                         )}
                       </TableCell>
                       <TableCell>
+                        {queue.organisation_name ? (
+                          <span className="px-2 py-0.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-full">
+                            {queue.organisation_name}
+                          </span>
+                        ) : (
+                          <span className="italic text-gray-300 text-xs">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <TierBadge tier={queue.tier} />
                       </TableCell>
                       <TableCell className="text-center">
@@ -162,9 +171,6 @@ const QueuesPageContent: React.FC = () => {
                         <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-sm font-medium text-blue-700">
                           {counts.in_progress}
                         </span>
-                      </TableCell>
-                      <TableCell className="text-center text-gray-500">
-                        {queue.display_order}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -198,6 +204,7 @@ const QueuesPageContent: React.FC = () => {
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Create Queue</h2>
             <QueueForm
               projectId={projectId}
+              organisationId={0}
               onSuccess={() => {
                 setIsCreateModalOpen(false);
                 fetchQueues();
