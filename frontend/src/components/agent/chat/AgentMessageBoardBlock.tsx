@@ -21,6 +21,7 @@ export function AgentMessageBoardBlock({
   className,
 }: AgentMessageBoardBlockProps) {
   const {
+    sessionId,
     registerBlock,
     isBlockRevealed,
     tryCompleteEmptyBlock,
@@ -30,9 +31,14 @@ export function AgentMessageBoardBlock({
     markTextPartComplete,
   } = useAgentMessageBoardTextContext()
 
+  // Re-evaluate reveal when the session FIFO queue advances (refs alone do not re-render).
+  void queueVersion
   const revealed = isBlockRevealed(blockId)
 
-  useLayoutEffect(() => registerBlock(blockId), [blockId, registerBlock])
+  useLayoutEffect(
+    () => registerBlock(blockId),
+    [blockId, registerBlock, sessionId]
+  )
 
   useLayoutEffect(() => {
     if (!revealed) return
