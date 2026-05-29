@@ -8,6 +8,7 @@ import DashboardSidebar from './DashboardSidebar';
 import NotificationBell from './NotificationBell';
 import UpcomingMeetingsPanel from './UpcomingMeetingsPanel';
 import AgentSidePanel from '@/components/agent/AgentSidePanel';
+import QuickStartPostCreateChecklist from '@/components/quick-start/QuickStartPostCreateChecklist';
 import { useDashboardPanelPreference } from './DashboardPanelPreferenceContext';
 import { useProjectStore } from '@/lib/projectStore';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
@@ -288,6 +289,7 @@ export default function DashboardLayout({
         </>
       )}
       <AgentSidePanel />
+      <QuickStartPostCreateChecklist />
     </div>
   );
 }

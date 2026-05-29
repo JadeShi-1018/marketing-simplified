@@ -16,12 +16,16 @@ import { CalendarViewRouter } from "@/components/calendar/CalendarViews";
 import { EventDialogContainer } from "@/components/calendar/EventDialogContainer";
 import type { CalendarDialogMode, EventPanelPosition } from "@/components/calendar/types";
 import { List, Loader2, RefreshCw } from "lucide-react";
+import { useProjectStore } from "@/lib/projectStore";
 import {
-  CALENDAR_FILTER_STORAGE_KEY,
   VIEW_LABELS,
+  calendarFilterStorageKey,
   extractCalendarIdFromStoredValue,
   sameCalendarIdList,
 } from "@/components/calendar/utils";
+import {
+  clearCalendarSidebarCache,
+} from "@/hooks/useCalendarSidebarData";
 
 const ACTIVITY_FILTER_STORAGE_KEY = "calendar:activity-filter";
 
@@ -46,6 +50,8 @@ function loadActivityFilter(): Set<string> {
 
 export default function CalendarPageContent() {
   const router = useRouter();
+  const activeProject = useProjectStore((state) => state.activeProject);
+  const projectId = activeProject?.id ?? null;
   const [currentView, setCurrentView] = useState<CalendarViewType>("week");
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [visibleCalendarIds, setVisibleCalendarIds] = useState<string[] | undefined>(undefined);
@@ -80,7 +86,7 @@ export default function CalendarPageContent() {
 
   useEffect(() => {
     let cancelled = false;
-    CalendarAPI.listCalendars()
+    CalendarAPI.listCalendars(projectId)
       .then((res) => {
         const raw = res.data as CalendarDTO[] | { results?: CalendarDTO[] };
         const list = Array.isArray(raw) ? raw : raw.results ?? [];
@@ -97,7 +103,13 @@ export default function CalendarPageContent() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [projectId]);
+
+  useEffect(() => {
+    clearCalendarSidebarCache();
+    setVisibleCalendarIds(undefined);
+    setHasLoadedCalendarFilter(false);
+  }, [projectId]);
 
   useEffect(() => {
     const onVis = () => {
@@ -168,6 +180,7 @@ export default function CalendarPageContent() {
     currentDate,
     calendarIds: visibleCalendarIds,
     activeEventTypes: Array.from(activeEventTypes),
+    projectId,
   });
 
   const handleGcalSync = useCallback(async () => {
@@ -253,31 +266,48 @@ export default function CalendarPageContent() {
     if (typeof window === "undefined") {
       return;
     }
-    const storedValue = window.localStorage.getItem(
-      CALENDAR_FILTER_STORAGE_KEY,
-    );
+    const storageKey = calendarFilterStorageKey(projectId);
+    const storedValue = window.localStorage.getItem(storageKey);
     const storedCalendarId = extractCalendarIdFromStoredValue(storedValue);
     if (storedCalendarId) {
       setVisibleCalendarIds([storedCalendarId]);
     } else if (storedValue) {
-      window.localStorage.removeItem(CALENDAR_FILTER_STORAGE_KEY);
+      window.localStorage.removeItem(storageKey);
     }
     setHasLoadedCalendarFilter(true);
-  }, []);
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || !hasLoadedCalendarFilter || calendars.length === 0) {
+      return;
+    }
+    const projectCalendar = calendars.find((cal) => cal.project_id === projectId);
+    if (!projectCalendar) {
+      return;
+    }
+    if (visibleCalendarIds && visibleCalendarIds.length === 1) {
+      const selectedIsProjectCalendar = visibleCalendarIds[0] === projectCalendar.id;
+      const selectedBelongsToProject = calendars.some(
+        (cal) => cal.id === visibleCalendarIds[0] && cal.project_id === projectId,
+      );
+      if (selectedIsProjectCalendar || selectedBelongsToProject) {
+        return;
+      }
+    }
+    setVisibleCalendarIds([projectCalendar.id]);
+  }, [projectId, hasLoadedCalendarFilter, calendars, visibleCalendarIds]);
 
   useEffect(() => {
     if (!hasLoadedCalendarFilter || typeof window === "undefined") {
       return;
     }
+    const storageKey = calendarFilterStorageKey(projectId);
     if (visibleCalendarIds && visibleCalendarIds.length === 1) {
-      window.localStorage.setItem(
-        CALENDAR_FILTER_STORAGE_KEY,
-        visibleCalendarIds[0],
-      );
+      window.localStorage.setItem(storageKey, visibleCalendarIds[0]);
       return;
     }
-    window.localStorage.removeItem(CALENDAR_FILTER_STORAGE_KEY);
-  }, [hasLoadedCalendarFilter, visibleCalendarIds]);
+    window.localStorage.removeItem(storageKey);
+  }, [hasLoadedCalendarFilter, visibleCalendarIds, projectId]);
 
   const headerTitle = useMemo(() => {
     if (currentView === "year") {
@@ -458,6 +488,7 @@ export default function CalendarPageContent() {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <CalendarSidebarContainer
           currentDate={currentDate}
+          projectId={projectId}
           onVisibleCalendarsChange={handleVisibleCalendarsChange}
           onDateChange={setCurrentDate}
           selectedCalendarId={selectedCalendarId}

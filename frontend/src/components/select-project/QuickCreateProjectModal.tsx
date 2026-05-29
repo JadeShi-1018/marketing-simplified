@@ -9,6 +9,8 @@ import { ProjectAPI, type ProjectData } from '@/lib/api/projectApi';
 interface QuickCreateProjectModalProps {
   open: boolean;
   onClose: () => void;
+  /** When set, header control is Exit and returns to the create-method chooser. */
+  onExit?: () => void;
   onCreated?: (project: ProjectData) => void | Promise<void>;
 }
 
@@ -33,7 +35,12 @@ const getErrorMessage = (err: any): string =>
   err?.message ||
   'Failed to create project';
 
-export default function QuickCreateProjectModal({ open, onClose, onCreated }: QuickCreateProjectModalProps) {
+export default function QuickCreateProjectModal({
+  open,
+  onClose,
+  onExit,
+  onCreated,
+}: QuickCreateProjectModalProps) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
@@ -99,11 +106,16 @@ export default function QuickCreateProjectModal({ open, onClose, onCreated }: Qu
 
           <button
             type="button"
-            onClick={onClose}
-            className="absolute right-3 top-4 inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition"
-            aria-label="Close"
+            onClick={onExit ?? onClose}
+            className={
+              onExit
+                ? 'absolute right-4 top-4 inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-800'
+                : 'absolute right-3 top-4 inline-flex h-7 w-7 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition'
+            }
+            aria-label={onExit ? 'Exit classic setup' : 'Close'}
           >
             <X className="h-4 w-4" />
+            {onExit ? <span>Exit</span> : null}
           </button>
 
           <div className="px-6 pt-5 pb-1">

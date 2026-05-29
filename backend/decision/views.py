@@ -211,6 +211,15 @@ class DecisionViewSet(
     permission_classes = [DecisionPermission]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
+    def _resolve_project_id(self) -> int | None:
+        raw = self.request.headers.get("x-project-id") or self.request.query_params.get(
+            "project_id"
+        )
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
     def get_queryset(self):
         base = (
             Decision.objects.filter(is_deleted=False)
@@ -237,20 +246,19 @@ class DecisionViewSet(
             ) | Q(status=Decision.Status.DRAFT, author=self.request.user)
             base = base.filter(visibility)
 
+            project_id = self._resolve_project_id()
+            if project_id is not None:
+                base = base.filter(project_id=project_id)
+
             status_q = self.request.query_params.get("status")
             if status_q in Decision.Status.values:
                 base = base.filter(status=status_q)
 
             return base
 
-        raw = self.request.headers.get("x-project-id") or self.request.query_params.get(
-            "project_id"
-        )
-        try:
-            pid = int(raw)
-            base = base.filter(project_id=pid)
-        except (TypeError, ValueError):
-            pass
+        project_id = self._resolve_project_id()
+        if project_id is not None:
+            base = base.filter(project_id=project_id)
 
         status_q = self.request.query_params.get("status")
         if status_q in Decision.Status.values:
