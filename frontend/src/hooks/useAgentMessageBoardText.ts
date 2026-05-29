@@ -27,12 +27,18 @@ function isDisplayedPrefixOfTarget(target: string, displayed: string): boolean {
   return sliceByCodePoints(target, textLength(displayed)) === displayed
 }
 
+function displayedForResumeLength(target: string, resumeLength: number): string {
+  if (resumeLength <= 0) return ""
+  return sliceByCodePoints(target, Math.min(resumeLength, textLength(target)))
+}
+
 export function useAgentMessageBoardText({
   target,
   partId,
   blockId,
 }: UseAgentMessageBoardTextOptions): UseAgentMessageBoardTextResult {
   const {
+    sessionId,
     isStreaming,
     queueVersion,
     registerTextPart,
@@ -42,6 +48,7 @@ export function useAgentMessageBoardText({
     markTextPartComplete,
     reopenTextPart,
     getPartGeneration,
+    getPartResumeLength,
     reportTextPartDisplay,
   } = useAgentMessageBoardTextContext()
 
@@ -50,8 +57,10 @@ export function useAgentMessageBoardText({
   const canType = isTextPartActive(partId, blockId)
   const complete = isTextPartComplete(partId, blockId)
 
-  const [displayed, setDisplayed] = useState("")
-  const displayedRef = useRef("")
+  const [displayed, setDisplayed] = useState(() =>
+    displayedForResumeLength(target, getPartResumeLength(partId))
+  )
+  const displayedRef = useRef(displayed)
   const rafRef = useRef<number | null>(null)
   const lastFrameRef = useRef<number | null>(null)
   const carryoverMsRef = useRef(0)
@@ -68,7 +77,39 @@ export function useAgentMessageBoardText({
     lastFrameRef.current = null
   }, [])
 
-  useLayoutEffect(() => registerTextPart(partId, blockId), [partId, blockId, registerTextPart])
+  useLayoutEffect(
+    () => registerTextPart(partId, blockId),
+    [partId, blockId, registerTextPart, sessionId]
+  )
+
+  useLayoutEffect(() => {
+    if (skipTyping) {
+      if (displayedRef.current !== target) {
+        displayedRef.current = target
+        setDisplayed(target)
+      }
+      return
+    }
+    if (complete) return
+
+    const len = getPartResumeLength(partId)
+    const prefix = displayedForResumeLength(target, len)
+    if (displayedRef.current === prefix) return
+    displayedRef.current = prefix
+    setDisplayed(prefix)
+    carryoverMsRef.current = 0
+    cancelRaf()
+  }, [
+    sessionId,
+    partId,
+    blockId,
+    target,
+    skipTyping,
+    complete,
+    getPartResumeLength,
+    queueVersion,
+    cancelRaf,
+  ])
 
   useLayoutEffect(() => {
     if (!skipTyping || complete) return
@@ -77,6 +118,7 @@ export function useAgentMessageBoardText({
 
   useEffect(() => {
     if (skipTyping) return
+    if (generation === 0) return
     displayedRef.current = ""
     setDisplayed("")
     carryoverMsRef.current = 0
@@ -190,8 +232,15 @@ export function useAgentMessageBoardText({
     }
 
     if (!isDisplayedPrefixOfTarget(target, displayedRef.current)) {
-      displayedRef.current = ""
-      setDisplayed("")
+      const resumeLen = getPartResumeLength(partId)
+      if (resumeLen > 0 && textLength(target) > 0) {
+        const recovered = displayedForResumeLength(target, resumeLen)
+        displayedRef.current = recovered
+        setDisplayed(recovered)
+      } else {
+        displayedRef.current = ""
+        setDisplayed("")
+      }
       carryoverMsRef.current = 0
     }
 
@@ -215,6 +264,7 @@ export function useAgentMessageBoardText({
     scheduleLoop,
     cancelRaf,
     markTextPartComplete,
+    getPartResumeLength,
   ])
 
   const isWaiting = !skipTyping && !canType && !complete
@@ -222,8 +272,11 @@ export function useAgentMessageBoardText({
   const isTyping = !skipTyping && canType && getBacklog(target, visibleDisplayed) > 0
 
   useEffect(() => {
-    reportTextPartDisplay(partId, textLength(visibleDisplayed))
-  }, [partId, visibleDisplayed, reportTextPartDisplay])
+    if (textLength(target) === 0) return
+    const len = textLength(visibleDisplayed)
+    if (len === 0 && getPartResumeLength(partId) > 0) return
+    reportTextPartDisplay(partId, len)
+  }, [partId, target, visibleDisplayed, reportTextPartDisplay, getPartResumeLength])
 
   return { displayed: visibleDisplayed, isTyping, isWaiting }
 }

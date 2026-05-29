@@ -17,10 +17,14 @@ import { StepProgress, type StepProgressItem } from "./StepProgress"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import type { TaskGenerationStatus } from "./TaskListCard"
 import { AgentMessageBoardBlock } from "./AgentMessageBoardBlock"
+import { AgentMessageBoardMarkdown } from "./AgentMessageBoardMarkdown"
 import { AgentMessageBoardText } from "./AgentMessageBoardText"
 import { AgentMessageBoardTextProvider } from "./AgentMessageBoardTextContext"
 import { AgentMessageBoardAvatar } from "./AgentMessageBoardAvatar"
-import { getAssistantMessageBlockIds } from "./agentMessageBoardBlockIds"
+import {
+  getAssistantMessageBlockIds,
+  getMessageBoardBlockIds,
+} from "./agentMessageBoardBlockIds"
 
 export type ChatMessageType =
   | "text"
@@ -83,6 +87,8 @@ export interface MessageListProps {
   stepState?: WorkflowStepState
   taskGenerationStatus?: TaskGenerationStatus
   isStreaming?: boolean
+  showRevisitThinkingBubble?: boolean
+  onRenderFinishChange?: (finished: boolean) => void
 }
 
 export function MessageList({
@@ -114,6 +120,8 @@ export function MessageList({
   stepState,
   taskGenerationStatus,
   isStreaming = false,
+  showRevisitThinkingBubble = false,
+  onRenderFinishChange,
 }: MessageListProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const prevScrollTopRef = useRef(0)
@@ -135,9 +143,37 @@ export function MessageList({
         Boolean(stepState?.analysisComplete) &&
         !stepState?.tasksCreated))
 
-  const boardMessageIds = useMemo(
-    () => messages.filter((m) => m.type !== "approval_request").map((m) => m.id),
-    [messages]
+  const showBottomActionCards = Boolean(
+    latestAnalysisWithTasks &&
+      (Boolean(stepState?.tasksCreated) ||
+        Boolean(pendingTaskApproval) ||
+        taskGenerationStatus === "awaiting_approval")
+  )
+  const hasThinkingMessage = messages.some(
+    (message) =>
+      message.role === "assistant" &&
+      message.content === AGENT_MESSAGES.CHAT_THINKING
+  )
+  const boardBlockIds = useMemo(
+    () =>
+      getMessageBoardBlockIds(messages, {
+        latestAnalysisMessageId,
+        showFollowUpToggle,
+        stepState,
+        bottomCardsMessageId,
+        showBottomActionCards,
+        showMiroApproval: Boolean(pendingMiroApproval),
+        showReupload: Boolean(stepState?.analysisComplete),
+      }),
+    [
+      messages,
+      latestAnalysisMessageId,
+      showFollowUpToggle,
+      stepState,
+      bottomCardsMessageId,
+      showBottomActionCards,
+      pendingMiroApproval,
+    ]
   )
   const extraPartIdsOnQuit = useMemo(
     () => (stepState?.analysisComplete ? ["reupload-button"] : []),
@@ -190,8 +226,9 @@ export function MessageList({
     <AgentMessageBoardTextProvider
       isStreaming={isStreaming}
       sessionId={sessionId}
-      boardMessageIds={boardMessageIds}
+      boardBlockIds={boardBlockIds}
       extraPartIdsOnQuit={extraPartIdsOnQuit}
+      onRenderFinishChange={onRenderFinishChange}
     >
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.map((message) => (
@@ -233,11 +270,11 @@ export function MessageList({
                   <AgentMessageBoardBlock blockId={`${message.id}-bubble`}>
                     <div
                       className={cn(
-                        "rounded-lg px-4 py-2.5 text-sm whitespace-pre-wrap bg-muted text-foreground",
+                        "rounded-lg px-4 py-2.5 text-sm bg-muted text-foreground",
                         message.content === AGENT_MESSAGES.CHAT_THINKING && "animate-pulse"
                       )}
                     >
-                      <AgentMessageBoardText
+                      <AgentMessageBoardMarkdown
                         target={message.content}
                         partId={`${message.id}-content`}
                         blockId={`${message.id}-bubble`}
@@ -368,9 +405,19 @@ export function MessageList({
           )
         ))}
 
+        {showRevisitThinkingBubble && !hasThinkingMessage && (
+          <div className="flex gap-3">
+            <AgentMessageBoardAvatar role="assistant" forceVisible />
+            <div className="max-w-[80%] space-y-2">
+              <div className="rounded-lg px-4 py-2.5 text-sm bg-muted text-foreground animate-pulse">
+                {AGENT_MESSAGES.CHAT_THINKING}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Action cards shown at the bottom so they're immediately visible after task creation. */}
-        {latestAnalysisWithTasks &&
-          (Boolean(stepState?.tasksCreated) || Boolean(pendingTaskApproval) || taskGenerationStatus === "awaiting_approval") && (
+        {showBottomActionCards && (
           <div className="space-y-3">
             <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-miro-generate`}>
               <MiroGenerateCard
