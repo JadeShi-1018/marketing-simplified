@@ -118,6 +118,23 @@ class RegisterView(APIView):
             )
             UserRole.objects.get_or_create(user=user, role=default_role)
 
+            # Create CustomerOrganisation + admin CustomerUser so CSM features work
+            from customer.models import CustomerOrganisation
+            from csm.models import CustomerUser
+            cust_org, _ = CustomerOrganisation.objects.get_or_create(
+                organization=organization,
+                defaults={'name': organization.name},
+            )
+            CustomerUser.objects.get_or_create(
+                user=user,
+                organisation=cust_org,
+                defaults={
+                    'user_type': 'admin',
+                    'is_active': True,
+                    'is_creator': True,
+                },
+            )
+
         # Auto-login: generate JWT tokens so the frontend can log in immediately
         refresh = RefreshToken.for_user(user)
         profile_data = UserProfileSerializer(user, context={'request': request}).data
@@ -705,10 +722,51 @@ class GoogleOAuthCallbackView(APIView):
                     
                     # Set unusable password (will be set during password setup)
                     user.set_unusable_password()
-                    
+
                     # Generate temporary token for password setup
                     temp_token = secrets.token_urlsafe(32)
                     user.verification_token = temp_token
+
+                    # Auto-create Organization + CSM records
+                    from core.models import Organization
+                    domain = email.split('@')[-1].lower() if '@' in email else None
+                    organization = None
+                    if domain:
+                        organization = Organization.objects.filter(email_domain__iexact=domain).first()
+                        if not organization:
+                            base_name = domain.split('.')[0].replace('-', ' ').replace('_', ' ').title() or domain
+                            org_name = base_name
+                            suffix = 1
+                            while Organization.objects.filter(name=org_name).exists():
+                                suffix += 1
+                                org_name = f"{base_name} {suffix}"
+                            organization = Organization.objects.create(name=org_name, email_domain=domain)
+                    if not organization:
+                        org_name = "Organization"
+                        suffix = 1
+                        while Organization.objects.filter(name=org_name).exists():
+                            suffix += 1
+                            org_name = f"Organization {suffix}"
+                        organization = Organization.objects.create(name=org_name)
+
+                    user.organization = organization
+
+                    from customer.models import CustomerOrganisation
+                    from csm.models import CustomerUser
+                    cust_org, _ = CustomerOrganisation.objects.get_or_create(
+                        organization=organization,
+                        defaults={'name': organization.name},
+                    )
+                    CustomerUser.objects.get_or_create(
+                        user=user,
+                        organisation=cust_org,
+                        defaults={
+                            'user_type': 'admin',
+                            'is_active': True,
+                            'is_creator': True,
+                        },
+                    )
+
                     user.save()
                     
                     print(f"[GOOGLE OAUTH] New user created: {email}, username: {username}")

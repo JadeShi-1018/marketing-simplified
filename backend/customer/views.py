@@ -50,9 +50,7 @@ class CustomerOrganisationViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerOrganisationSerializer
 
     def get_permissions(self):
-        if self.action == 'create':
-            return [IsAuthenticated()]
-        if self.action == 'my_admin_orgs':
+        if self.action in ('create', 'list', 'my_admin_orgs'):
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsCsmAccessAllowed()]
 

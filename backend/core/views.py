@@ -183,6 +183,9 @@ class ProjectOnboardingView(APIView):
             )
 
     def _ensure_organization_for_user(self, user):
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser
+
         email = getattr(user, 'email', '') or ''
         domain = email.split('@')[-1].lower() if '@' in email else None
         organization = None
@@ -209,6 +212,22 @@ class ProjectOnboardingView(APIView):
 
         user.organization = organization
         user.save(update_fields=['organization'])
+
+        # Create a CustomerOrganisation + admin CustomerUser so CSM features work
+        cust_org, created = CustomerOrganisation.objects.get_or_create(
+            organization=organization,
+            defaults={'name': organization.name},
+        )
+        CustomerUser.objects.get_or_create(
+            user=user,
+            organisation=cust_org,
+            defaults={
+                'user_type': 'admin',
+                'is_active': True,
+                'is_creator': True,
+            },
+        )
+
         return organization
 
 
@@ -345,18 +364,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
         user.save(update_fields=['organization'])
 
         # Also create a CustomerOrganisation so CSM features work
-        cust_org = CustomerOrganisation.objects.create(
-            name=org_name,
+        cust_org, _ = CustomerOrganisation.objects.get_or_create(
             organization=organization,
+            defaults={'name': org_name},
         )
 
         # Make user the admin (and creator) of the CSM org
-        CustomerUser.objects.create(
+        CustomerUser.objects.get_or_create(
             user=user,
             organisation=cust_org,
-            user_type='admin',
-            is_active=True,
-            is_creator=True,
+            defaults={
+                'user_type': 'admin',
+                'is_active': True,
+                'is_creator': True,
+            },
         )
 
         return organization
