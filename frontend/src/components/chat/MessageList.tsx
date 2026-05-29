@@ -126,6 +126,8 @@ export default function MessageList({
   onQuoteReply,
   onForwardSingle,
   onEnterSelectMode,
+  onOpenThread,
+  activeThreadMessageId,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -574,6 +576,8 @@ export default function MessageList({
                             onQuoteReply={onQuoteReply ? () => onQuoteReply(item.message) : undefined}
                             onForwardSingle={onForwardSingle ? () => onForwardSingle(item.message.id) : undefined}
                             onEnterSelectMode={onEnterSelectMode}
+                            onOpenThread={onOpenThread ? () => onOpenThread(item.message) : undefined}
+                            isThreadActive={activeThreadMessageId === item.message.id}
                           />
                         )}
                       </div>

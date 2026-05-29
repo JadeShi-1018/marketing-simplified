@@ -10,6 +10,7 @@ import {
   Edit2,
   Forward,
   Link,
+  MessageSquare,
   MoreHorizontal,
   Pin,
   Smile,
@@ -38,7 +39,7 @@ const EmojiPicker = dynamic(() => import('emoji-picker-react'), {
 interface MessageHoverActionsProps {
   isOwnMessage: boolean;
   onEmojiReaction: (emoji: string) => void;
-  onQuoteReply: () => void;
+  onQuoteReply?: () => void;
   onCopy: () => void;
   onCopyLink: () => void;
   onEdit?: () => void;         // own messages only
@@ -47,6 +48,7 @@ interface MessageHoverActionsProps {
   onSave: () => void;
   onRemind: () => void;
   onMultiSelect: () => void;
+  onReplyInThread?: () => void;
   onRevoke?: () => void;       // own messages only, placeholder
   onDelete?: () => void;       // own messages only
   onMenuOpenChange?: (isOpen: boolean) => void;
@@ -64,6 +66,7 @@ export default function MessageHoverActions({
   onSave,
   onRemind,
   onMultiSelect,
+  onReplyInThread,
   onRevoke,
   onDelete,
   onMenuOpenChange,
@@ -115,14 +118,27 @@ export default function MessageHoverActions({
         </PopoverContent>
       </Popover>
 
+      {/* Reply in thread */}
+      {onReplyInThread && (
+        <button
+          onClick={onReplyInThread}
+          className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+          title="Reply in thread"
+        >
+          <MessageSquare className="h-4 w-4" />
+        </button>
+      )}
+
       {/* Quote reply */}
-      <button
-        onClick={onQuoteReply}
-        className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
-        title="Reply"
-      >
-        <TextQuote className="h-4 w-4" />
-      </button>
+      {onQuoteReply && (
+        <button
+          onClick={onQuoteReply}
+          className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+          title="Reply"
+        >
+          <TextQuote className="h-4 w-4" />
+        </button>
+      )}
 
       {/* More actions */}
       <DropdownMenu open={isDropdownOpen} onOpenChange={handleDropdownOpenChange}>

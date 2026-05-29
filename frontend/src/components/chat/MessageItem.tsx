@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import { Forward } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { MessageItemProps } from '@/types/chat';
@@ -104,6 +104,8 @@ export default function MessageItem({
   onQuoteReply,
   onForwardSingle,
   onEnterSelectMode,
+  onOpenThread,
+  isThreadActive = false,
 }: MessageItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -140,6 +142,7 @@ export default function MessageItem({
     ? `${message.reply_to.sender.username}: ${message.reply_to.content || '[Attachment]'}`
     : '';
   const hasReactions = Boolean(message.reactions && message.reactions.length > 0);
+  const hasThreadReplies = (message.thread_reply_count ?? 0) > 0;
 
   let hasUrls = false;
   try {
@@ -234,7 +237,13 @@ export default function MessageItem({
       className={[
         rowPadding,
         'transition-colors',
-        isHighlighted ? 'bg-amber-50/40 scroll-mt-24' : isHovering ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md' : '',
+        isHighlighted
+          ? 'bg-amber-50/40 scroll-mt-24'
+          : isThreadActive
+            ? 'bg-teal-50/40'
+            : isHovering
+              ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md'
+              : '',
         isSelectMode ? 'relative pl-8' : '',
       ].join(' ')}
     >
@@ -386,6 +395,60 @@ export default function MessageItem({
                   align="left"
                 />
               )}
+
+              {hasThreadReplies && (
+                <button
+                  type="button"
+                  onClick={() => onOpenThread?.()}
+                  className={[
+                    'mt-1.5 flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors hover:border-teal-300 hover:bg-teal-50',
+                    isThreadActive
+                      ? 'border-teal-300 bg-teal-50'
+                      : 'border-gray-200 bg-white',
+                  ].join(' ')}
+                >
+                  {/* Participant avatar stack */}
+                  {message.thread_participants && message.thread_participants.length > 0 && (
+                    <span className="flex -space-x-1">
+                      {message.thread_participants.slice(0, 4).map((p) => (
+                        p.avatar ? (
+                          <img
+                            key={p.id}
+                            src={p.avatar}
+                            alt={p.username}
+                            title={p.username}
+                            className="h-4 w-4 rounded-full border border-white object-cover"
+                          />
+                        ) : (
+                          <span
+                            key={p.id}
+                            title={p.username}
+                            className={`flex h-4 w-4 items-center justify-center rounded-full border border-white text-[8px] font-semibold text-white ${avatarColor(p.id)}`}
+                          >
+                            {(p.username[0] ?? '?').toUpperCase()}
+                          </span>
+                        )
+                      ))}
+                    </span>
+                  )}
+
+                  <span className="font-semibold text-teal-600">
+                    {message.thread_reply_count}{' '}
+                    {message.thread_reply_count === 1 ? 'reply' : 'replies'}
+                  </span>
+
+                  {message.thread_last_reply_at && (
+                    <span className="text-gray-400">
+                      · Last reply{' '}
+                      {formatDistanceToNow(new Date(message.thread_last_reply_at), { addSuffix: true })}
+                    </span>
+                  )}
+
+                  {message.has_unread_thread_replies && (
+                    <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-teal-500" />
+                  )}
+                </button>
+              )}
             </>
           )}
         </div>
@@ -404,7 +467,8 @@ export default function MessageItem({
                   onReactionAdd?.(emoji);
                 }
               }}
-              onQuoteReply={() => onQuoteReply?.()}
+              onReplyInThread={onOpenThread}
+              onQuoteReply={onQuoteReply ? () => onQuoteReply() : undefined}
               onCopy={handleCopyText}
               onCopyLink={handleCopyLink}
               onEdit={isOwnMessage && onEdit ? () => setIsEditing(true) : undefined}

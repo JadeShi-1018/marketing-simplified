@@ -171,8 +171,24 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
     payload.mention_ids = data.mention_ids;
   }
 
+  // Include parent_message_id if this is a thread reply
+  if (data.parent_message_id) {
+    payload.parent_message_id = data.parent_message_id;
+  }
+
   const response = await api.post('/api/chat/messages/', payload);
   return response.data;
+};
+
+// ── Thread API ────────────────────────────────────────────────────────────────
+
+export const getThreadReplies = async (rootMessageId: number): Promise<{ results: Message[] }> => {
+  const response = await api.get(`/api/chat/messages/${rootMessageId}/thread_replies/`);
+  return response.data;
+};
+
+export const markThreadAsRead = async (rootMessageId: number): Promise<void> => {
+  await api.post(`/api/chat/messages/${rootMessageId}/mark_thread_as_read/`);
 };
 
 export const editMessage = async (

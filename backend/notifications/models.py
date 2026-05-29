@@ -39,6 +39,7 @@ class NotificationEventType(models.TextChoices):
     TASK_OVERDUE = "task_overdue", "Task overdue"
     TASK_COMMENT_MENTION = "task_comment_mention", "Mentioned in comment"
     CHAT_MENTION = "chat_mention", "Mentioned in chat"
+    CHAT_THREAD_REPLY = "chat_thread_reply", "Reply in thread"
     TASK_ANOMALY = "task_anomaly", "Task anomaly alert"
     # Decisions
     DECISION_REVIEW_NEEDED = "decision_review_needed", "Decision needs review"

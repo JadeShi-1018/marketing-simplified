@@ -277,6 +277,15 @@ class Message(TimeStampedModel):
         db_index=True,
         help_text="Message being replied to (quote reply)"
     )
+    parent_message = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        related_name='thread_replies',
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Root message this is a thread reply to. Null = root/main-timeline message."
+    )
     forwarded_from_message = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -322,6 +331,7 @@ class Message(TimeStampedModel):
             models.Index(fields=['chat', '-created_at']),  # For latest messages
             models.Index(fields=['chat', 'is_deleted']),
             models.Index(fields=['chat', 'is_revoked']),
+            models.Index(fields=['parent_message', 'created_at']),  # Thread reply listing
         ]
     
     def __str__(self):
@@ -478,6 +488,36 @@ class MessageReaction(TimeStampedModel):
 
     def __str__(self):
         return f"{self.user.email} reacted {self.emoji} on message {self.message_id}"
+
+
+class ThreadReadStatus(TimeStampedModel):
+    """
+    Tracks when a user last read the thread replies of a root message.
+    Used to compute has_unread_thread_replies per user.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='thread_read_statuses',
+    )
+    root_message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='thread_read_statuses',
+        help_text="The parent (root) message whose thread was read.",
+    )
+    last_read_at = models.DateTimeField(
+        help_text="Timestamp of the latest thread reply seen by this user.",
+    )
+
+    class Meta:
+        unique_together = ['user', 'root_message']
+        indexes = [
+            models.Index(fields=['user', 'root_message']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} read thread {self.root_message_id} at {self.last_read_at}"
 
 
 def temp_attachment_upload_path(instance, filename):

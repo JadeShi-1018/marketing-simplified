@@ -529,24 +529,26 @@ class MessageService:
         if not ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).exists():
             raise ValueError("You are not a participant of this chat")
         
+        # Root messages only — thread replies are fetched via the thread_replies endpoint
         query = Message.objects.filter(
             chat=chat,
-            is_deleted=False
+            is_deleted=False,
+            parent_message__isnull=True,
         ).select_related('sender')
-        
+
         if before:
             query = query.filter(created_at__lt=before)
-        
+
         if after:
             query = query.filter(created_at__gt=after)
-        
+
         # Order by created_at descending for "before" (scrolling up)
         # Order by created_at ascending for "after" (new messages)
         if after:
             query = query.order_by('created_at')
         else:
             query = query.order_by('-created_at')
-        
+
         return query[:limit]
     
     @staticmethod

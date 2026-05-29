@@ -416,7 +416,7 @@ class MessageViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get messages for a specific chat"""
         # For retrieve/detail actions, return all messages (permission checked in retrieve method)
-        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction', 'remind', 'cancel_remind', 'revoke', 'destroy', 'hide', 'partial_update', 'update']:
+        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction', 'remind', 'cancel_remind', 'revoke', 'destroy', 'hide', 'partial_update', 'update', 'thread_replies', 'mark_thread_as_read']:
             return Message.objects.all()
 
         # For list action, require chat_id
@@ -621,6 +621,62 @@ class MessageViewSet(viewsets.ModelViewSet):
             # Trigger async notification task (for WebSocket delivery)
             notify_new_message.delay(message.id)
 
+            # Fire thread-reply notifications when this is a thread reply
+            if message.parent_message_id:
+                try:
+                    from notifications.services import create_notification
+                    from notifications.models import NotificationCategory, NotificationEventType
+                    root = message.parent_message
+
+                    # Notify everyone who has previously replied in the thread
+                    # (including the root author) except the sender of this reply.
+                    notified_ids = set()
+                    notified_ids.add(request.user.id)
+
+                    # Root message author
+                    if root.sender_id != request.user.id:
+                        notified_ids.add(root.sender_id)
+                        create_notification(
+                            recipient_id=root.sender_id,
+                            actor_id=request.user.id,
+                            category=NotificationCategory.COLLABORATION,
+                            event_type=NotificationEventType.CHAT_THREAD_REPLY,
+                            title=f"{request.user.username or request.user.email} replied in a thread",
+                            body=message.content[:200] or "",
+                            related_object_type="chat",
+                            related_object_id=message.chat_id,
+                            action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
+                            metadata={
+                                "chat_id": message.chat_id,
+                                "root_message_id": root.id,
+                                "message_id": message.id,
+                                "project_id": message.chat.project_id,
+                            },
+                        )
+
+                    # Other thread participants
+                    for prev_reply in root.thread_replies.exclude(sender_id__in=notified_ids).select_related('sender').distinct('sender'):
+                        notified_ids.add(prev_reply.sender_id)
+                        create_notification(
+                            recipient_id=prev_reply.sender_id,
+                            actor_id=request.user.id,
+                            category=NotificationCategory.COLLABORATION,
+                            event_type=NotificationEventType.CHAT_THREAD_REPLY,
+                            title=f"{request.user.username or request.user.email} replied in a thread",
+                            body=message.content[:200] or "",
+                            related_object_type="chat",
+                            related_object_id=message.chat_id,
+                            action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
+                            metadata={
+                                "chat_id": message.chat_id,
+                                "root_message_id": root.id,
+                                "message_id": message.id,
+                                "project_id": message.chat.project_id,
+                            },
+                        )
+                except Exception as exc:
+                    logger.exception("Failed to create thread-reply notifications for message %s: %s", message.id, exc)
+
             # Refresh message with all relationships for response
             message = Message.objects.select_related(
                 'sender', 'reply_to', 'reply_to__sender'
@@ -743,6 +799,66 @@ class MessageViewSet(viewsets.ModelViewSet):
             'unread_count': count,
             'chat_id': chat_id
         })
+
+    @action(detail=True, methods=['get'], url_path='thread_replies')
+    def thread_replies(self, request, pk=None):
+        """
+        List the thread replies for a root message.
+
+        GET /api/chat/messages/{id}/thread_replies/
+
+        Returns replies in ascending chronological order.
+        Also marks the thread as read for the current user.
+        """
+        root = get_object_or_404(Message, pk=pk)
+
+        # Access check: user must be a chat participant
+        if not ChatParticipant.objects.filter(
+            chat=root.chat,
+            user=request.user,
+            is_active=True,
+        ).exists():
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        replies = (
+            Message.objects.filter(parent_message=root, is_deleted=False)
+            .select_related('sender', 'reply_to', 'reply_to__sender')
+            .prefetch_related('attachments', 'mentions')
+            .order_by('created_at')
+        )
+
+        serializer = MessageWithAttachmentsSerializer(replies, many=True, context={'request': request})
+        return Response({'results': serializer.data})
+
+    @action(detail=True, methods=['post'], url_path='mark_thread_as_read')
+    def mark_thread_as_read(self, request, pk=None):
+        """
+        Mark all current thread replies for a root message as read by the current user.
+
+        POST /api/chat/messages/{id}/mark_thread_as_read/
+        """
+        from django.utils import timezone as tz
+        from .models import ThreadReadStatus
+
+        root = get_object_or_404(Message, pk=pk)
+
+        # Access check
+        if not ChatParticipant.objects.filter(
+            chat=root.chat,
+            user=request.user,
+            is_active=True,
+        ).exists():
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        last_reply = root.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
+        if last_reply:
+            ThreadReadStatus.objects.update_or_create(
+                user=request.user,
+                root_message=root,
+                defaults={'last_read_at': last_reply.created_at},
+            )
+
+        return Response({'status': 'ok'})
 
     @action(detail=False, methods=['post'])
     def forward_batch(self, request):

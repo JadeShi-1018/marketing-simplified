@@ -158,6 +158,11 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     can_revoke = serializers.SerializerMethodField()
     is_hidden_by_me = serializers.SerializerMethodField()
     mentioned_user_ids = serializers.SerializerMethodField()
+    thread_reply_count = serializers.SerializerMethodField()
+    thread_last_reply_at = serializers.SerializerMethodField()
+    thread_participants = serializers.SerializerMethodField()
+    has_unread_thread_replies = serializers.SerializerMethodField()
+    parent_message_id = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = Message
@@ -167,6 +172,9 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             'has_attachments', 'attachment_count',
             'is_forwarded', 'forwarded_from', 'reply_to', 'reactions', 'can_revoke',
             'is_hidden_by_me', 'mentioned_user_ids',
+            'parent_message_id',
+            'thread_reply_count', 'thread_last_reply_at', 'thread_participants',
+            'has_unread_thread_replies',
         ]
         read_only_fields = ['id', 'sender', 'created_at', 'updated_at']
 
@@ -305,6 +313,67 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             return False
 
         return obj.hidden_by_users.filter(id=request.user.id).exists()
+
+    # ------------------------------------------------------------------ #
+    # Thread fields                                                        #
+    # ------------------------------------------------------------------ #
+
+    def get_thread_reply_count(self, obj):
+        """Number of direct thread replies on this root message."""
+        if obj.parent_message_id:
+            return None  # Thread replies don't have sub-threads
+        return obj.thread_replies.filter(is_deleted=False).count()
+
+    def get_thread_last_reply_at(self, obj):
+        """ISO timestamp of the most recent thread reply, or None."""
+        if obj.parent_message_id:
+            return None
+        last = obj.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
+        return last.created_at.isoformat() if last else None
+
+    def get_thread_participants(self, obj):
+        """
+        Up to 4 distinct senders in the thread (for avatar stack).
+        Returns a list of {id, username, avatar} dicts.
+        """
+        if obj.parent_message_id:
+            return []
+        seen_ids = set()
+        participants = []
+        for reply in obj.thread_replies.filter(is_deleted=False).select_related('sender').order_by('created_at'):
+            if reply.sender_id not in seen_ids:
+                seen_ids.add(reply.sender_id)
+                try:
+                    avatar_url = reply.sender.avatar.url if reply.sender.avatar else None
+                except (ValueError, AttributeError):
+                    avatar_url = None
+                participants.append({
+                    'id': reply.sender.id,
+                    'username': reply.sender.username,
+                    'email': reply.sender.email,
+                    'avatar': avatar_url,
+                })
+            if len(participants) >= 4:
+                break
+        return participants
+
+    def get_has_unread_thread_replies(self, obj):
+        """True if this root message has thread replies newer than the user's last read."""
+        if obj.parent_message_id:
+            return False
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        from .models import ThreadReadStatus
+        last_reply = obj.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
+        if not last_reply:
+            return False
+        try:
+            trs = ThreadReadStatus.objects.get(user=request.user, root_message=obj)
+            return last_reply.created_at > trs.last_read_at
+        except ThreadReadStatus.DoesNotExist:
+            # Never read the thread → unread if any replies exist
+            return True
 
 
 class MessageCreateSerializer(MessageContentValidationMixin, ChatParticipantValidationMixin, serializers.ModelSerializer):
@@ -849,6 +918,12 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         allow_null=True,
         help_text="ID of the message being replied to (quote reply)"
     )
+    parent_message_id = serializers.IntegerField(
+        required=False,
+        write_only=True,
+        allow_null=True,
+        help_text="ID of the root message this is a thread reply to"
+    )
     rich_body = serializers.JSONField(
         required=False,
         allow_null=True,
@@ -865,7 +940,7 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
 
     class Meta:
         model = Message
-        fields = ['id', 'chat', 'content', 'rich_body', 'mention_ids', 'attachment_ids', 'reply_to_id', 'attachments', 'created_at']
+        fields = ['id', 'chat', 'content', 'rich_body', 'mention_ids', 'attachment_ids', 'reply_to_id', 'parent_message_id', 'attachments', 'created_at']
         read_only_fields = ['id', 'attachments', 'created_at']
 
     def validate_content(self, value):
@@ -929,10 +1004,15 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         request = self.context.get('request')
         validated_data['sender'] = request.user
 
-        # Handle reply_to_id
+        # Handle reply_to_id (quote reply)
         reply_to_id = validated_data.pop('reply_to_id', None)
         if reply_to_id:
             validated_data['reply_to_id'] = reply_to_id
+
+        # Handle parent_message_id (thread reply)
+        parent_message_id = validated_data.pop('parent_message_id', None)
+        if parent_message_id:
+            validated_data['parent_message_id'] = parent_message_id
 
         attachment_ids = validated_data.pop('attachment_ids', [])
         mention_ids = validated_data.pop('mention_ids', [])

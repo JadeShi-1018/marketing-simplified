@@ -34,6 +34,10 @@ export const useChatStore = create<ChatState>()(
       capturedUnreadCounts: {}, // Snapshot of unread_count at the moment each chat is opened
       typingUsersByChat: {},    // chatId -> userIds currently typing (ephemeral, not persisted)
       mentionedChatIds: {},     // chatId -> true when current user has unread @-mention
+
+      // Thread panel
+      activeThreadMessageId: null,
+      threadReplies: {},
       globalUnreadCount: 0,     // Total unread across ALL projects
       isWidgetOpen: false,
       isMessagePageOpen: false,
@@ -371,60 +375,75 @@ export const useChatStore = create<ChatState>()(
           const newMessages = { ...state.messages };
           const actorId = Number(user.id);
           const currentId = currentUserId !== null ? Number(currentUserId) : null;
+
+          const applyToMessage = (msg: Message): Message => {
+            if (msg.id !== messageId) return msg;
+            const existing = msg.reactions ?? [];
+            if (action === 'added') {
+              const idx = existing.findIndex(r => r.emoji === emoji);
+              if (idx >= 0) {
+                if (existing[idx].users.some(u => Number(u.id) === actorId)) return msg;
+                const updated = existing.map((r, i) => i !== idx ? r : {
+                  ...r,
+                  count: r.count + 1,
+                  users: [...r.users, user],
+                  reacted_by_me: r.reacted_by_me || actorId === currentId,
+                });
+                return { ...msg, reactions: updated };
+              } else {
+                return {
+                  ...msg,
+                  reactions: [
+                    ...existing,
+                    {
+                      emoji,
+                      count: 1,
+                      users: [user],
+                      reacted_by_me: actorId === currentId,
+                    },
+                  ],
+                };
+              }
+            }
+
+            const reaction = existing.find(r => r.emoji === emoji);
+            if (!reaction || !reaction.users.some(u => Number(u.id) === actorId)) {
+              return msg;
+            }
+
+            const updated = existing
+              .map(r => {
+                if (r.emoji !== emoji) return r;
+                const users = r.users.filter(u => Number(u.id) !== actorId);
+                return {
+                  ...r,
+                  count: users.length,
+                  users,
+                  reacted_by_me: actorId === currentId ? false : r.reacted_by_me,
+                };
+              })
+              .filter(r => r.count > 0);
+
+            return { ...msg, reactions: updated };
+          };
+
+          // Update main timeline messages
           Object.keys(newMessages).forEach(chatIdStr => {
             const chatId = parseInt(chatIdStr);
-            newMessages[chatId] = newMessages[chatId].map(msg => {
-              if (msg.id !== messageId) return msg;
-              const existing = msg.reactions ?? [];
-              if (action === 'added') {
-                const idx = existing.findIndex(r => r.emoji === emoji);
-                if (idx >= 0) {
-                  if (existing[idx].users.some(u => Number(u.id) === actorId)) return msg;
-                  const updated = existing.map((r, i) => i !== idx ? r : {
-                    ...r,
-                    count: r.count + 1,
-                    users: [...r.users, user],
-                    reacted_by_me: r.reacted_by_me || actorId === currentId,
-                  });
-                  return { ...msg, reactions: updated };
-                } else {
-                  return {
-                    ...msg,
-                    reactions: [
-                      ...existing,
-                      {
-                        emoji,
-                        count: 1,
-                        users: [user],
-                        reacted_by_me: actorId === currentId,
-                      },
-                    ],
-                  };
-                }
-              }
-
-              const reaction = existing.find(r => r.emoji === emoji);
-              if (!reaction || !reaction.users.some(u => Number(u.id) === actorId)) {
-                return msg;
-              }
-
-              const updated = existing
-                .map(r => {
-                  if (r.emoji !== emoji) return r;
-                  const users = r.users.filter(u => Number(u.id) !== actorId);
-                  return {
-                    ...r,
-                    count: users.length,
-                    users,
-                    reacted_by_me: actorId === currentId ? false : r.reacted_by_me,
-                  };
-                })
-                .filter(r => r.count > 0);
-
-              return { ...msg, reactions: updated };
-            });
+            newMessages[chatId] = newMessages[chatId].map(applyToMessage);
           });
-          return { messages: newMessages };
+
+          // Update thread replies so reaction updates propagate there too
+          const newThreadReplies = { ...state.threadReplies };
+          Object.keys(newThreadReplies).forEach(rootIdStr => {
+            const rootId = parseInt(rootIdStr);
+            const replies = newThreadReplies[rootId];
+            if (replies.some(r => r.id === messageId)) {
+              newThreadReplies[rootId] = replies.map(applyToMessage);
+            }
+          });
+
+          return { messages: newMessages, threadReplies: newThreadReplies };
         });
       },
 
@@ -652,6 +671,8 @@ export const useChatStore = create<ChatState>()(
           globalUnreadCount: 0,
           typingUsersByChat: {},
           mentionedChatIds: {},
+          activeThreadMessageId: null,
+          threadReplies: {},
         });
       },
 
@@ -676,6 +697,39 @@ export const useChatStore = create<ChatState>()(
             );
           });
           return { mentionedChatIds: next, chatsByProject: newChatsByProject };
+        }),
+
+      // ── Thread panel ─────────────────────────────────────────────────
+      setActiveThreadMessageId: (id) => set({ activeThreadMessageId: id }),
+
+      setThreadReplies: (rootId, replies) =>
+        set((state) => ({
+          threadReplies: { ...state.threadReplies, [rootId]: replies },
+        })),
+
+      addThreadReply: (rootId, reply) =>
+        set((state) => {
+          const existing = state.threadReplies[rootId] ?? [];
+          // Avoid duplicates
+          if (existing.some((r) => r.id === reply.id)) return state;
+          return {
+            threadReplies: { ...state.threadReplies, [rootId]: [...existing, reply] },
+          };
+        }),
+
+      updateThreadReply: (replyId, updates) =>
+        set((state) => {
+          const next = { ...state.threadReplies };
+          for (const rootId of Object.keys(next)) {
+            const replies = next[Number(rootId)];
+            if (replies.some((r) => r.id === replyId)) {
+              next[Number(rootId)] = replies.map((r) =>
+                r.id === replyId ? { ...r, ...updates } : r,
+              );
+              break;
+            }
+          }
+          return { threadReplies: next };
         }),
     }),
     {

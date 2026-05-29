@@ -133,6 +133,16 @@ export interface Message {
   rich_body?: TiptapJSONContent | null;
   /** IDs of users @-mentioned in the message. */
   mentioned_user_ids?: number[];
+  /** ID of the root message when this is a thread reply. Null for root/timeline messages. */
+  parent_message_id?: number | null;
+  /** Number of thread replies on this root message. */
+  thread_reply_count?: number | null;
+  /** ISO timestamp of the most recent thread reply. */
+  thread_last_reply_at?: string | null;
+  /** Up to 4 participant stubs for the thread avatar stack. */
+  thread_participants?: Array<{ id: number; username: string; email: string; avatar?: string | null }>;
+  /** True when there are thread replies the current user has not seen. */
+  has_unread_thread_replies?: boolean;
 }
 
 // ==================== API Request/Response Types ====================
@@ -151,6 +161,8 @@ export interface SendMessageRequest {
   content: string;
   attachment_ids?: number[];
   reply_to_id?: number | null;
+  /** ID of the root message when posting a thread reply. */
+  parent_message_id?: number | null;
   /** Tiptap JSON for rich messages. */
   rich_body?: TiptapJSONContent | null;
   /** IDs of @-mentioned users. */
@@ -351,6 +363,16 @@ export interface ChatState {
   addMentionedChat: (chatId: number) => void;
   clearMentionedChat: (chatId: number) => void;
 
+  // Thread panel
+  /** ID of the root message whose thread panel is currently open, or null. */
+  activeThreadMessageId: number | null;
+  setActiveThreadMessageId: (id: number | null) => void;
+  /** Thread replies keyed by root message ID. */
+  threadReplies: Record<number, Message[]>;
+  setThreadReplies: (rootId: number, replies: Message[]) => void;
+  addThreadReply: (rootId: number, reply: Message) => void;
+  updateThreadReply: (replyId: number, updates: Partial<Message>) => void;
+
   // Helpers
   getCurrentChat: () => Chat | undefined;
   getCurrentMessages: () => Message[];
@@ -425,6 +447,9 @@ export interface MessageItemProps {
   onQuoteReply?: () => void;
   onForwardSingle?: () => void;
   onEnterSelectMode?: () => void;
+  onOpenThread?: () => void;
+  /** True when this message's thread panel is open. */
+  isThreadActive?: boolean;
 }
 
 export interface MessageListProps {
@@ -448,6 +473,9 @@ export interface MessageListProps {
   onQuoteReply?: (message: Message) => void;
   onForwardSingle?: (messageId: number) => void;
   onEnterSelectMode?: () => void;
+  onOpenThread?: (message: Message) => void;
+  /** ID of the message whose thread panel is currently open (highlights the row). */
+  activeThreadMessageId?: number | null;
 }
 
 export interface MessageInputProps {

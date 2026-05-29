@@ -15,6 +15,7 @@ import ChatComposer from './ChatComposer';
 import type { RichSendData } from './ChatComposer';
 import ForwardMessagesDialog from './ForwardMessagesDialog';
 import TypingIndicator from './TypingIndicator';
+import ThreadPanel from './ThreadPanel';
 
 interface ChatWindowProps {
   chat: Chat;
@@ -42,6 +43,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const [showSwitchLoadingSkeleton, setShowSwitchLoadingSkeleton] = useState(false);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<number | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [activeThreadMessage, setActiveThreadMessage] = useState<Message | null>(null);
   const unreadCapturedForChatRef = useRef<number | null>(null);
   const { forward, isForwarding } = useForwardMessages();
 
@@ -96,6 +98,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     hasMore,
     sendRich,
     loadMoreMessages,
+    removeMessage,
     markAllAsRead,
   } = useMessageData({ chatId: chat.id, autoFetch: true });
   
@@ -124,6 +127,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setIsForwardDialogOpen(false);
     setFirstUnreadMessageId(null);
     setReplyingTo(null);
+    setActiveThreadMessage(null);
     unreadCapturedForChatRef.current = null;
     jumpLoadAttemptsRef.current = 0;
     jumpedToMessageRef.current = null;
@@ -285,7 +289,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   };
 
   const handleDeleteMessage = async (messageId: number) => {
-    const { removeMessage } = useChatStore.getState();
+    // removeMessage clears from both localMessages (React state) and the Zustand store,
+    // preventing the merge in useMessageData from resurrecting the deleted message.
     removeMessage(messageId);
     try {
       await deleteMessage(messageId);
@@ -398,6 +403,10 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const chatName = chat.type === 'group' 
     ? (chat.name || 'Group Chat')
     : (otherParticipant?.user?.username || 'Chat');
+  const handleOpenThread = useCallback((message: Message) => {
+    setActiveThreadMessage((prev) => (prev?.id === message.id ? null : message));
+  }, []);
+
   const handleTypingStart = useCallback(() => {
     sendTypingStart(chat.id);
   }, [chat.id, sendTypingStart]);
@@ -405,6 +414,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const handleTypingStop = useCallback(() => {
     sendTypingStop(chat.id);
   }, [chat.id, sendTypingStop]);
+
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -474,47 +484,67 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-hidden">
-        <MessageList
-          messages={messages}
-          currentUserId={currentUserId ?? 0}
-          onLoadMore={loadMoreMessages}
-          hasMore={hasMore}
-          isLoading={isLoadingMessages}
-          isLoadingMoreMessages={isLoadingMoreMessages}
-          showSwitchLoadingSkeleton={showSwitchLoadingSkeleton}
-          roleByUserId={roleByUserId}
-          isGroupChat={chat.type === 'group'}
-          isSelectMode={isSelectMode}
-          selectedMessageIds={selectedMessageIds}
-          onToggleSelectMessage={handleToggleSelectMessage}
-          firstUnreadMessageId={firstUnreadMessageId}
-          onEditMessage={handleEditMessage}
-          onDeleteMessage={handleDeleteMessage}
-          onReactionAdd={handleReactionAdd}
-          onReactionRemove={handleReactionRemove}
-          onQuoteReply={handleQuoteReply}
-          onForwardSingle={handleForwardSingle}
-          onEnterSelectMode={toggleSelectMode}
-        />
-      </div>
+      {/* Main area: timeline + optional thread panel side-by-side */}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {/* Timeline column */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex-1 overflow-hidden">
+            <MessageList
+              messages={messages}
+              currentUserId={currentUserId ?? 0}
+              onLoadMore={loadMoreMessages}
+              hasMore={hasMore}
+              isLoading={isLoadingMessages}
+              isLoadingMoreMessages={isLoadingMoreMessages}
+              showSwitchLoadingSkeleton={showSwitchLoadingSkeleton}
+              roleByUserId={roleByUserId}
+              isGroupChat={chat.type === 'group'}
+              isSelectMode={isSelectMode}
+              selectedMessageIds={selectedMessageIds}
+              onToggleSelectMessage={handleToggleSelectMessage}
+              firstUnreadMessageId={firstUnreadMessageId}
+              onEditMessage={handleEditMessage}
+              onDeleteMessage={handleDeleteMessage}
+              onReactionAdd={handleReactionAdd}
+              onReactionRemove={handleReactionRemove}
+              onQuoteReply={handleQuoteReply}
+              onForwardSingle={handleForwardSingle}
+              onEnterSelectMode={toggleSelectMode}
+              onOpenThread={handleOpenThread}
+              activeThreadMessageId={activeThreadMessage?.id ?? null}
+            />
+          </div>
 
-      {/* Typing indicator */}
-      <TypingIndicator chat={chat} currentUserId={currentUserId} />
+          {/* Typing indicator */}
+          <TypingIndicator chat={chat} currentUserId={currentUserId} />
 
-      {/* Message Composer */}
-      <div className="flex-shrink-0">
-        <ChatComposer
-          onSendRich={handleSendRich}
-          disabled={isSending || isSelectMode || isForwarding}
-          chatId={chat.id}
-          onTypingStart={handleTypingStart}
-          onTypingStop={handleTypingStop}
-          replyingTo={replyingTo}
-          onClearReply={() => setReplyingTo(null)}
-          participants={chat.participants}
-        />
+          {/* Message Composer */}
+          <div className="flex-shrink-0">
+            <ChatComposer
+              onSendRich={handleSendRich}
+              disabled={isSending || isSelectMode || isForwarding}
+              chatId={chat.id}
+              onTypingStart={handleTypingStart}
+              onTypingStop={handleTypingStop}
+              replyingTo={replyingTo}
+              onClearReply={() => setReplyingTo(null)}
+              participants={chat.participants}
+            />
+          </div>
+        </div>
+
+        {/* Thread panel */}
+        {activeThreadMessage && (
+          <div className="hidden w-80 shrink-0 md:flex md:flex-col xl:w-96">
+            <ThreadPanel
+              rootMessage={activeThreadMessage}
+              participants={chat.participants}
+              currentUserId={currentUserId ?? undefined}
+              onClose={() => setActiveThreadMessage(null)}
+              onForwardMessage={handleForwardSingle}
+            />
+          </div>
+        )}
       </div>
 
       <ForwardMessagesDialog

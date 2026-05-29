@@ -271,6 +271,12 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
     }
   }, []);
 
+  // Remove a message from both local state and the store (for delete)
+  const removeMessage = useCallback((messageId: number) => {
+    setLocalMessages((prev) => prev.filter((m) => m.id !== messageId));
+    useChatStore.getState().removeMessage(messageId);
+  }, []);
+
   // Mark all messages in chat as read (uses efficient backend endpoint)
   const markAllAsRead = useCallback(async () => {
     if (!chatId) return;
@@ -312,6 +318,7 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
     send,
     sendWithAttachments,
     sendRich,
+    removeMessage,
     markAsRead,
     markAllAsRead,
   };

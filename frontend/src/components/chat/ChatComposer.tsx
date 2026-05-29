@@ -4,6 +4,7 @@ import {
   useState,
   useRef,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   type ChangeEvent,
@@ -11,6 +12,7 @@ import {
   type ReactNode,
   type Ref,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Send,
   Smile,
@@ -28,6 +30,7 @@ import {
   ListOrdered,
   ListChecks,
   Link2,
+  MoreHorizontal,
   Undo2,
   Redo2,
   AtSign,
@@ -103,6 +106,8 @@ export interface ChatComposerProps {
   /** Participants visible in the mention picker. Derive from `chat.participants`. */
   participants?: ChatParticipant[];
   placeholder?: string;
+  /** When true, the formatting toolbar collapses to one row with a "more" overflow button. */
+  compact?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -274,12 +279,116 @@ function ChatFormattingToolbar({
   editor,
   disabled,
   onOpenLink,
+  compact = false,
 }: {
   editor: Editor | null;
   disabled: boolean;
   onOpenLink: () => void;
+  compact?: boolean;
 }) {
   const inactive = disabled || !editor;
+  const [showMore, setShowMore] = useState(false);
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const [popupStyle, setPopupStyle] = useState<{ top: number; left: number } | null>(null);
+
+  // Compute popup position relative to the ⋯ button whenever it opens
+  useLayoutEffect(() => {
+    if (!showMore || !moreBtnRef.current) return;
+    const rect = moreBtnRef.current.getBoundingClientRect();
+    setPopupStyle({ top: rect.top, left: rect.right });
+  }, [showMore]);
+
+  useEffect(() => {
+    if (!showMore) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node;
+      const btn = moreBtnRef.current;
+      // Close if click is outside the button; the popup is a portal so we can't use a ref on it
+      if (btn && !btn.contains(target)) {
+        // Check if target is inside the portal popup (by data attribute)
+        const insidePopup = (target as Element).closest?.('[data-more-popup]');
+        if (!insidePopup) setShowMore(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMore]);
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-0.5 border-b border-gray-200 bg-gray-50 px-2 py-1">
+        {/* Primary buttons */}
+        <ToolbarButton label="Bold" shortcut="Cmd/Ctrl+B" active={Boolean(editor?.isActive('bold'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleBold().run()}>
+          <Bold className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton label="Italic" shortcut="Cmd/Ctrl+I" active={Boolean(editor?.isActive('italic'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleItalic().run()}>
+          <Italic className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton label="Underline" shortcut="Cmd/Ctrl+U" active={Boolean(editor?.isActive('underline'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleUnderline().run()}>
+          <Underline className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton label="Strikethrough" shortcut="Cmd/Ctrl+Shift+X" active={Boolean(editor?.isActive('strike'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleStrike().run()}>
+          <Strikethrough className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton label="Inline code" shortcut="Cmd/Ctrl+E" active={Boolean(editor?.isActive('code'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleCode().run()}>
+          <Code className="h-3.5 w-3.5" />
+        </ToolbarButton>
+
+        <ToolbarSeparator />
+
+        <ToolbarButton label="Bullet list" active={Boolean(editor?.isActive('bulletList'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleBulletList().run()}>
+          <List className="h-3.5 w-3.5" />
+        </ToolbarButton>
+        <ToolbarButton label="Numbered list" active={Boolean(editor?.isActive('orderedList'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleOrderedList().run()}>
+          <ListOrdered className="h-3.5 w-3.5" />
+        </ToolbarButton>
+
+        <ToolbarSeparator />
+
+        <ToolbarButton label="Link" shortcut="Cmd/Ctrl+K" active={Boolean(editor?.isActive('link'))} disabled={inactive} onClick={onOpenLink}>
+          <Link2 className="h-3.5 w-3.5" />
+        </ToolbarButton>
+
+        {/* More button — portal popup escapes overflow-hidden */}
+        <button
+          ref={moreBtnRef}
+          type="button"
+          aria-label={showMore ? 'Show less' : 'More formatting'}
+          title={showMore ? 'Show less' : 'More formatting'}
+          onClick={() => setShowMore((v) => !v)}
+          className={[toolbarButtonClassName, 'ml-auto', showMore ? 'bg-gray-100 text-gray-800' : ''].join(' ')}
+        >
+          <MoreHorizontal className="h-3.5 w-3.5" />
+        </button>
+
+        {showMore && popupStyle && typeof document !== 'undefined' && createPortal(
+          <div
+            data-more-popup
+            className="fixed z-[9999] flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white px-1 py-0.5 shadow-md"
+            style={{ top: popupStyle.top - 4, left: popupStyle.left, transform: 'translate(-100%, -100%)' }}
+          >
+            <ToolbarButton label="Checklist" active={Boolean(editor?.isActive('taskList'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleTaskList().run()}>
+              <ListChecks className="h-3.5 w-3.5" />
+            </ToolbarButton>
+            <ToolbarButton label="Quote" active={Boolean(editor?.isActive('blockquote'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleBlockquote().run()}>
+              <Quote className="h-3.5 w-3.5" />
+            </ToolbarButton>
+            <ToolbarButton label="Code block" active={Boolean(editor?.isActive('codeBlock'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleCodeBlock().run()}>
+              <Code2 className="h-3.5 w-3.5" />
+            </ToolbarButton>
+            <ToolbarSeparator />
+            <ToolbarButton label="Undo" shortcut="Cmd/Ctrl+Z" disabled={inactive || !editor?.can().chain().focus().undo().run()} onClick={() => editor?.chain().focus().undo().run()}>
+              <Undo2 className="h-3.5 w-3.5" />
+            </ToolbarButton>
+            <ToolbarButton label="Redo" shortcut="Cmd/Ctrl+Shift+Z" disabled={inactive || !editor?.can().chain().focus().redo().run()} onClick={() => editor?.chain().focus().redo().run()}>
+              <Redo2 className="h-3.5 w-3.5" />
+            </ToolbarButton>
+          </div>,
+          document.body,
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-0.5 border-b border-gray-200 bg-gray-50 px-2 py-1">
@@ -426,6 +535,7 @@ export default function ChatComposer({
   onClearReply,
   participants = [],
   placeholder = 'Type a message…',
+  compact = false,
 }: ChatComposerProps) {
   const [showFormattingToolbar, setShowFormattingToolbar] = useState(true);
 
@@ -1259,6 +1369,7 @@ export default function ChatComposer({
             editor={editor}
             disabled={disabled}
             onOpenLink={handleOpenLinkEditor}
+            compact={compact}
           />
         )}
 
