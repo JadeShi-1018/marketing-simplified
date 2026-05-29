@@ -191,9 +191,10 @@ export default function MessageItem({
   const hasAttachments = Boolean(message.attachments?.length);
   const missingForwardedAttachments = message.missing_forwarded_attachments ?? [];
   const hasReplyTo = Boolean(message.reply_to?.id);
+  const replyToAttachment = message.reply_to?.attachments?.[0] ?? null;
   const replyToContent = message.reply_to
-    ? `${message.reply_to.sender.username}: ${message.reply_to.content || '[Attachment]'}`
-    : '';
+    ? message.reply_to.content || null
+    : null;
   const hasReactions = Boolean(message.reactions && message.reactions.length > 0);
   const hasThreadReplies = (message.thread_reply_count ?? 0) > 0;
 
@@ -441,11 +442,44 @@ export default function MessageItem({
               )}
 
               {hasReplyTo && (
-                <div className="mt-1 rounded border border-gray-200 bg-gray-50 px-2 py-1">
-                  <span className="block max-w-[280px] truncate text-xs text-gray-500">
-                    {replyToContent}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = message.reply_to?.id;
+                    if (!id) return;
+                    window.dispatchEvent(
+                      new CustomEvent('mj:chat:jumpToMessage', {
+                        detail: { messageId: id, requestId: `reply:${id}:${Date.now()}` },
+                      })
+                    );
+                  }}
+                  className="mt-1 w-full max-w-[320px] rounded border border-gray-200 bg-gray-50 px-2 py-1 text-left hover:bg-gray-100 transition-colors"
+                >
+                  <span className="block text-[11px] font-medium text-teal-600 truncate">
+                    {message.reply_to?.sender.username}
                   </span>
-                </div>
+                  {replyToAttachment ? (
+                    <span className="flex items-center gap-1 text-xs text-gray-500 truncate mt-0.5">
+                      {replyToAttachment.file_type === 'image' ? (
+                        <span>🖼</span>
+                      ) : replyToAttachment.file_type === 'video' ? (
+                        <span>🎬</span>
+                      ) : replyToAttachment.mime_type?.startsWith('audio/') ||
+                        replyToAttachment.original_filename?.match(/\.(webm|mp3|ogg|m4a|wav)$/i) ? (
+                        <span>🎙</span>
+                      ) : (
+                        <span>📄</span>
+                      )}
+                      <span className="truncate">
+                        {replyToContent || replyToAttachment.original_filename || 'Attachment'}
+                      </span>
+                    </span>
+                  ) : (
+                    <span className="block text-xs text-gray-500 truncate mt-0.5">
+                      {replyToContent || '[Attachment]'}
+                    </span>
+                  )}
+                </button>
               )}
 
               {hasReactions && (

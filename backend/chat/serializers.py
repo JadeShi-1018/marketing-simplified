@@ -338,6 +338,23 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if not reply_msg:
             return None
 
+        request = self.context.get('request')
+
+        # Include the first attachment so the reply preview can show a file/audio indicator.
+        reply_attachments = []
+        for att in reply_msg.attachments.all()[:1]:
+            file_url = None
+            if att.file:
+                raw_url = att.file.url
+                file_url = request.build_absolute_uri(raw_url) if request else raw_url
+            reply_attachments.append({
+                'id': att.id,
+                'file_type': att.file_type,
+                'original_filename': att.original_filename,
+                'file_url': file_url,
+                'mime_type': att.mime_type,
+            })
+
         return {
             'id': reply_msg.id,
             'sender': {
@@ -347,6 +364,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             },
             'content': reply_msg.content,
             'created_at': reply_msg.created_at.isoformat() if reply_msg.created_at else None,
+            'attachments': reply_attachments,
         }
 
     def get_reactions(self, obj):

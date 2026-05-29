@@ -565,6 +565,7 @@ class MessageService:
             'forwarded_from_message',
         ).prefetch_related(
             'attachments',
+            'reply_to__attachments',
             'mentions',
             'reactions__user',
             Prefetch(

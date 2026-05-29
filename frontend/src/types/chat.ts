@@ -126,6 +126,13 @@ export interface Message {
     sender: User;
     content: string;
     created_at: string | null;
+    attachments?: Array<{
+      id: number;
+      file_type: 'image' | 'video' | 'document';
+      original_filename: string | null;
+      file_url: string | null;
+      mime_type: string | null;
+    }>;
   } | null;
   reactions?: Reaction[];
   created_at: string;
