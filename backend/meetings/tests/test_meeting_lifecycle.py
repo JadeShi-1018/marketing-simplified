@@ -416,3 +416,43 @@ class TestMeetingLifecycleAPI(TestCase):
         self.assertIn(response.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND])
         meeting.refresh_from_db()
         self.assertEqual(meeting.status, Meeting.STATUS_DRAFT)
+
+    # ------------------------------------------------------------------
+    # Full end-to-end integration
+    # ------------------------------------------------------------------
+
+    def test_full_lifecycle_draft_to_archived_integration(self):
+        """Walk every valid transition in sequence, verifying status and
+        available_transitions at each step."""
+        meeting = _meeting(self.project)
+
+        # draft → planned
+        res = self.client.post(self._transition_url(meeting), {"to_state": "planned"}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], Meeting.STATUS_PLANNED)
+        self.assertIn(Meeting.STATUS_IN_PROGRESS, res.data["available_transitions"])
+        self.assertIn(Meeting.STATUS_DRAFT, res.data["available_transitions"])
+
+        # planned → in_progress (requires participant)
+        ParticipantLink.objects.create(meeting=meeting, user=self.member)
+        res = self.client.post(self._transition_url(meeting), {"to_state": "in_progress"}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], Meeting.STATUS_IN_PROGRESS)
+
+        # in_progress → completed (requires objective + agenda)
+        meeting.objective = "Final objective"
+        meeting.save(update_fields=["objective"])
+        AgendaItem.objects.create(meeting=meeting, content="Item 1", order_index=0)
+        res = self.client.post(self._transition_url(meeting), {"to_state": "completed"}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], Meeting.STATUS_COMPLETED)
+
+        # completed → archived
+        res = self.client.post(self._transition_url(meeting), {"to_state": "archived"}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], Meeting.STATUS_ARCHIVED)
+        self.assertEqual(res.data["available_transitions"], [])
+
+        meeting.refresh_from_db()
+        self.assertEqual(meeting.status, Meeting.STATUS_ARCHIVED)
+        self.assertTrue(meeting.is_archived)

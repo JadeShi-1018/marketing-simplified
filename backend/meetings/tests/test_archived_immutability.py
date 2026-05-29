@@ -271,6 +271,13 @@ class TestArchivedMeetingImmutability(TestCase):
         self.assertFalse(meeting.is_archived)
         self.assertEqual(meeting.status, Meeting.STATUS_DRAFT)
 
+    def test_patch_is_archived_false_on_archived_meeting_is_blocked(self):
+        url = self._url("/")
+        res = self.client.patch(url, {"is_archived": False}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.meeting.refresh_from_db()
+        self.assertTrue(self.meeting.is_archived)
+
     # ------------------------------------------------------------------
     # Service layer isolation (Layer 3 fires independently of HTTP stack)
     # ------------------------------------------------------------------
