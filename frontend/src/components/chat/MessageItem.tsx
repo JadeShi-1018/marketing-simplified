@@ -267,7 +267,7 @@ export default function MessageItem({
       <div
         className={[
           'relative flex gap-2 pl-3 pr-4',
-          isHighlighted ? 'rounded-lg ring-2 ring-amber-200' : '',
+          isHighlighted ? 'bg-cyan-50' : '',
           isSelectMode ? 'cursor-pointer' : '',
           'border-l-2 border-transparent',
         ].join(' ')}

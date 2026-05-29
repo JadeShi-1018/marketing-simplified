@@ -13,6 +13,8 @@ import type {
   GetChatsParams,
   GetMessagesParams,
   PaginatedResponse,
+  SearchMessagesParams,
+  SearchMessagesResponse,
 } from '@/types/chat';
 import type { TiptapJSONContent } from '@/types/comment';
 
@@ -415,3 +417,10 @@ const chatApi = {
 };
 
 export default chatApi;
+
+// ==================== Search ====================
+
+export const searchMessages = async (params: SearchMessagesParams): Promise<SearchMessagesResponse> => {
+  const response = await api.get('/api/chat/search/', { params });
+  return response.data;
+};

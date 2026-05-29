@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckSquare, Forward, X } from 'lucide-react';
-import { useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/authStore';
 import { useMessageData } from '@/hooks/useMessageData';
 import { useForwardMessages } from '@/hooks/useForwardMessages';
@@ -30,6 +31,7 @@ interface ChatWindowProps {
 }
 
 export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDesktop }: ChatWindowProps) {
+  const router = useRouter();
   const searchParams = useSearchParams();
   // Use selector for stable reference
   const user = useAuthStore(state => state.user);
@@ -162,6 +164,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     // If URL includes a messageId, load older history one page at a time until
     // the message exists in the rendered list, then ask MessageList to focus it.
     if (!targetMessageId) return;
+    if (isLoadingMessages) return; // wait for initial load to complete
 
     const jumpKey = `${chat.id}:${targetMessageId}`;
     const hasTargetMessage = messages.some((message) => Number(message.id) === targetMessageId);
@@ -178,11 +181,28 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       return () => window.cancelAnimationFrame(frame);
     }
 
-    if (isLoadingMessages || isLoadingMoreMessages || !hasMore) return;
-    if (jumpLoadAttemptsRef.current >= 12) return; // safety cap: 12 * 50 = 600 older messages
+    if (isLoadingMoreMessages) return;
 
-    jumpLoadAttemptsRef.current += 1;
-    void loadMoreMessages();
+    // Still more pages to load — keep trying (up to 12 pages / ~600 messages)
+    if (hasMore && jumpLoadAttemptsRef.current < 12) {
+      jumpLoadAttemptsRef.current += 1;
+      void loadMoreMessages();
+      return;
+    }
+
+    // Guard: if no messages have loaded yet, the initial fetch hasn't resolved —
+    // don't declare "not found" before we've actually seen any data.
+    if (messages.length === 0) return;
+
+    // All messages loaded (or attempts exhausted) and the target wasn't found.
+    // The message was likely deleted. Show feedback and clear the stale URL param.
+    if (jumpedToMessageRef.current !== jumpKey) {
+      jumpedToMessageRef.current = jumpKey; // prevent repeated toasts on re-renders
+      toast.error('Message not found — it may have been deleted.');
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('messageId');
+      router.replace(params.size ? `?${params.toString()}` : window.location.pathname);
+    }
   }, [
     chat.id,
     hasMore,
@@ -190,6 +210,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     isLoadingMoreMessages,
     loadMoreMessages,
     messages,
+    router,
+    searchParams,
     targetMessageId,
   ]);
   

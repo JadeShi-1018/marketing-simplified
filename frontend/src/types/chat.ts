@@ -538,3 +538,44 @@ export interface LinkPreview {
   site_name: string | null;
   type: string;
 }
+
+// ==================== Search Types ====================
+
+export interface MessageSearchSender {
+  id: number;
+  username: string;
+  email: string;
+  avatar?: string | null;
+}
+
+export interface MessageSearchResult {
+  id: number;
+  chat_id: number;
+  chat_name: string;
+  chat_type: 'private' | 'group';
+  project_id: number;
+  content: string;
+  /** HTML snippet with <mark> tags around matched terms */
+  highlight: string;
+  created_at: string;
+  sender: MessageSearchSender;
+  has_attachments: boolean;
+  attachment_count: number;
+}
+
+export interface SearchMessagesParams {
+  q: string;
+  from_user?: string;
+  in_chat?: number;
+  has?: 'file';
+  date_after?: string;
+  date_before?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SearchMessagesResponse {
+  results: MessageSearchResult[];
+  total: number;
+  q: string;
+}

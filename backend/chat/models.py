@@ -1,5 +1,7 @@
 from django.db import models
 from django.conf import settings
+from django.contrib.postgres.search import SearchVectorField
+from django.contrib.postgres.indexes import GinIndex
 from core.models import TimeStampedModel, Project, Team
 
 
@@ -322,6 +324,8 @@ class Message(TimeStampedModel):
         blank=True,
         help_text="Users who have hidden this message (personal hide, not affecting others)"
     )
+    # Full-text search vector — kept up-to-date via post_save signal in chat/signals.py
+    search_vector = SearchVectorField(null=True, blank=True)
 
     class Meta:
         ordering = ['created_at']
@@ -332,6 +336,7 @@ class Message(TimeStampedModel):
             models.Index(fields=['chat', 'is_deleted']),
             models.Index(fields=['chat', 'is_revoked']),
             models.Index(fields=['parent_message', 'created_at']),  # Thread reply listing
+            GinIndex(fields=['search_vector'], name='chat_msg_search_vec_idx'),
         ]
     
     def __str__(self):

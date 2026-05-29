@@ -12,6 +12,9 @@ import { useProjectStore } from '@/lib/projectStore';
 import ChatWindow from '@/components/chat/ChatWindow';
 import CreateChatDialog from '@/components/chat/CreateChatDialog';
 import SlackMessagesLayout from '@/components/messages/SlackMessagesLayout';
+import SearchPanel from '@/components/chat/search/SearchPanel';
+import ChatCommandPalette from '@/components/chat/ChatCommandPalette';
+import type { MessageSearchResult } from '@/types/chat';
 
 const MESSAGES_MOBILE_QUERY = '(max-width: 767px)';
 
@@ -29,7 +32,9 @@ export default function MessagePageContent() {
   const [isCreateChannelDialogOpen, setIsCreateChannelDialogOpen] = useState(false);
   const [isConversationDrawerOpen, setIsConversationDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
   // Chat store state
   const currentChatId = useChatStore(state => state.currentChatId);
   const setCurrentChat = useChatStore(state => state.setCurrentChat);
@@ -54,6 +59,20 @@ export default function MessagePageContent() {
   // widget's fetchChats runs.  Here we only need to fetch on project change.
   const lastChatActivity = useChatStore(state => state.lastChatActivity);
   const hasFetchedRef = useRef<string | null>(null);
+
+  // Global Cmd/Ctrl-K → open conversation switcher
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        // Don't steal from Tiptap composer
+        if ((e.target as HTMLElement)?.closest?.('.ProseMirror')) return;
+        e.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // Re-fetch the chat list when the project changes or an SSE chat event arrives.
   useEffect(() => {
@@ -156,6 +175,7 @@ export default function MessagePageContent() {
     selectedProjectId === null && (!hasProjectStoreHydrated || hasProjectCandidate);
   
   const handleSelectChat = (chatId: number) => {
+    setIsSearchOpen(false);
     // Clicking the already-open chat closes it and returns to the list
     if (chatId === currentChatId) {
       setCurrentChat(null);
@@ -228,16 +248,36 @@ export default function MessagePageContent() {
     }
   }, [selectedProjectId, chats, createNewChat, setCurrentChat, replaceMessagesQuery]);
 
+  // When the user clicks a search result: navigate to that chat + message
+  const handleSelectSearchResult = useCallback(
+    (result: MessageSearchResult) => {
+      setIsSearchOpen(false);
+      // Switch project if the result is from a different one
+      if (result.project_id && result.project_id !== selectedProjectId) {
+        setSelectedProjectId(result.project_id);
+      }
+      setCurrentChat(result.chat_id);
+      replaceMessagesQuery({
+        projectId: result.project_id ?? selectedProjectId,
+        chatId: result.chat_id,
+        messageId: result.id,
+      });
+    },
+    [selectedProjectId, setCurrentChat, replaceMessagesQuery]
+  );
+
+  // Sidebar chat-list filter input (mobile drawer only).
   const renderSearchInput = (testId: string) => (
     <div className="relative w-full">
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
       <input
         type="text"
-        placeholder="Search conversations..."
+        placeholder="Search conversations…"
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         className="w-full rounded-md border border-gray-200 py-1.5 pl-10 pr-4 text-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
         data-testid={testId}
+        aria-label="Search conversations"
       />
     </div>
   );
@@ -266,9 +306,16 @@ export default function MessagePageContent() {
           <PanelLeftOpen className="h-4 w-4" />
           <span className="hidden min-[380px]:inline">Chats</span>
         </button>
-        <div className="ml-auto hidden flex-1 md:block md:max-w-md">
-          {renderSearchInput('messages-search')}
-        </div>
+        <button
+          type="button"
+          onClick={() => setIsSearchOpen(true)}
+          className="ml-auto hidden rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 md:block"
+          data-testid="messages-search"
+          aria-label="Search messages"
+          title="Search messages"
+        >
+          <Search className="h-4 w-4" />
+        </button>
       </div>
 
       <SlackMessagesLayout
@@ -300,7 +347,16 @@ export default function MessagePageContent() {
           )
         }
         chatPanel={
-          projectSelectionLoading ? (
+          isSearchOpen ? (
+            <div className="h-full">
+              <SearchPanel
+                projectId={selectedProjectId}
+                chats={chats}
+                onSelectResult={handleSelectSearchResult}
+                onClose={() => setIsSearchOpen(false)}
+              />
+            </div>
+          ) : projectSelectionLoading ? (
             <div className="flex-1" />
           ) : !selectedProjectId ? (
             <div className="flex-1 flex items-center justify-center p-6 text-center">
@@ -365,6 +421,15 @@ export default function MessagePageContent() {
           />
         </>
       )}
+
+      {/* Cmd/Ctrl-K conversation switcher */}
+      <ChatCommandPalette
+        isOpen={isCommandPaletteOpen}
+        onOpenChange={setIsCommandPaletteOpen}
+        projectId={selectedProjectId}
+        currentChatId={currentChatId}
+        onSelectChat={handleSelectChat}
+      />
     </div>
   );
 }

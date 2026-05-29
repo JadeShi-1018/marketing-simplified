@@ -4,6 +4,11 @@ import { persist } from 'zustand/middleware';
 import type { ChatState, Chat, Message } from '@/types/chat';
 import { getUnreadCount } from './api/chatApi';
 
+// Session-scoped set of message IDs the current user has deleted.
+// Not persisted — only lives until page refresh, but that's enough to
+// filter stale search results within the same browsing session.
+export const deletedMessageIds = new Set<number>();
+
 const resolveChatProjectId = (chat: Chat): number | null => {
   const rawProjectId = chat.project_id ?? chat.project;
   const parsed = Number(rawProjectId);
@@ -360,6 +365,7 @@ export const useChatStore = create<ChatState>()(
       },
 
       removeMessage: (messageId: number) => {
+        deletedMessageIds.add(messageId);
         set(state => {
           const newMessages = { ...state.messages };
           Object.keys(newMessages).forEach(chatIdStr => {

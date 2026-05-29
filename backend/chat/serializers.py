@@ -1149,3 +1149,61 @@ class SetReminderSerializer(serializers.Serializer):
         if value <= timezone.now():
             raise serializers.ValidationError("Reminder time must be in the future")
         return value
+
+
+# ── Search result serializer ───────────────────────────────────────────────────
+
+class MessageSearchResultSerializer(serializers.ModelSerializer):
+    """Serializer for full-text message search results."""
+    sender = serializers.SerializerMethodField()
+    chat_name = serializers.SerializerMethodField()
+    chat_type = serializers.CharField(source='chat.type', read_only=True)
+    project_id = serializers.IntegerField(source='chat.project_id', read_only=True)
+    highlight = serializers.SerializerMethodField()
+    attachment_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = [
+            'id', 'chat_id', 'chat_name', 'chat_type', 'project_id',
+            'content', 'highlight', 'created_at',
+            'sender', 'has_attachments', 'attachment_count',
+        ]
+
+    def get_sender(self, obj):
+        u = obj.sender
+        avatar = None
+        if hasattr(u, 'profile') and u.profile.avatar:
+            request = self.context.get('request')
+            avatar = request.build_absolute_uri(u.profile.avatar.url) if request else u.profile.avatar.url
+        return {
+            'id': u.id,
+            'username': u.username or '',
+            'email': u.email or '',
+            'avatar': avatar,
+        }
+
+    def get_chat_name(self, obj):
+        chat = obj.chat
+        if chat.type == 'group':
+            return chat.name or 'Group Chat'
+        # For private chats, return the other participant's name
+        request = self.context.get('request')
+        if request:
+            other = chat.participants.exclude(user=request.user).select_related('user').first()
+            if other:
+                return other.user.username or other.user.email or 'Direct Message'
+        return 'Direct Message'
+
+    def get_highlight(self, obj):
+        # Annotation added by the search view; fallback to truncated content
+        highlight = getattr(obj, 'highlight', None)
+        if highlight:
+            return highlight
+        content = obj.content or ''
+        return content[:200] + ('…' if len(content) > 200 else '')
+
+    def get_attachment_count(self, obj):
+        if hasattr(obj, '_prefetched_objects_cache') and 'attachments' in obj._prefetched_objects_cache:
+            return len(obj._prefetched_objects_cache['attachments'])
+        return obj.attachments.count() if obj.has_attachments else 0

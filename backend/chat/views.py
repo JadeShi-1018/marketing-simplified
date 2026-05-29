@@ -1674,3 +1674,95 @@ def fetch_link_preview(request):
             {'error': 'Internal server error'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+# ── Full-text message search ───────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def search_messages(request):
+    """
+    GET /api/chat/search/
+
+    Query params:
+      q            str   required, min 2 chars
+      from_user    str   optional — username/email substring
+      in_chat      int   optional — chat id
+      has          str   optional — 'file'
+      date_after   str   optional — ISO date YYYY-MM-DD
+      date_before  str   optional — ISO date YYYY-MM-DD
+      limit        int   default 20, max 50
+      offset       int   default 0
+    """
+    from django.contrib.postgres.search import SearchQuery, SearchRank, SearchHeadline
+    from .serializers import MessageSearchResultSerializer
+
+    q = request.query_params.get('q', '').strip()
+    if len(q) < 2:
+        return Response({'results': [], 'total': 0, 'q': q})
+
+    limit = min(int(request.query_params.get('limit', 20)), 50)
+    offset = max(int(request.query_params.get('offset', 0)), 0)
+
+    # Base queryset — only chats the current user participates in
+    qs = Message.objects.filter(
+        chat__participants__user=request.user,
+        chat__participants__is_active=True,
+        is_deleted=False,
+        is_revoked=False,
+        parent_message__isnull=True,  # root messages only (thread replies excluded)
+    ).exclude(
+        hidden_by_users=request.user
+    ).distinct()
+
+    # Full-text search with icontains fallback
+    try:
+        sq = SearchQuery(q, search_type='websearch', config='english')
+        qs = (
+            qs
+            .filter(search_vector=sq)
+            .annotate(
+                rank=SearchRank('search_vector', sq),
+                highlight=SearchHeadline(
+                    'content', sq,
+                    config='english',
+                    options='MaxFragments=1,MaxWords=15,MinWords=5,StartSel=<mark>,StopSel=</mark>',
+                ),
+            )
+            .order_by('-rank', '-created_at')
+        )
+    except Exception:
+        # Fallback: icontains (e.g. search_vector not yet populated)
+        qs = qs.filter(content__icontains=q).order_by('-created_at')
+
+    # Optional filters
+    from_user = request.query_params.get('from_user', '').strip()
+    if from_user:
+        qs = qs.filter(
+            Q(sender__username__icontains=from_user) |
+            Q(sender__email__icontains=from_user)
+        )
+
+    in_chat = request.query_params.get('in_chat', '').strip()
+    if in_chat and in_chat.isdigit():
+        qs = qs.filter(chat_id=int(in_chat))
+
+    has = request.query_params.get('has', '').strip()
+    if has == 'file':
+        qs = qs.filter(has_attachments=True)
+
+    date_after = request.query_params.get('date_after', '').strip()
+    if date_after:
+        qs = qs.filter(created_at__date__gte=date_after)
+
+    date_before = request.query_params.get('date_before', '').strip()
+    if date_before:
+        qs = qs.filter(created_at__date__lte=date_before)
+
+    qs = qs.select_related('sender', 'chat', 'chat__project').prefetch_related('attachments')
+
+    total = qs.count()
+    page = qs[offset: offset + limit]
+
+    serializer = MessageSearchResultSerializer(page, many=True, context={'request': request})
+    return Response({'results': serializer.data, 'total': total, 'q': q})

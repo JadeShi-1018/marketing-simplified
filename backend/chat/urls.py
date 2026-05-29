@@ -6,6 +6,7 @@ from .views import (
     AttachmentViewSet,
     StarredChatViewSet,
     fetch_link_preview,
+    search_messages,
 )
 
 # Create router
@@ -19,4 +20,5 @@ router.register(r'attachments', AttachmentViewSet, basename='attachment')
 urlpatterns = [
     path('', include(router.urls)),
     path('link-preview/', fetch_link_preview, name='link-preview'),
+    path('search/', search_messages, name='message-search'),
 ]
