@@ -219,8 +219,8 @@ function VoiceMessagePlayer({
   };
 
   return (
-    <div className="w-full min-w-0 max-w-lg rounded-xl border border-gray-200 bg-white shadow-sm">
-      <div className="flex items-center gap-3 px-3 py-3">
+    <div className="w-full min-w-0 max-w-[300px] rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="flex items-center gap-2 px-3 py-2">
         <audio
           ref={audioRef}
           src={attachment.file_url}
@@ -236,114 +236,124 @@ function VoiceMessagePlayer({
           Your browser does not support the audio tag.
         </audio>
 
+        {/* Play / Pause */}
         <button
           type="button"
           onClick={togglePlayback}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#25A9E0] text-white shadow-sm transition hover:bg-[#168EBC]"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#25A9E0] text-white shadow-sm transition hover:bg-[#168EBC]"
           aria-label={isPlaying ? 'Pause audio clip' : 'Play audio clip'}
           title={isPlaying ? 'Pause audio clip' : 'Play audio clip'}
         >
-          {isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="ml-0.5 h-5 w-5 fill-current" />}
+          {isPlaying ? <Pause className="h-3.5 w-3.5 fill-current" /> : <Play className="ml-0.5 h-3.5 w-3.5 fill-current" />}
         </button>
 
-        {/* Waveform — click anywhere to seek */}
-        <div
-          role="slider"
-          aria-label="Audio progress"
-          aria-valuemin={0}
-          aria-valuemax={duration || 1}
-          aria-valuenow={currentTime}
-          tabIndex={0}
-          className="flex h-12 min-w-0 flex-1 cursor-pointer items-center gap-1"
-          onClick={handleWaveformClick}
-          onKeyDown={(e) => {
-            const audio = audioRef.current;
-            if (!audio || !duration) return;
-            if (e.key === 'ArrowRight') audio.currentTime = Math.min(duration, currentTime + 5);
-            if (e.key === 'ArrowLeft') audio.currentTime = Math.max(0, currentTime - 5);
-          }}
-        >
-          {waveformBars.map((height, index) => (
-            <span
-              key={index}
-              className={[
-                'w-1 shrink-0 rounded-full transition-colors',
-                index < playedBars ? 'bg-[#25A9E0]' : 'bg-gray-300',
-              ].join(' ')}
-              style={{ height: `${height}%` }}
-            />
-          ))}
+        {/* Centre column: waveform on top, time + speed below */}
+        <div className="min-w-0 flex-1">
+          {/* Waveform — click anywhere to seek */}
+          <div
+            role="slider"
+            aria-label="Audio progress"
+            aria-valuemin={0}
+            aria-valuemax={duration || 1}
+            aria-valuenow={currentTime}
+            tabIndex={0}
+            className="flex h-8 w-full cursor-pointer items-center gap-[2px]"
+            onClick={handleWaveformClick}
+            onKeyDown={(e) => {
+              const audio = audioRef.current;
+              if (!audio || !duration) return;
+              if (e.key === 'ArrowRight') audio.currentTime = Math.min(duration, currentTime + 5);
+              if (e.key === 'ArrowLeft') audio.currentTime = Math.max(0, currentTime - 5);
+            }}
+          >
+            {waveformBars.map((height, index) => (
+              <span
+                key={index}
+                className={[
+                  'w-[2px] shrink-0 rounded-full transition-colors',
+                  index < playedBars ? 'bg-[#25A9E0]' : 'bg-gray-300',
+                ].join(' ')}
+                style={{ height: `${height}%` }}
+              />
+            ))}
+          </div>
+
+          {/* Time + speed — below the waveform, never overlaps */}
+          <div className="flex items-center gap-1 mt-0.5">
+            <span className="text-[11px] font-semibold tabular-nums text-gray-500">
+              {displayTime}
+            </span>
+            <span className="text-[11px] text-gray-300">·</span>
+            <button
+              type="button"
+              onClick={cyclePlaybackRate}
+              className="text-[11px] font-semibold text-gray-400 transition hover:text-gray-700"
+              aria-label="Change playback speed"
+              title="Change playback speed"
+            >
+              {playbackRate}x
+            </button>
+          </div>
         </div>
 
-        <span className="shrink-0 text-sm font-semibold tabular-nums text-gray-700">
-          {displayTime}
-        </span>
-
-        <button
-          type="button"
-          onClick={cyclePlaybackRate}
-          className="shrink-0 rounded-md px-1.5 py-1 text-sm font-semibold text-gray-500 transition hover:bg-gray-100 hover:text-gray-800"
-          aria-label="Change playback speed"
-          title="Change playback speed"
-        >
-          {playbackRate}x
-        </button>
-
-        {/* Transcript button */}
-        <button
-          type="button"
-          onClick={handleTranscript}
-          disabled={transcriptLoading}
-          className={[
-            'shrink-0 rounded-md p-1.5 transition',
-            transcriptOpen
-              ? 'bg-sky-50 text-sky-600 hover:bg-sky-100'
-              : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800',
-            transcriptLoading ? 'cursor-wait opacity-60' : '',
-          ].join(' ')}
-          aria-label="Generate transcript"
-          title="Generate transcript"
-        >
-          {transcriptLoading
-            ? <Loader2 className="h-5 w-5 animate-spin" />
-            : <Captions className="h-5 w-5" />}
-        </button>
-
-        <div ref={menuRef} className="relative shrink-0">
+        {/* Right actions */}
+        <div className="flex shrink-0 items-center">
+          {/* Transcript button */}
           <button
             type="button"
-            onClick={() => setShowMenu((prev) => !prev)}
-            className="rounded-md p-1.5 text-gray-500 transition hover:bg-gray-100 hover:text-gray-800"
-            aria-label="Audio clip actions"
-            title="Audio clip actions"
+            onClick={handleTranscript}
+            disabled={transcriptLoading}
+            className={[
+              'rounded-md p-1 transition',
+              transcriptOpen
+                ? 'bg-sky-50 text-sky-600 hover:bg-sky-100'
+                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700',
+              transcriptLoading ? 'cursor-wait opacity-60' : '',
+            ].join(' ')}
+            aria-label="Generate transcript"
+            title="Generate transcript"
           >
-            <MoreVertical className="h-5 w-5" />
+            {transcriptLoading
+              ? <Loader2 className="h-4 w-4 animate-spin" />
+              : <Captions className="h-4 w-4" />}
           </button>
 
-          {showMenu && (
-            <div className="absolute bottom-full left-0 z-20 mb-1 w-52 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
-              <button
-                type="button"
-                onClick={() => {
-                  onDownload(attachment);
-                  setShowMenu(false);
-                }}
-                className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              >
-                Download
-              </button>
-              <button
-                type="button"
-                onClick={copyAudioLink}
-                className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
-              >
-                Copy link to audio clip
-              </button>
-              <div className="border-t border-gray-100 px-3 py-2 text-xs text-gray-500">
-                {attachment.file_size_display}
+          <div ref={menuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setShowMenu((prev) => !prev)}
+              className="rounded-md p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+              aria-label="Audio clip actions"
+              title="Audio clip actions"
+            >
+              <MoreVertical className="h-4 w-4" />
+            </button>
+
+            {showMenu && (
+              <div className="absolute bottom-full right-0 z-20 mb-1 w-48 overflow-hidden rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onDownload(attachment);
+                    setShowMenu(false);
+                  }}
+                  className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Download
+                </button>
+                <button
+                  type="button"
+                  onClick={copyAudioLink}
+                  className="block w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  Copy link
+                </button>
+                <div className="border-t border-gray-100 px-3 py-2 text-xs text-gray-500">
+                  {attachment.file_size_display}
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 

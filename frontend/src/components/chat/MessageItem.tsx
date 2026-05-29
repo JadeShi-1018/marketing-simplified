@@ -30,14 +30,6 @@ const AVATAR_COLORS = [
 
 function MissingForwardedAttachmentCard({ item }: { item: MissingForwardedAttachment }) {
   const isAudioLike = item.kind === 'audio' || item.kind === 'unknown';
-  const title =
-    item.kind === 'audio'
-      ? 'Forwarded audio unavailable'
-      : item.kind === 'image'
-        ? 'Forwarded image unavailable'
-        : item.kind === 'video'
-          ? 'Forwarded video unavailable'
-          : 'Forwarded file unavailable';
   const Icon =
     item.kind === 'image'
       ? ImageOff
@@ -48,32 +40,34 @@ function MissingForwardedAttachmentCard({ item }: { item: MissingForwardedAttach
           : FileX2;
 
   return (
-    <div className="mt-2 w-full min-w-0 max-w-lg rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-gray-500">
-      <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-500">
-          <Icon className="h-5 w-5" />
+    <div className="mt-2 w-full min-w-0 max-w-[300px] rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-2">
+      <div className="flex items-center gap-2">
+        {/* Greyed-out icon circle matching compact player size */}
+        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200">
+          <Icon className="h-3.5 w-3.5 text-gray-400" />
         </div>
-        {isAudioLike ? (
-          <div className="flex h-10 min-w-0 flex-1 items-center gap-1 opacity-60">
-            {Array.from({ length: 22 }).map((_, index) => (
-              <span
-                key={`missing-wave-${item.id}-${index}`}
-                className="w-1 shrink-0 rounded-full bg-gray-300"
-                style={{ height: `${18 + Math.abs(Math.sin(index * 0.65)) * 58}%` }}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-gray-600">{item.original_filename}</p>
-            {item.file_size_display ? (
-              <p className="text-xs text-gray-400">{item.file_size_display}</p>
-            ) : null}
-          </div>
-        )}
+
+        {/* Centre column */}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-gray-600">{title}</p>
-          <p className="truncate text-xs text-gray-400">Original file was deleted</p>
+          {isAudioLike ? (
+            /* Ghost waveform matching compact player layout */
+            <div className="flex h-8 items-center gap-[2px] opacity-40">
+              {Array.from({ length: 40 }).map((_, index) => (
+                <span
+                  key={`missing-wave-${item.id}-${index}`}
+                  className="w-[2px] shrink-0 rounded-full bg-gray-400"
+                  style={{ height: `${18 + Math.abs(Math.sin(index * 0.65)) * 62}%` }}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex h-8 items-center">
+              <p className="truncate text-sm font-medium text-gray-500">
+                {item.original_filename || 'File'}
+              </p>
+            </div>
+          )}
+          <p className="mt-0.5 text-[11px] text-gray-400">Deleted</p>
         </div>
       </div>
     </div>
