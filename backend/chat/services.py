@@ -5,10 +5,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import transaction
-from django.db.models import Q, Prefetch, Max
+from django.db.models import Count, Q, Prefetch, Max
 from django.core.cache import cache
 from django.utils import timezone
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType, ThreadReadStatus
 from core.models import ProjectMember
 
 User = get_user_model()
@@ -530,11 +530,72 @@ class MessageService:
             raise ValueError("You are not a participant of this chat")
         
         # Root messages only — thread replies are fetched via the thread_replies endpoint
+        thread_replies_for_summary = (
+            Message.objects
+            .filter(is_deleted=False)
+            .select_related('sender')
+            .only(
+                'id',
+                'parent_message_id',
+                'sender_id',
+                'created_at',
+                'sender__id',
+                'sender__username',
+                'sender__email',
+                'sender__avatar',
+            )
+            .order_by('created_at')
+        )
+        thread_read_statuses_for_user = (
+            ThreadReadStatus.objects
+            .filter(user=user)
+            .only('id', 'root_message_id', 'last_read_at')
+        )
+        hidden_by_current_user = User.objects.filter(id=user.id).only('id')
+        message_statuses = MessageStatus.objects.select_related('user')
+
         query = Message.objects.filter(
             chat=chat,
             is_deleted=False,
             parent_message__isnull=True,
-        ).select_related('sender')
+        ).select_related(
+            'sender',
+            'reply_to',
+            'reply_to__sender',
+        ).prefetch_related(
+            'attachments',
+            'mentions',
+            'reactions__user',
+            Prefetch(
+                'statuses',
+                queryset=message_statuses,
+            ),
+            Prefetch(
+                'hidden_by_users',
+                queryset=hidden_by_current_user,
+                to_attr='_hidden_by_current_user',
+            ),
+            Prefetch(
+                'thread_replies',
+                queryset=thread_replies_for_summary,
+                to_attr='_thread_replies_for_summary',
+            ),
+            Prefetch(
+                'thread_read_statuses',
+                queryset=thread_read_statuses_for_user,
+                to_attr='_thread_read_status_for_user',
+            ),
+        ).annotate(
+            _thread_reply_count=Count(
+                'thread_replies',
+                filter=Q(thread_replies__is_deleted=False),
+                distinct=True,
+            ),
+            _thread_last_reply_at=Max(
+                'thread_replies__created_at',
+                filter=Q(thread_replies__is_deleted=False),
+            ),
+        )
 
         if before:
             query = query.filter(created_at__lt=before)

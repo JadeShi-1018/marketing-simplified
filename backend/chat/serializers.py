@@ -178,7 +178,34 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         ]
         read_only_fields = ['id', 'sender', 'created_at', 'updated_at']
 
+    def _get_prefetched_related(self, obj, related_name):
+        cache = getattr(obj, '_prefetched_objects_cache', {})
+        if related_name in cache:
+            return list(cache[related_name])
+        return None
+
+    def _get_thread_replies_for_summary(self, obj):
+        replies = getattr(obj, '_thread_replies_for_summary', None)
+        if replies is not None:
+            return list(replies)
+        cached_replies = self._get_prefetched_related(obj, 'thread_replies')
+        if cached_replies is not None:
+            return [reply for reply in cached_replies if not reply.is_deleted]
+        return None
+
+    def _get_thread_read_status_for_user(self, obj):
+        statuses = getattr(obj, '_thread_read_status_for_user', None)
+        if statuses is not None:
+            return statuses[0] if statuses else None
+        return None
+
+    def _get_prefetched_statuses(self, obj):
+        return self._get_prefetched_related(obj, 'statuses')
+
     def get_mentioned_user_ids(self, obj):
+        mentions = self._get_prefetched_related(obj, 'mentions')
+        if mentions is not None:
+            return [mention.mentioned_user_id for mention in mentions]
         return list(obj.mentions.values_list('mentioned_user_id', flat=True))
     
     def get_status(self, obj):
@@ -189,6 +216,13 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         
         # If sender, always show as 'sent'
         if obj.sender == request.user:
+            return 'sent'
+
+        statuses = self._get_prefetched_statuses(obj)
+        if statuses is not None:
+            for msg_status in statuses:
+                if msg_status.user_id == request.user.id:
+                    return msg_status.status
             return 'sent'
         
         # Get status for current user
@@ -211,10 +245,16 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_has_attachments(self, obj):
         """Whether message contains attachments."""
+        attachments = self._get_prefetched_related(obj, 'attachments')
+        if attachments is not None:
+            return bool(obj.has_attachments or attachments)
         return bool(obj.has_attachments or obj.attachments.exists())
 
     def get_attachment_count(self, obj):
         """Number of attachments linked to this message."""
+        attachments = self._get_prefetched_related(obj, 'attachments')
+        if attachments is not None:
+            return len(attachments)
         return obj.attachments.count()
 
     def get_forwarded_from(self, obj):
@@ -256,8 +296,11 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         request = self.context.get('request')
         current_user_id = request.user.id if request and request.user.is_authenticated else None
 
-        # Get all reactions for this message
-        reactions = MessageReaction.objects.filter(message=obj).select_related('user')
+        # Get all reactions for this message. The message list endpoint prefetches
+        # reactions in bulk, so avoid issuing one query per message when available.
+        reactions = self._get_prefetched_related(obj, 'reactions')
+        if reactions is None:
+            reactions = MessageReaction.objects.filter(message=obj).select_related('user')
 
         # Group by emoji
         emoji_groups = {}
@@ -312,6 +355,10 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if not request or not request.user.is_authenticated:
             return False
 
+        hidden_by_current_user = getattr(obj, '_hidden_by_current_user', None)
+        if hidden_by_current_user is not None:
+            return bool(hidden_by_current_user)
+
         return obj.hidden_by_users.filter(id=request.user.id).exists()
 
     # ------------------------------------------------------------------ #
@@ -322,12 +369,24 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         """Number of direct thread replies on this root message."""
         if obj.parent_message_id:
             return None  # Thread replies don't have sub-threads
+        if hasattr(obj, '_thread_reply_count'):
+            return obj._thread_reply_count
+        replies = self._get_thread_replies_for_summary(obj)
+        if replies is not None:
+            return len(replies)
         return obj.thread_replies.filter(is_deleted=False).count()
 
     def get_thread_last_reply_at(self, obj):
         """ISO timestamp of the most recent thread reply, or None."""
         if obj.parent_message_id:
             return None
+        if hasattr(obj, '_thread_last_reply_at'):
+            last_reply_at = obj._thread_last_reply_at
+            return last_reply_at.isoformat() if last_reply_at else None
+        replies = self._get_thread_replies_for_summary(obj)
+        if replies is not None:
+            last = replies[-1] if replies else None
+            return last.created_at.isoformat() if last else None
         last = obj.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
         return last.created_at.isoformat() if last else None
 
@@ -338,9 +397,12 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         """
         if obj.parent_message_id:
             return []
+        replies = self._get_thread_replies_for_summary(obj)
+        if replies is None:
+            replies = obj.thread_replies.filter(is_deleted=False).select_related('sender').order_by('created_at')
         seen_ids = set()
         participants = []
-        for reply in obj.thread_replies.filter(is_deleted=False).select_related('sender').order_by('created_at'):
+        for reply in replies:
             if reply.sender_id not in seen_ids:
                 seen_ids.add(reply.sender_id)
                 try:
@@ -365,9 +427,18 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if not request or not request.user.is_authenticated:
             return False
         from .models import ThreadReadStatus
-        last_reply = obj.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
+        replies = self._get_thread_replies_for_summary(obj)
+        if replies is not None:
+            last_reply = replies[-1] if replies else None
+        else:
+            last_reply = obj.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
         if not last_reply:
             return False
+        prefetched_status = self._get_thread_read_status_for_user(obj)
+        if prefetched_status is not None:
+            return last_reply.created_at > prefetched_status.last_read_at
+        if hasattr(obj, '_thread_read_status_for_user'):
+            return True
         try:
             trs = ThreadReadStatus.objects.get(user=request.user, root_message=obj)
             return last_reply.created_at > trs.last_read_at
