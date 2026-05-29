@@ -127,14 +127,20 @@ export default function MeetingDetailHeader({
         </div>
       </div>
 
-      <MeetingFSMActionBar
-        projectId={projectId}
-        meetingId={meeting.id}
-        currentStatus={meeting.status}
-        availableTransitions={availableTransitions}
-        preCheck={preCheck}
-        onTransitioned={onTransitioned}
-      />
+      {meeting.status === 'archived' ? (
+        <p className="text-xs text-gray-400">
+          This meeting is archived and read-only.
+        </p>
+      ) : (
+        <MeetingFSMActionBar
+          projectId={projectId}
+          meetingId={meeting.id}
+          currentStatus={meeting.status}
+          availableTransitions={availableTransitions}
+          preCheck={preCheck}
+          onTransitioned={onTransitioned}
+        />
+      )}
     </header>
   );
 }
