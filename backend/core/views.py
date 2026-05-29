@@ -186,29 +186,15 @@ class ProjectOnboardingView(APIView):
         from customer.models import CustomerOrganisation
         from csm.models import CustomerUser
 
+        base_name = f"{user.username}'s Organisation"
+        name = base_name
+        suffix = 1
+        while Organization.objects.filter(name=name).exists():
+            suffix += 1
+            name = f"{base_name} {suffix}"
         email = getattr(user, 'email', '') or ''
         domain = email.split('@')[-1].lower() if '@' in email else None
-        organization = None
-
-        if domain:
-            organization = Organization.objects.filter(email_domain__iexact=domain).first()
-            if not organization:
-                base_name = domain.split('.')[0].replace('-', ' ').replace('_', ' ').title() or domain
-                name = base_name
-                suffix = 1
-                while Organization.objects.filter(name=name).exists():
-                    suffix += 1
-                    name = f"{base_name} {suffix}"
-                organization = Organization.objects.create(name=name, email_domain=domain)
-
-        if not organization:
-            base_name = "Organization"
-            name = base_name
-            suffix = 1
-            while Organization.objects.filter(name=name).exists():
-                suffix += 1
-                name = f"{base_name} {suffix}"
-            organization = Organization.objects.create(name=name)
+        organization = Organization.objects.create(name=name, email_domain=domain)
 
         user.organization = organization
         user.save(update_fields=['organization'])
@@ -346,9 +332,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         from customer.models import CustomerOrganisation
         from csm.models import CustomerUser
 
-        # Derive a readable org name from the email
-        local_part = user.email.split('@')[0]
-        org_name = f"{local_part}'s Organisation"
+        org_name = f"{user.username}'s Organisation"
 
         # Ensure uniqueness
         base_name = org_name

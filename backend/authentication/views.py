@@ -75,25 +75,14 @@ class RegisterView(APIView):
             except Organization.DoesNotExist:
                 return Response({"error": "Organization not found"}, status=400)
         else:
+            base_name = f"{username}'s Organisation"
+            name = base_name
+            suffix = 1
+            while Organization.objects.filter(name=name).exists():
+                suffix += 1
+                name = f"{base_name} {suffix}"
             domain = email.split("@")[-1].lower() if "@" in email else None
-            if domain:
-                organization = Organization.objects.filter(email_domain__iexact=domain).first()
-                if not organization:
-                    base_name = domain.split(".")[0].replace("-", " ").replace("_", " ").title() or domain
-                    name = base_name
-                    suffix = 1
-                    while Organization.objects.filter(name=name).exists():
-                        suffix += 1
-                        name = f"{base_name} {suffix}"
-                    organization = Organization.objects.create(name=name, email_domain=domain)
-            else:
-                base_name = "Organization"
-                name = base_name
-                suffix = 1
-                while Organization.objects.filter(name=name).exists():
-                    suffix += 1
-                    name = f"{base_name} {suffix}"
-                organization = Organization.objects.create(name=name)
+            organization = Organization.objects.create(name=name, email_domain=domain)
 
         print(f"[DEBUG] Creating user with is_verified=True")
         user = User.objects.create_user(
@@ -729,25 +718,14 @@ class GoogleOAuthCallbackView(APIView):
 
                     # Auto-create Organization + CSM records
                     from core.models import Organization
+                    base_name = f"{username}'s Organisation"
+                    org_name = base_name
+                    suffix = 1
+                    while Organization.objects.filter(name=org_name).exists():
+                        suffix += 1
+                        org_name = f"{base_name} {suffix}"
                     domain = email.split('@')[-1].lower() if '@' in email else None
-                    organization = None
-                    if domain:
-                        organization = Organization.objects.filter(email_domain__iexact=domain).first()
-                        if not organization:
-                            base_name = domain.split('.')[0].replace('-', ' ').replace('_', ' ').title() or domain
-                            org_name = base_name
-                            suffix = 1
-                            while Organization.objects.filter(name=org_name).exists():
-                                suffix += 1
-                                org_name = f"{base_name} {suffix}"
-                            organization = Organization.objects.create(name=org_name, email_domain=domain)
-                    if not organization:
-                        org_name = "Organization"
-                        suffix = 1
-                        while Organization.objects.filter(name=org_name).exists():
-                            suffix += 1
-                            org_name = f"Organization {suffix}"
-                        organization = Organization.objects.create(name=org_name)
+                    organization = Organization.objects.create(name=org_name, email_domain=domain)
 
                     user.organization = organization
 
