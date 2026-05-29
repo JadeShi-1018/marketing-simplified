@@ -686,6 +686,11 @@ export const useChatStore = create<ChatState>()(
       lastChatActivity: 0,
       triggerChatActivity: () => set({ lastChatActivity: Date.now() }),
 
+      // ── Files tab refresh signal ─────────────────────────────────────
+      // Bumped when a message is deleted or revoked so FilesSidebarView refetches.
+      filesRefreshAt: 0,
+      triggerFilesRefresh: () => set({ filesRefreshAt: Date.now() }),
+
       // ── Mention badges ───────────────────────────────────────────────
       addMentionedChat: (chatId) =>
         set((state) => ({

@@ -1108,6 +1108,106 @@ class AttachmentAPITest(TestCase):
         self.assertEqual(row['chat']['id'], self.chat.id)
         self.assertEqual(row['message_id'], msg_allowed.id)
 
+    def test_list_accessible_files_excludes_forward_copies_after_source_delete(self):
+        """
+        Forwarded file copies should not become standalone Files-tab rows after
+        the original message is deleted.
+        """
+        source_msg = Message.objects.create(chat=self.chat, sender=self.user2, content='Original file')
+        source_attachment = MessageAttachment.objects.create(
+            uploader=self.user2,
+            message=source_msg,
+            file=SimpleUploadedFile('original.txt', b'original'),
+            file_type='document',
+            file_size=8,
+            original_filename='original.txt',
+            mime_type='text/plain',
+        )
+        forwarded_msg = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Original file',
+            forwarded_from_message=source_msg,
+            forwarded_from_sender_display=self.user2.username,
+            forwarded_from_created_at=source_msg.created_at,
+            has_attachments=True,
+        )
+        forwarded_attachment = MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=forwarded_msg,
+            file=SimpleUploadedFile('original-copy.txt', b'original'),
+            file_type='document',
+            file_size=8,
+            original_filename='original.txt',
+            mime_type='text/plain',
+        )
+
+        url = reverse('attachment-files')
+        before_delete = self.client.get(url, {'project_id': self.project.id})
+        self.assertEqual(before_delete.status_code, status.HTTP_200_OK)
+        before_ids = {row['id'] for row in before_delete.data['results']}
+        self.assertEqual(before_ids, {source_attachment.id})
+
+        source_msg.delete()
+
+        after_delete = self.client.get(url, {'project_id': self.project.id})
+        self.assertEqual(after_delete.status_code, status.HTTP_200_OK)
+        self.assertEqual(after_delete.data['results'], [])
+        self.assertTrue(MessageAttachment.objects.filter(id=forwarded_attachment.id).exists())
+        forwarded_msg.refresh_from_db()
+        self.assertFalse(forwarded_msg.has_attachments)
+
+    def test_list_accessible_files_excludes_legacy_orphan_forward_rows(self):
+        """Older forwarded copies with a missing source FK should stay out of Files."""
+        orphan_forward = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Forwarded file',
+            forwarded_from_sender_display=self.user2.username,
+            forwarded_from_created_at=None,
+            has_attachments=True,
+        )
+        MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=orphan_forward,
+            file=SimpleUploadedFile('stale-copy.txt', b'stale'),
+            file_type='document',
+            file_size=5,
+            original_filename='stale-copy.txt',
+            mime_type='text/plain',
+        )
+
+        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'], [])
+
+    def test_list_accessible_files_includes_thread_root_for_reply_attachments(self):
+        """Files attached to thread replies should deep-link through their root timeline message."""
+        root_message = Message.objects.create(chat=self.chat, sender=self.user2, content='Root')
+        thread_reply = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Reply with file',
+            parent_message=root_message,
+        )
+        attachment = MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=thread_reply,
+            file=SimpleUploadedFile('reply.txt', b'reply'),
+            file_type='document',
+            file_size=5,
+            original_filename='reply.txt',
+            mime_type='text/plain',
+        )
+
+        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['id'], attachment.id)
+        self.assertEqual(response.data['results'][0]['message_id'], thread_reply.id)
+        self.assertEqual(response.data['results'][0]['thread_root_message_id'], root_message.id)
+
 
 class StarredChatAPITest(TestCase):
     """Test starred chat API."""

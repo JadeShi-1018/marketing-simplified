@@ -368,7 +368,10 @@ function VoiceMessagePlayer({
   );
 }
 
-export default function AttachmentDisplay({ attachments, isOwnMessage = false }: AttachmentDisplayProps) {
+export default function AttachmentDisplay({
+  attachments,
+  isOwnMessage = false,
+}: AttachmentDisplayProps) {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
 
   if (!attachments || attachments.length === 0) return null;
@@ -504,7 +507,15 @@ export default function AttachmentDisplay({ attachments, isOwnMessage = false }:
   return (
     <>
       <div className="mt-2 flex w-full min-w-0 max-w-full flex-col gap-2">
-        {attachments.map(renderAttachment)}
+        {attachments.map((attachment) => (
+          <div
+            key={attachment.id}
+            data-attachment-id={attachment.id}
+            className="w-full min-w-0"
+          >
+            {renderAttachment(attachment)}
+          </div>
+        ))}
       </div>
 
       {/* Lightbox for images */}

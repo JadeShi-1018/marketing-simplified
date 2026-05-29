@@ -562,6 +562,7 @@ class MessageService:
             'sender',
             'reply_to',
             'reply_to__sender',
+            'forwarded_from_message',
         ).prefetch_related(
             'attachments',
             'mentions',

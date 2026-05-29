@@ -128,6 +128,7 @@ export default function MessageList({
   onEnterSelectMode,
   onOpenThread,
   activeThreadMessageId,
+  jumpTarget,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -138,6 +139,11 @@ export default function MessageList({
   const prependAnchorRef = useRef<PrependAnchor | null>(null);
   const restoreFrameRef = useRef<number | null>(null);
   const loadMoreFrameRef = useRef<number | null>(null);
+  const jumpFrameRef = useRef<number | null>(null);
+  const jumpObserverRef = useRef<ResizeObserver | null>(null);
+  const jumpStopTimeoutRef = useRef<number | null>(null);
+  const activeJumpRequestRef = useRef<string | null>(null);
+  const completedJumpRequestRef = useRef<string | null>(null);
   const isRestoringPrependRef = useRef(false);
   const lastMessageIdRef = useRef<number | null>(null);
   const unreadScrollDoneRef = useRef(false);
@@ -220,6 +226,114 @@ export default function MessageList({
     }
   }, []);
 
+  const cancelPendingJumpSettle = useCallback(() => {
+    if (jumpFrameRef.current !== null) {
+      window.cancelAnimationFrame(jumpFrameRef.current);
+      jumpFrameRef.current = null;
+    }
+    if (jumpObserverRef.current) {
+      jumpObserverRef.current.disconnect();
+      jumpObserverRef.current = null;
+    }
+    if (jumpStopTimeoutRef.current !== null) {
+      window.clearTimeout(jumpStopTimeoutRef.current);
+      jumpStopTimeoutRef.current = null;
+    }
+  }, []);
+
+  const scrollJumpTargetToCenter = useCallback((messageId: number, attachmentId?: number): HTMLElement | null => {
+    const container = scrollRef.current;
+    const attachmentEl = attachmentId
+      ? container?.querySelector<HTMLElement>(`[data-attachment-id="${attachmentId}"]`)
+      : null;
+    const messageEl = container?.querySelector<HTMLElement>(
+      `[data-message-id="${messageId}"]`,
+    );
+    const targetEl = attachmentEl ?? messageEl;
+    if (!container || !targetEl) return null;
+
+    stickyBottomRef.current = false;
+    const containerRect = container.getBoundingClientRect();
+    const messageRect = targetEl.getBoundingClientRect();
+    const nextTop =
+      container.scrollTop +
+      messageRect.top -
+      containerRect.top -
+      container.clientHeight / 2 +
+      messageRect.height / 2;
+
+    container.scrollTo({
+      top: Math.max(0, nextTop),
+      behavior: 'instant',
+    });
+
+    return targetEl;
+  }, []);
+
+  const startJumpToTarget = useCallback((target: {
+    messageId: number;
+    attachmentId?: number;
+    requestId: string;
+  }) => {
+    if (!target.messageId || !Number.isFinite(target.messageId)) return;
+    if (completedJumpRequestRef.current === target.requestId) return;
+
+    cancelPendingJumpSettle();
+    activeJumpRequestRef.current = target.requestId;
+    const isActiveJump = () => activeJumpRequestRef.current === target.requestId;
+
+    const startSettle = (targetEl: HTMLElement) => {
+      let attempts = 0;
+      const settle = () => {
+        if (!isActiveJump()) return;
+        scrollJumpTargetToCenter(target.messageId, target.attachmentId);
+        attempts += 1;
+        if (attempts < 12) {
+          jumpFrameRef.current = window.requestAnimationFrame(settle);
+          return;
+        }
+        jumpFrameRef.current = null;
+      };
+      jumpFrameRef.current = window.requestAnimationFrame(settle);
+
+      if (typeof ResizeObserver !== 'undefined') {
+        const observer = new ResizeObserver(() => {
+          if (!isActiveJump()) return;
+          scrollJumpTargetToCenter(target.messageId, target.attachmentId);
+        });
+        observer.observe(targetEl);
+        jumpObserverRef.current = observer;
+      }
+
+      jumpStopTimeoutRef.current = window.setTimeout(() => {
+        if (!isActiveJump()) return;
+        completedJumpRequestRef.current = target.requestId;
+        activeJumpRequestRef.current = null;
+        cancelPendingJumpSettle();
+      }, 1200);
+
+      setHighlightMessageId(target.messageId);
+    };
+
+    let findAttempts = 0;
+    const findAndJump = () => {
+      if (!isActiveJump()) return;
+      const targetEl = scrollJumpTargetToCenter(target.messageId, target.attachmentId);
+      if (targetEl) {
+        startSettle(targetEl);
+        return;
+      }
+      findAttempts += 1;
+      if (findAttempts < 30) {
+        jumpFrameRef.current = window.requestAnimationFrame(findAndJump);
+        return;
+      }
+      jumpFrameRef.current = null;
+    };
+
+    findAndJump();
+  }, [cancelPendingJumpSettle, scrollJumpTargetToCenter]);
+
   const schedulePrependAnchorRestore = useCallback((framesRemaining = 6): void => {
     if (restoreFrameRef.current !== null) {
       window.cancelAnimationFrame(restoreFrameRef.current);
@@ -243,49 +357,44 @@ export default function MessageList({
   // ── Jump-to-message event (cross-component) ──────────────────────────────────
   useEffect(() => {
     const handler = (e: Event) => {
-      const ce = e as CustomEvent<{ messageId?: number }>;
+      const ce = e as CustomEvent<{ messageId?: number; attachmentId?: number; requestId?: string }>;
       const messageId = ce.detail?.messageId;
+      const attachmentId = ce.detail?.attachmentId;
       if (!messageId || !Number.isFinite(messageId)) return;
-      const container = scrollRef.current;
-      const messageEl = container?.querySelector<HTMLElement>(
-        `[data-message-id="${messageId}"]`,
-      );
-      if (container && messageEl) {
-        const containerRect = container.getBoundingClientRect();
-        const messageRect = messageEl.getBoundingClientRect();
-        container.scrollTo({
-          top:
-            container.scrollTop +
-            messageRect.top -
-            containerRect.top -
-            container.clientHeight / 2 +
-            messageRect.height / 2,
-          behavior: 'smooth',
-        });
-      }
-      setHighlightMessageId(messageId);
+      const requestId = ce.detail?.requestId ?? `${messageId}:${attachmentId ?? 'message'}:${Date.now()}`;
+      startJumpToTarget({ messageId, attachmentId, requestId });
     };
     window.addEventListener('mj:chat:jumpToMessage', handler as EventListener);
     return () => window.removeEventListener('mj:chat:jumpToMessage', handler as EventListener);
-  }, []);
+  }, [startJumpToTarget]);
+
+  useLayoutEffect(() => {
+    if (!jumpTarget) return;
+    startJumpToTarget(jumpTarget);
+  }, [flatItems.length, jumpTarget, startJumpToTarget]);
 
   // Clear highlight after 4 s
   useEffect(() => {
     if (!highlightMessageId) return;
-    const t = window.setTimeout(() => setHighlightMessageId(null), 4000);
+    const t = window.setTimeout(() => {
+      setHighlightMessageId(null);
+    }, 4000);
     return () => window.clearTimeout(t);
   }, [highlightMessageId]);
 
   useEffect(() => {
     return () => {
+      activeJumpRequestRef.current = null;
+      completedJumpRequestRef.current = null;
       if (restoreFrameRef.current !== null) {
         window.cancelAnimationFrame(restoreFrameRef.current);
       }
       if (loadMoreFrameRef.current !== null) {
         window.cancelAnimationFrame(loadMoreFrameRef.current);
       }
+      cancelPendingJumpSettle();
     };
-  }, []);
+  }, [cancelPendingJumpSettle]);
 
   // Keep the newest messages anchored when the composer changes height
   // (for example, Slack-style Aa toolbar show/hide).
@@ -482,6 +591,7 @@ export default function MessageList({
     // bottom). This prevents firing on initial mount when content is short
     // enough that scrollTop stays 0 and the container isn't overflowing.
     if (
+      !activeJumpRequestRef.current &&
       !isBottom &&
       scrollTop < 100 &&
       hasMore &&

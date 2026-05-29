@@ -13,7 +13,7 @@ ForeignKey joins; passing a literal Value avoids the restriction.
 """
 
 from django.db.models import Value
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_delete
 from django.dispatch import receiver
 from django.contrib.postgres.search import SearchVector
 
@@ -46,3 +46,16 @@ def update_message_search_vector(sender, instance, **kwargs):
             + SearchVector(Value(sender_name), weight='B', config='english')
         )
     )
+
+
+@receiver(pre_delete, sender='chat.Message')
+def mark_forwarded_attachment_copies_unavailable(sender, instance, **kwargs):
+    """When an original message is deleted, forwarded file copies become tombstones."""
+    forwarded_messages = (
+        instance.forwarded_messages
+        .filter(has_attachments=True)
+    )
+
+    for forwarded_message in forwarded_messages:
+        forwarded_message.has_attachments = False
+        forwarded_message.save(update_fields=['has_attachments', 'updated_at'])

@@ -91,6 +91,21 @@ export default function DrawerChatView({
   // Ref for scrolling messages to bottom
   const messagesRef = useRef<DrawerChatMessagesHandle>(null);
 
+  // Ref for the composer wrapper — used to detect height changes (e.g. formatting bar open/close)
+  const composerWrapperRef = useRef<HTMLDivElement>(null);
+
+  // When the composer grows (formatting bar opens), scroll messages to bottom
+  // so the last message is not hidden behind the expanded composer.
+  useEffect(() => {
+    const el = composerWrapperRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      messagesRef.current?.scrollToBottom('smooth');
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   // WebSocket connection for real-time events
   const { connected, sendTypingStart, sendTypingStop } = useChatWebSocket(userId, {
     onTypingIndicator: useCallback((event: ChatWsEvent) => {
@@ -269,11 +284,12 @@ export default function DrawerChatView({
       const result = await revokeMessage(messageId);
       // Update message in store with revoke status
       if (result.message) {
-        const { updateMessage } = useChatStore.getState();
+        const { updateMessage, triggerFilesRefresh } = useChatStore.getState();
         updateMessage(messageId, {
           is_revoked: result.message.is_revoked,
           revoked_at: result.message.revoked_at,
         });
+        triggerFilesRefresh();
       }
       toast.success('Message revoked', { icon: '↩️' });
     } catch (error: any) {
@@ -308,6 +324,7 @@ export default function DrawerChatView({
         const updatedMessages = chatMessages.filter((msg) => msg.id !== messageId);
         useChatStore.getState().setMessages(chatId, updatedMessages);
       }
+      useChatStore.getState().triggerFilesRefresh();
     } catch (error: any) {
       console.error('Failed to delete message:', error);
       const errorMsg = error?.response?.data?.error || 'Failed to delete message';
@@ -427,7 +444,7 @@ export default function DrawerChatView({
       )}
 
       {/* Input area */}
-      <div className="flex-shrink-0 border-t border-[#3CCED7]/25 bg-white">
+      <div ref={composerWrapperRef} className="flex-shrink-0 border-t border-[#3CCED7]/25 bg-white">
         <ChatComposer
           variant="drawer"
           onSendRich={handleSendRich}

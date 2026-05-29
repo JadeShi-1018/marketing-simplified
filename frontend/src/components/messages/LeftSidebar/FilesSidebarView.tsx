@@ -4,6 +4,7 @@ import { FileText, Image as ImageIcon, Film, File, Download } from 'lucide-react
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { listAccessibleChatFiles } from '@/lib/api/attachmentApi';
+import { useChatStore } from '@/lib/chatStore';
 import type { ChatFileListItem } from '@/types/chat';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -30,6 +31,7 @@ export default function FilesSidebarView({ selectedProjectId }: { selectedProjec
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ChatFileListItem[]>([]);
+  const filesRefreshAt = useChatStore((s) => s.filesRefreshAt);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +40,7 @@ export default function FilesSidebarView({ selectedProjectId }: { selectedProjec
       setError(null);
       try {
         const data = await listAccessibleChatFiles({ projectId: selectedProjectId, page: 1, pageSize: 50 });
-        if (!cancelled) setRows(data.results ?? []);
+        if (!cancelled) setRows((data.results ?? []).filter((row) => row.is_orphaned_forward !== true));
       } catch (err: unknown) {
         if (cancelled) return;
         if (axios.isAxiosError(err)) {
@@ -65,7 +67,7 @@ export default function FilesSidebarView({ selectedProjectId }: { selectedProjec
     return () => {
       cancelled = true;
     };
-  }, [selectedProjectId]);
+  }, [selectedProjectId, filesRefreshAt]);
 
   const content = useMemo(() => {
     if (isLoading) {
@@ -105,7 +107,13 @@ export default function FilesSidebarView({ selectedProjectId }: { selectedProjec
               const params = new URLSearchParams();
               params.set('projectId', String(selectedProjectId));
               params.set('chatId', String(row.chat.id));
-              if (row.message_id) params.set('messageId', String(row.message_id));
+              params.set('fileId', String(row.id));
+              params.set('jumpId', `${row.id}-${Date.now()}`);
+              const timelineMessageId = row.thread_root_message_id ?? row.message_id;
+              if (timelineMessageId) params.set('messageId', String(timelineMessageId));
+              if (row.thread_root_message_id && row.message_id) {
+                params.set('threadMessageId', String(row.message_id));
+              }
               router.push(`/messages?${params.toString()}`);
             }}
             className="w-full text-left px-3 py-2 flex gap-2 hover:bg-gray-50"

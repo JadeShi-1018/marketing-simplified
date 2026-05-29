@@ -385,7 +385,7 @@ export default function HomeSidebar({
     }
 
     if (view === 'activity') {
-      return <ActivitySidebarView selectedProjectId={selectedProjectId} />;
+      return <ActivitySidebarView />;
     }
     if (view === 'files') {
       return <FilesSidebarView selectedProjectId={selectedProjectId} />;

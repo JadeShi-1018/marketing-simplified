@@ -9,7 +9,7 @@ import { useMessageData } from '@/hooks/useMessageData';
 import { useForwardMessages } from '@/hooks/useForwardMessages';
 import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useChatStore } from '@/lib/chatStore';
-import { editMessage, deleteMessage, addReaction, removeReaction } from '@/lib/api/chatApi';
+import { editMessage, deleteMessage, addReaction, removeReaction, getMessage } from '@/lib/api/chatApi';
 import type { Chat, Message } from '@/types/chat';
 import MessageList from './MessageList';
 import ChatComposer from './ChatComposer';
@@ -98,6 +98,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     isLoadingMoreMessages,
     isSending,
     hasMore,
+    hasFetchedInitially,
     sendRich,
     loadMoreMessages,
     removeMessage,
@@ -110,6 +111,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const markAsReadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const jumpLoadAttemptsRef = useRef(0);
   const jumpedToMessageRef = useRef<string | null>(null);
+  const resolvingMissingTargetRef = useRef<string | null>(null);
   const previousChatIdRef = useRef<number | null>(null);
 
   const chatProjectId = useMemo(() => {
@@ -133,6 +135,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     unreadCapturedForChatRef.current = null;
     jumpLoadAttemptsRef.current = 0;
     jumpedToMessageRef.current = null;
+    resolvingMissingTargetRef.current = null;
   }, [chat.id]);
 
   useEffect(() => {
@@ -155,63 +158,151 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }, [searchParams]);
 
+  const targetChatId = useMemo(() => {
+    const raw = searchParams.get('chatId');
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [searchParams]);
+
+  const targetFileId = useMemo(() => {
+    const raw = searchParams.get('fileId');
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [searchParams]);
+
+  const targetJumpId = useMemo(() => {
+    return searchParams.get('jumpId') || null;
+  }, [searchParams]);
+
+  const targetJumpKey = useMemo(() => {
+    if (!targetMessageId) return null;
+    return targetJumpId ?? `${chat.id}:${targetMessageId}:${targetFileId ?? 'message'}`;
+  }, [chat.id, targetFileId, targetJumpId, targetMessageId]);
+
+  const hasTargetMessage = useMemo(() => {
+    if (!targetMessageId) return false;
+    return messages.some((message) => Number(message.id) === targetMessageId);
+  }, [messages, targetMessageId]);
+
+  const jumpTarget = useMemo(() => {
+    if (!targetMessageId || !targetJumpKey || !hasTargetMessage) return null;
+    if (targetChatId && targetChatId !== chat.id) return null;
+    if (!hasFetchedInitially || isLoadingMessages || showSwitchLoadingSkeleton) return null;
+    return {
+      messageId: targetMessageId,
+      attachmentId: targetFileId ?? undefined,
+      requestId: targetJumpKey,
+    };
+  }, [
+    chat.id,
+    hasFetchedInitially,
+    hasTargetMessage,
+    isLoadingMessages,
+    showSwitchLoadingSkeleton,
+    targetChatId,
+    targetFileId,
+    targetJumpKey,
+    targetMessageId,
+  ]);
+
   useEffect(() => {
     jumpLoadAttemptsRef.current = 0;
     jumpedToMessageRef.current = null;
-  }, [chat.id, targetMessageId]);
+    resolvingMissingTargetRef.current = null;
+  }, [chat.id, targetMessageId, targetFileId, targetJumpId]);
 
   useEffect(() => {
     // If URL includes a messageId, load older history one page at a time until
     // the message exists in the rendered list, then ask MessageList to focus it.
     if (!targetMessageId) return;
+    if (targetChatId && targetChatId !== chat.id) return;
     if (isLoadingMessages) return; // wait for initial load to complete
+    if (showSwitchLoadingSkeleton) return; // wait until MessageList is rendering messages, not the switch skeleton
 
-    const jumpKey = `${chat.id}:${targetMessageId}`;
-    const hasTargetMessage = messages.some((message) => Number(message.id) === targetMessageId);
+    // Don't declare "not found" until the initial fetch for this chat has completed.
+    // Without this guard, stale store messages (from a previous load) can cause a false
+    // "not found" result in the brief window before isFetchingMessages turns true.
+    if (!hasFetchedInitially) return;
+
+    const jumpKey = targetJumpKey ?? `${chat.id}:${targetMessageId}:${targetFileId ?? 'message'}`;
 
     if (hasTargetMessage) {
       if (jumpedToMessageRef.current === jumpKey) return;
       jumpedToMessageRef.current = jumpKey;
-
-      const frame = window.requestAnimationFrame(() => {
-        window.dispatchEvent(
-          new CustomEvent('mj:chat:jumpToMessage', { detail: { messageId: targetMessageId } })
-        );
-      });
-      return () => window.cancelAnimationFrame(frame);
+      return;
     }
 
     if (isLoadingMoreMessages) return;
 
-    // Still more pages to load — keep trying (up to 12 pages / ~600 messages)
-    if (hasMore && jumpLoadAttemptsRef.current < 12) {
+    // Load real history pages first so deep links keep surrounding context.
+    // Falling back to a single-message lookup can create a discontinuous list
+    // where the target sits beside unrelated latest messages.
+    if (hasMore && jumpLoadAttemptsRef.current < 20) {
       jumpLoadAttemptsRef.current += 1;
       void loadMoreMessages();
       return;
     }
 
-    // Guard: if no messages have loaded yet, the initial fetch hasn't resolved —
-    // don't declare "not found" before we've actually seen any data.
-    if (messages.length === 0) return;
+    if (resolvingMissingTargetRef.current === jumpKey) return;
+    resolvingMissingTargetRef.current = jumpKey;
 
-    // All messages loaded (or attempts exhausted) and the target wasn't found.
-    // The message was likely deleted. Show feedback and clear the stale URL param.
-    if (jumpedToMessageRef.current !== jumpKey) {
+    const clearStaleTarget = () => {
+      if (jumpedToMessageRef.current === jumpKey) return;
       jumpedToMessageRef.current = jumpKey; // prevent repeated toasts on re-renders
       toast.error('Message not found — it may have been deleted.');
       const params = new URLSearchParams(searchParams.toString());
       params.delete('messageId');
+      params.delete('threadMessageId');
+      params.delete('fileId');
+      params.delete('jumpId');
       router.replace(params.size ? `?${params.toString()}` : window.location.pathname);
-    }
+    };
+
+    // The target can be a thread reply from Files. Thread replies are not rendered in
+    // the main timeline, so resolve old links to the root message before warning.
+    void getMessage(targetMessageId)
+      .then((target) => {
+        if (target.is_deleted || target.is_revoked) {
+          clearStaleTarget();
+          return;
+        }
+
+        if (target.parent_message_id) {
+          const params = new URLSearchParams(searchParams.toString());
+          params.set('messageId', String(target.parent_message_id));
+          params.set('threadMessageId', String(targetMessageId));
+          router.replace(`/messages?${params.toString()}`);
+          return;
+        }
+
+        const rawTargetChatId = target.chat_id ?? target.chat;
+        const messageChatId = typeof rawTargetChatId === 'string' ? Number(rawTargetChatId) : rawTargetChatId;
+        if (Number(messageChatId) !== Number(chat.id)) {
+          clearStaleTarget();
+          return;
+        }
+
+        useChatStore.getState().prependMessages(chat.id, [
+          { ...target, chat_id: chat.id },
+        ]);
+      })
+      .catch(clearStaleTarget);
   }, [
     chat.id,
+    hasFetchedInitially,
     hasMore,
+    hasTargetMessage,
     isLoadingMessages,
     isLoadingMoreMessages,
     loadMoreMessages,
     messages,
     router,
     searchParams,
+    showSwitchLoadingSkeleton,
+    targetChatId,
+    targetFileId,
+    targetJumpKey,
+    targetJumpId,
     targetMessageId,
   ]);
   
@@ -316,6 +407,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     removeMessage(messageId);
     try {
       await deleteMessage(messageId);
+      // Refresh Files tab after the backend confirms the delete (CASCADE removes the attachment).
+      useChatStore.getState().triggerFilesRefresh();
     } catch {
       // rollback not implemented — message is already gone from UI
     }
@@ -512,6 +605,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div className="flex-1 overflow-hidden">
             <MessageList
+              key={chat.id}
               messages={messages}
               currentUserId={currentUserId ?? 0}
               onLoadMore={loadMoreMessages}
@@ -534,6 +628,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
               onEnterSelectMode={toggleSelectMode}
               onOpenThread={handleOpenThread}
               activeThreadMessageId={activeThreadMessage?.id ?? null}
+              jumpTarget={jumpTarget}
             />
           </div>
 

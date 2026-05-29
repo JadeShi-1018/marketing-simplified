@@ -300,6 +300,60 @@ class MessageWithAttachmentsSerializerTest(TestCase):
         self.assertIn('file_url', attachment_data)
         self.assertIn('original_filename', attachment_data)
 
+    def test_orphan_forwarded_message_hides_attachments(self):
+        """Legacy forwarded file copies should not render after their source is gone."""
+        forwarded_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='Forwarded file',
+            forwarded_from_sender_display='source-user',
+            has_attachments=True,
+        )
+        MessageAttachment.objects.create(
+            message=forwarded_message,
+            uploader=self.user,
+            file=SimpleUploadedFile('forwarded.txt', b'content'),
+            file_type='document',
+            file_size=7,
+            original_filename='forwarded.txt',
+            mime_type='text/plain',
+        )
+        request = self.factory.get('/')
+        request.user = self.user
+
+        data = MessageWithAttachmentsSerializer(
+            forwarded_message,
+            context={'request': request},
+        ).data
+
+        self.assertEqual(data['attachments'], [])
+        self.assertFalse(data['has_attachments'])
+        self.assertEqual(data['attachment_count'], 0)
+        self.assertEqual(len(data['missing_forwarded_attachments']), 1)
+        self.assertEqual(data['missing_forwarded_attachments'][0]['kind'], 'document')
+        self.assertEqual(data['missing_forwarded_attachments'][0]['original_filename'], 'forwarded.txt')
+
+    def test_orphan_forwarded_attachment_only_message_gets_generic_tombstone(self):
+        """Already-cleaned forwarded attachment-only messages should still show a tombstone."""
+        forwarded_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='',
+            forwarded_from_sender_display='source-user',
+            has_attachments=False,
+        )
+        request = self.factory.get('/')
+        request.user = self.user
+
+        data = MessageWithAttachmentsSerializer(
+            forwarded_message,
+            context={'request': request},
+        ).data
+
+        self.assertEqual(data['attachments'], [])
+        self.assertEqual(len(data['missing_forwarded_attachments']), 1)
+        self.assertEqual(data['missing_forwarded_attachments'][0]['kind'], 'unknown')
+
 
 class MessageCreateWithAttachmentsSerializerTest(TestCase):
     """Test cases for MessageCreateWithAttachmentsSerializer"""

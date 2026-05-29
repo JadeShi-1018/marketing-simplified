@@ -390,6 +390,37 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
 
         logger.info(f"Reaction update sent for message {message_id}: {emoji} {action} by user {user_id}")
 
+        # Persist an in-app notification for the message author when someone
+        # adds (not removes) a reaction — skip self-reactions.
+        if action == 'added' and message.sender_id != user_id:
+            try:
+                from notifications.services import create_notification
+                from notifications.models import NotificationCategory, NotificationEventType
+                create_notification(
+                    recipient_id=message.sender_id,
+                    actor_id=user_id,
+                    category=NotificationCategory.COLLABORATION,
+                    event_type=NotificationEventType.CHAT_REACTION,
+                    title=f"{user.username or user.email} reacted {emoji} to your message",
+                    body=message.content[:200] or "[Attachment]",
+                    related_object_type="chat",
+                    related_object_id=message.chat_id,
+                    action_url=(
+                        f"/messages?chatId={message.chat_id}"
+                        f"&projectId={message.chat.project_id}"
+                        f"&messageId={message_id}"
+                    ),
+                    metadata={
+                        "chat_id": message.chat_id,
+                        "message_id": message_id,
+                        "project_id": message.chat.project_id,
+                        "emoji": emoji,
+                        "message_preview": message.content[:200] or "[Attachment]",
+                    },
+                )
+            except Exception as e:
+                logger.error(f"Failed to create reaction notification for message {message_id}: {e}")
+
     except Message.DoesNotExist:
         logger.error(f"Message {message_id} not found for reaction update")
     except User.DoesNotExist:

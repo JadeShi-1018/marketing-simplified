@@ -65,6 +65,7 @@ export default function ChatCommandPalette({
 }: Props) {
   const chatsByProject = useChatStore((s) => s.chatsByProject);
   const user = useAuthStore((s) => s.user);
+  const currentUserId = user?.id == null ? undefined : Number(user.id);
 
   const allChats = useMemo(
     () => (projectId ? (chatsByProject[projectId] ?? []) : []),
@@ -93,26 +94,29 @@ export default function ChatCommandPalette({
 
         {recentChats.length > 0 && (
           <CommandGroup heading="Recent">
-            {recentChats.map((chat) => (
-              <CommandItem
-                key={chat.id}
-                value={`recent-${chat.id}-${chat.name ?? ''}-${chat.participants?.map((p) => p.user.username).join(' ')}`}
-                onSelect={() => handleSelect(chat.id)}
-                className="cursor-pointer"
-              >
-                <ChatLabel chat={chat} currentUserId={user?.id} />
-                {chat.unread_count > 0 && (
-                  <span className="ml-auto flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-[#3CCED7] px-1 text-[10px] font-semibold text-white">
-                    {chat.unread_count > 99 ? '99+' : chat.unread_count}
-                  </span>
-                )}
-                {chat.last_message && (
-                  <span className="ml-2 max-w-[180px] truncate text-xs text-gray-400">
-                    {chat.last_message.content?.slice(0, 60)}
-                  </span>
-                )}
-              </CommandItem>
-            ))}
+            {recentChats.map((chat) => {
+              const unreadCount = chat.unread_count ?? 0;
+              return (
+                <CommandItem
+                  key={chat.id}
+                  value={`recent-${chat.id}-${chat.name ?? ''}-${chat.participants?.map((p) => p.user.username).join(' ')}`}
+                  onSelect={() => handleSelect(chat.id)}
+                  className="cursor-pointer"
+                >
+                  <ChatLabel chat={chat} currentUserId={currentUserId} />
+                  {unreadCount > 0 && (
+                    <span className="ml-auto flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-[#3CCED7] px-1 text-[10px] font-semibold text-white">
+                      {unreadCount > 99 ? '99+' : unreadCount}
+                    </span>
+                  )}
+                  {chat.last_message && (
+                    <span className="ml-2 max-w-[180px] truncate text-xs text-gray-400">
+                      {chat.last_message.content?.slice(0, 60)}
+                    </span>
+                  )}
+                </CommandItem>
+              );
+            })}
           </CommandGroup>
         )}
 
@@ -127,7 +131,7 @@ export default function ChatCommandPalette({
                   onSelect={() => handleSelect(chat.id)}
                   className="cursor-pointer"
                 >
-                  <ChatLabel chat={chat} currentUserId={user?.id} />
+                  <ChatLabel chat={chat} currentUserId={currentUserId} />
                 </CommandItem>
               ))}
           </CommandGroup>

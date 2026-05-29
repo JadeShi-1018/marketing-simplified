@@ -73,6 +73,14 @@ export interface MessageAttachment {
   created_at: string;
 }
 
+export interface MissingForwardedAttachment {
+  id: number;
+  kind: 'audio' | 'video' | 'image' | 'document' | 'unknown';
+  original_filename: string;
+  file_size_display?: string;
+  reason: 'original_deleted';
+}
+
 export interface ChatContext {
   id: number;
   type: ChatType;
@@ -83,6 +91,10 @@ export interface ChatFileListItem extends MessageAttachment {
   uploader: UserWithName;
   chat: ChatContext | null;
   message_id: number | null;
+  /** Root message id when the attachment belongs to a thread reply. */
+  thread_root_message_id?: number | null;
+  /** True when this attachment was forwarded and its original source message has been deleted. */
+  is_orphaned_forward?: boolean;
 }
 
 export interface ReactionUser {
@@ -128,6 +140,7 @@ export interface Message {
   has_attachments?: boolean;
   attachment_count?: number;
   attachments?: MessageAttachment[];
+  missing_forwarded_attachments?: MissingForwardedAttachment[];
   is_hidden_by_me?: boolean;
   /** Tiptap JSON document, present when the message was composed with the rich editor. */
   rich_body?: TiptapJSONContent | null;
@@ -358,6 +371,10 @@ export interface ChatState {
   /** Called by useNotificationSSE when a chat-related event arrives. */
   triggerChatActivity: () => void;
 
+  /** Timestamp bumped when a message is deleted/revoked — signals FilesSidebarView to refetch. */
+  filesRefreshAt: number;
+  triggerFilesRefresh: () => void;
+
   // Mention badges: chat IDs where the current user has an unread @-mention
   mentionedChatIds: Record<number, true>;
   addMentionedChat: (chatId: number) => void;
@@ -476,6 +493,12 @@ export interface MessageListProps {
   onOpenThread?: (message: Message) => void;
   /** ID of the message whose thread panel is currently open (highlights the row). */
   activeThreadMessageId?: number | null;
+  /** Route-driven jump target from Files/search deep links. */
+  jumpTarget?: {
+    messageId: number;
+    attachmentId?: number;
+    requestId: string;
+  } | null;
 }
 
 export interface MessageInputProps {

@@ -1,259 +1,246 @@
-import { useEffect, useMemo, useState } from 'react';
-import { addDays, format, startOfDay } from 'date-fns';
-import { CalendarDays } from 'lucide-react';
-import { CalendarAPI, type CalendarSubscriptionDTO, type EventDTO } from '@/lib/api/calendarApi';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Skeleton } from '@/components/ui/skeleton';
+'use client';
 
-type DayGroup = { dayKey: string; label: string; events: EventDTO[] };
+import { useRouter } from 'next/navigation';
+import { formatDistanceToNow } from 'date-fns';
+import {
+  AtSign,
+  Bell,
+  Check,
+  CheckCheck,
+  Loader2,
+  MessageCircle,
+  MessageSquare,
+  SmilePlus,
+  Trash2,
+} from 'lucide-react';
+import { useActivityFeed } from '@/hooks/useActivityFeed';
+import type { NotificationItem } from '@/types/notifications';
 
-function normalizeListResponse<T>(payload: unknown): T[] {
-  if (Array.isArray(payload)) return payload;
-  if (
-    payload &&
-    typeof payload === 'object' &&
-    Array.isArray((payload as { results?: unknown[] }).results)
-  ) {
-    return (payload as { results: T[] }).results;
-  }
-  return [];
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+const AVATAR_COLORS = [
+  'bg-blue-500', 'bg-emerald-500', 'bg-violet-500', 'bg-orange-500',
+  'bg-pink-500', 'bg-teal-500', 'bg-red-500', 'bg-indigo-500',
+];
+
+function avatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
 }
 
-function groupEventsByDay(events: EventDTO[]): DayGroup[] {
-  const byKey = new Map<string, EventDTO[]>();
-  for (const ev of events) {
-    const dt = new Date(ev.start_datetime);
-    const key = format(dt, 'yyyy-MM-dd');
-    const arr = byKey.get(key) ?? [];
-    arr.push(ev);
-    byKey.set(key, arr);
+function relativeTime(iso: string): string {
+  try {
+    return formatDistanceToNow(new Date(iso), { addSuffix: true });
+  } catch {
+    return '';
   }
-
-  const keys = Array.from(byKey.keys()).sort();
-  return keys.map((key) => {
-    const eventsForDay = (byKey.get(key) ?? []).slice().sort((a, b) => {
-      return new Date(a.start_datetime).getTime() - new Date(b.start_datetime).getTime();
-    });
-    const label = format(new Date(`${key}T00:00:00`), 'PP');
-    return { dayKey: key, label, events: eventsForDay };
-  });
 }
 
-export default function ActivitySidebarView({ selectedProjectId }: { selectedProjectId: number }) {
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [events, setEvents] = useState<EventDTO[]>([]);
-  const [calendarNameById, setCalendarNameById] = useState<Record<string, string>>({});
+function typeIcon(eventType: string) {
+  switch (eventType) {
+    case 'chat_mention':
+      return <AtSign className="h-3 w-3 text-[#3CCED7]" />;
+    case 'chat_thread_reply':
+      return <MessageCircle className="h-3 w-3 text-violet-500" />;
+    case 'chat_reaction':
+      return <SmilePlus className="h-3 w-3 text-amber-500" />;
+    case 'chat_new_conversation':
+      return <MessageSquare className="h-3 w-3 text-emerald-500" />;
+    default: // chat_new_message
+      return <Bell className="h-3 w-3 text-gray-400" />;
+  }
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const [calendarsResp, subsResp] = await Promise.all([
-          CalendarAPI.listCalendars(),
-          CalendarAPI.listSubscriptions(),
-        ]);
+// ── Activity item ─────────────────────────────────────────────────────────────
 
-        const calendars = normalizeListResponse<{ id: string; project_id?: number | null; name?: string }>(
-          calendarsResp.data
-        );
-        const subs = normalizeListResponse<CalendarSubscriptionDTO>(subsResp.data);
-        const subscribedCalendars = subs.map((s) => s.calendar).filter(Boolean) as Array<{
-          id: string;
-          project_id?: number | null;
-          name?: string;
-        }>;
+function ActivityItem({
+  item,
+  onRead,
+  onNavigate,
+}: {
+  item: NotificationItem;
+  onRead: (id: string) => void;
+  onNavigate: (url: string) => void;
+}) {
+  const actorName = item.actor_name ?? 'Someone';
+  const initials = actorName[0]?.toUpperCase() ?? '?';
 
-        const byId = new Map<string, { id: string; project_id?: number | null; name?: string }>();
-        for (const cal of [...calendars, ...subscribedCalendars]) {
-          if (cal?.id) byId.set(cal.id, cal);
-        }
+  const handleClick = () => {
+    if (!item.is_read) onRead(item.id);
+    if (item.action_url) onNavigate(item.action_url);
+  };
 
-        const projectCalendars = Array.from(byId.values()).filter(
-          (c) => Number(c.project_id) === selectedProjectId
-        );
-        const calendarIds = projectCalendars.map((c) => c.id);
-        const calNameMap: Record<string, string> = {};
-        for (const c of projectCalendars) {
-          if (c?.id) calNameMap[c.id] = c.name ?? c.id;
-        }
+  // For chat_new_message show message count badge
+  const msgCount =
+    item.event_type === 'chat_new_message'
+      ? (item.metadata?.message_count as number | undefined)
+      : undefined;
 
-        if (calendarIds.length === 0) {
-          if (!cancelled) setEvents([]);
-          return;
-        }
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className={[
+        'group w-full flex items-start gap-2.5 rounded-lg px-3 py-2.5 text-left transition',
+        item.is_read
+          ? 'hover:bg-gray-50'
+          : 'bg-[#3CCED7]/5 hover:bg-[#3CCED7]/10',
+      ].join(' ')}
+    >
+      {/* Unread dot */}
+      <div className="mt-1.5 shrink-0">
+        {item.is_read ? (
+          <div className="h-2 w-2" />
+        ) : (
+          <div className="h-2 w-2 rounded-full bg-[#3CCED7]" />
+        )}
+      </div>
 
-        const start = startOfDay(new Date());
-        const end = addDays(startOfDay(new Date()), 90);
-        const agendaResp = await CalendarAPI.getAgendaView({
-          start_date: start.toISOString(),
-          end_date: end.toISOString(),
-          calendar_ids: calendarIds,
-        });
+      {/* Actor avatar */}
+      <div className="shrink-0">
+        {item.actor_avatar ? (
+          <img
+            src={item.actor_avatar}
+            alt={actorName}
+            className="h-7 w-7 rounded-full object-cover"
+          />
+        ) : (
+          <div
+            className={`flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold text-white ${avatarColor(actorName)}`}
+          >
+            {initials}
+          </div>
+        )}
+      </div>
 
-        const now = new Date();
-        const upcoming = (agendaResp.data?.events ?? []).filter((ev) => {
-          const startAt = new Date(ev.start_datetime);
-          return !Number.isNaN(startAt.getTime()) && startAt >= now;
-        });
-        if (!cancelled) {
-          setEvents(upcoming);
-          const namesFromAgenda: Record<string, string> = {};
-          for (const cal of agendaResp.data?.calendars ?? []) {
-            if (cal?.id) namesFromAgenda[cal.id] = cal.name ?? cal.id;
-          }
-          // Prefer names from the agenda response (authoritative), fall back to ids.
-          setCalendarNameById({ ...calNameMap, ...namesFromAgenda });
-        }
-      } catch {
-        if (!cancelled) setError('Could not load activity');
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedProjectId]);
-
-  const groups = useMemo(() => groupEventsByDay(events), [events]);
-
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex flex-col">
-        <div className="px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
-          Activity
+      {/* Content */}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-xs font-semibold text-gray-900 shrink-0">
+            {actorName}
+          </span>
+          <span className="flex items-center gap-0.5 text-[11px] text-gray-400">
+            {typeIcon(item.event_type)}
+          </span>
+          {msgCount && msgCount > 1 && (
+            <span className="rounded-full bg-[#3CCED7] px-1.5 py-0.5 text-[10px] font-semibold text-white leading-none">
+              {msgCount > 99 ? '99+' : msgCount}
+            </span>
+          )}
         </div>
-        <div className="space-y-5 p-3">
-          {[
-            { key: 'messages-activity-skeleton-day-1', cards: [true, false] },
-            { key: 'messages-activity-skeleton-day-2', cards: [false] },
-          ].map((group) => (
-            <div key={group.key}>
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-600">
-                <Skeleton className="h-3.5 w-3.5 rounded-sm" />
-                <Skeleton className="h-5 w-28" />
-              </div>
-              <div className="mt-2 space-y-3">
-                {group.cards.map((showDescription, index) => (
-                  <div
-                    key={`${group.key}-card-${index}`}
-                    className="rounded-lg border border-gray-200 bg-white px-3 py-2"
-                  >
-                    <div className="flex items-start gap-2">
-                      <Skeleton className="mt-0.5 h-6 w-16 rounded-sm" />
-                      <div className="min-w-0 flex-1 space-y-2">
-                        <Skeleton className="h-7 w-40" />
-                        {showDescription ? <Skeleton className="h-5 w-32" /> : null}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+        <p className="mt-0.5 text-[11px] text-gray-600 leading-snug">
+          {item.title}
+        </p>
+        {item.body && (
+          <p className="mt-0.5 line-clamp-2 text-[11px] text-gray-400 leading-snug">
+            {item.body}
+          </p>
+        )}
+        <p className="mt-1 text-[10px] text-gray-300">{relativeTime(item.created_at)}</p>
+      </div>
+    </button>
+  );
+}
+
+// ── Main view ─────────────────────────────────────────────────────────────────
+
+export default function ActivitySidebarView() {
+  const router = useRouter();
+  const { groups, isLoading, error, unreadCount, markRead, markAllRead, clearRead } =
+    useActivityFeed();
+
+  const handleNavigate = (url: string) => {
+    router.push(url);
+  };
+
+  if (isLoading && groups.length === 0) {
+    return (
+      <div className="flex flex-1 flex-col">
+        <div className="flex items-center justify-between px-3 py-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">Activity</span>
+        </div>
+        <div className="flex flex-1 items-center justify-center py-12">
+          <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
         </div>
       </div>
     );
   }
 
   if (error) {
-    return <div className="p-4 text-sm text-gray-500">{error}</div>;
-  }
-
-  if (groups.length === 0) {
     return (
-      <div className="flex-1 flex flex-col">
-        <div className="px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
-          Activity
-        </div>
-        <div className="p-4 text-sm text-gray-500">No future activity</div>
+      <div className="flex flex-1 flex-col">
+        <div className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-gray-600">Activity</div>
+        <div className="p-4 text-sm text-gray-500">{error}</div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col">
-      <div className="px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
-        Activity
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        <div className="divide-y divide-gray-100">
-          {groups.map((g) => (
-            <div key={g.dayKey} className="px-3 py-2">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-600">
-                <CalendarDays className="w-3.5 h-3.5 text-gray-400" />
-                {g.label}
-              </div>
-              <div className="mt-2 space-y-2">
-                {g.events.map((ev) => {
-                  const start = new Date(ev.start_datetime);
-                  const timeLabel = ev.is_all_day ? 'All day' : format(start, 'p');
-                  const dateLabel = format(start, 'PPpp');
-                  const calendarLabel = ev.calendar_id ? calendarNameById[ev.calendar_id] : undefined;
-                  const description = (ev.description ?? '').trim();
-                  return (
-                    <Popover key={ev.id}>
-                      <PopoverTrigger asChild>
-                        <button
-                          type="button"
-                          className={[
-                            'w-full text-left rounded-lg border border-gray-200 bg-white px-3 py-2',
-                            'hover:bg-gray-50 hover:border-gray-300',
-                            'focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/40',
-                          ].join(' ')}
-                          aria-label={`View details for ${ev.title || 'activity'}`}
-                        >
-                          <div className="flex items-start gap-2">
-                            <div className="text-[11px] text-gray-500 whitespace-nowrap pt-0.5">
-                              {timeLabel}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="text-sm font-medium text-gray-900 truncate">
-                                {ev.title || '(Untitled)'}
-                              </div>
-                              {description ? (
-                                <div className="mt-0.5 text-xs text-gray-500 line-clamp-2">
-                                  {description}
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent align="start" className="w-[320px]">
-                        <div className="text-sm font-semibold text-gray-900">
-                          {ev.title || '(Untitled)'}
-                        </div>
-                        <div className="mt-3 space-y-2 text-sm">
-                          <div className="flex gap-2">
-                            <div className="w-20 text-gray-500">Date</div>
-                            <div className="flex-1 text-gray-900">{dateLabel}</div>
-                          </div>
-                          <div className="flex gap-2">
-                            <div className="w-20 text-gray-500">Project</div>
-                            <div className="flex-1 text-gray-900">
-                              {calendarLabel ? `${calendarLabel} (ID: ${selectedProjectId})` : `ID: ${selectedProjectId}`}
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <div className="w-20 text-gray-500">Description</div>
-                            <div className="flex-1 text-gray-900 whitespace-pre-wrap">
-                              {description || '—'}
-                            </div>
-                          </div>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+    <div className="flex flex-1 flex-col min-h-0">
+      {/* Header */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-gray-100 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+            Activity
+          </span>
+          {unreadCount > 0 && (
+            <span className="flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-[#3CCED7] px-1 text-[10px] font-semibold text-white">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </div>
+        <div className="flex items-center gap-1">
+          {unreadCount > 0 && (
+            <button
+              type="button"
+              onClick={markAllRead}
+              title="Mark all as read"
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clearRead}
+            title="Clear read notifications"
+            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto">
+        {groups.length === 0 ? (
+          <div className="flex flex-col items-center gap-2 px-4 py-16 text-center text-gray-400">
+            <Check className="h-8 w-8 opacity-20" />
+            <p className="text-sm">You're all caught up!</p>
+            <p className="text-xs text-gray-300">Mentions, replies, reactions and DMs will appear here.</p>
+          </div>
+        ) : (
+          <div className="space-y-4 py-2">
+            {groups.map((group) => (
+              <div key={group.label}>
+                <div className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                  {group.label}
+                </div>
+                <div className="px-1 space-y-0.5">
+                  {group.items.map((item) => (
+                    <ActivityItem
+                      key={item.id}
+                      item={item}
+                      onRead={markRead}
+                      onNavigate={handleNavigate}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

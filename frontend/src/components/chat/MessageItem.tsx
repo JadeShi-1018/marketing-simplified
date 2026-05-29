@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { format, formatDistanceToNow } from 'date-fns';
-import { Forward } from 'lucide-react';
+import { FileX2, Film, Forward, ImageOff, MicOff } from 'lucide-react';
 import toast from 'react-hot-toast';
-import type { MessageItemProps } from '@/types/chat';
+import type { MessageItemProps, MissingForwardedAttachment } from '@/types/chat';
 import MessageStatus from './MessageStatus';
 import AttachmentDisplay from './AttachmentDisplay';
 import LinkPreview from './LinkPreview';
@@ -27,6 +27,58 @@ const AVATAR_COLORS = [
   'bg-blue-500', 'bg-emerald-500', 'bg-violet-500', 'bg-orange-500',
   'bg-pink-500', 'bg-teal-500', 'bg-red-500', 'bg-indigo-500',
 ];
+
+function MissingForwardedAttachmentCard({ item }: { item: MissingForwardedAttachment }) {
+  const isAudioLike = item.kind === 'audio' || item.kind === 'unknown';
+  const title =
+    item.kind === 'audio'
+      ? 'Forwarded audio unavailable'
+      : item.kind === 'image'
+        ? 'Forwarded image unavailable'
+        : item.kind === 'video'
+          ? 'Forwarded video unavailable'
+          : 'Forwarded file unavailable';
+  const Icon =
+    item.kind === 'image'
+      ? ImageOff
+      : item.kind === 'video'
+        ? Film
+        : isAudioLike
+          ? MicOff
+          : FileX2;
+
+  return (
+    <div className="mt-2 w-full min-w-0 max-w-lg rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-3 text-gray-500">
+      <div className="flex items-center gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-500">
+          <Icon className="h-5 w-5" />
+        </div>
+        {isAudioLike ? (
+          <div className="flex h-10 min-w-0 flex-1 items-center gap-1 opacity-60">
+            {Array.from({ length: 22 }).map((_, index) => (
+              <span
+                key={`missing-wave-${item.id}-${index}`}
+                className="w-1 shrink-0 rounded-full bg-gray-300"
+                style={{ height: `${18 + Math.abs(Math.sin(index * 0.65)) * 58}%` }}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-gray-600">{item.original_filename}</p>
+            {item.file_size_display ? (
+              <p className="text-xs text-gray-400">{item.file_size_display}</p>
+            ) : null}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-gray-600">{title}</p>
+          <p className="truncate text-xs text-gray-400">Original file was deleted</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function avatarColor(userId: number): string {
   return AVATAR_COLORS[userId % AVATAR_COLORS.length];
@@ -137,6 +189,7 @@ export default function MessageItem({
   const forwardedFrom = message.forwarded_from?.sender_display?.trim() || '';
   const hasContent = Boolean(messageContent.trim());
   const hasAttachments = Boolean(message.attachments?.length);
+  const missingForwardedAttachments = message.missing_forwarded_attachments ?? [];
   const hasReplyTo = Boolean(message.reply_to?.id);
   const replyToContent = message.reply_to
     ? `${message.reply_to.sender.username}: ${message.reply_to.content || '[Attachment]'}`
@@ -373,7 +426,18 @@ export default function MessageItem({
               {showLinkPreview && <LinkPreview content={messageContent} />}
 
               {hasAttachments && (
-                <AttachmentDisplay attachments={message.attachments!} isOwnMessage={isOwnMessage} />
+                <AttachmentDisplay
+                  attachments={message.attachments!}
+                  isOwnMessage={isOwnMessage}
+                />
+              )}
+
+              {missingForwardedAttachments.length > 0 && (
+                <div className="mt-2 flex w-full min-w-0 max-w-full flex-col gap-2">
+                  {missingForwardedAttachments.map((item) => (
+                    <MissingForwardedAttachmentCard key={item.id} item={item} />
+                  ))}
+                </div>
               )}
 
               {hasReplyTo && (

@@ -158,6 +158,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     can_revoke = serializers.SerializerMethodField()
     is_hidden_by_me = serializers.SerializerMethodField()
     mentioned_user_ids = serializers.SerializerMethodField()
+    missing_forwarded_attachments = serializers.SerializerMethodField()
     thread_reply_count = serializers.SerializerMethodField()
     thread_last_reply_at = serializers.SerializerMethodField()
     thread_participants = serializers.SerializerMethodField()
@@ -172,6 +173,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             'has_attachments', 'attachment_count',
             'is_forwarded', 'forwarded_from', 'reply_to', 'reactions', 'can_revoke',
             'is_hidden_by_me', 'mentioned_user_ids',
+            'missing_forwarded_attachments',
             'parent_message_id',
             'thread_reply_count', 'thread_last_reply_at', 'thread_participants',
             'has_unread_thread_replies',
@@ -202,11 +204,66 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     def _get_prefetched_statuses(self, obj):
         return self._get_prefetched_related(obj, 'statuses')
 
+    def _forward_source_is_unavailable(self, obj):
+        """True when a forwarded message has lost the live source it copied from."""
+        if not self.get_is_forwarded(obj):
+            return False
+        if not obj.forwarded_from_message_id:
+            return True
+        source = getattr(obj, 'forwarded_from_message', None)
+        if source is None:
+            return True
+        return bool(source.is_deleted or source.is_revoked)
+
+    def _attachment_kind(self, attachment):
+        mime_type = (getattr(attachment, 'mime_type', '') or '').lower()
+        if mime_type.startswith('audio/'):
+            return 'audio'
+        if mime_type.startswith('video/'):
+            return 'video'
+        if getattr(attachment, 'file_type', '') == 'image':
+            return 'image'
+        return 'document'
+
     def get_mentioned_user_ids(self, obj):
         mentions = self._get_prefetched_related(obj, 'mentions')
         if mentions is not None:
             return [mention.mentioned_user_id for mention in mentions]
         return list(obj.mentions.values_list('mentioned_user_id', flat=True))
+
+    def get_missing_forwarded_attachments(self, obj):
+        """Tombstones for forwarded attachments whose original message is gone."""
+        if not self._forward_source_is_unavailable(obj):
+            return []
+
+        attachments = self._get_prefetched_related(obj, 'attachments')
+        if attachments is None:
+            attachments = list(obj.attachments.all())
+
+        tombstones = [
+            {
+                'id': attachment.id,
+                'kind': self._attachment_kind(attachment),
+                'original_filename': attachment.original_filename or 'Forwarded file',
+                'file_size_display': MessageAttachmentSerializer().get_file_size_display(attachment),
+                'reason': 'original_deleted',
+            }
+            for attachment in attachments
+        ]
+
+        # Older forwarded attachment rows may already have had their copied attachment
+        # record deleted. If the forwarded message is attachment-only, still render a
+        # visible tombstone instead of leaving only "Forwarded from ...".
+        if not tombstones and not (obj.content or '').strip():
+            tombstones.append({
+                'id': -obj.id,
+                'kind': 'unknown',
+                'original_filename': 'Forwarded file',
+                'file_size_display': '',
+                'reason': 'original_deleted',
+            })
+
+        return tombstones
     
     def get_status(self, obj):
         """Get message status for the current user"""
@@ -245,6 +302,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_has_attachments(self, obj):
         """Whether message contains attachments."""
+        if self._forward_source_is_unavailable(obj):
+            return False
         attachments = self._get_prefetched_related(obj, 'attachments')
         if attachments is not None:
             return bool(obj.has_attachments or attachments)
@@ -252,6 +311,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_attachment_count(self, obj):
         """Number of attachments linked to this message."""
+        if self._forward_source_is_unavailable(obj):
+            return 0
         attachments = self._get_prefetched_related(obj, 'attachments')
         if attachments is not None:
             return len(attachments)
@@ -830,6 +891,15 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
     
     def get_file_url(self, obj):
         """Return the full URL for the file"""
+        message = getattr(obj, 'message', None)
+        if message and (
+            message.forwarded_from_sender_display
+            or message.forwarded_from_created_at
+            or message.forwarded_from_message_id
+        ):
+            source = getattr(message, 'forwarded_from_message', None)
+            if not message.forwarded_from_message_id or source is None or source.is_deleted or source.is_revoked:
+                return None
         if obj.file:
             request = self.context.get('request')
             if request:
@@ -839,6 +909,15 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
     
     def get_thumbnail_url(self, obj):
         """Return thumbnail URL if available"""
+        message = getattr(obj, 'message', None)
+        if message and (
+            message.forwarded_from_sender_display
+            or message.forwarded_from_created_at
+            or message.forwarded_from_message_id
+        ):
+            source = getattr(message, 'forwarded_from_message', None)
+            if not message.forwarded_from_message_id or source is None or source.is_deleted or source.is_revoked:
+                return None
         if hasattr(obj, 'thumbnail') and obj.thumbnail:
             request = self.context.get('request')
             if request:
@@ -878,15 +957,23 @@ class AttachmentFileListRowSerializer(MessageAttachmentSerializer):
     uploader = UserSimpleSerializer(read_only=True)
     chat = serializers.SerializerMethodField()
     message_id = serializers.IntegerField(read_only=True)
+    thread_root_message_id = serializers.IntegerField(source='message.parent_message_id', read_only=True)
+    is_orphaned_forward = serializers.SerializerMethodField()
 
     class Meta(MessageAttachmentSerializer.Meta):
-        fields = MessageAttachmentSerializer.Meta.fields + ['uploader', 'chat', 'message_id']
+        fields = MessageAttachmentSerializer.Meta.fields + [
+            'uploader', 'chat', 'message_id', 'thread_root_message_id', 'is_orphaned_forward',
+        ]
 
     def get_chat(self, obj):
         chat = getattr(getattr(obj, 'message', None), 'chat', None)
         if not chat:
             return None
         return ChatContextSerializer(chat).data
+
+    def get_is_orphaned_forward(self, obj) -> bool:
+        """True when this attachment came from a forwarded message whose source was deleted."""
+        return bool(getattr(obj, 'is_orphaned_forward', False))
 
 
 class AttachmentUploadSerializer(serializers.ModelSerializer):
@@ -969,10 +1056,18 @@ class AttachmentUploadSerializer(serializers.ModelSerializer):
 
 class MessageWithAttachmentsSerializer(MessageSerializer):
     """Serializer for Message model with nested attachments"""
-    attachments = MessageAttachmentSerializer(many=True, read_only=True)
+    attachments = serializers.SerializerMethodField()
     
     class Meta(MessageSerializer.Meta):
         fields = MessageSerializer.Meta.fields + ['attachments']
+
+    def get_attachments(self, obj):
+        if self._forward_source_is_unavailable(obj):
+            return []
+        attachments = self._get_prefetched_related(obj, 'attachments')
+        if attachments is None:
+            attachments = obj.attachments.all()
+        return MessageAttachmentSerializer(attachments, many=True, context=self.context).data
 
 
 class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, serializers.ModelSerializer):

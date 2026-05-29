@@ -1506,6 +1506,17 @@ class AttachmentViewSet(viewsets.GenericViewSet):
             MessageAttachment.objects.filter(
                 message__isnull=False,
                 message__chat_id__in=chat_ids,
+                message__is_revoked=False,
+                message__is_deleted=False,
+            )
+            .exclude(message__hidden_by_users=request.user)
+            # Files tab should not surface forwarded attachment copies. The live
+            # original attachment appears once; if the original message is deleted,
+            # forwarded copies are hidden/cleaned up instead of becoming stale rows.
+            .exclude(
+                Q(message__forwarded_from_message__isnull=False)
+                | Q(message__forwarded_from_sender_display__isnull=False)
+                | Q(message__forwarded_from_created_at__isnull=False)
             )
             .select_related('uploader', 'message__chat')
             .order_by('-created_at')
