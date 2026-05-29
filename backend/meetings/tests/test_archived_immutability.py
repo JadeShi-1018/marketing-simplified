@@ -306,7 +306,7 @@ class TestArchivedMeetingImmutability(TestCase):
             meeting=self.meeting, content="Item", order_index=0
         )
         with self.assertRaises(PermissionDenied):
-            update_agenda_item(item=item, content="Changed", actor=self.member)
+            update_agenda_item(item=item, content="Changed", is_priority=False, actor=self.member)
 
     # ------------------------------------------------------------------
     # Repeated attempts on the same blocked endpoint stay consistent
