@@ -49,6 +49,9 @@ import {
   Settings,
   Sparkles,
   UploadCloud,
+  AlertTriangle,
+  Play,
+  Pause,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import toast from 'react-hot-toast';
@@ -141,7 +144,7 @@ function getSupportedRecordingMimeType(mode: RecordingMode): string | undefined 
   const candidates =
     mode === 'video'
       ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
-      : ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+      : ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'];
   return candidates.find((type) => MediaRecorder.isTypeSupported(type));
 }
 
@@ -159,6 +162,36 @@ function stopStreamTracks(stream: MediaStream | null) {
 
 function getDeviceConstraint(deviceId: string): boolean | MediaTrackConstraints {
   return deviceId ? { deviceId: { exact: deviceId } } : true;
+}
+
+function AudioPreview({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const toggle = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (playing) { el.pause(); } else { void el.play(); }
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+      />
+      <button
+        type="button"
+        onClick={toggle}
+        className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 hover:bg-gray-300 transition"
+        aria-label={playing ? 'Pause' : 'Play'}
+      >
+        {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+      </button>
+    </div>
+  );
 }
 
 function hasLiveVideoTrack(stream: MediaStream | null) {
@@ -576,6 +609,10 @@ export default function ChatComposer({
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState('');
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState('');
+  const [permissionBanner, setPermissionBanner] = useState<string | null>(null);
+  const [permissionBannerDevice, setPermissionBannerDevice] = useState<'camera' | 'mic' | null>(null);
+  const [permissionBannerOsLink, setPermissionBannerOsLink] = useState<string | null>(null);
+  const permissionRetryRef = useRef<(() => void) | null>(null);
   const [showVideoSettings, setShowVideoSettings] = useState(false);
   const [showVideoEffects, setShowVideoEffects] = useState(false);
   const [videoEffect, setVideoEffect] = useState<VideoEffectMode>('none');
@@ -722,14 +759,17 @@ export default function ChatComposer({
     }
   }, [showLinkEditor]);
 
-  // ---- Revoke object-URL previews on unmount ----
+  // Keep a ref so the unmount cleanup can access the latest list without
+  // the effect re-running (and revoking URLs) on every progress update.
+  const pendingAttachmentsRef = useRef(pendingAttachments);
+  useEffect(() => { pendingAttachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
   useEffect(() => {
     return () => {
-      pendingAttachments.forEach((a) => {
+      pendingAttachmentsRef.current.forEach((a) => {
         if (a.preview) URL.revokeObjectURL(a.preview);
       });
     };
-  }, [pendingAttachments]);
+  }, []); // intentionally empty — only runs on unmount
 
   useEffect(() => {
     return () => {
@@ -920,7 +960,10 @@ export default function ChatComposer({
     }
 
     const previewUrl = URL.createObjectURL(file);
-    setVideoBackgroundImage(previewUrl);
+    setVideoBackgroundImage((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return previewUrl;
+    });
     setVideoEffect('background');
     setShowVideoEffects(false);
     e.target.value = '';
@@ -1013,8 +1056,11 @@ export default function ChatComposer({
         }
 
         if (chunks.length === 0) return;
+        // recorder.mimeType can be empty string in Safari even when a mimeType was set.
+        // Fall back to the mimeType we used to create the recorder, then to a safe default.
         const type =
           recorder.mimeType ||
+          mimeType ||
           (mode === 'video' ? 'video/webm' : 'audio/webm');
         const fileType = type.split(';')[0];
         const blob = new Blob(chunks, { type: fileType });
@@ -1063,10 +1109,17 @@ export default function ChatComposer({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       startRecordingFromStream('audio', stream);
-    } catch {
+    } catch (err) {
       stopMediaTracks();
       setRecordingMode(null);
-      toast.error('Allow microphone access to record audio');
+      const name = (err as DOMException)?.name;
+      if (name === 'NotReadableError' || name === 'TrackStartError') {
+        toast.error('Microphone is in use by another app', { id: 'mic-permission' });
+      } else if (name === 'NotAllowedError') {
+        toast.error('Allow microphone access to record audio', { id: 'mic-permission' });
+      } else {
+        toast.error('Could not access microphone', { id: 'mic-permission' });
+      }
     }
   }, [disabled, recordingMode, startRecordingFromStream, stopMediaTracks, stopRecording]);
 
@@ -1091,6 +1144,9 @@ export default function ChatComposer({
       cameraStreamRef.current = stream;
       setIsCameraEnabled(true);
       setVideoPreviewStream(screenStreamRef.current || stream);
+      setPermissionBanner(null);
+      setPermissionBannerDevice(null);
+      setPermissionBannerOsLink(null);
       stream.getVideoTracks().forEach((track) => {
         track.addEventListener('ended', () => {
           if (cameraStreamRef.current === stream) {
@@ -1102,11 +1158,34 @@ export default function ChatComposer({
       });
       void refreshMediaDevices();
       return stream;
-    } catch {
+    } catch (err) {
       cameraStreamRef.current = null;
       setIsCameraEnabled(false);
       updateVideoPreviewStream();
-      toast.error('Allow camera access to preview video');
+      const name = (err as DOMException)?.name;
+      if (name === 'NotReadableError' || name === 'TrackStartError') {
+        setPermissionBanner('Camera is in use by another app');
+        setPermissionBannerDevice(null);
+      } else if (name === 'NotAllowedError') {
+        let siteGranted = false;
+        try {
+          const ps = await navigator.permissions?.query({ name: 'camera' as PermissionName });
+          siteGranted = ps?.state === 'granted';
+        } catch { /* Permissions API unavailable */ }
+        if (siteGranted) {
+          setPermissionBanner('Camera is blocked by your system. Open System Settings to allow access.');
+          setPermissionBannerDevice(null);
+          setPermissionBannerOsLink('x-apple.systempreferences:com.apple.preference.security?Privacy_Camera');
+        } else {
+          setPermissionBanner('Allow camera access in your browser settings, then try again');
+          setPermissionBannerDevice('camera');
+          setPermissionBannerOsLink(null);
+          permissionRetryRef.current = () => { void startCameraPreview(); };
+        }
+      } else {
+        setPermissionBanner('Could not access camera');
+        setPermissionBannerDevice(null);
+      }
       return null;
     }
   }, [refreshMediaDevices, selectedVideoDeviceId, updateVideoPreviewStream]);
@@ -1127,6 +1206,9 @@ export default function ChatComposer({
       });
       micStreamRef.current = stream;
       setIsMicEnabled(true);
+      setPermissionBanner(null);
+      setPermissionBannerDevice(null);
+      setPermissionBannerOsLink(null);
       stream.getAudioTracks().forEach((track) => {
         track.addEventListener('ended', () => {
           if (micStreamRef.current === stream) {
@@ -1137,10 +1219,35 @@ export default function ChatComposer({
       });
       void refreshMediaDevices();
       return stream;
-    } catch {
+    } catch (err) {
       micStreamRef.current = null;
       setIsMicEnabled(false);
-      toast.error('Allow microphone access to include audio');
+      const name = (err as DOMException)?.name;
+      if (name === 'NotReadableError' || name === 'TrackStartError') {
+        setPermissionBanner('Microphone is in use by another app');
+        setPermissionBannerDevice(null);
+        setPermissionBannerOsLink(null);
+      } else if (name === 'NotAllowedError') {
+        let siteGranted = false;
+        try {
+          const ps = await navigator.permissions?.query({ name: 'microphone' as PermissionName });
+          siteGranted = ps?.state === 'granted';
+        } catch { /* Permissions API unavailable */ }
+        if (siteGranted) {
+          setPermissionBanner('Microphone is blocked by your system. Open System Settings to allow access.');
+          setPermissionBannerDevice(null);
+          setPermissionBannerOsLink('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+        } else {
+          setPermissionBanner('Allow microphone access in your browser settings, then try again');
+          setPermissionBannerDevice('mic');
+          setPermissionBannerOsLink(null);
+          permissionRetryRef.current = () => { void startMicPreview(); };
+        }
+      } else {
+        setPermissionBanner('Could not access microphone');
+        setPermissionBannerDevice(null);
+        setPermissionBannerOsLink(null);
+      }
       return null;
     }
   }, [refreshMediaDevices, selectedAudioDeviceId]);
@@ -1148,21 +1255,19 @@ export default function ChatComposer({
   const openVideoRecorder = useCallback(async () => {
     if (disabled) return;
     if (recordingMode && recordingMode !== 'video') return;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      toast.error('Video recording is not supported in this browser');
-      return;
-    }
 
     setIsVideoRecorderOpen(true);
     setShowVideoEffects(false);
     setShowVideoSettings(false);
     setIsScreenEnabled(false);
-    setIsCameraEnabled(true);
-    setIsMicEnabled(true);
+    setIsCameraEnabled(false);
+    setIsMicEnabled(false);
+    setPermissionBanner(null);
+    setPermissionBannerDevice(null);
+    setPermissionBannerOsLink(null);
     await refreshMediaDevices();
-    void startCameraPreview();
-    void startMicPreview();
-  }, [disabled, recordingMode, refreshMediaDevices, startCameraPreview, startMicPreview]);
+    // Nothing auto-starts — user enables camera / mic / screen via the buttons.
+  }, [disabled, recordingMode, refreshMediaDevices]);
 
   const closeVideoRecorder = useCallback(() => {
     if (recordingMode === 'video') {
@@ -1225,9 +1330,13 @@ export default function ChatComposer({
           }
         });
       });
-    } catch {
+    } catch (err) {
       setIsScreenEnabled(false);
-      toast.error('Screen sharing was cancelled');
+      // NotAllowedError / AbortError = user dismissed the picker — no toast needed.
+      const name = (err as DOMException)?.name;
+      if (name !== 'NotAllowedError' && name !== 'AbortError') {
+        toast.error('Screen sharing failed');
+      }
     }
   }, [isScreenEnabled]);
 
@@ -1283,6 +1392,32 @@ export default function ChatComposer({
       videoPreviewRef.current.srcObject = videoPreviewStream;
     }
   }, [videoPreviewStream]);
+
+  // Watch for the user granting camera/mic permission in browser settings while
+  // the permission banner is visible, and auto-retry when they do.
+  useEffect(() => {
+    if (!permissionBannerDevice || !navigator.permissions?.query) return;
+    const permName = permissionBannerDevice === 'camera' ? 'camera' : 'microphone';
+    let didCancel = false;
+    let cleanup: (() => void) | null = null;
+    navigator.permissions.query({ name: permName as PermissionName }).then((s) => {
+      if (didCancel) return;
+      const onChange = () => {
+        if (s.state === 'granted') {
+          setPermissionBanner(null);
+          setPermissionBannerDevice(null);
+          setPermissionBannerOsLink(null);
+          permissionRetryRef.current?.();
+        }
+      };
+      s.addEventListener('change', onChange);
+      cleanup = () => s.removeEventListener('change', onChange);
+    }).catch(() => { /* Permissions API not supported */ });
+    return () => {
+      didCancel = true;
+      cleanup?.();
+    };
+  }, [permissionBannerDevice]);
 
   const handleInsertMentionTrigger = useCallback(() => {
     editor?.chain().focus().insertContent('@').run();
@@ -1430,11 +1565,8 @@ export default function ChatComposer({
                     preload="metadata"
                   />
                 ) : att.preview && att.file.type.startsWith('audio/') ? (
-                  <div className="flex min-w-[180px] items-center gap-2">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-200">
-                      {getFileIcon(att.file)}
-                    </div>
-                    <audio src={att.preview} controls preload="metadata" className="h-8 max-w-[180px]" />
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-gray-200">
+                    <AudioPreview src={att.preview} />
                   </div>
                 ) : (
                   <div className="flex h-10 w-10 items-center justify-center rounded bg-gray-200">
@@ -1604,6 +1736,43 @@ export default function ChatComposer({
                 </button>
               </div>
             </div>
+
+            {permissionBanner && (
+              <div className="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-5 py-3 text-sm text-amber-300">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span className="flex-1">{permissionBanner}</span>
+                {permissionBannerOsLink && (
+                  <a
+                    href={permissionBannerOsLink}
+                    className="rounded px-2 py-0.5 text-xs font-semibold text-amber-200 underline hover:text-white"
+                  >
+                    Open System Settings
+                  </a>
+                )}
+                {permissionBannerDevice && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPermissionBanner(null);
+                      setPermissionBannerDevice(null);
+                      setPermissionBannerOsLink(null);
+                      permissionRetryRef.current?.();
+                    }}
+                    className="rounded px-2 py-0.5 text-xs font-semibold text-amber-200 underline hover:text-white"
+                  >
+                    Try again
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => { setPermissionBanner(null); setPermissionBannerDevice(null); setPermissionBannerOsLink(null); }}
+                  className="rounded p-0.5 hover:bg-white/10"
+                  aria-label="Dismiss"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            )}
 
             <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-8">
               <div
