@@ -5,7 +5,7 @@ from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
 
-from tracking.enums import EndReason, EventType
+from tracking.enums import EndReason, EventType, Source
 
 
 class TrackingSession(models.Model):
@@ -50,6 +50,13 @@ class TrackingEvent(models.Model):
     object_id = models.PositiveIntegerField(null=True)
     target = GenericForeignKey('content_type', 'object_id')
     event_type = models.CharField(max_length=30, choices=EventType.choices)
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.MIDDLEWARE,
+        db_index=True,
+    )
+    schema_version = models.PositiveSmallIntegerField(default=1)
     occurred_at = models.DateTimeField(db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     metadata = models.JSONField(default=dict, blank=True)

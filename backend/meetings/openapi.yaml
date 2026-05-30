@@ -28,7 +28,10 @@ components:
         - planned: Meeting scheduled with participants
         - in_progress: Meeting is currently active
         - completed: Meeting finished with documentation
-        - archived: Terminal state, no further transitions allowed
+        - archived: Terminal state. No further transitions allowed. All write
+          operations on the meeting and its sub-resources (agenda items,
+          participants, artifacts, action items, document) return 403.
+          is_archived is set to true atomically on transition to this state.
 
     LifecycleState:
       type: object
@@ -164,7 +167,7 @@ paths:
       summary: Execute a lifecycle transition
       description: |
         Transitions a meeting to a new lifecycle state.
-        
+
         Transition rules:
         - draft → planned (no validation required)
         - planned → in_progress (requires at least one participant)
@@ -172,8 +175,10 @@ paths:
         - in_progress → completed (requires non-empty objective and at least one agenda item)
         - completed → archived (requires all action items to be resolved, if any exist)
         - archived → any state (blocked, terminal state)
-        
-        Status is read-only and cannot be set via PATCH on the meeting resource.
+
+        Status and is_archived are read-only and cannot be set via PATCH on the
+        meeting resource. When a meeting transitions to archived, is_archived is
+        set to true atomically in the same database write.
       operationId: executeMeetingTransition
       security:
         - bearerAuth: []
@@ -313,11 +318,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/ActionItem'
         '403':
-          description: User is not a member of this project
+          description: |
+            Permission denied. Possible reasons:
+            - User is not a member of this project
+            - Meeting is archived (write-lock): all write operations on archived
+              meetings return 403 with detail "Archived meetings are read-only."
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PermissionError'
+              examples:
+                not_member:
+                  summary: Non-member access
+                  value:
+                    detail: "You do not have permission to perform this action."
+                archived_meeting:
+                  summary: Meeting is archived
+                  value:
+                    detail: "Archived meetings are read-only."
 
   /projects/{project_id}/meetings/{meeting_id}/action-items/{id}/:
     patch:
@@ -357,10 +375,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/ActionItem'
         '403':
-          description: User is not a member of this project
+          description: |
+            Permission denied. Possible reasons:
+            - User is not a member of this project
+            - Meeting is archived (write-lock): all write operations on archived
+              meetings return 403 with detail "Archived meetings are read-only."
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PermissionError'
+              examples:
+                not_member:
+                  summary: Non-member access
+                  value:
+                    detail: "You do not have permission to perform this action."
+                archived_meeting:
+                  summary: Meeting is archived
+                  value:
+                    detail: "Archived meetings are read-only."
         '404':
           description: Action item not found

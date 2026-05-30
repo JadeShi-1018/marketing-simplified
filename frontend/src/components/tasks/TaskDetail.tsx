@@ -948,28 +948,6 @@ export default function TaskDetail({
 
   useEffect(() => {
     const shouldRenderRetrospective = task?.type === "retrospective";
-    // #region agent log
-    fetch("http://127.0.0.1:7242/ingest/d1c5a812-8fba-4f4b-91ec-d69ecfc99679", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runId: "taskdetail-retro-render-check-v1",
-        hypothesisId: "H1",
-        location: "TaskDetail.tsx:renderStateEffect",
-        message: "Render state snapshot for retrospective section",
-        data: {
-          taskId: task?.id ?? null,
-          taskType: task?.type ?? null,
-          shouldRenderRetrospective,
-          retrospectiveLoading,
-          hasRetrospectiveData: Boolean(retrospective),
-          taskObjectId: task?.object_id ?? null,
-          taskContentType: task?.content_type ?? null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
   }, [
     task?.id,
     task?.type,

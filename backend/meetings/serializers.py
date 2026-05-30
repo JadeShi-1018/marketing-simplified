@@ -132,6 +132,7 @@ class MeetingSerializer(serializers.ModelSerializer):
             "related_tasks",
             "zoom_post_meeting",
             "status",
+            "is_archived",
         ]
 
     def get_participants(self, obj):
