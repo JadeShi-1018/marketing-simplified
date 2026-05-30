@@ -131,6 +131,7 @@ export default function MessageList({
   jumpTarget,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [highlightMessageId, setHighlightMessageId] = useState<number | null>(null);
 
@@ -146,10 +147,8 @@ export default function MessageList({
   const completedJumpRequestRef = useRef<string | null>(null);
   const isRestoringPrependRef = useRef(false);
   const lastMessageIdRef = useRef<number | null>(null);
-  const unreadScrollDoneRef = useRef(false);
-  const scrollPendingRef = useRef<'bottom' | 'unread' | null>(null);
-  const firstUnreadMessageIdRef = useRef(firstUnreadMessageId);
-  firstUnreadMessageIdRef.current = firstUnreadMessageId;
+  const bottomSettleFrameRef = useRef<number | null>(null);
+  const bottomSettleRemainingRef = useRef(0);
   const previousCountRef = useRef(messages.length);
   // stickyBottomRef: when true, size/content changes scroll to the real bottom.
   // This handles initial scroll, chat switches, and composer height changes.
@@ -192,19 +191,42 @@ export default function MessageList({
     scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior });
   }, []);
 
-  const scrollToUnreadDivider = useCallback((): boolean => {
-    const container = scrollRef.current;
-    const divider = document.getElementById('new-messages-divider');
-    if (!container || !divider) return false;
+  const cancelBottomSettle = useCallback(() => {
+    if (bottomSettleFrameRef.current !== null) {
+      window.cancelAnimationFrame(bottomSettleFrameRef.current);
+      bottomSettleFrameRef.current = null;
+    }
+    bottomSettleRemainingRef.current = 0;
+  }, []);
 
-    const containerRect = container.getBoundingClientRect();
-    const dividerRect = divider.getBoundingClientRect();
-    container.scrollTo({
-      top: container.scrollTop + dividerRect.top - containerRect.top,
-      behavior: 'instant',
-    });
-    unreadScrollDoneRef.current = true;
-    return true;
+  const scheduleBottomSettle = useCallback((frames = 18) => {
+    if (activeJumpRequestRef.current) return;
+    if (isLoadingMoreRef.current || isRestoringPrependRef.current) return;
+    if (!stickyBottomRef.current) return;
+
+    bottomSettleRemainingRef.current = Math.max(bottomSettleRemainingRef.current, frames);
+    if (bottomSettleFrameRef.current !== null) return;
+
+    const settle = () => {
+      bottomSettleFrameRef.current = null;
+      if (!stickyBottomRef.current || activeJumpRequestRef.current) {
+        bottomSettleRemainingRef.current = 0;
+        return;
+      }
+      if (isLoadingMoreRef.current || isRestoringPrependRef.current) {
+        bottomSettleRemainingRef.current = 0;
+        return;
+      }
+
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
+      bottomSettleRemainingRef.current -= 1;
+
+      if (bottomSettleRemainingRef.current > 0) {
+        bottomSettleFrameRef.current = window.requestAnimationFrame(settle);
+      }
+    };
+
+    bottomSettleFrameRef.current = window.requestAnimationFrame(settle);
   }, []);
 
   const restorePrependAnchor = useCallback((): void => {
@@ -393,13 +415,16 @@ export default function MessageList({
         window.cancelAnimationFrame(loadMoreFrameRef.current);
       }
       cancelPendingJumpSettle();
+      cancelBottomSettle();
     };
-  }, [cancelPendingJumpSettle]);
+  }, [cancelBottomSettle, cancelPendingJumpSettle]);
 
   // Keep the newest messages anchored when the composer changes height
-  // (for example, Slack-style Aa toolbar show/hide).
+  // (for example, Slack-style Aa toolbar show/hide) or message content settles
+  // after first paint.
   useLayoutEffect(() => {
     const container = scrollRef.current;
+    const content = contentRef.current;
     if (!container || typeof ResizeObserver === 'undefined') return;
 
     let frame: number | null = null;
@@ -413,6 +438,7 @@ export default function MessageList({
     });
 
     observer.observe(container);
+    if (content) observer.observe(content);
     return () => {
       observer.disconnect();
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -430,47 +456,25 @@ export default function MessageList({
     const isInitialLoad = lastMessageIdRef.current === null;
 
     if (isInitialLoad || isNewChat) {
-      if (isNewChat) unreadScrollDoneRef.current = false;
-      if (firstUnreadMessageIdRef.current) {
-        // Has unread — will scroll to divider instead of bottom
-        stickyBottomRef.current = false;
-        scrollPendingRef.current = 'unread';
-      } else {
-        stickyBottomRef.current = true;
-        scrollPendingRef.current = null;
-      }
+      // Opening a conversation should land on the latest message. The unread
+      // divider still renders in history, but it should not steal initial focus.
+      stickyBottomRef.current = true;
+      scheduleBottomSettle();
     }
     lastMessageIdRef.current = lastMessageId;
-  }, [messages]);
+  }, [messages, scheduleBottomSettle]);
 
-  // ── Scroll to bottom (or unread divider) on content changes ─────────────────
+  // ── Scroll to bottom on content changes ─────────────────────────────────────
   useLayoutEffect(() => {
     if (showSwitchLoadingSkeleton) return;
     if (flatItems.length === 0 || !scrollRef.current) return;
 
-    // One-time scroll to the unread divider (higher priority than sticky bottom)
-    if (scrollPendingRef.current === 'unread') {
-      if (scrollToUnreadDivider()) {
-        scrollPendingRef.current = null;
-        return;
-      }
-    }
-
     if (stickyBottomRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
+      scheduleBottomSettle();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flatItems.length, showSwitchLoadingSkeleton]);
-
-  // ── firstUnreadMessageId arrives after initial render ────────────────────────
-  useLayoutEffect(() => {
-    if (!firstUnreadMessageId) {
-      unreadScrollDoneRef.current = false;
-      return;
-    }
-    if (unreadScrollDoneRef.current) return;
-    scrollToUnreadDivider();
-  }, [firstUnreadMessageId, scrollToUnreadDivider]);
 
   // ── Restore scroll position after prepending older messages ──────────────────
   // Must be useLayoutEffect (not useEffect) so the position is corrected before
@@ -636,9 +640,10 @@ export default function MessageList({
               <div
                 ref={scrollRef}
                 onScroll={handleScroll}
-                className="h-full overflow-y-auto"
+                className="h-full overflow-y-auto flex flex-col"
               >
-                <div className="min-h-full pb-3">
+                <div ref={contentRef} className="flex-1 pb-3 flex flex-col">
+                  <div className="flex-1" />
                   {flatItems.map((item, index) => {
                     return (
                       <div
