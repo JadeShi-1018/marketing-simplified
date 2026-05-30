@@ -9,6 +9,7 @@ from freezegun import freeze_time
 
 from tracking.enums import EndReason
 from tracking.models import TrackingEvent, TrackingSession
+from tracking.services import SessionLookup
 from tracking.tasks import expire_stale_sessions, purge_old_data
 
 User = get_user_model()
@@ -16,6 +17,12 @@ User = get_user_model()
 TIMEOUT = 900   # matches default TRACKING_SESSION_TIMEOUT_SECONDS
 RETENTION_EVENTS = 90
 RETENTION_SESSIONS = 180
+
+LOCMEM_CACHE = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }
+}
 
 
 def make_session(user, **kwargs):
@@ -42,21 +49,30 @@ def make_events_bulk(user, session, n, content_type, object_id=1):
     TRACKING_SESSION_TIMEOUT_SECONDS=TIMEOUT,
     TRACKING_EVENT_RETENTION_DAYS=RETENTION_EVENTS,
     TRACKING_SESSION_RETENTION_DAYS=RETENTION_SESSIONS,
+    CACHES=LOCMEM_CACHE,
 )
 class ExpireStaleSessionsTest(TestCase):
 
     def setUp(self):
         self.user = User.objects.create_user(username='alice', email='alice@test.com', password='pass')
+        self.user2 = User.objects.create_user(username='bob', email='bob@test.com', password='pass')
 
     # 1. 1 stale + 1 active → only stale gets TIMEOUT
     def test_only_stale_session_is_expired(self):
-        stale_heartbeat = timezone.now() - timedelta(seconds=TIMEOUT + 60)
-        fresh_heartbeat = timezone.now() - timedelta(seconds=TIMEOUT - 60)
+        t0 = timezone.now()
 
-        stale = make_session(self.user, last_heartbeat_at=stale_heartbeat)
-        active = make_session(self.user, last_heartbeat_at=fresh_heartbeat)
+        # stale: heartbeat set TIMEOUT+60s ago — must expire
+        with freeze_time(t0 - timedelta(seconds=TIMEOUT + 60)):
+            stale_id = SessionLookup().get_or_create_session(self.user.pk)
+        stale = TrackingSession.objects.get(pk=stale_id)
 
-        count = expire_stale_sessions()
+        # active: heartbeat set TIMEOUT-60s ago — must survive
+        with freeze_time(t0 - timedelta(seconds=TIMEOUT - 60)):
+            active_id = SessionLookup().get_or_create_session(self.user2.pk)
+        active = TrackingSession.objects.get(pk=active_id)
+
+        with freeze_time(t0):
+            count = expire_stale_sessions()
 
         self.assertEqual(count, 1)
         stale.refresh_from_db()

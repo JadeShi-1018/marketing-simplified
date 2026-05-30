@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import type { TaskData } from '@/types/task';
+import { normalizeTaskFromApi } from '@/lib/tasks/normalizeTaskFromApi';
 import { useTaskStore } from '@/lib/taskStore';
 import { useAuthStore } from '@/lib/authStore';
 
@@ -17,7 +18,7 @@ import TaskTypeBlock from '@/components/tasks/detail/TaskTypeBlock';
 import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
 import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
-import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
+import CommentSection from '@/components/comments/CommentSection';
 import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 
@@ -65,17 +66,19 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     setActiveTab('details');
   }, [taskId]);
 
-  const load = useCallback(async (silent = false) => {
-    if (!taskId) return;
+  const load = useCallback(async (silent = false): Promise<TaskData | null> => {
+    if (!taskId) return null;
     if (!silent) setLoading(true);
     setError(null);
     try {
       const resp = await TaskAPI.getTask(taskId);
-      const fresh = resp.data as TaskData;
+      const fresh = normalizeTaskFromApi(resp.data);
       setTask(fresh);
       if (fresh.id) updateTaskInStore(fresh.id, fresh);
+      return fresh;
     } catch (e) {
       setError((e as any)?.response?.data?.detail || 'Failed to load task');
+      return null;
     } finally {
       if (!silent) setLoading(false);
     }
@@ -112,11 +115,26 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     };
   }, [task?.project?.id, task?.project_id]);
 
-  const onMutated = useCallback(async () => {
+  const onMutated = useCallback(async (updatedTask?: TaskData) => {
+    if (updatedTask?.id) {
+      const normalized = normalizeTaskFromApi(updatedTask);
+      const id = normalized.id;
+      setTask(normalized);
+      if (typeof id === 'number') {
+        updateTaskInStore(id, normalized);
+      }
+    }
     setRefreshKey((k) => k + 1);
-    await load(true);
-    onTaskUpdate?.();
-  }, [load, onTaskUpdate]);
+    // Fetch authoritative single-task data first.
+    const fresh = await load(true);
+    // Await the full list refresh so fetchTasks finishes before we re-assert.
+    await onTaskUpdate?.();
+    // Re-assert the single task so the list filter sees correct tags even if
+    // the list endpoint returned stale/empty tag data for this task.
+    if (fresh?.id) {
+      updateTaskInStore(fresh.id, fresh);
+    }
+  }, [load, onTaskUpdate, updateTaskInStore]);
 
   // Keyboard handler: Escape closes, j/k navigates (skip when an input or lightbox is focused)
   useEffect(() => {
@@ -336,14 +354,13 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                     onUpdated={onMutated}
                     loading={loading}
                   />
-                  {(task?.id || loading) && (
-                    <TaskActivityBlock
-                      taskId={task?.id ?? 0}
-                      readOnly={task?.status === 'LOCKED'}
-                      refreshKey={refreshKey}
-                      loading={loading}
+                  {task?.id ? (
+                    <CommentSection
+                      entityType="task"
+                      entityId={task.id}
+                      readOnlyComposer={task.status === 'LOCKED'}
                     />
-                  )}
+                  ) : null}
                 </div>
               )}
 

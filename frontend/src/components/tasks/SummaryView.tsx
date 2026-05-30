@@ -10,7 +10,7 @@ import {
 import api from '@/lib/api';
 import KpiCard from './KpiCard';
 import WorkTypeDonut from './WorkTypeDonut';
-import { TASK_TYPES } from './TYPE_META';
+import { TASK_TYPE_DEFINITIONS } from '@/lib/tasks/taskTypes';
 import { Skeleton } from '@/components/ui/skeleton';
 
 type UserField = string | { id?: number; username?: string; email?: string; name?: string } | null | undefined;
@@ -260,7 +260,7 @@ export default function SummaryView({
           <header className="mb-4 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-gray-900">Work type overview</h2>
             <span className="text-[11px] uppercase tracking-wider text-gray-400">
-              {types.length} of {TASK_TYPES.length} types
+              {types.length} of {TASK_TYPE_DEFINITIONS.length} types
             </span>
           </header>
           <WorkTypeDonut counts={typeCounts} />
@@ -277,7 +277,7 @@ export default function SummaryView({
             <p className="text-sm text-gray-400">No type data yet.</p>
           ) : (
             <ul className="space-y-2">
-              {TASK_TYPES.map((t) => {
+              {TASK_TYPE_DEFINITIONS.map((t) => {
                 const count = typeCounts[t.value] || 0;
                 const total = types.reduce((acc, x) => acc + x.count, 0);
                 const pct = total > 0 ? Math.round((count / total) * 100) : 0;

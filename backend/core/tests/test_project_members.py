@@ -434,11 +434,60 @@ class TestProjectMemberViewSet:
         assert project.owner == user2
         assert membership.role == 'owner'
 
+        from notifications.models import Notification, NotificationEventType
+
+        owner_notification = Notification.objects.filter(
+            recipient=user2,
+            event_type=NotificationEventType.ACCOUNT_PERMISSION,
+            metadata__action="project_owner_transferred",
+        )
+        assert owner_notification.exists()
+        notification = owner_notification.first()
+        assert notification.related_object_type == "project"
+        assert notification.related_object_id == str(project.id)
+        assert project.name in notification.title
+
         previous_owner_membership = ProjectMember.objects.get(
             user=user,
             project=project,
         )
         assert previous_owner_membership.role == 'Team Leader'
+
+    def test_transfer_owner_to_cross_org_member(self, authenticated_client, project, user):
+        """Transferring ownership to a cross-org member should sync the project calendar."""
+        from calendars.models import Calendar
+        from core.utils.project_calendars import ensure_project_calendar
+
+        other_org = Organization.objects.create(name="Other Org", email_domain="other.com")
+        cross_org_user = type(user).objects.create_user(
+            username="crossorg",
+            email="crossorg@other.com",
+            password="testpass123",
+            organization=other_org,
+        )
+        membership = ProjectMember.objects.create(
+            user=cross_org_user,
+            project=project,
+            role="member",
+            is_active=True,
+        )
+        ensure_project_calendar(project)
+
+        url = reverse('project-member-detail', kwargs={
+            'project_id': project.id,
+            'pk': membership.id,
+        })
+        response = authenticated_client.patch(url, {"role": "owner"}, format='json')
+
+        assert response.status_code == status.HTTP_200_OK
+        project.refresh_from_db()
+        membership.refresh_from_db()
+        assert project.owner == cross_org_user
+        assert membership.role == 'owner'
+
+        project_calendar = Calendar.objects.get(project=project, is_deleted=False)
+        assert project_calendar.owner_id == cross_org_user.id
+        assert project_calendar.organization_id == project.organization_id
 
     def test_demote_owner_requires_transfer(self, authenticated_client, project, user):
         """Demoting the current owner should be rejected."""

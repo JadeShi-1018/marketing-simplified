@@ -136,15 +136,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId }: ChatWindowPro
     
     // Only call API if this is initial load OR new messages arrived
     if (messages.length > lastMessageCountRef.current) {
-      console.log('[ChatWindow] New messages detected, scheduling markAllAsRead:', {
-        chatId: chat.id,
-        previousCount: lastMessageCountRef.current,
-        newCount: messages.length,
-      });
-      
       markAsReadTimeoutRef.current = setTimeout(() => {
         markAllAsRead().then(() => {
-          console.log('[ChatWindow] markAllAsRead completed for chat:', chat.id);
           // Refetch global unread count from backend to ensure accuracy
           fetchGlobalUnreadCount();
         });

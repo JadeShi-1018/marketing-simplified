@@ -55,6 +55,10 @@ Please review and take appropriate action.
         # Remove duplicates and convert to User objects
         unique_user_ids = list(set(escalation_users))
         users = User.objects.filter(id__in=unique_user_ids)
+
+        # In-app notifications (Notification drawer / bell)
+        from budget_approval.notifications import notify_budget_escalated
+        notify_budget_escalated(budget_request, recipient_ids=unique_user_ids)
         
         # Send notifications to each escalation user
         notification_results = []

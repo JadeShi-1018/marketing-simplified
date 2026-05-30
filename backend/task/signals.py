@@ -7,6 +7,7 @@ from .tasks import scan_task_attachment
 
 logger = logging.getLogger(__name__)
 
+# ── Thread-local user tracking (for field history) ────────────────────────────
 _current_user = threading.local()
 _deleting_task_ids = threading.local()
 
@@ -76,12 +77,39 @@ def _field_value(old_instance, new_instance, field):
 
         return old_val, new_val
 
+    if field == 'tags':
+        def _format_tags(value):
+            if not value:
+                return None
+            if isinstance(value, list):
+                labels = []
+                for item in value:
+                    if isinstance(item, dict):
+                        name = str(item.get('name', '') or '').strip()
+                        if name:
+                            labels.append(name)
+                    elif isinstance(item, str):
+                        label = item.strip()
+                        if label:
+                            labels.append(label)
+                return ', '.join(labels) if labels else None
+            return str(value)
+
+        return _format_tags(getattr(old_instance, field, None)), _format_tags(
+            new_instance.__dict__.get(field, getattr(new_instance, field, None))
+        )
+
     # Plain scalar field
     old_raw = getattr(old_instance, field, None)
     new_raw = new_instance.__dict__.get(field, getattr(new_instance, field, None))
     old_val = str(old_raw) if old_raw is not None else None
     new_val = str(new_raw) if new_raw is not None else None
     return old_val, new_val
+
+
+# ── Status/anomaly caches (for notifications) ─────────────────────────────────
+_task_status_cache: dict[int, str] = {}
+_task_anomaly_cache: dict[int, str] = {}
 
 
 @receiver(pre_delete, sender=Task)
@@ -94,28 +122,23 @@ def unmark_task_deleting(sender, instance, **kwargs):
     _get_deleting_task_ids().discard(instance.pk)
 
 
-@receiver(post_save, sender=Task)
-def record_task_created(sender, instance, created, **kwargs):
-    if not created:
+@receiver(pre_save, sender=Task)
+def _cache_previous_task_status(sender, instance, **kwargs):
+    """Cache previous status and anomaly_status for notification signals."""
+    if not instance.pk:
         return
-    user = _get_current_user_safe()
-    if user is not None and instance.created_by_id is None:
-        Task.objects.filter(pk=instance.pk, created_by__isnull=True).update(created_by=user)
-        instance.created_by = user
     try:
-        TaskFieldHistory.objects.create(
-            task=instance,
-            field_name='task_created',
-            old_value=None,
-            new_value=None,
-            changed_by=user,
-        )
-    except Exception:
-        logger.exception('TaskFieldHistory: failed to record task_created for task %s', instance.pk)
+        prev = Task.objects.get(pk=instance.pk)
+        _task_status_cache[instance.pk] = prev.status
+        _task_anomaly_cache[instance.pk] = prev.anomaly_status
+    except Task.DoesNotExist:
+        _task_status_cache[instance.pk] = None
+        _task_anomaly_cache[instance.pk] = None
 
 
 @receiver(pre_save, sender=Task)
 def record_task_field_changes(sender, instance, **kwargs):
+    """Record field changes to TaskFieldHistory before save."""
     if not instance.pk:
         return
     try:
@@ -140,6 +163,109 @@ def record_task_field_changes(sender, instance, **kwargs):
             TaskFieldHistory.objects.bulk_create(records)
     except Exception:
         logger.exception('TaskFieldHistory: failed to record field changes for task %s', instance.pk)
+
+
+@receiver(post_save, sender=Task)
+def record_task_created(sender, instance, created, **kwargs):
+    """Backfill created_by and record task creation in field history."""
+    if not created:
+        return
+    user = _get_current_user_safe()
+    if user is not None and instance.created_by_id is None:
+        Task.objects.filter(pk=instance.pk, created_by__isnull=True).update(created_by=user)
+        instance.created_by = user
+    try:
+        TaskFieldHistory.objects.create(
+            task=instance,
+            field_name='task_created',
+            old_value=None,
+            new_value=None,
+            changed_by=user,
+        )
+    except Exception:
+        logger.exception('TaskFieldHistory: failed to record task_created for task %s', instance.pk)
+
+
+@receiver(post_save, sender=Task)
+def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
+    """Notify task owner when status changes."""
+    if created:
+        return
+    if getattr(instance, '_suppress_status_notification', False):
+        _task_status_cache.pop(instance.pk, None)
+        return
+    old = _task_status_cache.pop(instance.pk, None)
+    if old is None or old == instance.status or not instance.owner_id:
+        return
+    # Skip while the owner hasn't accepted their assignment yet
+    if instance.owner_invite_pending:
+        return
+    from notifications.models import NotificationCategory, NotificationEventType
+    from notifications.services import create_notification
+    from notifications.action_urls import task_action_url
+
+    actor = _get_current_user_safe()
+    actor_id = actor.pk if actor else None
+
+    create_notification(
+        recipient_id=instance.owner_id,
+        actor_id=actor_id,
+        category=NotificationCategory.TASKS,
+        event_type=NotificationEventType.TASK_STATUS_CHANGED,
+        title=f"Task status updated: {instance.summary}",
+        body=f"Status changed from {old} to {instance.status}.",
+        related_object_type="task",
+        related_object_id=str(instance.id),
+        action_url=task_action_url(instance.id),
+        metadata={
+            "task_id": instance.id,
+            "project_id": instance.project_id,
+            "change_type": "task_status",
+            "old_value": old,
+            "new_value": instance.status,
+            # Legacy keys kept for backward-compat with existing notifications.
+            "old_status": old,
+            "new_status": instance.status,
+        },
+    )
+
+
+@receiver(post_save, sender=Task)
+def notify_on_anomaly_status_change(sender, instance, created, **kwargs):
+    """Fire TASK_ANOMALY when anomaly_status transitions away from NORMAL."""
+    if created:
+        _task_anomaly_cache.pop(instance.pk, None)
+        return
+    old_anomaly = _task_anomaly_cache.pop(instance.pk, None)
+    if old_anomaly is None or old_anomaly == instance.anomaly_status:
+        return
+    if instance.anomaly_status in (None, "", "NORMAL"):
+        return
+    if not instance.owner_id:
+        return
+
+    from notifications.models import NotificationCategory, NotificationEventType  # noqa: PLC0415
+    from notifications.services import create_notification  # noqa: PLC0415
+    from notifications.action_urls import task_action_url  # noqa: PLC0415
+
+    create_notification(
+        recipient_id=instance.owner_id,
+        actor_id=None,
+        category=NotificationCategory.TASKS,
+        event_type=NotificationEventType.TASK_ANOMALY,
+        title=f"Anomaly detected on task: {instance.summary}",
+        body=f"Task anomaly status changed to {instance.anomaly_status}.",
+        related_object_type="task",
+        related_object_id=str(instance.id),
+        action_url=task_action_url(instance.id),
+        metadata={
+            "task_id": instance.id,
+            "project_id": instance.project_id,
+            "change_type": "task_anomaly",
+            "old_value": old_anomaly or "NORMAL",
+            "new_value": instance.anomaly_status,
+        },
+    )
 
 
 @receiver(post_save, sender=TaskAttachment)

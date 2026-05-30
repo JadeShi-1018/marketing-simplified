@@ -14,6 +14,7 @@ from meetings.models import (
     ArtifactLink,
     MeetingDocument,
     MeetingActionItem,
+    MeetingAuditLog,
 )
 from meetings.knowledge_links import (
     generated_decisions_payload,
@@ -28,11 +29,24 @@ from meetings.services import (
 from zoom_integration.post_meeting_payload import build_zoom_post_meeting_payload
 
 
-def meeting_participants_for_api(meeting: Meeting) -> list[dict]:
-    return [
-        {"user_id": link.user_id, "role": link.role}
-        for link in meeting.participant_links.all()
-    ]
+def meeting_participants_for_api(meeting: Meeting, request=None) -> list[dict]:
+    result = []
+    for link in meeting.participant_links.select_related("user").all():
+        user = link.user
+        avatar_url = None
+        if user.avatar:
+            avatar_url = (
+                request.build_absolute_uri(user.avatar.url)
+                if request
+                else user.avatar.url
+            )
+        result.append({
+            "user_id": link.user_id,
+            "role": link.role,
+            "username": user.username,
+            "avatar": avatar_url,
+        })
+    return result
 
 
 def meeting_tags_for_api(meeting: Meeting) -> list[dict]:
@@ -89,6 +103,7 @@ class MeetingSerializer(serializers.ModelSerializer):
             "layout_config",
             "status",
             "is_archived",
+            "minutes_published",
             "participants",
             "tags",
             "generated_decisions",
@@ -117,10 +132,11 @@ class MeetingSerializer(serializers.ModelSerializer):
             "related_tasks",
             "zoom_post_meeting",
             "status",
+            "is_archived",
         ]
 
     def get_participants(self, obj):
-        return meeting_participants_for_api(obj)
+        return meeting_participants_for_api(obj, self.context.get("request"))
 
     def get_tags(self, obj):
         return meeting_tags_for_api(obj)
@@ -403,7 +419,7 @@ class MeetingListSerializer(serializers.ModelSerializer):
         ]
 
     def get_participants(self, obj):
-        return meeting_participants_for_api(obj)
+        return meeting_participants_for_api(obj, self.context.get("request"))
 
     def get_tags(self, obj):
         return meeting_tags_for_api(obj)
@@ -560,4 +576,28 @@ class BulkActionItemConvertItemSerializer(serializers.Serializer):
 
 class BulkActionItemConvertSerializer(serializers.Serializer):
     items = serializers.ListField(child=BulkActionItemConvertItemSerializer(), min_length=1)
+
+
+class AuditLogActorSerializer(serializers.Serializer):
+    """Serializer for actor info in audit log responses."""
+    id = serializers.IntegerField()
+    display_name = serializers.SerializerMethodField()
+    email = serializers.EmailField()
+
+    def get_display_name(self, obj):
+        full_name = f"{obj.first_name} {obj.last_name}".strip()
+        return full_name if full_name else obj.username
+
+
+class MeetingAuditLogSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for MeetingAuditLog entries.
+    Nested actor info with null fallback for system events.
+    """
+    actor = AuditLogActorSerializer(read_only=True, allow_null=True)
+
+    class Meta:
+        model = MeetingAuditLog
+        fields = ['id', 'event_type', 'timestamp', 'actor', 'before', 'after', 'context']
+        read_only_fields = fields
 

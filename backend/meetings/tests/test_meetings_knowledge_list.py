@@ -22,6 +22,7 @@ from meetings.models import (
 )
 from meetings.views import MeetingViewSet
 from task.models import Task
+from meetings.tests.decision_origin_helpers import create_meeting_decision_origin
 
 
 class _TwoPerPage(PageNumberPagination):
@@ -366,8 +367,8 @@ class TestMeetingsKnowledgeListAPI(TestCase):
         d2 = Decision.objects.create(
             project=self.project, author=self.user, title="Raise budget"
         )
-        MeetingDecisionOrigin.objects.create(meeting=m, decision=d1)
-        MeetingDecisionOrigin.objects.create(meeting=m, decision=d2)
+        create_meeting_decision_origin(meeting=m, decision=d1)
+        create_meeting_decision_origin(meeting=m, decision=d2)
         t = Task.objects.create(
             summary="Do thing",
             project=self.project,
@@ -409,7 +410,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
             author=self.user,
             title="D",
         )
-        MeetingDecisionOrigin.objects.create(meeting=m_with, decision=d)
+        create_meeting_decision_origin(meeting=m_with, decision=d)
 
         m_without = Meeting.objects.create(
             project=self.project,
@@ -499,7 +500,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
             scheduled_date=date(2026, 2, 15),
         )
         ParticipantLink.objects.create(meeting=m_match, user=self.user, role="host")
-        MeetingDecisionOrigin.objects.create(meeting=m_match, decision=d_match)
+        create_meeting_decision_origin(meeting=m_match, decision=d_match)
 
         d_wrong_date = Decision.objects.create(
             project=self.project,
@@ -514,7 +515,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
             scheduled_date=date(2026, 6, 1),
         )
         ParticipantLink.objects.create(meeting=m_wrong_date, user=self.user, role="host")
-        MeetingDecisionOrigin.objects.create(meeting=m_wrong_date, decision=d_wrong_date)
+        create_meeting_decision_origin(meeting=m_wrong_date, decision=d_wrong_date)
 
         d_wrong_participant = Decision.objects.create(
             project=self.project,
@@ -533,10 +534,10 @@ class TestMeetingsKnowledgeListAPI(TestCase):
             user=self.other_user,
             role=None,
         )
-        MeetingDecisionOrigin.objects.create(
+        create_meeting_decision_origin(
             meeting=m_wrong_participant,
             decision=d_wrong_participant,
-        )
+            )
 
         m_no_origin = Meeting.objects.create(
             project=self.project,
@@ -724,7 +725,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
         )
         self.assertEqual(row["meeting_type"], "Planning")
         self.assertEqual(row["meeting_type_slug"], "planning")
-        self.assertEqual(row["participants"], [{"user_id": self.user.id, "role": "host"}])
+        self.assertEqual(row["participants"], [{"user_id": self.user.id, "role": "host", "username": self.user.username, "avatar": None}])
         self.assertEqual(
             row["tags"],
             [{"slug": "strategy", "label": "Strategy"}],

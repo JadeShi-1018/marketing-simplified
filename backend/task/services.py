@@ -7,6 +7,22 @@ from task.models import Task
 
 User = get_user_model()
 
+_START_BEFORE_DUE_MSG = 'Start date must be on or before due date.'
+
+
+def _effective_start_due(task, updates):
+    start = updates['start_date'] if 'start_date' in updates else task.start_date
+    due = updates['due_date'] if 'due_date' in updates else task.due_date
+    return start, due
+
+
+def _start_after_due(start, due):
+    return (
+        start is not None
+        and due is not None
+        and start > due
+    )
+
 
 def user_can_edit_task(user, task):
     """Return True if user has task edit permission."""
@@ -163,6 +179,14 @@ def bulk_update_tasks(*, user, task_ids, updates):
                         "task_id": task_id,
                         "reason": f"Unsupported transition to {updates['status']} from {task.status}.",
                     }
+                )
+                continue
+
+        if "start_date" in updates or "due_date" in updates:
+            eff_start, eff_due = _effective_start_due(task, updates)
+            if _start_after_due(eff_start, eff_due):
+                failed.append(
+                    {"task_id": task_id, "reason": _START_BEFORE_DUE_MSG},
                 )
                 continue
 

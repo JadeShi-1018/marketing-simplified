@@ -6,7 +6,8 @@ import toast from 'react-hot-toast';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { useTaskStore } from '@/lib/taskStore';
 import type { TaskData } from '@/types/task';
-import { PRIORITY_OPTIONS, TASK_TYPES } from './TYPE_META';
+import { TASK_PRIORITY_OPTIONS } from '@/lib/tasks/taskPriorities';
+import { TASK_TYPE_DEFINITIONS } from '@/lib/tasks/taskTypes';
 
 interface QuickTaskCreateProps {
   projectId: number;
@@ -18,7 +19,7 @@ interface QuickTaskCreateProps {
 export default function QuickTaskCreate({ projectId, open, onClose, onCreated }: QuickTaskCreateProps) {
   const addTask = useTaskStore((s) => s.addTask);
 
-  const [type, setType] = useState(TASK_TYPES[0].value);
+  const [type, setType] = useState<string>(TASK_TYPE_DEFINITIONS[0].value);
   const [summary, setSummary] = useState('');
   const [priority, setPriority] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -29,7 +30,7 @@ export default function QuickTaskCreate({ projectId, open, onClose, onCreated }:
 
   useEffect(() => {
     if (open) {
-      setType(TASK_TYPES[0].value);
+      setType(TASK_TYPE_DEFINITIONS[0].value);
       setSummary('');
       setPriority('');
       setDueDate('');
@@ -112,7 +113,7 @@ export default function QuickTaskCreate({ projectId, open, onClose, onCreated }:
               onChange={(e) => setType(e.target.value)}
               className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
             >
-              {TASK_TYPES.map((t) => (
+              {TASK_TYPE_DEFINITIONS.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
             </select>
@@ -145,7 +146,7 @@ export default function QuickTaskCreate({ projectId, open, onClose, onCreated }:
                 className="h-9 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-700 outline-none transition focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20"
               >
                 <option value="">No priority</option>
-                {PRIORITY_OPTIONS.map((p) => (
+                {TASK_PRIORITY_OPTIONS.map((p) => (
                   <option key={p} value={p}>{p.charAt(0) + p.slice(1).toLowerCase()}</option>
                 ))}
               </select>

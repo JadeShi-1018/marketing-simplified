@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { TaskAPI } from "@/lib/api/taskApi";
 import api from "@/lib/api";
+import { normalizeTaskFromApi } from "@/lib/tasks/normalizeTaskFromApi";
 import { TaskData, CreateTaskData, TaskListFilters } from "@/types/task";
 import { useTaskStore } from "@/lib/taskStore";
 
@@ -9,12 +10,6 @@ type TaskFetchParams = TaskListFilters & {
   object_id?: string;
   page?: number;
 };
-
-// Agent ingest/telemetry calls are best-effort debugging helpers.
-// When the local ingest service is not running, these requests will fail and
-// spam DevTools with `ERR_CONNECTION_REFUSED`, hurting UX (e.g. "flashing"
-// detail pages due to repeated re-renders).
-const ENABLE_INGEST = false;
 
 const taskErrorMessage = (err: unknown, fallback: string) => {
   const apiData = (err as any)?.response?.data;
@@ -46,31 +41,6 @@ export const useTaskData = () => {
     async (params?: TaskFetchParams) => {
       // Record the last request parameters
       setLastParams(params || undefined);
-      // #region agent log
-      if (ENABLE_INGEST) {
-        fetch(
-          "http://127.0.0.1:7242/ingest/d1c5a812-8fba-4f4b-91ec-d69ecfc99679",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              runId: "usetaskdata-project-debug-v1",
-              hypothesisId: "H1",
-              location: "useTaskData.ts:fetchTasks:entry",
-              message: "fetchTasks called with params",
-              data: {
-                hasParams: Boolean(params),
-                project_id: params?.project_id ?? null,
-                include_subtasks: params?.include_subtasks ?? null,
-                all_projects: params?.all_projects ?? null,
-                type: params?.type ?? null,
-              },
-              timestamp: Date.now(),
-            }),
-          },
-        ).catch(() => {});
-      }
-      // #endregion
 
       try {
         setLoading(true);
@@ -93,31 +63,6 @@ export const useTaskData = () => {
             } else {
               // Otherwise, use TaskAPI with params and page number
               const requestParams = { ...params, page };
-              // #region agent log
-              if (ENABLE_INGEST) {
-                fetch(
-                  "http://127.0.0.1:7242/ingest/d1c5a812-8fba-4f4b-91ec-d69ecfc99679",
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                      runId: "usetaskdata-project-debug-v1",
-                      hypothesisId: "H2",
-                      location: "useTaskData.ts:fetchTasks:firstPageRequest",
-                      message: "Requesting tasks with TaskAPI.getTasks",
-                      data: {
-                        page,
-                        project_id: requestParams.project_id ?? null,
-                        include_subtasks:
-                          requestParams.include_subtasks ?? null,
-                        all_projects: requestParams.all_projects ?? null,
-                      },
-                      timestamp: Date.now(),
-                    }),
-                  },
-                ).catch(() => {});
-              }
-              // #endregion
               response = await TaskAPI.getTasks(requestParams);
             }
           } catch (err) {
@@ -133,31 +78,6 @@ export const useTaskData = () => {
           const tasks =
             responseData.results ||
             (Array.isArray(responseData) ? responseData : []);
-          // #region agent log
-          if (ENABLE_INGEST) {
-            fetch(
-              "http://127.0.0.1:7242/ingest/d1c5a812-8fba-4f4b-91ec-d69ecfc99679",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  runId: "usetaskdata-project-debug-v1",
-                  hypothesisId: "H4",
-                  location: "useTaskData.ts:fetchTasks:responseParsed",
-                  message: "Parsed tasks response page",
-                  data: {
-                    page,
-                    hasResultsField: Boolean(responseData && responseData.results),
-                    isArrayResponse: Array.isArray(responseData),
-                    parsedTaskCount: Array.isArray(tasks) ? tasks.length : -1,
-                    next: responseData?.next ?? null,
-                  },
-                  timestamp: Date.now(),
-                }),
-              },
-            ).catch(() => {});
-          }
-          // #endregion
           allTasks = allTasks.concat(tasks);
 
           nextUrl = responseData.next || null;
@@ -167,8 +87,9 @@ export const useTaskData = () => {
           if (page > 100) break;
         } while (nextUrl);
 
-        setTasks(allTasks);
-        return allTasks;
+        const normalized = allTasks.map((row) => normalizeTaskFromApi(row));
+        setTasks(normalized);
+        return normalized;
       } catch (err) {
         setError(taskErrorMessage(err, "Failed to load tasks"));
         throw err;

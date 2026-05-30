@@ -192,19 +192,21 @@ class ChatParticipant(TimeStampedModel):
         """
         Get count of unread messages for this participant.
         Uses last_read_at for quick calculation.
-        
+
         NOTE: This is the SINGLE SOURCE OF TRUTH for unread count calculation.
         All serializers and services should delegate to this method.
         """
         if not self.last_read_at:
             # Never read, count all messages except own
             return self.chat.messages.filter(
-                is_deleted=False
+                is_deleted=False,
+                is_revoked=False
             ).exclude(sender=self.user).count()
-        
+
         return self.chat.messages.filter(
             created_at__gt=self.last_read_at,
-            is_deleted=False
+            is_deleted=False,
+            is_revoked=False
         ).exclude(sender=self.user).count()
 
 
@@ -253,6 +255,15 @@ class Message(TimeStampedModel):
         default=False,
         help_text="Whether this message has attachments (for optimization)"
     )
+    reply_to = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        related_name='replies',
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Message being replied to (quote reply)"
+    )
     forwarded_from_message = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -275,6 +286,14 @@ class Message(TimeStampedModel):
     )
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag")
     deleted_at = models.DateTimeField(null=True, blank=True, help_text="When the message was soft deleted")
+    is_revoked = models.BooleanField(default=False, help_text="Whether the message has been revoked by sender")
+    revoked_at = models.DateTimeField(null=True, blank=True, help_text="When the message was revoked")
+    hidden_by_users = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name='hidden_messages',
+        blank=True,
+        help_text="Users who have hidden this message (personal hide, not affecting others)"
+    )
 
     class Meta:
         ordering = ['created_at']
@@ -283,6 +302,7 @@ class Message(TimeStampedModel):
             models.Index(fields=['sender', 'created_at']),
             models.Index(fields=['chat', '-created_at']),  # For latest messages
             models.Index(fields=['chat', 'is_deleted']),
+            models.Index(fields=['chat', 'is_revoked']),
         ]
     
     def __str__(self):
@@ -379,6 +399,40 @@ class MessageStatus(TimeStampedModel):
             if not self.delivered_at:
                 self.delivered_at = self.read_at
             self.save(update_fields=['status', 'delivered_at', 'read_at', 'updated_at'])
+
+
+class MessageReaction(TimeStampedModel):
+    """
+    Emoji reactions on messages.
+    Each user can add one reaction per emoji per message.
+    """
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='reactions',
+        help_text="The message this reaction is on"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='message_reactions',
+        help_text="User who reacted"
+    )
+    emoji = models.CharField(
+        max_length=10,
+        help_text="Emoji character (e.g., 😊, 👍)"
+    )
+
+    class Meta:
+        unique_together = ['message', 'user', 'emoji']
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['message', 'emoji']),
+            models.Index(fields=['user', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} reacted {self.emoji} on message {self.message_id}"
 
 
 def temp_attachment_upload_path(instance, filename):
@@ -541,5 +595,56 @@ class MessageAttachment(TimeStampedModel):
         allowed = ALLOWED_MIMES.get(file_type, ALLOWED_MIMES[AttachmentType.DOCUMENT])
         if content_type and content_type.lower() not in allowed:
             return False, f"File type '{content_type}' is not allowed for {file_type}"
-        
+
         return True, None
+
+
+class MessageReminder(TimeStampedModel):
+    """
+    Reminder for a message that should notify the user at a specific time.
+    Users can set reminders to be notified about messages later.
+    """
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='reminders',
+        help_text="The message to be reminded about"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='message_reminders',
+        help_text="User who set the reminder"
+    )
+    remind_at = models.DateTimeField(
+        help_text="When to send the reminder notification"
+    )
+    note = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Optional note for the reminder"
+    )
+
+    # Status tracking
+    is_sent = models.BooleanField(
+        default=False,
+        help_text="Whether the reminder notification has been sent"
+    )
+    sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the reminder notification was sent"
+    )
+
+    class Meta:
+        unique_together = ['message', 'user']
+        ordering = ['remind_at']
+        indexes = [
+            models.Index(fields=['is_sent', 'remind_at']),  # For periodic task queries
+            models.Index(fields=['user', 'is_sent']),
+            models.Index(fields=['message', 'user']),
+        ]
+
+    def __str__(self):
+        return f"Reminder for {self.user.email} on message {self.message_id} at {self.remind_at}"

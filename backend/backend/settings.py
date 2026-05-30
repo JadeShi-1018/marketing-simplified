@@ -82,6 +82,7 @@ INSTALLED_APPS = [
     'chat.apps.ChatConfig',
     'experiment.apps.ExperimentConfig',
     'client_communication.apps.ClientCommunicationConfig',
+    'comments.apps.CommentsConfig',
     'calendars.apps.CalendarConfig',
     'miro.apps.MiroConfig',
     'ad_copy_variation',
@@ -90,6 +91,7 @@ INSTALLED_APPS = [
     'slack_integration.apps.SlackIntegrationConfig',
     'agent.apps.AgentConfig',
     'meetings.apps.MeetingsConfig',
+    'notifications.apps.NotificationsConfig',
     'zoom_integration.apps.ZoomIntegrationConfig',
     'linear_integration.apps.LinearIntegrationConfig',
     'google_docs_integration.apps.GoogleDocsIntegrationConfig',
@@ -413,6 +415,32 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=3, minute=0),
         'options': {'timezone': 'UTC'},
     },
+    # Notification tasks
+    'fire-calendar-reminders': {
+        'task': 'notifications.tasks.fire_calendar_reminders',
+        'schedule': timedelta(minutes=1),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-task-overdue-notifications': {
+        'task': 'notifications.tasks.fire_task_overdue_notifications',
+        'schedule': timedelta(hours=1),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-decision-deadline-notifications': {
+        'task': 'notifications.tasks.fire_decision_deadline_notifications',
+        'schedule': timedelta(hours=12),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-meeting-starting-soon-notifications': {
+        'task': 'notifications.tasks.fire_meeting_starting_soon_notifications',
+        'schedule': timedelta(minutes=5),
+        'options': {'timezone': 'UTC'},
+    },
+    'fire-message-reminders': {
+        'task': 'notifications.tasks.fire_message_reminders',
+        'schedule': timedelta(minutes=1),
+        'options': {'timezone': 'UTC'},
+    },
 }
 
 # Shared secret for the platform-native cron endpoint that triggers the
@@ -708,3 +736,6 @@ TRACKING_SESSION_TIMEOUT_SECONDS = config('TRACKING_SESSION_TIMEOUT_SECONDS', de
 TRACKING_EVENT_FLUSH_SECONDS = config('TRACKING_EVENT_FLUSH_SECONDS', default=10, cast=int)
 TRACKING_EVENT_RETENTION_DAYS = config('TRACKING_EVENT_RETENTION_DAYS', default=90, cast=int)
 TRACKING_SESSION_RETENTION_DAYS = config('TRACKING_SESSION_RETENTION_DAYS', default=180, cast=int)
+TRACKING_HANDLERS = [
+    'task.tracking_handlers.handle_task_request',
+]

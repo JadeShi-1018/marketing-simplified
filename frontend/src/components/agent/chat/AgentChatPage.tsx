@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useRef, useEffect } from "react"
+import { useState, useCallback, useRef, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { useAgentLayout, type AgentView } from "@/components/agent/AgentLayoutContext"
 import { WelcomeScreen } from "./WelcomeScreen"
@@ -10,6 +10,11 @@ import { ActionBar } from "./ActionBar"
 import { ApprovalToggle } from "./ApprovalToggle"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import { AgentAPI } from "@/lib/api/agentApi"
+import {
+  setAgentMessageBoardWaitingForFileAnalysisResponse,
+  setAgentMessageBoardRenderEffectsCompletedOnQuit,
+  shouldShowAgentMessageBoardThinkingBubbleOnRevisit,
+} from "@/lib/agentMessageBoardReadState"
 import type { SSEEvent, AgentAction, AgentMessage, AnalysisResult, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
 import { AGENT_MESSAGES } from "@/lib/agentMessages"
 import type { StepProgressItem } from "./StepProgress"
@@ -310,6 +315,18 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     ? "You can send one follow-up message now. Ask for an explanation, a short report, or forwarding to specific project members."
     : undefined
   const latestAnalysisMessageId = [...messages].reverse().find((message) => message.type === "analysis")?.id ?? null
+  const [renderFinishSignal, setRenderFinishSignal] = useState(0)
+  const showRevisitThinkingBubble = useMemo(() => {
+    // Important: this value is persisted outside React (localStorage). We must re-check it
+    // once the message board finishes (re)rendering, otherwise a revisit can miss the
+    // transition to `renderFinish=true`.
+    void renderFinishSignal
+    return Boolean(
+      sessionId &&
+        !isStreaming &&
+        shouldShowAgentMessageBoardThinkingBubbleOnRevisit(sessionId)
+    )
+  }, [sessionId, isStreaming, renderFinishSignal])
 
   const sessionIdRef = useRef<string | null>(null)
   const stepProgressMsgIdRef = useRef<string | null>(null)
@@ -456,6 +473,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       if (m.message_type === "task_created" || m.data?.task_ids) restoredStepState.tasksCreated = true
     }
     setStepState(restoredStepState)
+    if (restoredStepState.analysisComplete) {
+      setAgentMessageBoardWaitingForFileAnalysisResponse(String(session.id), false)
+    }
     const pendingTaskApprovalFromMessages = !restoredStepState.tasksCreated
       ? [...restored].reverse().find((message) => message.approval?.kind === "task")?.approval ?? null
       : null
@@ -500,7 +520,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           /* ignore */
         })
     }
-  }, [setSessionId, embeddedInFloating, queueAutoExternalActionsAfterAnalysis])
+  }, [
+    setSessionId,
+    embeddedInFloating,
+    queueAutoExternalActionsAfterAnalysis,
+  ])
 
   const refreshFollowUpState = useCallback(async (id: string) => {
     try {
@@ -523,6 +547,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   }, [])
 
   const invalidateActiveStreams = useCallback(() => {
+    const sid = sessionIdRef.current
+    const streaming = isStreamingRef.current
+    if (sid && streaming) {
+      setAgentMessageBoardWaitingForFileAnalysisResponse(String(sid), true)
+    }
     activeStreamTokenRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -553,6 +582,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
       }
       setMessages(dedupeMiroGenerationStartedMessages(restored))
+      const hasAnalysis = session.messages.some((message) => Boolean(message.data?.anomalies))
+      if (hasAnalysis) {
+        setAgentMessageBoardWaitingForFileAnalysisResponse(String(id), false)
+      }
       setApprovalRequired(Boolean(session.approval_required))
       setFollowUpAvailable(Boolean(session.follow_up_available))
       setFollowUpStarted(Boolean(session.follow_up_started))
@@ -608,7 +641,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   // Abort SSE on unmount
   useEffect(() => {
-    return () => { abortRef.current?.abort() }
+    return () => {
+      const sid = sessionIdRef.current
+      const streaming = isStreamingRef.current
+      // Persist "waiting" so revisit can show the thinking bubble once render finishes.
+      if (sid && streaming) {
+        setAgentMessageBoardWaitingForFileAnalysisResponse(String(sid), true)
+      }
+      abortRef.current?.abort()
+    }
   }, [])
 
   useEffect(() => {
@@ -798,6 +839,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
     const streamToken = activeStreamTokenRef.current
     const requestSessionId = String(sid)
+    setAgentMessageBoardRenderEffectsCompletedOnQuit(requestSessionId, false)
+    setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, true)
 
     abortRef.current = AgentAPI.uploadAndAnalyze(
       file,
@@ -853,6 +896,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             updateMessage(aiMsgId, { content: contentParts.join("\n") })
           }
         } else if (event.type === "analysis") {
+          setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           contentParts.push(event.content || "")
           analysisData = (event.data as unknown as AnalysisResult) || null
           latestRecommendedTasksRef.current = analysisData?.recommended_tasks || null
@@ -906,8 +950,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             isFollowUpPrompt: true,
           })
         } else if (event.type === "error") {
+          setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           updateMessage(aiMsgId, { content: event.content || "An error occurred.", type: "error" })
         } else if (event.type === "done") {
+          // Stream ended: stop the revisit thinking state.
+          setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           // Capture session_id from done event
           const sid = event.data?.session_id
           if (sid) {
@@ -941,12 +988,14 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       (error) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
+        setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
         updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
         setIsStreaming(false)
       },
       () => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
+        setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
         void refreshSession(requestSessionId)
         void refreshFollowUpState(requestSessionId)
         setIsStreaming(false)
@@ -1779,6 +1828,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         {...({
           messages,
           sessionId,
+          isStreaming,
+          showRevisitThinkingBubble,
+          onRenderFinishChange: () => setRenderFinishSignal((prev) => prev + 1),
           approvalDisabled: isStreaming,
           approvalRequired,
           generatedTaskIndexes,

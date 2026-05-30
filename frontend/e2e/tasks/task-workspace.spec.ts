@@ -108,7 +108,7 @@ test.describe('Tasks workspace flows', () => {
     await page.getByTestId('tab-tasks').click();
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });
 
-    const searchInput = page.getByPlaceholder('Search summary, type or owner…');
+    const searchInput = page.getByPlaceholder('Search summary, tags, type or owner…');
     await expect(searchInput).toBeVisible();
 
     // Type something unlikely to match anything → expect no task rows
@@ -125,7 +125,7 @@ test.describe('Tasks workspace flows', () => {
     await page.getByTestId('tab-tasks').click();
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });
 
-    const searchInput = page.getByPlaceholder('Search summary, type or owner…');
+    const searchInput = page.getByPlaceholder('Search summary, tags, type or owner…');
     await searchInput.fill('zzz__no_match_xyz');
     await page.waitForTimeout(200);
 

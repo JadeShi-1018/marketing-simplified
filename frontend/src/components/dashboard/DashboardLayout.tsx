@@ -19,6 +19,9 @@ import {
 } from '@/lib/dashboardPanelPreferences';
 import type { AlertData } from '@/lib/mock/dashboardMock';
 import type { MeetingListItem } from '@/types/meeting';
+import { NotificationDrawerProvider } from '@/components/notifications/NotificationDrawerProvider';
+import NotificationDrawer from '@/components/notifications/NotificationDrawer';
+import { useNotificationSSE } from '@/hooks/useNotificationSSE';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -106,6 +109,9 @@ export default function DashboardLayout({
   hideRightPanel = false,
   mainClassName = '',
 }: DashboardLayoutProps) {
+  // Establish the SSE connection for real-time notification push.
+  useNotificationSSE();
+
   const {
     upcomingMeetingsPanelOpen: isPanelOpen,
     setUpcomingMeetingsPanelOpen: setIsPanelOpen,
@@ -222,6 +228,7 @@ export default function DashboardLayout({
   };
 
   return (
+    <NotificationDrawerProvider>
     <div className="flex h-screen w-full bg-[#F7F8FA] overflow-hidden">
       <DashboardSidebar />
 
@@ -291,5 +298,9 @@ export default function DashboardLayout({
       <AgentSidePanel />
       <QuickStartPostCreateChecklist />
     </div>
+
+    {/* Notification context drawer — available on every page that uses DashboardLayout */}
+    <NotificationDrawer />
+    </NotificationDrawerProvider>
   );
 }
