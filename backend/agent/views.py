@@ -800,9 +800,19 @@ class StepReorderView(EnglishResponseMixin, APIView):
             )
         from django.db import transaction
         with transaction.atomic():
-            # Use negative values to avoid unique_together conflict
+            # Phase 1: move all reordered steps to a safe high-offset zone so that
+            # the final sequential assignment (phase 2) does not conflict with any
+            # remaining active steps.  We cannot use negative values because
+            # PositiveIntegerField enforces a DB-level CHECK (order >= 0).
+            max_existing = (
+                workflow.steps.aggregate(m=Max('order'))['m'] or 0
+            )
+            temp_base = max_existing + len(step_ids) + 1000
             for idx, step_id in enumerate(step_ids):
-                AgentWorkflowStep.objects.filter(id=step_id).update(order=-(idx + 1))
+                AgentWorkflowStep.objects.filter(id=step_id).update(
+                    order=temp_base + idx + 1
+                )
+            # Phase 2: assign final sequential 1-based positions
             for idx, step_id in enumerate(step_ids, start=1):
                 AgentWorkflowStep.objects.filter(id=step_id).update(order=idx)
 

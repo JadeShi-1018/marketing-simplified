@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.db.models import Q
 from django.conf import settings
 from core.models import TimeStampedModel
 
@@ -460,7 +461,15 @@ class AgentWorkflowStep(TimeStampedModel):
 
     class Meta:
         ordering = ['order']
-        unique_together = [['workflow', 'order']]
+        # Partial unique index: only active (non-deleted) steps must have unique orders.
+        # Soft-deleted steps retain their order value without blocking future assignments.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workflow', 'order'],
+                condition=Q(is_deleted=False),
+                name='unique_active_workflow_step_order',
+            )
+        ]
 
     def __str__(self):
         return f"{self.workflow.name} - Step {self.order}: {self.name}"

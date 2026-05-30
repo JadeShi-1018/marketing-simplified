@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useReducer, useState } from "react"
+import { useCallback, useReducer, useRef } from "react"
 import toast from "react-hot-toast"
 import { AgentAPI } from "@/lib/api/agentApi"
 import type { AgentWorkflowStep, WorkflowStepType } from "@/types/agent"
@@ -28,7 +28,7 @@ type HistoryAction =
   | { type: "INIT"; steps: AgentWorkflowStep[] }
   | { type: "ADD"; step: LocalStep; insertAfter: number }
   | { type: "DELETE"; stepId: string }
-  | { type: "UPDATE"; stepId: string; patch: Partial<Pick<LocalStep, "name" | "config" | "description">> }
+  | { type: "UPDATE"; stepId: string; patch: Partial<Pick<LocalStep, "name" | "step_type" | "config" | "description">> }
   | { type: "REORDER"; fromIdx: number; toIdx: number }
   | { type: "UNDO" }
   | { type: "REDO" }
@@ -125,8 +125,9 @@ function useCanvasState(initialSteps: AgentWorkflowStep[]): UseCanvasStateReturn
     present: initialSteps.map(apiToLocal),
     future: [],
   })
-  const [savedIds] = useState(() => new Set(initialSteps.map((s) => s.id)))
-  const [isSaving, setIsSaving] = useState(false)
+  // useRef so we can mutate after each successful save without causing re-renders
+  const savedIdsRef = useRef(new Set(initialSteps.map((s) => s.id)))
+  const [isSaving, setIsSaving] = useReducer((s: boolean, v: boolean) => v, false)
 
   const steps = history.present
   const canUndo = history.past.length > 0
@@ -135,22 +136,28 @@ function useCanvasState(initialSteps: AgentWorkflowStep[]): UseCanvasStateReturn
   // isDirty: any temp step, any dirty step, or any deletion compared to savedIds
   const isDirty =
     steps.some((s) => s._isTemp || s._isDirty) ||
-    [...savedIds].some((id) => !steps.find((s) => s.id === id))
+    [...savedIdsRef.current].some((id) => !steps.find((s) => s.id === id))
 
   const save = useCallback(
     async (workflowId: string, projectParams?: { project_id?: string | number }) => {
       setIsSaving(true)
       try {
-        // 1. Delete removed steps (real IDs that are no longer in the list)
+        // 1. Delete removed steps (real IDs no longer present in local state)
+        //    Treat 404 as already-deleted (idempotent) so a stale savedId doesn't abort the save.
         const presentIds = new Set(steps.map((s) => s.id))
-        const deletions = [...savedIds].filter(
+        const deletions = [...savedIdsRef.current].filter(
           (id) => !id.startsWith("temp-") && !presentIds.has(id)
         )
         await Promise.all(
-          deletions.map((id) => AgentAPI.deleteStep(workflowId, id, projectParams))
+          deletions.map((id) =>
+            AgentAPI.deleteStep(workflowId, id, projectParams).catch((err) => {
+              if (err?.response?.status === 404) return // already gone — fine
+              throw err
+            })
+          )
         )
 
-        // 2. Update dirty (non-temp) steps
+        // 2. Update dirty (non-temp) steps — includes step_type if it changed
         await Promise.all(
           steps
             .filter((s) => !s._isTemp && s._isDirty)
@@ -158,13 +165,13 @@ function useCanvasState(initialSteps: AgentWorkflowStep[]): UseCanvasStateReturn
               AgentAPI.updateStep(
                 workflowId,
                 s.id,
-                { name: s.name, config: s.config, description: s.description },
+                { name: s.name, step_type: s.step_type, config: s.config, description: s.description },
                 projectParams
               )
             )
         )
 
-        // 3. Create temp steps sequentially (order matters)
+        // 3. Create temp steps sequentially (order matters for auto-assigned order)
         const idMap: Record<string, string> = {}
         for (const s of steps) {
           if (s._isTemp) {
@@ -177,23 +184,41 @@ function useCanvasState(initialSteps: AgentWorkflowStep[]): UseCanvasStateReturn
           }
         }
 
-        // 4. Reorder with resolved IDs
+        // 4. Reorder — must include ALL active backend steps (not just canvas steps).
+        //    If a delete was 404-ignored, those steps are still active in the backend.
+        //    Sending only canvas IDs would cause an order=N conflict → 500.
         const finalOrder = steps.map((s) => idMap[s.id] ?? s.id)
-        if (finalOrder.length > 0) {
-          await AgentAPI.reorderSteps(workflowId, finalOrder, projectParams)
+        const fresh = await AgentAPI.getWorkflow(workflowId, projectParams)
+        const backendIds = (fresh.steps ?? []).map((s) => s.id)
+
+        if (backendIds.length > 0) {
+          // Canvas steps in canvas order → unknown backend-only steps appended at the end
+          const canvasPos = new Map(finalOrder.map((id, i) => [id, i]))
+          const sortedIds = [...backendIds].sort(
+            (a, b) =>
+              (canvasPos.get(a) ?? Number.MAX_SAFE_INTEGER) -
+              (canvasPos.get(b) ?? Number.MAX_SAFE_INTEGER)
+          )
+          await AgentAPI.reorderSteps(workflowId, sortedIds, projectParams)
         }
 
-        toast.success("Workflow saved")
-        // Re-init with fresh data so dirty flags reset
-        const fresh = await AgentAPI.getWorkflow(workflowId, projectParams)
+        // 5. Re-fetch fresh state to reset dirty flags (reuse the fetch from step 4)
+        // (fresh already fetched above)
+        // Update savedIds to reflect the new real IDs
+        savedIdsRef.current = new Set((fresh.steps ?? []).map((s) => s.id))
         dispatch({ type: "INIT", steps: fresh.steps ?? [] })
-      } catch {
-        toast.error("Failed to save workflow")
+        toast.success("Workflow saved")
+      } catch (e) {
+        console.error("[AgentWorkflowCanvas] save failed:", e)
+        const msg =
+          (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+          "Failed to save workflow"
+        toast.error(msg)
       } finally {
         setIsSaving(false)
       }
     },
-    [steps, savedIds]
+    [steps]
   )
 
   return { steps, canUndo, canRedo, isDirty, isSaving, dispatch, save }

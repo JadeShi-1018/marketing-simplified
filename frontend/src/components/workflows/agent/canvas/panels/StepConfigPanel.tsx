@@ -2,14 +2,24 @@
 
 import { useEffect, useState } from "react"
 import { Trash2, X } from "lucide-react"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { StepConfigForm } from "@/components/agent/workflow/stepConfig/StepConfigForm"
-import { getStepMeta } from "../canvasStepMeta"
+import { PICKER_GROUPS, getStepMeta } from "../canvasStepMeta"
 import type { LocalStep } from "../useCanvasState"
+import type { WorkflowStepType } from "@/types/agent"
 
 interface StepConfigPanelProps {
   step: LocalStep
   onClose: () => void
-  onUpdate: (patch: Partial<Pick<LocalStep, "name" | "config" | "description">>) => void
+  onUpdate: (patch: Partial<Pick<LocalStep, "name" | "step_type" | "config" | "description">>) => void
   onDelete: () => void
 }
 
@@ -25,7 +35,7 @@ export default function StepConfigPanel({
   const [name, setName] = useState(step.name)
   const [config, setConfig] = useState<Record<string, unknown>>(step.config ?? {})
 
-  // Sync when step changes (e.g. selection switches to a different node)
+  // Sync local state when the selected step changes
   useEffect(() => {
     setName(step.name)
     setConfig(step.config ?? {})
@@ -36,6 +46,13 @@ export default function StepConfigPanel({
     if (trimmed && trimmed !== step.name) {
       onUpdate({ name: trimmed })
     }
+  }
+
+  const handleTypeChange = (newType: WorkflowStepType) => {
+    if (newType === step.step_type) return
+    // Reset config — different types have incompatible config schemas
+    setConfig({})
+    onUpdate({ step_type: newType, config: {} })
   }
 
   const handleConfigChange = (next: Record<string, unknown>) => {
@@ -50,7 +67,7 @@ export default function StepConfigPanel({
         <span
           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${meta.bgClass}`}
         >
-          <Icon className="h-4.5 w-4.5 text-white" strokeWidth={2} />
+          <Icon className="h-[18px] w-[18px] text-white" strokeWidth={2} />
         </span>
         <div className="min-w-0 flex-1">
           <p className="text-xs font-medium text-slate-500">{meta.label}</p>
@@ -68,9 +85,9 @@ export default function StepConfigPanel({
 
       {/* Body */}
       <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4">
-        {/* Name field */}
+        {/* Name */}
         <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
             Step name
           </label>
           <input
@@ -81,22 +98,47 @@ export default function StepConfigPanel({
           />
         </div>
 
-        {/* Step type (read-only) */}
+        {/* Type — grouped Select */}
         <div>
-          <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
             Type
           </label>
-          <div className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2">
-            <span className={`flex h-5 w-5 items-center justify-center rounded ${meta.bgClass}`}>
-              <Icon className="h-3 w-3 text-white" />
-            </span>
-            <span className="text-sm text-slate-700">{meta.label}</span>
-          </div>
+          <Select value={step.step_type} onValueChange={(v) => handleTypeChange(v as WorkflowStepType)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+
+            <SelectContent className="max-h-72">
+              {PICKER_GROUPS.map((group) => (
+                <SelectGroup key={group.label}>
+                  <SelectLabel className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    {group.label}
+                  </SelectLabel>
+                  {group.types.map((type) => {
+                    const m = getStepMeta(type)
+                    const MIcon = m.icon
+                    return (
+                      <SelectItem key={type} value={type}>
+                        <span className="flex items-center gap-2">
+                          <span
+                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${m.bgClass}`}
+                          >
+                            <MIcon className="h-3 w-3 text-white" />
+                          </span>
+                          {m.label}
+                        </span>
+                      </SelectItem>
+                    )
+                  })}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* Configuration */}
+        {/* Configuration form — reacts to step_type automatically */}
         <div>
-          <label className="mb-2 block text-xs font-semibold text-slate-500 uppercase tracking-wide">
+          <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
             Configuration
           </label>
           <StepConfigForm
