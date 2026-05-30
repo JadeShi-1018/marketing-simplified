@@ -47,7 +47,6 @@ import {
   Monitor,
   ScreenShare,
   Settings,
-  Sparkles,
   UploadCloud,
   AlertTriangle,
   Play,
@@ -132,7 +131,6 @@ const EmojiPicker = dynamic(() => import('emoji-picker-react'), {
 
 const DRAFT_KEY = (chatId: number) => `chat_draft_v1_${chatId}`;
 type RecordingMode = 'audio' | 'video';
-type VideoEffectMode = 'none' | 'blur' | 'background';
 type MediaDevicesWithDisplayMedia = MediaDevices & {
   getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
 };
@@ -614,11 +612,7 @@ export default function ChatComposer({
   const [permissionBannerOsLink, setPermissionBannerOsLink] = useState<string | null>(null);
   const permissionRetryRef = useRef<(() => void) | null>(null);
   const [showVideoSettings, setShowVideoSettings] = useState(false);
-  const [showVideoEffects, setShowVideoEffects] = useState(false);
-  const [videoEffect, setVideoEffect] = useState<VideoEffectMode>('none');
-  const [videoBackgroundImage, setVideoBackgroundImage] = useState<string | null>(null);
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
-  const backgroundImageInputRef = useRef<HTMLInputElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -770,12 +764,6 @@ export default function ChatComposer({
       });
     };
   }, []); // intentionally empty — only runs on unmount
-
-  useEffect(() => {
-    return () => {
-      if (videoBackgroundImage) URL.revokeObjectURL(videoBackgroundImage);
-    };
-  }, [videoBackgroundImage]);
 
   // ---------------------------------------------------------------------------
   // Typing indicators
@@ -949,25 +937,6 @@ export default function ChatComposer({
     await uploadFiles(Array.from(e.target.files));
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [uploadFiles]);
-
-  const handleBackgroundImageSelect = useCallback((e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      toast.error('Choose an image for the background');
-      e.target.value = '';
-      return;
-    }
-
-    const previewUrl = URL.createObjectURL(file);
-    setVideoBackgroundImage((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return previewUrl;
-    });
-    setVideoEffect('background');
-    setShowVideoEffects(false);
-    e.target.value = '';
-  }, []);
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setPendingAttachments((prev) => {
@@ -1257,7 +1226,6 @@ export default function ChatComposer({
     if (recordingMode && recordingMode !== 'video') return;
 
     setIsVideoRecorderOpen(true);
-    setShowVideoEffects(false);
     setShowVideoSettings(false);
     setIsScreenEnabled(false);
     setIsCameraEnabled(false);
@@ -1275,7 +1243,6 @@ export default function ChatComposer({
       return;
     }
     setIsVideoRecorderOpen(false);
-    setShowVideoEffects(false);
     setShowVideoSettings(false);
     stopVideoPreviewStreams();
   }, [recordingMode, stopRecording, stopVideoPreviewStreams]);
@@ -1775,31 +1742,15 @@ export default function ChatComposer({
             )}
 
             <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-8">
-              <div
-                className="relative aspect-video w-full max-w-3xl overflow-hidden rounded-xl bg-[#111317] bg-cover bg-center shadow-inner"
-                style={
-                  videoEffect === 'background' && videoBackgroundImage
-                    ? { backgroundImage: `url(${videoBackgroundImage})` }
-                    : undefined
-                }
-              >
+              <div className="relative aspect-video w-full max-w-3xl overflow-hidden rounded-xl bg-[#111317] shadow-inner">
                 {videoPreviewStream ? (
-                  <>
-                    <video
-                      ref={videoPreviewRef}
-                      autoPlay
-                      muted
-                      playsInline
-                      className={[
-                        'h-full w-full object-cover',
-                        videoEffect === 'blur' ? 'blur-[1.5px]' : '',
-                        videoEffect === 'background' ? 'opacity-80' : '',
-                      ].join(' ')}
-                    />
-                    {videoEffect === 'background' && (
-                      <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#3CCED7]/15 via-transparent to-[#A6E661]/20" />
-                    )}
-                  </>
+                  <video
+                    ref={videoPreviewRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="h-full w-full object-cover"
+                  />
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-gray-400">
                     <CameraOff className="h-12 w-12" />
@@ -1844,50 +1795,6 @@ export default function ChatComposer({
                   >
                     {isMicEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
                   </button>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setShowVideoEffects((prev) => !prev)}
-                      className="flex h-11 w-11 items-center justify-center rounded-lg bg-white/10 text-white transition hover:bg-white/20"
-                      aria-label="Video effects"
-                      title="Video effects"
-                    >
-                      <Sparkles className="h-5 w-5" />
-                    </button>
-                    {showVideoEffects && (
-                      <div className="absolute bottom-full left-0 mb-2 w-60 overflow-hidden rounded-lg border border-gray-700 bg-[#24272D] py-1 text-sm shadow-xl">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setVideoEffect('none');
-                            setShowVideoEffects(false);
-                          }}
-                          className="block w-full px-4 py-2 text-left hover:bg-white/10"
-                        >
-                          No effect
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setVideoEffect('blur');
-                            setShowVideoEffects(false);
-                          }}
-                          className="block w-full px-4 py-2 text-left hover:bg-white/10"
-                        >
-                          Blur background
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            backgroundImageInputRef.current?.click();
-                          }}
-                          className="block w-full px-4 py-2 text-left hover:bg-white/10"
-                        >
-                          Upload background image
-                        </button>
-                      </div>
-                    )}
-                  </div>
                   <button
                     type="button"
                     onClick={() => setShowVideoSettings((prev) => !prev)}
@@ -1947,13 +1854,6 @@ export default function ChatComposer({
             )}
 
             <div className="flex flex-wrap items-center gap-3 border-t border-gray-700 px-5 py-4">
-              <input
-                ref={backgroundImageInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleBackgroundImageSelect}
-                className="hidden"
-              />
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
