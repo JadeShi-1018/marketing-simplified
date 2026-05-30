@@ -1,8 +1,17 @@
-import WorkflowEditor from "@/components/workflows/WorkflowEditor";
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import AgentWorkflowEditor from '@/components/workflows/agent/AgentWorkflowEditor';
 
-export default function WorkflowEditPage({ params }: { params: { id: string } }) {
-  const workflowId = parseInt(params.id);
-
-  return <WorkflowEditor workflowId={workflowId} />;
+export default function WorkflowDetailPage({
+  params,
+}: {
+  params: { id: string }
+}) {
+  return (
+    <ProtectedRoute>
+      <DashboardLayout mainClassName="!p-0">
+        <AgentWorkflowEditor workflowId={params.id} />
+      </DashboardLayout>
+    </ProtectedRoute>
+  );
 }
-
