@@ -440,6 +440,10 @@ class AgentWorkflowStep(TimeStampedModel):
         ('detect_columns', 'Detect Columns'),
         ('normalize_data', 'Normalize Data'),
         ('generate_criteria', 'Generate Criteria'),
+        # Flow control (UI-driven; executor is a no-op pass-through)
+        ('if_else', 'If - Else'),
+        ('merge', 'Merge'),
+        ('loop', 'Loop'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

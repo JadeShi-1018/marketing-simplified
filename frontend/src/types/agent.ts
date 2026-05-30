@@ -231,7 +231,11 @@ export type WorkflowStepType =
   | 'normalize_data'
   | 'generate_criteria'
   | 'generate_miro_snapshot'
-  | 'create_miro_board';
+  | 'create_miro_board'
+  // Flow control — rendered on canvas; no runtime execution yet
+  | 'if_else'
+  | 'merge'
+  | 'loop';
 
 export interface AgentWorkflowStep {
   id: string;

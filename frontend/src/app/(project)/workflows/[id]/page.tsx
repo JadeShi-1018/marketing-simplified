@@ -1,6 +1,5 @@
-import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-import AgentWorkflowEditor from '@/components/workflows/agent/AgentWorkflowEditor';
+import AgentWorkflowCanvas from '@/components/workflows/agent/canvas/AgentWorkflowCanvas';
 
 export default function WorkflowDetailPage({
   params,
@@ -9,9 +8,8 @@ export default function WorkflowDetailPage({
 }) {
   return (
     <ProtectedRoute>
-      <DashboardLayout mainClassName="!p-0">
-        <AgentWorkflowEditor workflowId={params.id} />
-      </DashboardLayout>
+      {/* Full-screen canvas — no DashboardLayout (sidebar excluded intentionally) */}
+      <AgentWorkflowCanvas workflowId={params.id} />
     </ProtectedRoute>
   );
 }
