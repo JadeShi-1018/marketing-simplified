@@ -13,10 +13,17 @@ from django.utils.text import slugify
 
 from django.contrib.auth import get_user_model
 from rest_framework import serializers as drf_serializers
+from rest_framework.exceptions import PermissionDenied
 
 from core.models import Project, ProjectMember
 from meetings.models import AgendaItem, Meeting, MeetingTypeDefinition, ParticipantLink, MeetingDocument, MeetingActionItem, MeetingTagAssignment, MeetingTemplate
 from meetings.audit import record_audit_entry
+
+
+def assert_meeting_not_archived(meeting: Meeting) -> None:
+    """Raises PermissionDenied if the meeting is in the archived terminal state."""
+    if meeting.status == Meeting.STATUS_ARCHIVED:
+        raise PermissionDenied("Archived meetings are read-only.")
 
 User = get_user_model()
 
@@ -253,6 +260,7 @@ def transition_meeting_status(
 
 def update_meeting_title(meeting: Meeting, new_title: str, actor: Optional[User]) -> None:
     """Update meeting title and record audit entry."""
+    assert_meeting_not_archived(meeting)
     old_title = meeting.title
     meeting.title = new_title
     meeting.save(update_fields=['title'])
@@ -264,6 +272,7 @@ def update_meeting_title(meeting: Meeting, new_title: str, actor: Optional[User]
 
 def update_meeting_objective(meeting: Meeting, new_objective: str, actor: Optional[User]) -> None:
     """Update meeting objective and record audit entry."""
+    assert_meeting_not_archived(meeting)
     old_objective = meeting.objective
     meeting.objective = new_objective
     meeting.save(update_fields=['objective'])
@@ -275,6 +284,7 @@ def update_meeting_objective(meeting: Meeting, new_objective: str, actor: Option
 
 def update_meeting_summary(meeting: Meeting, new_summary: str, actor: Optional[User]) -> None:
     """Update meeting summary and record audit entry."""
+    assert_meeting_not_archived(meeting)
     old_summary = meeting.summary
     meeting.summary = new_summary
     meeting.save(update_fields=['summary'])
@@ -304,6 +314,7 @@ def add_participant(
     Returns:
         The created ParticipantLink instance.
     """
+    assert_meeting_not_archived(meeting)
     link = ParticipantLink.objects.create(
         meeting=meeting,
         user=user,
@@ -345,6 +356,7 @@ def remove_participant(
     Raises:
         ValueError: If the user is not a participant of the meeting.
     """
+    assert_meeting_not_archived(meeting)
     try:
         link = ParticipantLink.objects.get(meeting=meeting, user=user)
     except ParticipantLink.DoesNotExist:
@@ -387,7 +399,7 @@ def reorder_agenda_items(meeting_id: int, items: Iterable[dict]) -> List[AgendaI
     This function performs the update in a single transaction to avoid
     transient unique_together(meeting, order_index) conflicts.
     """
-
+    assert_meeting_not_archived(Meeting.objects.only("status").get(pk=meeting_id))
     items = list(items)
 
     temp_offset = 1000000
@@ -692,6 +704,7 @@ def update_meeting_document_content(
     user_id: int | None = None,
     notify_collaborators: bool = False,
 ) -> MeetingDocument:
+    assert_meeting_not_archived(Meeting.objects.only("status").get(pk=meeting_id))
     document = get_or_create_meeting_document(meeting_id)
     old_content = document.content
     document.content = content
@@ -778,6 +791,7 @@ def create_agenda_item(
     Returns:
         The created AgendaItem instance.
     """
+    assert_meeting_not_archived(meeting)
     item = AgendaItem.objects.create(
         meeting=meeting,
         content=content,
@@ -818,6 +832,7 @@ def update_agenda_item(
     Returns:
         The updated AgendaItem instance.
     """
+    assert_meeting_not_archived(item.meeting)
     old_content = item.content
     old_priority = item.is_priority
 
@@ -852,6 +867,7 @@ def delete_agenda_item(item: AgendaItem, actor: Optional[User]) -> None:
         item: The AgendaItem to delete.
         actor: The User deleting the agenda item (for audit recording).
     """
+    assert_meeting_not_archived(item.meeting)
     meeting = item.meeting
     content = item.content
     order_index = item.order_index
@@ -890,6 +906,7 @@ def create_action_item(
     Returns:
         The created MeetingActionItem instance.
     """
+    assert_meeting_not_archived(meeting)
     item = MeetingActionItem.objects.create(
         meeting=meeting,
         title=title,
@@ -932,6 +949,7 @@ def update_action_item(
     Returns:
         The updated MeetingActionItem instance.
     """
+    assert_meeting_not_archived(item.meeting)
     old_title = item.title
     old_resolved = item.is_resolved
 
@@ -997,6 +1015,7 @@ def update_meeting_type(
     actor: Optional[User],
 ) -> None:
     """Update meeting type and record audit entry."""
+    assert_meeting_not_archived(meeting)
     old_type_id = meeting.type_definition_id
     meeting.type_definition = new_type
     meeting.save(update_fields=['type_definition'])
@@ -1018,6 +1037,7 @@ def update_meeting_datetime(
     actor: Optional[User],
 ) -> None:
     """Update meeting date and time and record audit entry."""
+    assert_meeting_not_archived(meeting)
     old_date = meeting.scheduled_date
     old_time = meeting.scheduled_time
 
@@ -1047,6 +1067,7 @@ def update_meeting_tags(
     actor: Optional[User],
 ) -> None:
     """Update meeting tags and record audit entry."""
+    assert_meeting_not_archived(meeting)
     old_tags = list(meeting.tag_assignments.values_list('tag_definition_id', flat=True))
 
     meeting.tag_assignments.all().delete()
