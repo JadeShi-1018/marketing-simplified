@@ -81,3 +81,17 @@ class EmitTrackingEventTests(TestCase):
         emit_tracking_event(self.user.pk, '/api/health/', 'GET', {})
         emit_tracking_event(self.user.pk, '/api/projects/', 'GET', {})
         self.assertEqual(TrackingEvent.objects.count(), 0)
+
+    def test_first_interaction_not_re_emitted_within_30_days(self):
+        # Day 1: first POST → FIRST_INTERACTION + TASK_WRITE
+        with freeze_time("2026-01-01"):
+            emit_tracking_event(self.user.pk, '/api/tasks/9/comments/', 'POST', {})
+        # Day 16: still inside 30-day dedup window → TASK_WRITE only
+        with freeze_time("2026-01-16"):
+            emit_tracking_event(self.user.pk, '/api/tasks/9/comments/', 'POST', {})
+        self.assertEqual(
+            TrackingEvent.objects.filter(event_type='FIRST_INTERACTION').count(), 1
+        )
+        self.assertEqual(
+            TrackingEvent.objects.filter(event_type='TASK_WRITE').count(), 2
+        )
