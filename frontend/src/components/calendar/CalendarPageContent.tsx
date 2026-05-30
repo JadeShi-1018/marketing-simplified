@@ -23,6 +23,7 @@ import {
   extractCalendarIdFromStoredValue,
   sameCalendarIdList,
 } from "@/components/calendar/utils";
+import { openAgentSidePanel } from "@/lib/agentSidePanelStore";
 import {
   clearCalendarSidebarCache,
 } from "@/hooks/useCalendarSidebarData";
@@ -131,8 +132,8 @@ export default function CalendarPageContent() {
     };
     sessionStorage.setItem("agent-calendar-context", JSON.stringify(ctx));
     sessionStorage.removeItem("agent-session-id");
-    router.push("/agent");
-  }, [visibleCalendarIds, currentView, currentDate, router]);
+    openAgentSidePanel();
+  }, [visibleCalendarIds, currentView, currentDate]);
 
   const handleAskAgentFromEvent = useCallback(
     (event: EventDTO) => {
@@ -148,9 +149,9 @@ export default function CalendarPageContent() {
       };
       sessionStorage.setItem("agent-calendar-context", JSON.stringify(ctx));
       sessionStorage.removeItem("agent-session-id");
-      router.push("/agent");
+      openAgentSidePanel();
     },
-    [router],
+    [],
   );
 
   useEffect(() => {
