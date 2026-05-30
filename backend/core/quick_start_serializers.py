@@ -5,10 +5,9 @@ from rest_framework import serializers
 from core.services.quick_start.constants import (
     ALL_MODULES,
     MAX_COMBINED_INPUT_LENGTH,
-    MAX_PROMPT_LENGTH,
-    MAX_SUPPLEMENT_LENGTH,
-    MIN_PROMPT_LENGTH,
 )
+from core.services.quick_start.exceptions import QuickStartValidationError
+from core.services.quick_start.validation import validate_prompt_text, validate_supplement_text
 
 
 class QuickStartModuleToggleSerializer(serializers.Serializer):
@@ -25,19 +24,28 @@ class QuickStartPreviewRequestSerializer(serializers.Serializer):
         required=True,
         allow_blank=False,
         trim_whitespace=True,
-        min_length=MIN_PROMPT_LENGTH,
-        max_length=MAX_PROMPT_LENGTH,
     )
     supplement = serializers.CharField(
         required=False,
         allow_blank=True,
         allow_null=True,
         trim_whitespace=True,
-        max_length=MAX_SUPPLEMENT_LENGTH,
     )
     chips = serializers.DictField(required=False, allow_empty=True)
     selected_modules = QuickStartModuleToggleSerializer(required=False)
     locale = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=32)
+
+    def validate_prompt(self, value):
+        try:
+            return validate_prompt_text(value)
+        except QuickStartValidationError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+
+    def validate_supplement(self, value):
+        try:
+            return validate_supplement_text(value)
+        except QuickStartValidationError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
     def validate(self, attrs):
         prompt = (attrs.get('prompt') or '').strip()

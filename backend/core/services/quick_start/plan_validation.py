@@ -16,6 +16,7 @@ from core.services.quick_start.constants import (
     MODULE_TASKS,
 )
 from core.services.quick_start.exceptions import QuickStartValidationError
+from core.services.quick_start.repair import repair_campaign_plan
 from core.services.quick_start.validation import _require_dict, _require_list
 
 
@@ -23,6 +24,8 @@ def validate_campaign_plan(
     raw: Mapping[str, Any],
     selected_modules: dict[str, bool],
 ) -> dict[str, Any]:
+    raw = repair_campaign_plan(dict(raw), selected_modules)
+
     if raw.get('version') != 1:
         raise QuickStartValidationError('plan.version must be 1.')
 

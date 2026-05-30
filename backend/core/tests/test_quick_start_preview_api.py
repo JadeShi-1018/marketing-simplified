@@ -75,6 +75,7 @@ class TestQuickStartPreviewAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data['error'] == 'validation_failed'
+        assert 'too short' in response.data['detail'].lower()
 
     @patch('core.quick_start_views.QuickStartPreviewService.generate_preview')
     def test_llm_error_returns_502(self, mock_generate, authenticated_client):
@@ -113,6 +114,7 @@ class TestQuickStartPreviewAPI:
             format='json',
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['error'] == 'validation_failed'
 
     def test_supplement_over_max_length_returns_400(self, authenticated_client):
         url = reverse(PREVIEW_URL)
@@ -126,6 +128,7 @@ class TestQuickStartPreviewAPI:
             format='json',
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['error'] == 'validation_failed'
 
     def test_invalid_step_serializer_error(self, authenticated_client):
         url = reverse(PREVIEW_URL)
@@ -138,3 +141,4 @@ class TestQuickStartPreviewAPI:
             format='json',
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data['error'] == 'validation_failed'

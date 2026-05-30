@@ -119,6 +119,17 @@ class TestBlueprintValidation:
         blueprint = validate_and_normalize_blueprint(payload, DEFAULT_MODULES)
         assert blueprint['project']['objectives'] == ['awareness']
 
+    def test_normalizes_unknown_task_type_from_llm(self):
+        payload = {
+            **SAMPLE_LLM_PAYLOAD,
+            'tasks': [
+                {**SAMPLE_LLM_PAYLOAD['tasks'][0], 'type': 'planning'},
+                *SAMPLE_LLM_PAYLOAD['tasks'][1:],
+            ],
+        }
+        blueprint = validate_and_normalize_blueprint(payload, DEFAULT_MODULES)
+        assert blueprint['tasks'][0]['type'] == 'execution'
+
 
 class TestQuickStartLLMChain:
     def test_generate_blueprint_uses_two_stage_chain(self):

@@ -25,21 +25,38 @@ describe('resolveQuickStartError', () => {
     expect(resolved.retryAfterSeconds).toBe(30);
   });
 
-  it('hides technical JSON parse errors', () => {
+  it('does not blame campaign for generic validation_failed', () => {
     const error = new AxiosError('Request failed');
     error.response = {
-      status: 502,
-      statusText: 'Bad Gateway',
+      status: 400,
+      statusText: 'Bad Request',
       headers: {},
       config: { headers: new AxiosHeaders() },
       data: {
-        error: 'malformed_output',
-        detail: 'Gemini response is not valid JSON: Unterminated string',
+        error: 'validation_failed',
+        detail: 'plan.campaign_summary is required.',
       },
     };
 
     const resolved = resolveQuickStartError(error, QUICK_START_PREVIEW_ERROR_FALLBACK);
-    expect(resolved.message).not.toMatch(/json|unterminated|gemini/i);
-    expect(resolved.message).toContain('Generate preview');
+    expect(resolved.message).not.toMatch(/check your campaign|description is/i);
+    expect(resolved.message).toContain('Nothing is wrong with your description');
+  });
+
+  it('maps prompt length validation to a specific message', () => {
+    const error = new AxiosError('Request failed');
+    error.response = {
+      status: 400,
+      statusText: 'Bad Request',
+      headers: {},
+      config: { headers: new AxiosHeaders() },
+      data: {
+        error: 'validation_failed',
+        detail: 'prompt must be at least 10 characters after trimming.',
+      },
+    };
+
+    const resolved = resolveQuickStartError(error, QUICK_START_PREVIEW_ERROR_FALLBACK);
+    expect(resolved.message).toContain('too short');
   });
 });

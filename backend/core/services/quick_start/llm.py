@@ -12,7 +12,11 @@ from agent.gemini_client import call_gemini_json
 from core.services.quick_start.blueprint import normalize_selected_modules
 from core.services.quick_start.brief import build_campaign_brief
 from core.services.quick_start.config import QuickStartConfig, get_quick_start_config
-from core.services.quick_start.exceptions import QuickStartLLMError
+from core.services.quick_start.exceptions import QuickStartLLMError, QuickStartValidationError
+from core.services.quick_start.user_messages import (
+    LLM_ERROR_MALFORMED_OUTPUT,
+    USER_MESSAGE_MALFORMED_OUTPUT,
+)
 from core.services.quick_start.module_defaults import ensure_quick_start_module_minimums
 from core.services.quick_start.plan_validation import validate_campaign_plan
 from core.services.quick_start.prompt_builder import (
@@ -132,6 +136,13 @@ class QuickStartLLMChain:
         )
         try:
             return validate_campaign_plan(raw, selected_modules)
+        except QuickStartValidationError as exc:
+            logger.warning('Quick Start plan validation failed: %s', exc)
+            raise QuickStartLLMError(
+                str(exc),
+                error_code=LLM_ERROR_MALFORMED_OUTPUT,
+                user_message=USER_MESSAGE_MALFORMED_OUTPUT,
+            ) from exc
         except Exception as exc:
             logger.warning('Quick Start plan validation failed: %s', exc)
             raise
@@ -159,6 +170,13 @@ class QuickStartLLMChain:
             blueprint = validate_and_normalize_blueprint(raw, selected_modules)
             blueprint = ensure_quick_start_module_minimums(blueprint, selected_modules)
             return validate_and_normalize_blueprint(blueprint, selected_modules)
+        except QuickStartValidationError as exc:
+            logger.warning('Quick Start blueprint validation failed: %s', exc)
+            raise QuickStartLLMError(
+                str(exc),
+                error_code=LLM_ERROR_MALFORMED_OUTPUT,
+                user_message=USER_MESSAGE_MALFORMED_OUTPUT,
+            ) from exc
         except Exception as exc:
             logger.warning('Quick Start blueprint validation failed: %s', exc)
             raise

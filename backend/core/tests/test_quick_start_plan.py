@@ -103,7 +103,7 @@ class TestQuickStartTwoStageLLMChain:
             return {'version': 1, 'campaign_summary': 'x', 'project': {'name': 'X'}}
 
         chain = QuickStartLLMChain(call_json=_bad_plan)
-        with pytest.raises(QuickStartValidationError):
+        with pytest.raises(QuickStartLLMError):
             chain.generate_blueprint(
                 prompt='US Meta Q2 campaign with $30k budget for six weeks',
                 selected_modules=DEFAULT_MODULES,

@@ -24,9 +24,40 @@ from core.services.quick_start.user_messages import (
     USER_MESSAGE_CONFIGURATION,
     USER_MESSAGE_GENERIC,
     llm_error_response,
+    user_message_for_validation_error,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _serializer_errors_to_detail(errors) -> str:
+    """Flatten DRF serializer errors into one string for user_message_for_validation_error."""
+    if not errors:
+        return 'Invalid request.'
+    for key in ('non_field_errors', 'prompt', 'supplement', 'step'):
+        if key in errors:
+            value = errors[key]
+            if isinstance(value, list) and value:
+                return str(value[0])
+            return str(value)
+    first_key = next(iter(errors))
+    value = errors[first_key]
+    if isinstance(value, list) and value:
+        return str(value[0])
+    return str(value)
+
+
+def _validation_error_response(detail: str) -> Response:
+    error_code, user_message = user_message_for_validation_error(detail)
+    status_code = (
+        status.HTTP_400_BAD_REQUEST
+        if error_code == 'validation_failed'
+        else status.HTTP_502_BAD_GATEWAY
+    )
+    return Response(
+        llm_error_response(error_code=error_code, user_message=user_message),
+        status=status_code,
+    )
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -41,7 +72,8 @@ class QuickStartPreviewView(APIView):
 
     def post(self, request):
         serializer = QuickStartPreviewRequestSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            return _validation_error_response(_serializer_errors_to_detail(serializer.errors))
         data = serializer.validated_data
 
         service = QuickStartPreviewService()
@@ -55,10 +87,7 @@ class QuickStartPreviewView(APIView):
                 locale=data.get('locale'),
             )
         except QuickStartValidationError as exc:
-            return Response(
-                {'error': 'validation_failed', 'detail': str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _validation_error_response(str(exc))
         except QuickStartConfigurationError as exc:
             logger.warning('Quick Start configuration error: %s', exc)
             return Response(

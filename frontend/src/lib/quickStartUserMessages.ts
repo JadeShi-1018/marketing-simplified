@@ -4,7 +4,7 @@ import type { QuickStartApiErrorBody } from '@/types/quickStart';
 
 /** Fallback when the API does not return a structured error body. */
 export const QUICK_START_PREVIEW_ERROR_FALLBACK =
-  'We could not generate a preview right now. Please try again in a moment.';
+  'We could not generate a preview right now. Nothing is wrong with your description — please try again in a moment.';
 
 export const QUICK_START_CONFIRM_ERROR_FALLBACK =
   'We could not create the project right now. Please try again.';
@@ -13,18 +13,17 @@ const MESSAGE_BY_ERROR_CODE: Record<string, string> = {
   rate_limited:
     'AI requests are coming in too quickly. Please wait 30 seconds, then try again.',
   malformed_output:
-    'We could not finish building your draft. Please try Generate preview again.',
+    'The AI draft came back incomplete. Please try Generate preview again — no changes to your description are needed.',
   network_error:
     'We could not reach the AI service. Check your connection and try again.',
   llm_generation_failed: QUICK_START_PREVIEW_ERROR_FALLBACK,
   configuration_error:
     'AI setup is not complete. Ask your administrator to configure the Gemini API key.',
-  validation_failed: 'Please check your campaign description and try again.',
 };
 
 /** Patterns that indicate a technical message we should not show to users. */
 const TECHNICAL_DETAIL_PATTERN =
-  /json|traceback|http\s*\d{3}|gemini|unterminated|runtimeerror|exception|429|too many requests/i;
+  /json|traceback|http\s*\d{3}|gemini|unterminated|runtimeerror|exception|429|too many requests|plan\.|blueprint\.|tasks\[/i;
 
 export type QuickStartResolvedError = {
   message: string;
@@ -34,6 +33,25 @@ export type QuickStartResolvedError = {
 
 function isTechnicalDetail(detail: string): boolean {
   return TECHNICAL_DETAIL_PATTERN.test(detail);
+}
+
+function mapValidationDetailToUserMessage(detail: string): string | null {
+  const lower = detail.toLowerCase();
+
+  if (lower.includes('prompt must be at least')) {
+    return 'Your campaign description is too short. Add a bit more detail and try again.';
+  }
+  if (lower.includes('prompt must be at most')) {
+    return 'Your campaign description is too long. Shorten it and try again.';
+  }
+  if (lower.includes('supplement must be at most')) {
+    return 'Additional context is too long. Shorten it and try again.';
+  }
+  if (lower.includes('combined must be at most') || lower.includes('prompt and supplement combined')) {
+    return 'Campaign description and additional context together are too long. Shorten one and try again.';
+  }
+
+  return null;
 }
 
 export function resolveQuickStartError(
@@ -54,6 +72,15 @@ export function resolveQuickStartError(
             ? 30
             : undefined;
 
+      if (code === 'validation_failed') {
+        const detail = typeof body.detail === 'string' ? body.detail.trim() : '';
+        const mapped = detail ? mapValidationDetailToUserMessage(detail) : null;
+        if (mapped) {
+          return { message: mapped, errorCode: code };
+        }
+        return { message: fallback, errorCode: 'llm_generation_failed' };
+      }
+
       if (code && MESSAGE_BY_ERROR_CODE[code]) {
         return {
           message: MESSAGE_BY_ERROR_CODE[code],
@@ -64,6 +91,10 @@ export function resolveQuickStartError(
 
       if (typeof body.detail === 'string' && body.detail.trim()) {
         const detail = body.detail.trim();
+        const inputMapped = mapValidationDetailToUserMessage(detail);
+        if (inputMapped) {
+          return { message: inputMapped, errorCode: 'validation_failed' };
+        }
         if (!isTechnicalDetail(detail)) {
           return {
             message: detail,
@@ -89,6 +120,10 @@ export function resolveQuickStartError(
   }
 
   const generic = getApiErrorDetail(error, fallback);
+  const inputMapped = mapValidationDetailToUserMessage(generic);
+  if (inputMapped) {
+    return { message: inputMapped, errorCode: 'validation_failed' };
+  }
   if (!isTechnicalDetail(generic)) {
     return { message: generic };
   }

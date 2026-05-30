@@ -29,6 +29,7 @@ from core.services.quick_start.dates import (
     normalize_quick_start_task_dates,
 )
 from core.services.quick_start.exceptions import QuickStartValidationError
+from core.services.quick_start.repair import repair_blueprint
 
 TASK_TYPES = frozenset(
     {
@@ -47,6 +48,68 @@ TASK_TYPES = frozenset(
 )
 
 TASK_PRIORITIES = frozenset({'HIGHEST', 'HIGH', 'MEDIUM', 'LOW', 'LOWEST'})
+
+# Common Gemini aliases → canonical task types (avoid hard failures on stage-2 blueprint).
+_TASK_TYPE_ALIASES: dict[str, str] = {
+    'planning': 'execution',
+    'plan': 'execution',
+    'setup': 'execution',
+    'launch': 'execution',
+    'campaign': 'execution',
+    'strategy': 'execution',
+    'media': 'execution',
+    'marketing': 'execution',
+    'creative': 'asset',
+    'content': 'asset',
+    'design': 'asset',
+    'reporting': 'report',
+    'analysis': 'report',
+    'analytics': 'report',
+    'research': 'experiment',
+    'test': 'experiment',
+    'testing': 'experiment',
+    'optimize': 'optimization',
+    'optimisation': 'optimization',
+    'scale': 'scaling',
+    'monitoring': 'alert',
+    'comms': 'communication',
+    'policy': 'platform_policy_update',
+}
+
+
+def normalize_task_type(value: Any) -> str:
+    """Map LLM task types to allowed TASK_TYPES; default to execution."""
+    if value is None or value == '':
+        return 'execution'
+    text = str(value).strip().lower()
+    if text in TASK_TYPES:
+        return text
+    if text in _TASK_TYPE_ALIASES:
+        return _TASK_TYPE_ALIASES[text]
+    if 'budget' in text:
+        return 'budget'
+    if 'asset' in text or 'creative' in text:
+        return 'asset'
+    if 'report' in text or 'readout' in text:
+        return 'report'
+    if 'experiment' in text or 'test' in text:
+        return 'experiment'
+    if 'optim' in text:
+        return 'optimization'
+    if 'scale' in text:
+        return 'scaling'
+    if 'retro' in text:
+        return 'retrospective'
+    return 'execution'
+
+
+def normalize_task_priority(value: Any) -> str:
+    if value is None or value == '':
+        return 'MEDIUM'
+    text = str(value).strip().upper()
+    if text in TASK_PRIORITIES:
+        return text
+    return 'MEDIUM'
 
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
@@ -100,9 +163,9 @@ def _require_list(value: Any, field: str) -> list[Any]:
 def _parse_date(value: Any, field: str) -> str | None:
     if value is None or value == '':
         return None
-    if not isinstance(value, str) or not DATE_RE.match(value):
-        raise QuickStartValidationError(f'{field} must be YYYY-MM-DD.')
-    return value
+    if isinstance(value, str) and DATE_RE.match(value.strip()):
+        return value.strip()
+    return None
 
 
 def _parse_datetime(value: Any, field: str) -> str:
@@ -126,6 +189,8 @@ def validate_and_normalize_blueprint(
     """
     if not isinstance(raw, Mapping):
         raise QuickStartValidationError('blueprint must be a JSON object.')
+
+    raw = repair_blueprint(dict(raw), selected_modules)
 
     version = raw.get('version')
     if version != 1:
@@ -200,7 +265,8 @@ def _optional_str(value: Any) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise QuickStartValidationError('Expected string field.')
+        text = str(value).strip()
+        return text or None
     stripped = value.strip()
     return stripped or None
 
@@ -235,12 +301,8 @@ def _validate_tasks(items: list[Any]) -> list[dict[str, Any]]:
         summary = row.get('summary')
         if not isinstance(summary, str) or not summary.strip():
             raise QuickStartValidationError(f'tasks[{index}].summary is required.')
-        task_type = row.get('type')
-        if task_type not in TASK_TYPES:
-            raise QuickStartValidationError(f'tasks[{index}].type is invalid.')
-        priority = row.get('priority') or 'MEDIUM'
-        if priority not in TASK_PRIORITIES:
-            raise QuickStartValidationError(f'tasks[{index}].priority is invalid.')
+        task_type = normalize_task_type(row.get('type'))
+        priority = normalize_task_priority(row.get('priority'))
         due_date = _parse_date(row.get('due_date'), f'tasks[{index}].due_date')
         planned_start_date = _parse_date(
             row.get('planned_start_date'), f'tasks[{index}].planned_start_date'

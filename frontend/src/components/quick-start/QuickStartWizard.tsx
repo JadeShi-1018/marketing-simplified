@@ -8,7 +8,7 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { ProjectAPI } from '@/lib/api/projectApi';
 import type { ProjectData } from '@/lib/api/projectApi';
 import { useQuickStartRetryCooldown } from '@/hooks/useQuickStartRetryCooldown';
-import { QuickStartAPI, getQuickStartErrorDetail } from '@/lib/api/quickStartApi';
+import { QuickStartAPI } from '@/lib/api/quickStartApi';
 import {
   QUICK_START_CONFIRM_ERROR_FALLBACK,
   QUICK_START_PREVIEW_ERROR_FALLBACK,
@@ -168,9 +168,11 @@ export default function QuickStartWizard() {
       await QuickStartAPI.preview(buildQuickStartPreviewRequest(state, 1));
       setStepIndex(1);
     } catch (error) {
-      setStepError(
-        getQuickStartErrorDetail(error, 'Please check your campaign prompt and try again.')
-      );
+      const resolved = resolveQuickStartError(error, QUICK_START_PREVIEW_ERROR_FALLBACK);
+      setStepError(resolved.message);
+      if (resolved.retryAfterSeconds) {
+        startCooldown(resolved.retryAfterSeconds);
+      }
     } finally {
       setLoadingMode(null);
     }
