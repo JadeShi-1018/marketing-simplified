@@ -137,7 +137,7 @@
 
 ## 🚀 Quick Start (Docker Development)
 
-This section follows the official steps from [DOCKER_README.md](DOCKER_README.md).
+For additional Docker setup and deployment details, see [DOCKER_README.md](DOCKER_README.md).
 
 ### Prerequisites
 
@@ -240,7 +240,7 @@ MediaJira includes monitoring and observability tools for local development and 
 
 - **Prometheus**: Collects metrics from backend and frontend services
   - Access: http://localhost:9090
-  - Metrics endpoint: `/metrics` on backend and frontend
+  - Metrics endpoints: `/metrics` on backend and `/api/metrics` on frontend
 
 ### Visualization
 
@@ -282,8 +282,8 @@ MediaJira includes monitoring and observability tools for local development and 
 
 ## 🧩 Development Services (Current `docker-compose.dev.yml`)
 
-Service list below is based on:
-`docker compose -f docker-compose.dev.yml --env-file .env config --services`
+Service list below is based on `docker-compose.dev.yml`. 
+Most services are part of the default development stack. Profile-gated services, such as `k6`, only run when their profile is enabled.
 
 - `clamav`
 - `redis`
@@ -296,6 +296,7 @@ Service list below is based on:
 - `celery-worker`
 - `grafana`
 - `influxdb`
+- `k6` — Load testing runner, only started with `--profile k6`
 - `kafka-exporter`
 - `kcat`
 - `nginx`
@@ -458,4 +459,4 @@ For detailed information on specific topics, please refer to the following docum
 
 ## 📜 License
 
-This project is licensed under the **LGPL-2.1** license. See the [LICENSE](LICENSE) file for details
+This project is licensed under the **LGPL-2.1** license. See the [LICENSE](LICENSE) file for details.
