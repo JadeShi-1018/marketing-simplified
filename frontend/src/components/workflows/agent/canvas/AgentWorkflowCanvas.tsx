@@ -48,8 +48,23 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
   const { projectParams } = useAgentWorkflowProjectParams()
 
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null)
-  // pickerInsertAfter: index of the step after which to insert (-1 = prepend / empty canvas)
-  const [pickerInsertAfter, setPickerInsertAfter] = useState<number | null>(null)
+  // picker state: insertion index + viewport anchor coordinates
+  const [pickerState, setPickerState] = useState<{
+    insertAfter: number
+    anchorX: number
+    anchorY: number
+  } | null>(null)
+
+  // Helpers that enforce mutual exclusivity between picker and config panel
+  const openPicker = useCallback((insertAfter: number, e: React.MouseEvent) => {
+    setSelectedStepId(null)       // close config panel
+    setPickerState({ insertAfter, anchorX: e.clientX, anchorY: e.clientY })
+  }, [])
+
+  const openConfig = useCallback((stepId: string) => {
+    setPickerState(null)          // close picker
+    setSelectedStepId((prev) => (prev === stepId ? null : stepId))
+  }, [])
 
   const canvasState = useCanvasState(workflow.steps ?? [])
   const { steps, canUndo, canRedo, isDirty, isSaving, dispatch, save } = canvasState
@@ -67,8 +82,8 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
       data: {
         step,
         isSelected: selectedStepId === step.id,
-        onSelect: () => setSelectedStepId((prev) => (prev === step.id ? null : step.id)),
-        onAddAfter: () => setPickerInsertAfter(idx),
+        onSelect: () => openConfig(step.id),
+        onAddAfter: (e) => openPicker(idx, e),
         onDelete: () => {
           dispatch({ type: "DELETE", stepId: step.id })
           if (selectedStepId === step.id) setSelectedStepId(null)
@@ -85,7 +100,7 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
       selectable: false,
       data: {
         isEmpty: steps.length === 0,
-        onClick: () => setPickerInsertAfter(steps.length - 1),
+        onClick: (e) => openPicker(steps.length - 1, e),
       } satisfies AgentAddNodeData,
     })
 
@@ -132,8 +147,8 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
   const handlePickStep = useCallback(
     (type: WorkflowStepType) => {
       const meta = getStepMeta(type)
-      const insertAfter = pickerInsertAfter ?? steps.length - 1
-      setPickerInsertAfter(null)
+      const insertAfter = pickerState?.insertAfter ?? steps.length - 1
+      setPickerState(null)
 
       const tempStep = {
         id: makeTempId(),
@@ -146,9 +161,10 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
       }
 
       dispatch({ type: "ADD", step: tempStep, insertAfter })
-      setSelectedStepId(tempStep.id)
+      // After adding, open the config panel for the new step (picker already closed above)
+      openConfig(tempStep.id)
     },
-    [pickerInsertAfter, steps.length, dispatch]
+    [pickerState, steps.length, dispatch]
   )
 
   // ── Save ────────────────────────────────────────────────────────────────────
@@ -173,6 +189,11 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
         minZoom={0.3}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
+        // Required: React Flow v11 sets pointer-events:none on nodes when
+        // nodesDraggable=false AND elementsSelectable=false AND onNodeClick is
+        // absent. Providing this handler (even empty) keeps pointer-events:all
+        // so buttons inside custom nodes remain interactive.
+        onNodeClick={() => {}}
       >
         <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="#cbd5e1" />
       </ReactFlow>
@@ -211,15 +232,19 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
         </div>
       </div>
 
-      {/* ── Step picker panel ────────────────────────────────────────────────── */}
-      {pickerInsertAfter !== null && (
+      {/* ── Right side panels (mutually exclusive) ──────────────────────────── */}
+
+      {/* Step picker — floating bubble anchored to the + button */}
+      {pickerState !== null && (
         <StepPickerPanel
+          anchorX={pickerState.anchorX}
+          anchorY={pickerState.anchorY}
           onSelect={handlePickStep}
-          onClose={() => setPickerInsertAfter(null)}
+          onClose={() => setPickerState(null)}
         />
       )}
 
-      {/* ── Step config panel (right side) ──────────────────────────────────── */}
+      {/* Step config — slides in from the right when a node is selected */}
       {selectedStep && (
         <div className="absolute right-0 top-0 z-20 h-full">
           <StepConfigPanel

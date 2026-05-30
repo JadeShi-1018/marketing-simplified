@@ -11,7 +11,7 @@ export interface AgentStepNodeData {
   step: LocalStep
   isSelected: boolean
   onSelect: () => void
-  onAddAfter: () => void
+  onAddAfter: (e: React.MouseEvent) => void
   onDelete: () => void
 }
 
@@ -25,7 +25,8 @@ const AgentStepNode = memo(function AgentStepNode({
   const Icon = meta.icon
 
   return (
-    <div className="group flex flex-col items-center" style={{ width: 100 }}>
+    // `relative` on the outer wrapper so the + button can be absolutely positioned correctly
+    <div className="group relative flex flex-col items-center" style={{ width: 100 }}>
       {/* Left connection handle */}
       <Handle
         type="target"
@@ -38,7 +39,10 @@ const AgentStepNode = memo(function AgentStepNode({
       <div className="relative">
         <button
           type="button"
-          onClick={onSelect}
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect()
+          }}
           className={cn(
             "flex h-[72px] w-[72px] items-center justify-center rounded-full shadow-lg transition-all duration-150",
             meta.bgClass,
@@ -77,7 +81,7 @@ const AgentStepNode = memo(function AgentStepNode({
         {step.name}
       </p>
 
-      {/* Right connection handle + add button */}
+      {/* Right connection handle */}
       <Handle
         type="source"
         position={Position.Right}
@@ -85,18 +89,15 @@ const AgentStepNode = memo(function AgentStepNode({
         style={{ right: -6, top: 36 }}
       />
 
-      {/* + button to insert a step after this one */}
+      {/* + button — positioned absolutely relative to the outer wrapper (which is now relative) */}
       <button
         type="button"
         onClick={(e) => {
           e.stopPropagation()
-          onAddAfter()
+          onAddAfter(e)
         }}
-        className={cn(
-          "absolute right-[-32px] top-[22px] flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-300 bg-white text-slate-500 shadow-sm opacity-0 transition-opacity group-hover:opacity-100 hover:border-indigo-400 hover:text-indigo-600",
-        )}
+        className="absolute right-[-28px] top-[22px] flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-300 bg-white text-slate-500 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 hover:border-indigo-400 hover:text-indigo-600"
         aria-label="Add step after"
-        style={{ position: "absolute" }}
       >
         <Plus className="h-3.5 w-3.5" />
       </button>

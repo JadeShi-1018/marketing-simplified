@@ -7,7 +7,7 @@ import { Plus } from "lucide-react"
 export interface AgentAddNodeData {
   /** True when no steps exist yet — renders a larger prominent circle */
   isEmpty: boolean
-  onClick: () => void
+  onClick: (e: React.MouseEvent) => void
 }
 
 const AgentAddNode = memo(function AgentAddNode({
@@ -31,7 +31,7 @@ const AgentAddNode = memo(function AgentAddNode({
 
       <button
         type="button"
-        onClick={onClick}
+        onClick={(e) => { e.stopPropagation(); onClick(e) }}
         className={
           isEmpty
             ? "flex h-20 w-20 items-center justify-center rounded-full border-4 border-dashed border-indigo-300 bg-white text-indigo-400 shadow-sm transition hover:border-indigo-500 hover:bg-indigo-50 hover:text-indigo-600 hover:shadow-md"
