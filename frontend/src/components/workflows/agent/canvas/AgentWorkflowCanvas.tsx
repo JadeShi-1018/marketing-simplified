@@ -91,18 +91,21 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
       },
     }))
 
-    // Add-node at the end
-    nodes.push({
-      id: ADD_NODE_ID,
-      type: "agentAdd",
-      position: { x: steps.length * STEP_X_GAP, y: steps.length === 0 ? 0 : NODE_Y },
-      draggable: false,
-      selectable: false,
-      data: {
-        isEmpty: steps.length === 0,
-        onClick: (e) => openPicker(steps.length - 1, e),
-      } satisfies AgentAddNodeData,
-    })
+    // Add-node only when canvas is empty — acts as the entry-point prompt.
+    // When steps exist, the hover "+" on each AgentStepNode covers all insertion cases.
+    if (steps.length === 0) {
+      nodes.push({
+        id: ADD_NODE_ID,
+        type: "agentAdd",
+        position: { x: 0, y: 0 },
+        draggable: false,
+        selectable: false,
+        data: {
+          isEmpty: true,
+          onClick: (e) => openPicker(-1, e),
+        } satisfies AgentAddNodeData,
+      })
+    }
 
     return nodes
   }, [steps, selectedStepId, dispatch])
@@ -120,17 +123,6 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
         type: "smoothstep",
         markerEnd: { type: MarkerType.ArrowClosed, color: meta.edgeColor, width: 16, height: 16 },
         style: { stroke: meta.edgeColor, strokeWidth: 2 },
-      })
-    }
-
-    // Dashed edge from last step → add-node
-    if (steps.length > 0) {
-      edges.push({
-        id: `e-${steps[steps.length - 1].id}-add`,
-        source: steps[steps.length - 1].id,
-        target: ADD_NODE_ID,
-        type: "smoothstep",
-        style: { stroke: "#cbd5e1", strokeWidth: 1.5, strokeDasharray: "5 4" },
       })
     }
 
