@@ -172,6 +172,7 @@ POSTGRES_USER=mediajira_user
 POSTGRES_PASSWORD=<your-password>
 POSTGRES_PORT=5432
 ```
+> Note: For the current `docker-compose.dev.yml` workflow, `DB_HOST` is overridden to `host.docker.internal` by the backend and Celery service definitions. This means the dev containers connect to PostgreSQL running on your host machine, even if `env.example` contains `DB_HOST=db`.
 
 ### 3. Start development environment
 
