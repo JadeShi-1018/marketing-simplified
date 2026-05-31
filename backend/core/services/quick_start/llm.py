@@ -46,6 +46,7 @@ class QuickStartLLMChain:
         call_json: GeminiJsonCaller | None = None,
     ) -> None:
         self.config = config or get_quick_start_config()
+        self._uses_live_gemini = call_json is None
         self._call_json = call_json or call_gemini_json
 
     def _read_prompt_file(self, filename: str) -> str:
@@ -191,7 +192,8 @@ class QuickStartLLMChain:
         locale: str | None = None,
     ) -> dict[str, Any]:
         """Call Gemini (plan then blueprint) and return a validated blueprint dict."""
-        self.config.require_llm_configured()
+        if self._uses_live_gemini:
+            self.config.require_llm_configured()
         cleaned_prompt = validate_prompt_text(prompt)
         modules = normalize_selected_modules(selected_modules)
 
