@@ -47,6 +47,7 @@ urlpatterns = [
     path('api/core/', include('core.urls')),
     path('api/alerting/', include('alerting.urls')),
     path('api/report/', include('report.urls')),
+    path('api/', include('comments.urls')),
     # Must be before any path("api/", include(...)) so /api/google-*/ is not routed to task.urls.
     path("api/google-docs/", include("google_docs_integration.urls")),
     path("api/google-calendar/", include("google_calendar_integration.urls")),
@@ -80,6 +81,7 @@ urlpatterns = [
     path('api/slack/', include('slack_integration.urls')),
     path('api/agent/', include('agent.urls')),
     path('api/', include('meetings.urls')),
+    path('api/', include('notifications.urls')),
     path("", include("django_prometheus.urls")),
     path("api/v1/zoom/", include("zoom_integration.urls")),
     path('api/', include('experience_group.urls')),

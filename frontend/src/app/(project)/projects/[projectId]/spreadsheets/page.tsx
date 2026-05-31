@@ -281,7 +281,7 @@ export default function SpreadsheetsListPage() {
             <div className="flex flex-col gap-2 mb-6">
               <div className="flex items-center gap-3">
                 <Link
-                  href="/projects"
+                  href="/select-project"
                   className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900"
                 >
                   <ArrowLeft className="h-4 w-4" />

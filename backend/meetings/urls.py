@@ -8,6 +8,7 @@ from meetings.views import (
     ArtifactLinkViewSet,
     MeetingActionItemViewSet,
     MeetingDocumentAPIView,
+    MeetingAuditLogViewSet,
 )
 
 
@@ -36,6 +37,11 @@ router.register(
     r"projects/(?P<project_id>\d+)/meetings/(?P<meeting_id>\d+)/action-items",
     MeetingActionItemViewSet,
     basename="project-meeting-action-items",
+)
+router.register(
+    r"projects/(?P<project_id>\d+)/meetings/(?P<meeting_id>\d+)/audit-log",
+    MeetingAuditLogViewSet,
+    basename="project-meeting-audit-log",
 )
 
 

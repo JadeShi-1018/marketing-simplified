@@ -123,7 +123,7 @@ export default function ProjectMiroPage() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => router.push("/projects")}
+              onClick={() => router.push("/select-project")}
               className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
               title="Back to Projects"
             >

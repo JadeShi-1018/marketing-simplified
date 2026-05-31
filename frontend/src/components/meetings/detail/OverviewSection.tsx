@@ -88,6 +88,7 @@ export default function OverviewSection({
               if (label !== meetingType) commit({ meeting_type: label });
             }}
             suggestions={typeSuggestions}
+            disabled={readOnly}
           />
         </div>
 

@@ -7,10 +7,13 @@ import MessageStatus from './MessageStatus';
 import AttachmentDisplay from './AttachmentDisplay';
 import LinkPreview from './LinkPreview';
 import TaskSharePreview from './TaskSharePreview';
+import ReactionsDisplay from './ReactionsDisplay';
 import { extractUrls } from '@/lib/api/linkPreviewApi';
 
 const AGENT_BOT_EMAIL = 'agent-bot@system.local';
 const AGENT_BOT_USERNAME = 'agent-bot';
+const SELECT_MODE_CHECKBOX_SELECTED =
+  'bg-gradient-to-br from-[#3CCED7] to-[#A6E661] border-transparent shadow-sm';
 
 function isAgentBot(sender: { email?: string; username?: string }): boolean {
   return sender.email === AGENT_BOT_EMAIL || sender.username === AGENT_BOT_USERNAME;
@@ -25,6 +28,9 @@ export default function MessageItem({
   isSelected = false,
   onToggleSelect,
   isHighlighted = false,
+  isHovered = false,
+  renderActions,
+  onReactionClick,
 }: MessageItemProps) {
   const formatTime = (dateString: string) => {
     try {
@@ -61,13 +67,22 @@ export default function MessageItem({
   const showTaskPreview = Boolean(taskPreviewId);
   const showLinkPreview = hasUrls && !showTaskPreview;
 
+  // Quote reply
+  const hasReplyTo = Boolean(message.reply_to?.id);
+  const replyToContent = message.reply_to
+    ? `${message.reply_to.sender.username}：${message.reply_to.content || '[Attachment]'}`
+    : '';
+
+  // Reactions
+  const hasReactions = Boolean(message.reactions && message.reactions.length > 0);
+
   const handleToggleSelect = () => {
     if (!isSelectMode || !onToggleSelect) return;
     onToggleSelect(message.id);
   };
 
   const selectionClass = isSelectMode
-    ? `cursor-pointer border ${isSelected ? 'border-[#3CCED7] ring-2 ring-blue-100' : 'border-transparent'} rounded-lg p-1`
+    ? 'cursor-pointer'
     : '';
   const forwardedContainerClass = isForwarded ? 'relative pt-4' : '';
   const ownMessageContentClass = `${forwardedContainerClass} flex flex-col items-end`;
@@ -86,12 +101,18 @@ export default function MessageItem({
         ].join(' ')}
       >
         {isSelectMode && (
-          <input
-            type="checkbox"
-            checked={isSelected}
-            onChange={handleToggleSelect}
-            className="absolute left-0 top-2 w-4 h-4 text-[#3CCED7] border-gray-300 rounded"
-          />
+          <div
+            onClick={handleToggleSelect}
+            className={`absolute left-0 top-2 w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all ${
+              isSelected ? SELECT_MODE_CHECKBOX_SELECTED : 'border-gray-300 bg-white'
+            }`}
+          >
+            {isSelected && (
+              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+          </div>
         )}
         <div className="flex justify-end">
           <div className="w-full max-w-[88%] min-w-0 sm:max-w-[75%]">
@@ -128,14 +149,39 @@ export default function MessageItem({
                 
                 {/* Attachments */}
                 {hasAttachments && (
-                  <AttachmentDisplay 
-                    attachments={message.attachments!} 
+                  <AttachmentDisplay
+                    attachments={message.attachments!}
                     isOwnMessage={true}
                   />
                 )}
-                
+
+                {/* Quote Reply Block */}
+                {hasReplyTo && (
+                  <div className="flex justify-end">
+                    <div className="mt-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded">
+                      <span className="text-xs text-gray-500 truncate block max-w-[240px] sm:max-w-[280px]">
+                        {replyToContent}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Reactions */}
+                {hasReactions && (
+                  <ReactionsDisplay
+                    reactions={message.reactions!}
+                    onReactionClick={onReactionClick}
+                    align="right"
+                  />
+                )}
+
                 {/* Timestamp and status */}
                 <div className="flex items-center justify-end gap-1 mt-1 px-1">
+                  {renderActions && !isSelectMode && (
+                    <span className={isHovered ? 'opacity-100' : 'opacity-0'}>
+                      {renderActions()}
+                    </span>
+                  )}
                   <span className="text-xs text-gray-500">{formatTime(message.created_at)}</span>
                   <MessageStatus message={message} />
                 </div>
@@ -157,12 +203,18 @@ export default function MessageItem({
       ].join(' ')}
     >
       {isSelectMode && (
-        <input
-          type="checkbox"
-          checked={isSelected}
-          onChange={handleToggleSelect}
-          className="absolute left-0 top-2 w-4 h-4 text-[#3CCED7] border-gray-300 rounded"
-        />
+        <div
+          onClick={handleToggleSelect}
+          className={`absolute left-0 top-2 w-5 h-5 rounded-full border-2 flex items-center justify-center cursor-pointer transition-all ${
+            isSelected ? SELECT_MODE_CHECKBOX_SELECTED : 'border-gray-300 bg-white'
+          }`}
+        >
+          {isSelected && (
+            <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </div>
       )}
       <div className="flex justify-start">
         <div className="w-full max-w-[88%] min-w-0 sm:max-w-[75%]">
@@ -229,9 +281,34 @@ export default function MessageItem({
                 />
               )}
 
+              {/* Quote Reply Block */}
+              {hasReplyTo && (
+                <div className="flex">
+                  <div className="mt-1 px-2 py-1 bg-gray-100 border border-gray-200 rounded">
+                    <span className="text-xs text-gray-500 truncate block max-w-[240px] sm:max-w-[280px]">
+                      {replyToContent}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Reactions */}
+              {hasReactions && (
+                <ReactionsDisplay
+                  reactions={message.reactions!}
+                  onReactionClick={onReactionClick}
+                  align="left"
+                />
+              )}
+
               {/* Timestamp */}
               <div className="flex items-center gap-1 mt-1 px-1">
                 <span className="text-xs text-gray-500">{formatTime(message.created_at)}</span>
+                {renderActions && !isSelectMode && (
+                  <span className={isHovered ? 'opacity-100' : 'opacity-0'}>
+                    {renderActions()}
+                  </span>
+                )}
               </div>
             </div>
           </div>

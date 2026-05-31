@@ -74,7 +74,12 @@ const initialState: WizardState = {
   inviteInput: '',
 };
 
-const OnboardingWizard: React.FC = () => {
+type OnboardingWizardProps = {
+  /** Return to Quick Start vs Classic chooser (onboarding overlay only). */
+  onExit?: () => void;
+};
+
+const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
   const { markCompleted, fetchError, refreshProjects } = useOnboarding();
   const router = useRouter();
   const [state, setState] = useState<WizardState>(initialState);
@@ -322,7 +327,7 @@ const OnboardingWizard: React.FC = () => {
       </div>
       <div className="bg-white shadow-2xl rounded-2xl border border-gray-100 overflow-hidden">
         <div className="px-8 pt-8 pb-4 border-b border-gray-100 bg-gradient-to-r from-[#3CCED7]/5 via-white to-[#A6E661]/5">
-          <div className="flex items-center justify-between">
+          <div className="flex items-start justify-between gap-4">
             <div>
               <div className="text-sm text-gray-500">Step {currentStep + 1} of {steps.length}</div>
               <h2 className="text-2xl font-semibold text-gray-900 flex items-center gap-2">
@@ -332,12 +337,24 @@ const OnboardingWizard: React.FC = () => {
               </h2>
               <p className="text-gray-600 mt-1">{steps[currentStep].description}</p>
             </div>
-            <div className="text-right">
-              <div className="flex items-center gap-2 text-sm text-gray-600 justify-end">
-                <Users className="w-4 h-4 text-[#3CCED7]" />
-                Workspace locked until setup
+            {onExit ? (
+              <button
+                type="button"
+                onClick={onExit}
+                className="inline-flex shrink-0 items-center gap-1 text-sm text-gray-500 hover:text-gray-800"
+                aria-label="Exit classic setup"
+              >
+                <X className="w-4 h-4" />
+                Exit
+              </button>
+            ) : (
+              <div className="text-right">
+                <div className="flex items-center gap-2 text-sm text-gray-600 justify-end">
+                  <Users className="w-4 h-4 text-[#3CCED7]" />
+                  Workspace locked until setup
+                </div>
               </div>
-            </div>
+            )}
           </div>
           <div className="mt-4 h-2 bg-gray-100 rounded-full overflow-hidden">
             <div

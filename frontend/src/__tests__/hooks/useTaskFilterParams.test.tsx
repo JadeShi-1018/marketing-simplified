@@ -4,7 +4,7 @@ import { useTaskFilterParams } from "@/hooks/useTaskFilterParams";
 
 jest.mock("next/navigation", () => {
   let params = new URLSearchParams(
-    "project_id=123&priority=HIGH&priority=LOW&status=DRAFT&status=SUBMITTED&include_subtasks=true",
+    "project_id=123&priority=HIGH&priority=LOW&status=DRAFT&status=SUBMITTED&include_subtasks=true&tag_names=Launch&tag_names=Urgent",
   );
   return {
     usePathname: () => "/tasks",
@@ -32,6 +32,7 @@ const Harness = () => {
       <div data-testid="include-subtasks">
         {filters.include_subtasks ? "true" : "false"}
       </div>
+      <div data-testid="tag-names">{filters.tag_names?.join(",") ?? ""}</div>
       <button
         type="button"
         onClick={() => setFilters({ ...filters, priority: "LOW" })}
@@ -52,10 +53,10 @@ describe("useTaskFilterParams", () => {
     // multi-select should parse to an array; stringifying shows comma separation in textContent
     expect(screen.getByTestId("priority").textContent).toContain("HIGH");
     expect(screen.getByTestId("include-subtasks").textContent).toBe("true");
+    expect(screen.getByTestId("tag-names").textContent).toBe("Launch,Urgent");
   });
 
   // The hook writes back to the mocked router's replace(), which updates the
   // internal URLSearchParams instance. Verifying the exact re-render behaviour
   // is brittle in Jest + Next mocks, so we only assert initial parsing here.
 });
-

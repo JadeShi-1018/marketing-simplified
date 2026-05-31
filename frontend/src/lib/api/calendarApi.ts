@@ -62,8 +62,12 @@ export interface CreateCalendarPayload {
   description?: string;
 }
 
+const withProjectScope = (projectId?: number | null) =>
+  projectId != null ? { params: { project_id: projectId } } : {};
+
 export const CalendarAPI = {
-  listCalendars: () => api.get<CalendarDTO[]>("/api/calendars/"),
+  listCalendars: (projectId?: number | null) =>
+    api.get<CalendarDTO[]>("/api/calendars/", withProjectScope(projectId)),
 
   createCalendar: (payload: CreateCalendarPayload) =>
     api.post<CalendarDTO>("/api/calendars/", payload),
@@ -80,19 +84,29 @@ export const CalendarAPI = {
       data,
     ),
 
-  getDayView: (params: { date: string; calendar_ids?: string[] }) =>
+  getDayView: (params: {
+    date: string;
+    calendar_ids?: string[];
+    project_id?: number | null;
+  }) =>
     api.get<CalendarViewResponse>("/api/views/day/", {
       params: {
         date: params.date,
         calendar_ids: params.calendar_ids?.join(","),
+        ...(params.project_id != null ? { project_id: params.project_id } : {}),
       },
     }),
 
-  getWeekView: (params: { start_date: string; calendar_ids?: string[] }) =>
+  getWeekView: (params: {
+    start_date: string;
+    calendar_ids?: string[];
+    project_id?: number | null;
+  }) =>
     api.get<CalendarViewResponse>("/api/views/week/", {
       params: {
         start_date: params.start_date,
         calendar_ids: params.calendar_ids?.join(","),
+        ...(params.project_id != null ? { project_id: params.project_id } : {}),
       },
     }),
 
@@ -100,12 +114,14 @@ export const CalendarAPI = {
     year: number;
     month: number;
     calendar_ids?: string[];
+    project_id?: number | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/month/", {
       params: {
         year: params.year,
         month: params.month,
         calendar_ids: params.calendar_ids?.join(","),
+        ...(params.project_id != null ? { project_id: params.project_id } : {}),
       },
     }),
 
@@ -113,12 +129,14 @@ export const CalendarAPI = {
     start_date: string;
     end_date?: string;
     calendar_ids?: string[];
+    project_id?: number | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/agenda/", {
       params: {
         start_date: params.start_date,
         end_date: params.end_date,
         calendar_ids: params.calendar_ids?.join(","),
+        ...(params.project_id != null ? { project_id: params.project_id } : {}),
       },
     }),
 
@@ -134,11 +152,16 @@ export const CalendarAPI = {
     api.delete<void>(`/api/events/${eventId}/`),
 
   // Fetch system-derived calendar events (from Decisions and Tasks, read-only)
-  getDerivedEvents: (params: { start: string; end: string }) =>
+  getDerivedEvents: (params: {
+    start: string;
+    end: string;
+    project_id?: number | null;
+  }) =>
     api.get<{ count: number; results: DerivedCalendarEventDTO[] }>("/api/derived-events/", {
       params: {
         start: params.start,
         end: params.end,
+        ...(params.project_id != null ? { project_id: params.project_id } : {}),
       },
     }),
 };

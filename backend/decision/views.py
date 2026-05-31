@@ -5,10 +5,13 @@ from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.utils import timezone
 
 from core.models import Project, ProjectMember
-from meetings.models import MeetingDecisionOrigin
+from meetings.models import Meeting, MeetingDecisionOrigin
+from meetings.services import record_decision_created, record_decision_updated, record_decision_deleted
+from notifications.models import NotificationCategory, NotificationEventType
+from notifications.services import create_notification
+from notifications.action_urls import decision_action_url
 from .models import CommitRecord, Decision, DecisionEdge, Review, Signal
 from calendars.models import CalendarEvent
 from .permissions import DecisionPermission
@@ -108,24 +111,61 @@ class DecisionDraftViewSet(
 
         parent_ids = serializer.validated_data.pop("parentDecisionIds", None)
         origin_meeting_id = serializer.validated_data.pop("origin_meeting_id", None)
+
         with transaction.atomic():
             project = Project.objects.select_for_update().get(pk=project_id)
+
+            origin_meeting = None
+            if origin_meeting_id is not None:
+                origin_meeting = (
+                    Meeting.objects
+                    .select_for_update()
+                    .filter(pk=origin_meeting_id, project=project)
+                    .first()
+                )
+                if origin_meeting is None:
+                    raise ValidationError({
+                        "origin_meeting_id": "Origin meeting must exist in the selected project."
+                    })
+
             max_seq = (
                 Decision.objects.filter(project=project)
                 .aggregate(max_seq=Max("project_seq"))
                 .get("max_seq")
             )
             next_seq = (max_seq or 0) + 1
+
             decision = serializer.save(
                 author=self.request.user,
                 last_edited_by=self.request.user,
                 project=project,
                 project_seq=next_seq,
             )
-            if origin_meeting_id is not None:
+
+            if origin_meeting is not None:
                 MeetingDecisionOrigin.objects.create(
-                    meeting_id=origin_meeting_id,
+                    meeting=origin_meeting,
                     decision=decision,
+                    origin_timestamp=timezone.now(),
+                    creation_context={
+                        "source": "decision_create_origin_meeting_id",
+                        "meeting_id": origin_meeting.id,
+                        "meeting_title": origin_meeting.title,
+                        "meeting_summary": origin_meeting.summary,
+                        "meeting_objective": origin_meeting.objective,
+                        "artifact_links": list(
+                            origin_meeting.artifact_links.values(
+                                "artifact_type",
+                                "artifact_id",
+                            )
+                        ),
+                    },
+                    created_by=self.request.user,
+                )
+                record_decision_created(
+                    meeting=origin_meeting,
+                    decision_id=decision.id,
+                    actor=self.request.user,
                 )
             self._apply_parent_edges(decision, parent_ids)
 
@@ -163,6 +203,14 @@ class DecisionDraftViewSet(
             instance.promote_to_draft()
             instance.is_pre_draft = False
             instance.save()
+        from meetings.models import Meeting
+        origin = MeetingDecisionOrigin.objects.filter(decision=instance).select_related('meeting').first()
+        if origin:
+            record_decision_updated(
+                meeting=origin.meeting,
+                decision_id=instance.id,
+                actor=self.request.user,
+            )
 
     def retrieve(self, request, *args, **kwargs):
         decision = self.get_object()
@@ -211,6 +259,15 @@ class DecisionViewSet(
     permission_classes = [DecisionPermission]
     http_method_names = ["get", "post", "put", "patch", "delete", "head", "options"]
 
+    def _resolve_project_id(self) -> int | None:
+        raw = self.request.headers.get("x-project-id") or self.request.query_params.get(
+            "project_id"
+        )
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
     def get_queryset(self):
         base = (
             Decision.objects.filter(is_deleted=False)
@@ -237,20 +294,19 @@ class DecisionViewSet(
             ) | Q(status=Decision.Status.DRAFT, author=self.request.user)
             base = base.filter(visibility)
 
+            project_id = self._resolve_project_id()
+            if project_id is not None:
+                base = base.filter(project_id=project_id)
+
             status_q = self.request.query_params.get("status")
             if status_q in Decision.Status.values:
                 base = base.filter(status=status_q)
 
             return base
 
-        raw = self.request.headers.get("x-project-id") or self.request.query_params.get(
-            "project_id"
-        )
-        try:
-            pid = int(raw)
-            base = base.filter(project_id=pid)
-        except (TypeError, ValueError):
-            pass
+        project_id = self._resolve_project_id()
+        if project_id is not None:
+            base = base.filter(project_id=project_id)
 
         status_q = self.request.query_params.get("status")
         if status_q in Decision.Status.values:
@@ -344,6 +400,30 @@ class DecisionViewSet(
                 if child not in visited:
                     stack.append(child)
         return False
+
+    @action(detail=True, methods=["get"], url_path="origin")
+    def origin(self, request, pk=None):
+        decision = self.get_object()
+
+        try:
+            origin = decision.meeting_origin
+        except MeetingDecisionOrigin.DoesNotExist:
+            return Response(
+                {"detail": "This decision does not have a meeting origin."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        meeting = origin.meeting
+        return Response({
+            "decisionId": decision.id,
+            "meeting": {
+                "id": meeting.id,
+                "title": meeting.title,
+            },
+            "originTimestamp": origin.origin_timestamp,
+            "createdBy": origin.created_by_id,
+            "creationContext": origin.creation_context,
+        })
 
     @action(detail=True, methods=['get', 'put'], url_path='connections')
     def connections(self, request, pk=None):
@@ -637,6 +717,26 @@ class DecisionViewSet(
                 note=serializer.validated_data.get("note"),
                 metadata=metadata,
             )
+
+        # Notify project owner when approval is required (skip self-approval)
+        if decision.status == Decision.Status.AWAITING_APPROVAL:
+            project = decision.project
+            owner_id = project.owner_id if project else None
+            if owner_id and owner_id != decision.author_id:
+                decision_label = decision.title or f"#{decision.project_seq}"
+                create_notification(
+                    recipient_id=owner_id,
+                    actor_id=decision.author_id,
+                    category=NotificationCategory.DECISIONS,
+                    event_type=NotificationEventType.DECISION_REVIEW_NEEDED,
+                    title=f"Decision needs your approval: {decision_label}",
+                    body="A decision has been submitted and is waiting for your approval.",
+                    related_object_type="decision",
+                    related_object_id=str(decision.id),
+                    action_url=decision_action_url(decision.id, decision.project_id),
+                    metadata={"project_id": decision.project_id},
+                )
+
         response_serializer = DecisionCommittedSerializer(
             decision,
             context=self.get_serializer_context(),
@@ -753,6 +853,23 @@ class DecisionViewSet(
                 note=serializer.validated_data.get("note"),
                 metadata=serializer.validated_data.get("metadata"),
             )
+
+        # Notify the decision author that their decision was approved (skip self-approval)
+        if decision.author_id and decision.author_id != request.user.id:
+            decision_label = decision.title or f"#{decision.project_seq}"
+            create_notification(
+                recipient_id=decision.author_id,
+                actor_id=request.user.id,
+                category=NotificationCategory.DECISIONS,
+                event_type=NotificationEventType.DECISION_PUBLISHED,
+                title=f"Decision approved: {decision_label}",
+                body="Your decision has been approved and committed.",
+                related_object_type="decision",
+                related_object_id=str(decision.id),
+                action_url=decision_action_url(decision.id, decision.project_id),
+                metadata={"project_id": decision.project_id},
+            )
+
         response_serializer = DecisionCommittedSerializer(
             decision,
             context=self.get_serializer_context(),
@@ -809,11 +926,18 @@ class DecisionViewSet(
         if decision.is_deleted:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     
+        origin = MeetingDecisionOrigin.objects.filter(decision=decision).select_related('meeting').first()
+
         with transaction.atomic():
-        # Delete all CalendarEvents derived from this Decision before soft-deleting
             CalendarEvent.objects.filter(decision=decision).delete()
-        
             decision.is_deleted = True
             decision.save(update_fields=["is_deleted", "updated_at"])
-    
+
+        if origin:
+            record_decision_deleted(
+                meeting=origin.meeting,
+                decision_id=decision.id,
+                actor=request.user,
+            )
+
         return Response(status=status.HTTP_204_NO_CONTENT)

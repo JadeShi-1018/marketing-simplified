@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.core.cache import cache
 from datetime import datetime
-from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, MessageAttachment
+from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, MessageAttachment, MessageReaction
 from .serializers import (
     ChatSerializer,
     ChatListSerializer,
@@ -31,6 +31,7 @@ from .serializers import (
     MessageAttachmentSerializer,
     AttachmentUploadSerializer,
     AttachmentFileListRowSerializer,
+    AddReactionSerializer,
 )
 from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
 from .tasks import notify_new_message
@@ -210,7 +211,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         chat = serializer.save()
-        
+
         # Notify all participants about the new chat via WebSocket
         self._notify_chat_created(chat, request)
         
@@ -415,15 +416,15 @@ class MessageViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get messages for a specific chat"""
         # For retrieve/detail actions, return all messages (permission checked in retrieve method)
-        if self.action in ['retrieve', 'mark_as_read']:
+        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction', 'remind', 'cancel_remind', 'revoke', 'destroy', 'hide']:
             return Message.objects.all()
-        
+
         # For list action, require chat_id
         chat_id = self.request.query_params.get('chat_id')
-        
+
         if not chat_id:
             return Message.objects.none()
-        
+
         # Verify user is a participant
         if not ChatParticipant.objects.filter(
             chat_id=chat_id,
@@ -431,10 +432,13 @@ class MessageViewSet(viewsets.ModelViewSet):
             is_active=True
         ).exists():
             return Message.objects.none()
-        
+
+        # Filter out messages hidden by current user
         return Message.objects.filter(
             chat_id=chat_id,
             is_deleted=False
+        ).exclude(
+            hidden_by_users=self.request.user
         ).select_related('sender').order_by('-created_at')
     
     def get_serializer_class(self):
@@ -569,10 +573,32 @@ class MessageViewSet(viewsets.ModelViewSet):
                 )
                 for recipient in recipients
             ])
-            
-            # Trigger async notification task
+
+            # Create in-app notifications for all recipients (sync)
+            try:
+                from notifications.services import create_or_update_chat_notification
+
+                for recipient in recipients:
+                    create_or_update_chat_notification(
+                        recipient_id=recipient.user_id,
+                        actor_id=request.user.id,
+                        chat_id=message.chat.id,
+                        message_id=message.id,
+                        project_id=message.chat.project_id,
+                        message_preview=message.content or "",
+                        actor_name=request.user.username or request.user.email or "",
+                    )
+            except Exception as e:
+                logger.exception(f"Failed to create in-app notifications for message {message.id}: {e}")
+
+            # Trigger async notification task (for WebSocket delivery)
             notify_new_message.delay(message.id)
-            
+
+            # Refresh message with all relationships for response
+            message = Message.objects.select_related(
+                'sender', 'reply_to', 'reply_to__sender'
+            ).prefetch_related('attachments').get(id=message.id)
+
             # Return message with attachments
             response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
             logger.info(f"Message {message.id} created successfully with {message.attachments.count()} attachments")
@@ -667,6 +693,399 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def react(self, request, pk=None):
+        """
+        Add or toggle a reaction on a message.
+
+        If the user already has this reaction, it will be removed (toggle behavior).
+
+        Body:
+        - emoji: The emoji character to react with
+        """
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = AddReactionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        emoji = serializer.validated_data['emoji']
+
+        # Check if reaction already exists
+        existing = MessageReaction.objects.filter(
+            message=message,
+            user=request.user,
+            emoji=emoji
+        ).first()
+
+        if existing:
+            # Toggle off - remove reaction
+            existing.delete()
+            action_taken = 'removed'
+        else:
+            # Add new reaction
+            MessageReaction.objects.create(
+                message=message,
+                user=request.user,
+                emoji=emoji
+            )
+            action_taken = 'added'
+
+        # Notify via WebSocket
+        from .tasks import notify_reaction_update
+        notify_reaction_update.delay(message.id, request.user.id, emoji, action_taken)
+
+        # Return updated reactions
+        message.refresh_from_db()
+        response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+        return Response({
+            'status': action_taken,
+            'message': response_serializer.data
+        })
+
+    @action(detail=True, methods=['delete'], url_path='react/(?P<emoji>[^/.]+)')
+    def remove_reaction(self, request, pk=None, emoji=None):
+        """
+        Remove a specific reaction from a message.
+
+        URL params:
+        - emoji: The emoji character to remove (URL encoded)
+        """
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if not emoji:
+            return Response(
+                {'error': 'Emoji is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Find and delete the reaction
+        deleted_count, _ = MessageReaction.objects.filter(
+            message=message,
+            user=request.user,
+            emoji=emoji
+        ).delete()
+
+        if deleted_count == 0:
+            return Response(
+                {'error': 'Reaction not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Notify via WebSocket
+        from .tasks import notify_reaction_update
+        notify_reaction_update.delay(message.id, request.user.id, emoji, 'removed')
+
+        # Return updated reactions
+        message.refresh_from_db()
+        response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+        return Response({
+            'status': 'removed',
+            'message': response_serializer.data
+        })
+
+    @action(detail=True, methods=['post'])
+    def remind(self, request, pk=None):
+        """
+        Set or update a reminder for a message.
+
+        Body:
+        - remind_at: When to send the reminder (ISO 8601 datetime)
+        - note: Optional note for the reminder (max 255 chars)
+        """
+        from .models import MessageReminder
+        from .serializers import SetReminderSerializer
+
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = SetReminderSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        remind_at = serializer.validated_data['remind_at']
+        note = serializer.validated_data.get('note', '')
+
+        # Create or update reminder
+        reminder, created = MessageReminder.objects.update_or_create(
+            message=message,
+            user=request.user,
+            defaults={
+                'remind_at': remind_at,
+                'note': note,
+                'is_sent': False,
+                'sent_at': None,
+            }
+        )
+
+        logger.info(
+            f"User {request.user.id} {'created' if created else 'updated'} reminder for message {message.id} at {remind_at}"
+        )
+
+        return Response({
+            'status': 'created' if created else 'updated',
+            'reminder': {
+                'id': reminder.id,
+                'remind_at': reminder.remind_at.isoformat(),
+                'note': reminder.note,
+            }
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=['delete'])
+    def cancel_remind(self, request, pk=None):
+        """
+        Cancel a reminder for a message.
+
+        DELETE /api/chat/messages/{id}/cancel_remind/
+        """
+        from .models import MessageReminder
+
+        message = self.get_object()
+
+        # Verify user is a participant of the chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant of this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Delete the reminder
+        deleted_count, _ = MessageReminder.objects.filter(
+            message=message,
+            user=request.user
+        ).delete()
+
+        if deleted_count == 0:
+            return Response(
+                {'error': 'No reminder found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        logger.info(f"User {request.user.id} cancelled reminder for message {message.id}")
+
+        return Response({'status': 'cancelled'}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'])
+    def revoke(self, request, pk=None):
+        """
+        Revoke a message (within 2 minutes of sending).
+
+        Rules:
+        - Only sender can revoke
+        - Must be within 2 minutes of sending
+        - Cannot revoke already revoked message
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+
+        message = self.get_object()
+
+        # Verify user is sender
+        if message.sender != request.user:
+            return Response(
+                {'error': 'Only the sender can revoke this message'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check if already revoked
+        if message.is_revoked:
+            return Response(
+                {'error': 'Message is already revoked'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if within 2 minutes
+        time_limit = timezone.now() - timedelta(minutes=2)
+        if message.created_at <= time_limit:
+            return Response(
+                {'error': 'Message can only be revoked within 2 minutes of sending'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Revoke the message
+        message.is_revoked = True
+        message.revoked_at = timezone.now()
+        message.save(update_fields=['is_revoked', 'revoked_at', 'updated_at'])
+
+        logger.info(f"User {request.user.id} revoked message {message.id}")
+
+        # Update related notifications
+        try:
+            from notifications.models import Notification, NotificationCategory
+
+            # Find all unread chat notifications for this chat
+            notifications = Notification.objects.filter(
+                category=NotificationCategory.COLLABORATION,
+                event_type='chat_new_message',
+                related_object_id=str(message.chat_id),
+                is_read=False
+            )
+
+            logger.info(f"Found {notifications.count()} unread notifications for chat {message.chat_id}")
+
+            for notification in notifications:
+                # Recalculate unread message count for this recipient
+                from .models import ChatParticipant
+                try:
+                    participant = ChatParticipant.objects.get(
+                        chat_id=message.chat_id,
+                        user_id=notification.recipient_id,
+                        is_active=True
+                    )
+                    unread_count = participant.get_unread_count()
+                except ChatParticipant.DoesNotExist:
+                    unread_count = 0
+
+                # Find the latest UNREAD non-revoked message (not all messages)
+                query = Message.objects.filter(
+                    chat_id=message.chat_id,
+                    is_deleted=False,
+                    is_revoked=False
+                ).exclude(sender=notification.recipient)
+
+                # Only consider unread messages
+                try:
+                    if participant.last_read_at:
+                        query = query.filter(created_at__gt=participant.last_read_at)
+                    latest_unread_message = query.order_by('-created_at').first()
+                except:
+                    latest_unread_message = None
+
+                sender_name = request.user.username or request.user.email or 'User'
+
+                # Update notification content based on whether we have unread messages
+                if latest_unread_message:
+                    # Show the latest unread message
+                    notification.body = latest_unread_message.content or '[Attachment]'
+                    notification.metadata['message_id'] = latest_unread_message.id
+                    notification.metadata['message_preview'] = latest_unread_message.content or '[Attachment]'
+                    if 'is_recalled' in notification.metadata:
+                        del notification.metadata['is_recalled']
+                else:
+                    # No unread messages left, show recalled message
+                    notification.body = f"{sender_name} recalled a message"
+                    notification.metadata['message_preview'] = 'recalled a message'
+                    notification.metadata['message_id'] = message.id
+                    notification.metadata['is_recalled'] = True
+
+                # Update message count
+                notification.metadata['message_count'] = unread_count
+
+                # Mark as read if no unread messages
+                if unread_count == 0:
+                    notification.is_read = True
+
+                # Always save the notification
+                logger.info(f"Updated notification {notification.id} - unread_count={unread_count}, is_read={notification.is_read}, body={notification.body[:50] if len(notification.body) > 50 else notification.body}")
+                notification.save()
+
+                # Send SSE update to notify frontend
+                try:
+                    from notifications.services import send_notification_update
+                    send_notification_update(notification.recipient_id, notification)
+                except Exception as e:
+                    logger.warning(f"Failed to send SSE notification update: {e}")
+        except Exception as e:
+            logger.error(f"Failed to update notifications after revoke: {e}")
+
+        # Return updated message
+        response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+        return Response({
+            'status': 'revoked',
+            'message': response_serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a message (hard delete from database).
+
+        Rules:
+        - Only sender can delete their own messages
+        """
+        message = self.get_object()
+
+        # Verify user is sender
+        if message.sender != request.user:
+            return Response(
+                {'error': 'Only the sender can delete this message'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        message_id = message.id
+        chat_id = message.chat_id
+
+        # Hard delete the message
+        message.delete()
+
+        logger.info(f"User {request.user.id} deleted message {message_id}")
+
+        return Response({'status': 'deleted'}, status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'])
+    def hide(self, request, pk=None):
+        """
+        Hide a message for the current user only (does not affect other users).
+
+        Rules:
+        - Any user can hide any message in chats they participate in
+        - Message remains visible to other participants
+        - Hidden messages are filtered from list queries
+        """
+        message = self.get_object()
+
+        # Verify user is a participant in this chat
+        if not ChatParticipant.objects.filter(
+            chat=message.chat,
+            user=request.user,
+            is_active=True
+        ).exists():
+            return Response(
+                {'error': 'You are not a participant in this chat'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Add user to hidden_by_users
+        message.hidden_by_users.add(request.user)
+
+        logger.info(f"User {request.user.id} hid message {message.id}")
+
+        # Return the updated message
+        serializer = self.get_serializer(message)
+        return Response({'status': 'hidden', 'message': serializer.data}, status=status.HTTP_200_OK)
 
 
 class AttachmentViewSet(viewsets.GenericViewSet):

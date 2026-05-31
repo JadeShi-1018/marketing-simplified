@@ -4,6 +4,7 @@ import ChatFAB from '@/components/global-chat/ChatFAB';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import OverviewContent from '@/components/overview/OverviewContent';
 import { useOverviewData } from '@/hooks/useOverviewData';
+import { useOverviewSectionHashScroll } from '@/hooks/useOverviewSectionHashScroll';
 import { useProjectStore } from '@/lib/projectStore';
 
 function OverviewSkeleton() {
@@ -41,6 +42,7 @@ export default function OverviewPage() {
   const activeProject = useProjectStore((s) => s.activeProject);
   const projectId = activeProject?.id ?? null;
   const { data, alerts, loading, errors } = useOverviewData(projectId);
+  useOverviewSectionHashScroll(!loading && projectId != null);
 
   return (
     <DashboardLayout

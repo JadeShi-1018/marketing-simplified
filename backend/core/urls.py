@@ -17,6 +17,7 @@ from core.views import (
     ResendInvitationView,
 )
 from core.admin_views import AdminOrganizationViewSet
+from core.quick_start_views import QuickStartConfirmView, QuickStartPreviewView
 
 router = DefaultRouter()
 router.register(r'projects', ProjectViewSet, basename='project')
@@ -30,6 +31,16 @@ router.register(r'admin/organizations', AdminOrganizationViewSet, basename='admi
 urlpatterns = [
     path('check-project-membership/', CheckProjectMembershipView.as_view(), name='check-project-membership'),
     path('projects/onboarding/', ProjectOnboardingView.as_view(), name='project-onboarding'),
+    path(
+        'projects/quick-start/preview/',
+        QuickStartPreviewView.as_view(),
+        name='quick-start-preview',
+    ),
+    path(
+        'projects/quick-start/confirm/',
+        QuickStartConfirmView.as_view(),
+        name='quick-start-confirm',
+    ),
     path('kpi-suggestions/', KPISuggestionsView.as_view(), name='kpi-suggestions'),
     # Invitation endpoints
     path('invitations/accept/', AcceptInvitationView.as_view(), name='accept-invitation'),

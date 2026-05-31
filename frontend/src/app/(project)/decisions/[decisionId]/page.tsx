@@ -82,7 +82,12 @@ function DecisionDetailContent() {
   const signals = detail.signals;
   const projectSeq = detail.draft?.projectSeq ?? committed?.projectSeq ?? null;
   const createdByAgent = detail.draft?.createdByAgent ?? committed?.createdByAgent ?? false;
-  const originMeeting = (detail.draft?.origin_meeting ?? committed?.origin_meeting) ?? null;
+  const originMeeting =
+    ((detail.draft as any)?.originMeeting ??
+      (detail.draft as any)?.origin_meeting ??
+      (committed as any)?.originMeeting ??
+      (committed as any)?.origin_meeting) ??
+    null;
   const commitRecord = (committed as any)?.commitRecord ?? null;
   const stateTransitions = ((committed as any)?.stateTransitions ?? []) as any[];
   const plannedDecisionDate = (detail.draft as any)?.plannedDecisionDate ?? null;

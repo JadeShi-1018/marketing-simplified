@@ -277,8 +277,7 @@ def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None):
 
     # 3. No LLM available
     raise RuntimeError(
-        "No analysis provider available. Configure GEMINI_API_KEY "
-        "or ANTHROPIC_API_KEY to enable analysis."
+        "No analysis provider available."
     )
 
 

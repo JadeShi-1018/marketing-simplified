@@ -24,9 +24,16 @@ interface UseCalendarSidebarResult {
 }
 
 const sidebarCache: {
+  projectId?: number | null;
   calendars?: CalendarDTO[];
   subscriptions?: CalendarSubscriptionDTO[];
 } = {};
+
+export function clearCalendarSidebarCache(): void {
+  delete sidebarCache.calendars;
+  delete sidebarCache.subscriptions;
+  delete sidebarCache.projectId;
+}
 
 function normalizeListResponse<T>(payload: unknown): T[] {
   if (Array.isArray(payload)) {
@@ -42,7 +49,9 @@ function normalizeListResponse<T>(payload: unknown): T[] {
   return [];
 }
 
-export function useCalendarSidebarData(): UseCalendarSidebarResult {
+export function useCalendarSidebarData(
+  projectId?: number | null,
+): UseCalendarSidebarResult {
   const [calendars, setCalendars] = useState<CalendarDTO[]>([]);
   const [subscriptions, setSubscriptions] = useState<CalendarSubscriptionDTO[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -52,30 +61,36 @@ export function useCalendarSidebarData(): UseCalendarSidebarResult {
   const currentUserId = user?.id;
 
   useEffect(() => {
-    if (
+    const cacheHit =
+      sidebarCache.projectId === projectId &&
       Array.isArray(sidebarCache.calendars) &&
-      Array.isArray(sidebarCache.subscriptions)
-    ) {
-      setCalendars(sidebarCache.calendars);
-      setSubscriptions(sidebarCache.subscriptions);
+      Array.isArray(sidebarCache.subscriptions);
+
+    if (cacheHit) {
+      setCalendars(sidebarCache.calendars!);
+      setSubscriptions(sidebarCache.subscriptions!);
       return;
     }
 
     setIsLoading(true);
     setError(null);
 
-    Promise.all([CalendarAPI.listCalendars(), CalendarAPI.listSubscriptions()])
+    Promise.all([
+      CalendarAPI.listCalendars(projectId),
+      CalendarAPI.listSubscriptions(),
+    ])
       .then(([calRes, subRes]) => {
         const normalizedCalendars = normalizeListResponse<CalendarDTO>(calRes.data);
         const normalizedSubscriptions = normalizeListResponse<CalendarSubscriptionDTO>(
           subRes.data,
         );
+        sidebarCache.projectId = projectId;
         sidebarCache.calendars = normalizedCalendars;
         sidebarCache.subscriptions = normalizedSubscriptions;
         setCalendars(normalizedCalendars);
         setSubscriptions(normalizedSubscriptions);
       })
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         setError(
           err instanceof Error ? err : new Error("Failed to load calendar sidebar data"),
         );
@@ -83,7 +98,7 @@ export function useCalendarSidebarData(): UseCalendarSidebarResult {
       .finally(() => {
         setIsLoading(false);
       });
-  }, []);
+  }, [projectId]);
 
   const items = useMemo<SidebarCalendarItem[]>(() => {
     if (!calendars.length && !subscriptions.length) {

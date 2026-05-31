@@ -94,6 +94,44 @@ class TestTaskListFilters:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "priority" in response.data
 
+    def test_filter_by_tag_names(self, authenticated_client, project, user):
+        """tag_names matches tasks with any selected task tag name."""
+        user.active_project = project
+        user.save()
+
+        launch_task = Task.objects.create(
+            summary="Launch task",
+            type="asset",
+            project=project,
+            owner=user,
+            tags=[{"name": "Launch", "color": "#123ABC"}],
+        )
+        urgent_task = Task.objects.create(
+            summary="Urgent task",
+            type="asset",
+            project=project,
+            owner=user,
+            tags=[{"name": "Urgent", "color": "#EB5757"}],
+        )
+        Task.objects.create(
+            summary="Untagged task",
+            type="asset",
+            project=project,
+            owner=user,
+            tags=[],
+        )
+
+        url = reverse("task-list")
+        response = authenticated_client.get(
+            url,
+            [("tag_names", "Launch"), ("tag_names", "Urgent")],
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        tasks = _tasks_from_response(response)
+        task_ids = {t["id"] for t in tasks}
+        assert task_ids == {launch_task.id, urgent_task.id}
+
     def test_filter_by_current_approver_id(self, authenticated_client, project, user):
         """Filter by current_approver_id returns only tasks assigned to that user."""
         from django.contrib.auth import get_user_model

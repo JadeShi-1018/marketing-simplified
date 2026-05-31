@@ -7,7 +7,7 @@ import type { TaskListFilters } from "@/types/task";
  *
  * URL shape (examples):
  * - ?project_id=123&type=asset&status=UNDER_REVIEW
- * - ?priority=HIGH&current_approver_id=42&has_parent=true
+ * - ?priority=HIGH&current_approver_id=42&has_parent=true&tag_names=Launch
  */
 export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters) => void, () => void] => {
   const router = useRouter();
@@ -78,6 +78,10 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
       created_before: setString("created_before", getString("created_before")),
       include_subtasks: getBoolean("include_subtasks"),
       all_projects: getBoolean("all_projects"),
+      tag_names: (() => {
+        const vals = getStrings("tag_names");
+        return vals.length ? vals : undefined;
+      })(),
     };
   }, [searchParams]);
 
@@ -135,6 +139,7 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
       setString("created_before", next.created_before);
       setBoolean("include_subtasks", next.include_subtasks);
       setBoolean("all_projects", next.all_projects);
+      setRepeated("tag_names", next.tag_names);
 
       router.replace(`${pathname}?${params.toString()}`);
     },
@@ -156,6 +161,7 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
       "created_before",
       "include_subtasks",
       "all_projects",
+      "tag_names",
     ].forEach((key) => params.delete(key));
 
     router.replace(`${pathname}?${params.toString()}`);
@@ -163,4 +169,3 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
 
   return [filters, setFilters, clearFilters];
 };
-

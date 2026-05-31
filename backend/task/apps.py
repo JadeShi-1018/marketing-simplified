@@ -8,3 +8,4 @@ class TaskConfig(AppConfig):
     def ready(self):
         """Import signals when app is ready"""
         import task.signals
+        import task.tracking_schemas  # noqa: F401

@@ -20,7 +20,7 @@ import { userDisplayName } from '@/types/task';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
 import { TaskAPI } from '@/lib/api/taskApi';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
-import { PRIORITY_META, PRIORITY_OPTIONS } from './TYPE_META';
+import { TASK_PRIORITY_BY_VALUE, TASK_PRIORITY_OPTIONS } from '@/lib/tasks/taskPriorities';
 import { dueDateNextWeek, dueDateToday, dueDateTomorrow } from './taskDueDateQuickPick';
 import {
   getMvpWorkflowMenuItems,
@@ -450,8 +450,8 @@ export default function TaskListRowContextMenu({
             </button>
             {expanded === 'priority' && (
               <div className="border-t border-gray-100 bg-gray-50/80 py-1">
-                {PRIORITY_OPTIONS.map((p) => {
-                  const meta = PRIORITY_META[p];
+                {TASK_PRIORITY_OPTIONS.map((p) => {
+                  const meta = TASK_PRIORITY_BY_VALUE[p];
                   return (
                     <button
                       key={p}
