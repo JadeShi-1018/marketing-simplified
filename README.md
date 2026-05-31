@@ -40,6 +40,17 @@
 - **Observability**
   Monitor and troubleshoot the system with Prometheus metrics, Grafana dashboards, Loki logs, and Jaeger distributed tracing.
 
+* **Miro Collaboration**
+  Create, edit, and manage visual boards for brainstorming, planning, and workflow collaboration.
+* **Spreadsheet Workspace**
+  Manage structured data with spreadsheet-style editing, formulas, and analysis workflows.
+* **AI Agent Workflows**
+  Run AI-assisted task workflows for data processing, decision support, and execution guidance.
+* **Meetings & Action Items**
+  Capture meeting outcomes and track action items through follow-up workflows.
+* **Integrations Hub**
+  Connect with external platforms (Notion, Slack, Google, Zoom, Linear, Meta/TikTok, etc.) for cross-system collaboration.
+
 ---
 
 ## 🛠 Tech Stack
@@ -103,6 +114,14 @@
 │   ├── decision/               # Decision tracking app
 │   ├── automationWorkflow/     # Workflow automation app
 │   ├── agent/                  # Agent workflows app
+│   ├── spreadsheet/            # Spreadsheet functionality app
+│   ├── miro/                   # Miro integration app
+│   ├── slack_integration/      # Slack integration app
+│   ├── notion_editor/          # Notion editor integration app
+│   ├── linear_integration/     # Linear integration app
+│   ├── zoom_integration/       # Zoom integration app
+│   ├── google_calendar_integration/     # Google Calendar integration app
+│   ├── google_docs_integration/         # Google Docs integration app
 │   ├── ...                     # Other Django apps
 │   ├── manage.py               # Django management entrypoint
 │   └── requirements.txt        # Backend Python dependencies
@@ -132,6 +151,21 @@
 ├── CICD_README.md              # CI/CD pipeline documentation
 └── ...                         # Other project files
 ```
+
+---
+
+## 🧩 Core Modules
+
+- **campaign**: Manages campaign lifecycle, execution status, and cross-team coordination.
+- **task**: Handles task creation, assignment, status transitions, and workflow-linked execution.
+- **chat**: Provides real-time team communication and collaboration messaging flows.
+- **meetings**: Supports meeting lifecycle management, summaries, and action-item tracking.
+- **miro**: Enables visual board collaboration and Miro-related workflow artifacts.
+- **spreadsheet**: Provides spreadsheet-style data operations, structured analysis, and tabular workflows.
+- **agent**: Powers AI-assisted workflow orchestration, decision support, and execution guidance.
+- **automationWorkflow**: Defines and executes automation flows across business modules.
+- **decision**: Tracks decision records, approval states, and related governance flows.
+- **integrations** (`notion_editor`, `slack_integration`, `linear_integration`, `zoom_integration`, `google_calendar_integration`, `google_docs_integration`): Connects MediaJira with external systems for synchronized workflows.
 
 ---
 
@@ -172,6 +206,7 @@ POSTGRES_USER=mediajira_user
 POSTGRES_PASSWORD=<your-password>
 POSTGRES_PORT=5432
 ```
+
 > Note: For the current `docker-compose.dev.yml` workflow, `DB_HOST` is overridden to `host.docker.internal` by the backend and Celery service definitions. This means the dev containers connect to PostgreSQL running on your host machine, even if `env.example` contains `DB_HOST=db`.
 
 ### 3. Start development environment
@@ -282,7 +317,7 @@ MediaJira includes monitoring and observability tools for local development and 
 
 ## 🧩 Development Services (Current `docker-compose.dev.yml`)
 
-Service list below is based on `docker-compose.dev.yml`. 
+Service list below is based on `docker-compose.dev.yml`.
 Most services are part of the default development stack. Profile-gated services, such as `k6`, only run when their profile is enabled.
 
 - `clamav`
@@ -321,7 +356,6 @@ Notes:
 - In dev compose, PostgreSQL is not defined as a containerized service; backend uses host PostgreSQL via `host.docker.internal`.
 
 ---
-
 
 ## 🧪 Testing
 
