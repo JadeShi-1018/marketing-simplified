@@ -9,8 +9,8 @@ export interface Customer {
   is_active: boolean;
   created_at: string;
   updated_at: string;
-  region: number | null;                                                                                                           
-  organisation: number | null; 
+  region: number | null;
+  organisation: number | null;
 }
 
 export interface CreateCustomerData {
@@ -19,8 +19,8 @@ export interface CreateCustomerData {
   company?: string;
   phone?: string;
   experience_group?: number | null;
-  region?: number | null;                                                                                                             
-  organisation?: number | null; 
+  region?: number | null;
+  organisation?: number | null;
 }
 
 export interface UpdateCustomerData {
@@ -30,6 +30,6 @@ export interface UpdateCustomerData {
   phone?: string;
   experience_group?: number | null;
   is_active?: boolean;
-  region?: number | null;                                                                                                             
-  organisation?: number | null; 
+  region?: number | null;
+  organisation?: number | null;
 }

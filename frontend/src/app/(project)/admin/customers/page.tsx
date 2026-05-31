@@ -108,7 +108,6 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, org
     region: null,
     organisation: null,
   });
-  const [sendInvitation, setSendInvitation] = useState(true);
   const [errors, setErrors] = useState<Partial<Record<keyof CreateCustomerData, string>>>({});
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -128,7 +127,7 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, org
     setSubmitting(true);
     setServerError(null);
     try {
-      const res = await CustomerAPI.create({ ...form, send_invitation: sendInvitation } as any, projectId);
+      const res = await CustomerAPI.create(form, projectId);
       onSuccess(res.data);
     } catch (err: any) {
       const detail =
@@ -235,20 +234,6 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, org
             disabled={submitting}
           />
         </div>
-      </div>
-
-      <div className="flex items-center gap-3">
-        <input
-          id="send_invitation"
-          type="checkbox"
-          checked={sendInvitation}
-          onChange={(e) => setSendInvitation(e.target.checked)}
-          disabled={submitting}
-          className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-        />
-        <label htmlFor="send_invitation" className="text-sm text-gray-700">
-          Send invitation email
-        </label>
       </div>
 
       <div className="flex justify-end gap-3 pt-2 border-t border-gray-200">

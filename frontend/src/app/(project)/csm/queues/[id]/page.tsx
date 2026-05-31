@@ -318,7 +318,7 @@ const QueueDetailContent: React.FC = () => {
 
 export default function QueueDetailPage() {
   return (
-    <ProtectedRoute requiredAuth={true}>
+    <ProtectedRoute requiredAuth={true} requireAdmin={true}>
       <QueueDetailContent />
     </ProtectedRoute>
   );

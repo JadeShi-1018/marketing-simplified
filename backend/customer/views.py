@@ -28,7 +28,13 @@ class RegionViewSet(viewsets.ModelViewSet):
         return qs.filter(organisation_id__in=admin_org_ids)
 
     def perform_create(self, serializer):
-        serializer.save()
+        from core.admin_utils import get_csm_admin_org_ids
+        org_id = self.request.data.get('organisation')
+        if not org_id:
+            admin_org_ids = get_csm_admin_org_ids(self.request.user)
+            if admin_org_ids:
+                org_id = admin_org_ids[0]
+        serializer.save(organisation_id=org_id)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

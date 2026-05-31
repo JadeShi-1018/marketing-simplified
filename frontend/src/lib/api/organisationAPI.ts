@@ -1,5 +1,5 @@
 import api from '../api';
-import { Organisation, CreateOrganisationData, UpdateOrganisationData } from '@/types/organisation'
+import { Organisation, CreateOrganisationData, UpdateOrganisationData } from '@/types/organisation';
 
 const BASE = '/api/organisations';
 
@@ -9,6 +9,7 @@ type PaginatedOrganisations = {
   previous: string | null;
   results: Organisation[];
 };
+
 export const OrganisationAPI = {
   list: () =>
     api.get<PaginatedOrganisations | Organisation[]>(`${BASE}/`),
@@ -27,4 +28,4 @@ export const OrganisationAPI = {
 
   myAdminOrgs: () =>
     api.get<{ id: number; name: string }[]>(`${BASE}/my-admin-orgs/`),
-}
+};

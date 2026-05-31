@@ -204,7 +204,6 @@ const QueuesPageContent: React.FC = () => {
             <h2 className="text-lg font-semibold text-gray-900 mb-4">Create Queue</h2>
             <QueueForm
               projectId={projectId}
-              organisationId={0}
               onSuccess={() => {
                 setIsCreateModalOpen(false);
                 fetchQueues();
@@ -238,7 +237,7 @@ const QueuesPageContent: React.FC = () => {
 
 export default function QueuesPage() {
   return (
-    <ProtectedRoute requiredAuth={true}>
+    <ProtectedRoute requiredAuth={true} requireAdmin={true}>
       <QueuesPageContent />
     </ProtectedRoute>
   );

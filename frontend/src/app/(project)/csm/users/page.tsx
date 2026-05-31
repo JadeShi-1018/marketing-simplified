@@ -522,7 +522,7 @@ const CustomerUsersPageContent: React.FC = () => {
 
 export default function CustomerUsersPage() {
   return (
-    <ProtectedRoute requiredAuth={true}>
+    <ProtectedRoute requiredAuth={true} requireAdmin={true}>
       <CustomerUsersPageContent />
     </ProtectedRoute>
   );

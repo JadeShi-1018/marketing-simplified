@@ -1,24 +1,20 @@
 import { create } from 'zustand';
-import { Queue, CSMInvitation, QueueTicketCounts } from '@/types/csm';
+import { Queue, QueueTicketCounts } from '@/types/csm';
 import CsmAPI from './api/csmApi';
 
 interface CsmState {
   // Data
   queues: Queue[];
-  invitations: CSMInvitation[];
   ticketCounts: Record<number, QueueTicketCounts>; // keyed by queue id
 
   // Loading states
   queuesLoading: boolean;
-  invitationsLoading: boolean;
 
   // Error states
   queuesError: string | null;
-  invitationsError: string | null;
 
   // Actions
   fetchQueues: (params?: { organisation?: number }) => Promise<void>;
-  fetchInvitations: (projectId: number) => Promise<void>;
   fetchTicketCounts: (queueId: number) => Promise<void>;
   fetchAllTicketCounts: () => Promise<void>;
   reset: () => void;
@@ -26,12 +22,9 @@ interface CsmState {
 
 export const useCsmStore = create<CsmState>((set, get) => ({
   queues: [],
-  invitations: [],
   ticketCounts: {},
   queuesLoading: false,
-  invitationsLoading: false,
   queuesError: null,
-  invitationsError: null,
 
   fetchQueues: async (params?: { organisation?: number }) => {
     set({ queuesLoading: true, queuesError: null });
@@ -42,19 +35,6 @@ export const useCsmStore = create<CsmState>((set, get) => ({
       set({
         queuesError: err?.response?.data?.detail || 'Failed to load queues',
         queuesLoading: false,
-      });
-    }
-  },
-
-  fetchInvitations: async (projectId: number) => {
-    set({ invitationsLoading: true, invitationsError: null });
-    try {
-      const invitations = await CsmAPI.getInvitations(projectId);
-      set({ invitations, invitationsLoading: false });
-    } catch (err: any) {
-      set({
-        invitationsError: err?.response?.data?.detail || 'Failed to load invitations',
-        invitationsLoading: false,
       });
     }
   },
@@ -78,12 +58,9 @@ export const useCsmStore = create<CsmState>((set, get) => ({
   reset: () => {
     set({
       queues: [],
-      invitations: [],
       ticketCounts: {},
       queuesLoading: false,
-      invitationsLoading: false,
       queuesError: null,
-      invitationsError: null,
     });
   },
 }));

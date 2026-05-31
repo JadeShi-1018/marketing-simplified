@@ -1,12 +1,15 @@
 import api from '../api';
-import { Region, CreateRegionData, UpdateRegionData } from '@/types/region'
+import { Region, CreateRegionData, UpdateRegionData } from '@/types/region';
+
 const BASE = '/api/regions';
+
 type PaginatedRegions = {
   count: number;
   next: string | null;
   previous: string | null;
   results: Region[];
 };
+
 export const RegionAPI = {
   list: (params?: { organisation?: number; is_active?: boolean }) =>
     api.get<PaginatedRegions | Region[]>(`${BASE}/`, { params }),
@@ -22,4 +25,4 @@ export const RegionAPI = {
 
   destroy: (id: number) =>
     api.delete(`${BASE}/${id}/`),
-}
+};
