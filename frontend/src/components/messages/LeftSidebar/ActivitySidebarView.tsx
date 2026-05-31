@@ -213,7 +213,7 @@ export default function ActivitySidebarView() {
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="task-tab-scrollbar flex-1 overflow-y-auto">
         {groups.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-16 text-center text-gray-400">
             <Check className="h-8 w-8 opacity-20" />

@@ -95,7 +95,7 @@ export default function ForwardMessagesDialog({
               placeholder="Search chats..."
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-[#3CCED7]"
             />
-            <div className="overflow-y-auto space-y-2 pr-1">
+            <div className="task-tab-scrollbar overflow-y-auto space-y-2 pr-1">
               {filteredChats.length === 0 ? (
                 <p className="text-xs text-gray-500">No chats found.</p>
               ) : (
@@ -121,7 +121,7 @@ export default function ForwardMessagesDialog({
 
           <div className="border border-gray-200 rounded-lg p-3 flex flex-col min-h-0">
             <h3 className="text-sm font-medium text-gray-900 mb-2">Target users</h3>
-            <div className="overflow-y-auto">
+            <div className="task-tab-scrollbar overflow-y-auto">
               <ParticipantSelector
                 projectId={projectId}
                 selectedIds={selectedUserIds}

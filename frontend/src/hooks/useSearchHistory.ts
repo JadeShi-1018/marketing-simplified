@@ -3,12 +3,18 @@
 import { useState, useCallback } from 'react';
 
 const STORAGE_KEY = 'msg-search-history';
-const MAX_ENTRIES = 20;
+const MAX_ENTRIES = 10;
 
 function readHistory(): string[] {
   if (typeof window === 'undefined') return [];
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
+    const stored: string[] = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
+    const trimmed = stored.slice(0, MAX_ENTRIES);
+    // Persist the trimmed list so it doesn't grow back
+    if (trimmed.length < stored.length) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed)); } catch {}
+    }
+    return trimmed;
   } catch {
     return [];
   }

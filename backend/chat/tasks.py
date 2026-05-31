@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from .models import Message, MessageStatus, ChatParticipant
+from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage
 from .services import OnlineStatusService
 
 User = get_user_model()
@@ -427,3 +427,87 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
         logger.error(f"User {user_id} not found for reaction update")
     except Exception as e:
         logger.error(f"Error notifying reaction update for message {message_id}: {e}")
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_scheduled_message(self, scheduled_message_id: int):
+    """
+    Celery task that fires at the scheduled time and creates the actual Message.
+
+    Flow:
+      1. Load ScheduledMessage; skip if not pending (already sent/cancelled).
+      2. Mark status=sending.
+      3. Create the Message (content, rich_body, attachments, mentions, reply_to).
+      4. Mark status=sent, store sent_message FK.
+      5. Dispatch notify_new_message so online users receive it via WebSocket.
+    """
+    from django.contrib.auth import get_user_model as _get_user_model
+    from .models import Message, MessageMention, MessageAttachment, ScheduledMessage
+
+    _User = _get_user_model()
+    sm = None
+    try:
+        sm = (
+            ScheduledMessage.objects
+            .select_related('chat', 'sender', 'reply_to')
+            .get(id=scheduled_message_id)
+        )
+    except ScheduledMessage.DoesNotExist:
+        logger.error(f"send_scheduled_message: ScheduledMessage {scheduled_message_id} not found")
+        return
+
+    if sm.status != ScheduledMessage.STATUS_PENDING:
+        logger.info(f"send_scheduled_message {scheduled_message_id}: status={sm.status}, skipping")
+        return
+
+    # Mark as sending so concurrent retries skip
+    sm.status = ScheduledMessage.STATUS_SENDING
+    sm.save(update_fields=['status', 'updated_at'])
+
+    try:
+        # Create the message
+        message = Message.objects.create(
+            chat=sm.chat,
+            sender=sm.sender,
+            content=sm.content,
+            rich_body=sm.rich_body,
+            reply_to_id=sm.reply_to_id,
+        )
+
+        # Link attachments
+        attachment_ids = sm.attachment_ids or []
+        if attachment_ids:
+            MessageAttachment.objects.filter(id__in=attachment_ids).update(message=message)
+            message.has_attachments = True
+            message.save(update_fields=['has_attachments'])
+
+        # Create mention records
+        mention_ids = sm.mention_ids or []
+        for uid in mention_ids:
+            try:
+                MessageMention.objects.get_or_create(message=message, mentioned_user_id=uid)
+            except Exception:
+                pass
+
+        # Finalize
+        sm.status = ScheduledMessage.STATUS_SENT
+        sm.sent_message = message
+        sm.save(update_fields=['status', 'sent_message', 'updated_at'])
+
+        logger.info(
+            f"send_scheduled_message {scheduled_message_id}: created message {message.id} in chat {sm.chat_id}"
+        )
+
+        # Push to online participants
+        notify_new_message.delay(message.id)
+
+    except Exception as exc:
+        logger.error(f"send_scheduled_message {scheduled_message_id} failed: {exc}")
+        if sm is not None:
+            try:
+                sm.status = ScheduledMessage.STATUS_FAILED
+                sm.error_message = str(exc)
+                sm.save(update_fields=['status', 'error_message', 'updated_at'])
+            except Exception:
+                pass
+        raise self.retry(exc=exc)

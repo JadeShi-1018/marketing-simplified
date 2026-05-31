@@ -7,9 +7,11 @@ import type { MessageSearchResult, SearchMessagesParams } from '@/types/chat';
 export interface SearchFilters {
   fromUser: string;
   inChat: number | null;
-  has: 'file' | '';
+  has: 'file' | 'link' | '';
   dateAfter: string;
   dateBefore: string;
+  threadsOnly: boolean;
+  mentionsMe: string; // current user's username, empty = off
 }
 
 const DEFAULT_FILTERS: SearchFilters = {
@@ -18,6 +20,8 @@ const DEFAULT_FILTERS: SearchFilters = {
   has: '',
   dateAfter: '',
   dateBefore: '',
+  threadsOnly: false,
+  mentionsMe: '',
 };
 
 const DEBOUNCE_MS = 300;
@@ -36,7 +40,9 @@ export function useMessageSearch() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const doSearch = useCallback(async (q: string, f: SearchFilters, off: number) => {
-    if (q.trim().length < 2) {
+    const hasFilters = !!(f.fromUser || f.inChat || f.has || f.dateAfter || f.dateBefore || f.threadsOnly || f.mentionsMe);
+
+    if (q.trim().length < 2 && !hasFilters) {
       setResults([]);
       setTotal(0);
       setIsLoading(false);
@@ -54,9 +60,11 @@ export function useMessageSearch() {
     };
     if (f.fromUser) params.from_user = f.fromUser;
     if (f.inChat) params.in_chat = f.inChat;
-    if (f.has === 'file') params.has = 'file';
+    if (f.has) params.has = f.has;
     if (f.dateAfter) params.date_after = f.dateAfter;
     if (f.dateBefore) params.date_before = f.dateBefore;
+    if (f.threadsOnly) params.threads_only = true;
+    if (f.mentionsMe) params.mentions_me = f.mentionsMe;
 
     setIsLoading(true);
     setError(null);

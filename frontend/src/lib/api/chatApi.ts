@@ -2,6 +2,7 @@
 import api from '../api';
 import type {
   Chat,
+  ChatParticipant,
   ChatStarRow,
   Message,
   CreateChatRequest,
@@ -59,6 +60,117 @@ export const deleteChat = async (chatId: number): Promise<void> => {
   await api.delete(`/api/chat/chats/${chatId}/`);
 };
 
+/**
+ * Leave a chat (soft-removes the current user from participants).
+ * Backend DELETE on the chat maps to ChatService.leave_chat for the requester.
+ */
+export const leaveChat = async (chatId: number): Promise<void> => {
+  await api.delete(`/api/chat/chats/${chatId}/`);
+};
+
+// ==================== Pinned Messages ====================
+
+export interface PinnedMessageRow {
+  id: number;
+  chat: number;
+  pinned_by: { id: number; username: string; email: string } | null;
+  created_at: string;
+  message: Message;
+}
+
+export const listPins = async (chatId: number): Promise<PinnedMessageRow[]> => {
+  const response = await api.get(`/api/chat/chats/${chatId}/pins/`);
+  return response.data;
+};
+
+export interface ChatFileRow {
+  id: number;
+  original_filename: string;
+  file_type: string; // 'image' | 'video' | 'document' | 'audio'
+  file_size: number;
+  file_url: string;
+  created_at: string;
+  message_id: number;
+  uploader: { id: number; username: string; email: string } | null;
+}
+
+export const listChatFiles = async (chatId: number, page = 1): Promise<{ results: ChatFileRow[]; total: number }> => {
+  const response = await api.get(`/api/chat/chats/${chatId}/files/`, { params: { page, page_size: 25 } });
+  return response.data;
+};
+
+export const pinMessage = async (chatId: number, messageId: number): Promise<PinnedMessageRow> => {
+  const response = await api.post(`/api/chat/chats/${chatId}/pin/`, { message_id: messageId });
+  return response.data;
+};
+
+export const unpinMessage = async (chatId: number, messageId: number): Promise<void> => {
+  await api.delete(`/api/chat/chats/${chatId}/pin/${messageId}/`);
+};
+
+// ==================== Browse channels ====================
+
+export interface BrowseChannelRow {
+  id: number;
+  name: string;
+  topic: string;
+  description: string;
+  participant_count: number;
+  is_member: boolean;
+}
+
+export const browseChannels = async (projectId: number): Promise<BrowseChannelRow[]> => {
+  const response = await api.get('/api/chat/chats/browse/', { params: { project_id: projectId } });
+  return response.data;
+};
+
+// ==================== Saved messages ====================
+
+export interface SavedMessageRow {
+  id: number;
+  message: Message;
+  chat_id?: number | null;
+  project_id?: number | null;
+  chat_name?: string | null;
+  chat_type?: string | null;
+  created_at: string;
+}
+
+export const listSavedMessages = async (): Promise<SavedMessageRow[]> => {
+  const response = await api.get('/api/chat/saved/');
+  // Backend returns paginated response { count, next, results }
+  return response.data.results ?? response.data;
+};
+
+export const saveMessage = async (messageId: number): Promise<SavedMessageRow> => {
+  const response = await api.post('/api/chat/saved/', { message_id: messageId });
+  return response.data;
+};
+
+export const unsaveMessage = async (savedId: number): Promise<void> => {
+  await api.delete(`/api/chat/saved/${savedId}/`);
+};
+
+// ==================== Notification settings ====================
+
+export const updateNotificationSettings = async (
+  chatId: number,
+  data: { is_muted?: boolean; notification_level?: 'all' | 'mentions' | 'none' }
+): Promise<{ is_muted: boolean; notification_level: string }> => {
+  const response = await api.patch(`/api/chat/chats/${chatId}/notification_settings/`, data);
+  return response.data;
+};
+
+// ==================== Channel Details ====================
+
+export const updateChatDetails = async (
+  chatId: number,
+  data: { name?: string; topic?: string; description?: string }
+): Promise<Chat> => {
+  const response = await api.patch(`/api/chat/chats/${chatId}/update_details/`, data);
+  return response.data;
+};
+
 // ==================== Starred chats ====================
 
 export const listStarredChats = async (projectId: number): Promise<ChatStarRow[]> => {
@@ -88,7 +200,7 @@ export const reorderStarredChats = async (
 /**
  * Add a participant to a group chat
  */
-export const addParticipant = async (chatId: number, userId: number): Promise<Chat> => {
+export const addParticipant = async (chatId: number, userId: number): Promise<ChatParticipant> => {
   const response = await api.post(`/api/chat/chats/${chatId}/add_participant/`, {
     user_id: userId,
   });
@@ -98,11 +210,10 @@ export const addParticipant = async (chatId: number, userId: number): Promise<Ch
 /**
  * Remove a participant from a group chat
  */
-export const removeParticipant = async (chatId: number, userId: number): Promise<Chat> => {
-  const response = await api.post(`/api/chat/chats/${chatId}/remove_participant/`, {
+export const removeParticipant = async (chatId: number, userId: number): Promise<void> => {
+  await api.post(`/api/chat/chats/${chatId}/remove_participant/`, {
     user_id: userId,
   });
-  return response.data;
 };
 
 // ==================== Message Endpoints ====================
@@ -388,12 +499,55 @@ export const forwardBatch = async (
   return response.data;
 };
 
+// ==================== Scheduled Messages ====================
+
+export interface ScheduledMessageRow {
+  id: number;
+  chat: number;
+  content: string;
+  rich_body: object | null;
+  attachment_ids: number[];
+  mention_ids: number[];
+  reply_to: number | null;
+  scheduled_at: string;
+  status: 'pending' | 'sending' | 'sent' | 'cancelled' | 'failed';
+  task_id: string;
+  created_at: string;
+}
+
+export interface CreateScheduledMessageRequest {
+  chat_id: number;
+  content?: string;
+  rich_body?: object | null;
+  attachment_ids?: number[];
+  mention_ids?: number[];
+  reply_to_id?: number | null;
+  scheduled_at: string; // ISO 8601
+}
+
+export const createScheduledMessage = async (
+  data: CreateScheduledMessageRequest
+): Promise<ScheduledMessageRow> => {
+  const response = await api.post('/api/chat/scheduled/', data);
+  return response.data;
+};
+
+export const listScheduledMessages = async (chatId: number): Promise<ScheduledMessageRow[]> => {
+  const response = await api.get('/api/chat/scheduled/', { params: { chat_id: chatId } });
+  return response.data.results ?? response.data;
+};
+
+export const cancelScheduledMessage = async (id: number): Promise<void> => {
+  await api.delete(`/api/chat/scheduled/${id}/`);
+};
+
 // Export all functions as a single API object (optional alternative style)
 const chatApi = {
   getChats,
   getChat,
   createChat,
   deleteChat,
+  leaveChat,
   listStarredChats,
   starChat,
   unstarChat,

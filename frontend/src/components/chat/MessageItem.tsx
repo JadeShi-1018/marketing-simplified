@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { FileX2, Film, Forward, ImageOff, MicOff } from 'lucide-react';
+import ProfileHovercard from './ProfileHovercard';
 import toast from 'react-hot-toast';
 import type { MessageItemProps, MissingForwardedAttachment } from '@/types/chat';
 import MessageStatus from './MessageStatus';
@@ -152,6 +153,11 @@ export default function MessageItem({
   onEnterSelectMode,
   onOpenThread,
   isThreadActive = false,
+  onPin,
+  onSave,
+  onRemind,
+  isPinned = false,
+  isSaved = false,
 }: MessageItemProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -317,21 +323,40 @@ export default function MessageItem({
           'relative flex gap-2 pl-3 pr-4',
           isHighlighted ? 'bg-cyan-50' : '',
           isSelectMode ? 'cursor-pointer' : '',
+          // Reserve the 2px left-border slot unconditionally so layout never shifts
           'border-l-2 border-transparent',
         ].join(' ')}
         onClick={handleToggleSelect}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
+        {/* Left-accent bar: split teal/amber when both pinned + saved, single color otherwise */}
+        {(isPinned || isSaved) && (
+          <div className="pointer-events-none absolute -left-0.5 inset-y-0 flex w-0.5 flex-col">
+            <div className={`flex-1 ${isPinned ? 'bg-teal-400' : 'bg-amber-400'}`} />
+            {isPinned && isSaved && <div className="flex-1 bg-amber-400" />}
+          </div>
+        )}
         <div className="flex w-8 shrink-0 items-end pb-0.5">
           {showSender ? (
-            <Avatar
-              src={bot ? null : message.sender.avatar}
-              username={message.sender.username}
-              userId={message.sender.id}
-              colorClass={bot ? 'bg-violet-500' : undefined}
-              initials={initials}
-            />
+            bot ? (
+              <Avatar
+                src={null}
+                username={message.sender.username}
+                userId={message.sender.id}
+                colorClass="bg-violet-500"
+                initials={initials}
+              />
+            ) : (
+              <ProfileHovercard user={message.sender} role={senderRole}>
+                <Avatar
+                  src={message.sender.avatar}
+                  username={message.sender.username}
+                  userId={message.sender.id}
+                  initials={initials}
+                />
+              </ProfileHovercard>
+            )
           ) : (
             <div className="flex w-8 items-center justify-end">
               <span className={`whitespace-nowrap text-[10px] leading-none text-gray-400 transition-opacity ${isHovering ? 'opacity-100' : 'opacity-0'}`}>
@@ -344,7 +369,13 @@ export default function MessageItem({
         <div className="min-w-0 flex-1">
           {showSender && (
             <div className="mb-0.5 flex items-baseline gap-1.5 px-0.5">
-              <span className="text-sm font-semibold text-gray-900">{senderLabel}</span>
+              {bot ? (
+                <span className="text-sm font-semibold text-gray-900">{senderLabel}</span>
+              ) : (
+                <ProfileHovercard user={message.sender} role={senderRole}>
+                  <span className="text-sm font-semibold text-gray-900">{senderLabel}</span>
+                </ProfileHovercard>
+              )}
               {bot ? (
                 <span className="rounded bg-violet-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700">
                   AI
@@ -476,6 +507,23 @@ export default function MessageItem({
                 </button>
               )}
 
+              {(isPinned || isSaved) && (
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                  {isPinned && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-teal-600">
+                      <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+                      Pinned to channel · visible to all members
+                    </span>
+                  )}
+                  {isSaved && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-amber-500">
+                      <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+                      Saved for later · only visible to you
+                    </span>
+                  )}
+                </div>
+              )}
+
               {hasReactions && (
                 <ReactionsDisplay
                   reactions={message.reactions!}
@@ -565,9 +613,9 @@ export default function MessageItem({
               onCopyLink={handleCopyLink}
               onEdit={isOwnMessage && onEdit ? () => setIsEditing(true) : undefined}
               onForward={() => onForwardSingle?.()}
-              onPin={() => handlePlaceholderAction('Pin')}
-              onSave={() => handlePlaceholderAction('Save')}
-              onRemind={() => handlePlaceholderAction('Remind me')}
+              onPin={() => onPin ? onPin(message.id) : handlePlaceholderAction('Pin')}
+              onSave={() => onSave ? onSave(message.id) : handlePlaceholderAction('Save')}
+              onRemind={() => onRemind ? onRemind(message.id) : handlePlaceholderAction('Remind me')}
               onMultiSelect={() => onEnterSelectMode?.()}
               onDelete={isOwnMessage && onDelete ? () => onDelete(message.id) : undefined}
               onMenuOpenChange={(open) => {

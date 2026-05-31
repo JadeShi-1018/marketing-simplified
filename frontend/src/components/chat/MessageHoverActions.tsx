@@ -171,12 +171,18 @@ export default function MessageHoverActions({
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem onSelect={onPin}>
-            <Pin className="mr-2 h-4 w-4" />
-            Pin
+            <Pin className="mr-2 h-4 w-4 shrink-0" />
+            <div className="flex flex-col">
+              <span>Pin to channel</span>
+              <span className="text-[11px] font-normal text-gray-400">Highlights for all members</span>
+            </div>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={onSave}>
-            <Bookmark className="mr-2 h-4 w-4" />
-            Save
+            <Bookmark className="mr-2 h-4 w-4 shrink-0" />
+            <div className="flex flex-col">
+              <span>Save for later</span>
+              <span className="text-[11px] font-normal text-gray-400">Private bookmark, only you can see it</span>
+            </div>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={onRemind}>
             <Bell className="mr-2 h-4 w-4" />

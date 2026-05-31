@@ -29,6 +29,8 @@ export interface ChatParticipant {
   chat_id: number;
   joined_at: string;
   last_read_at?: string | null;
+  is_muted?: boolean;
+  notification_level?: 'all' | 'mentions' | 'none';
 }
 
 export interface Chat {
@@ -37,6 +39,9 @@ export interface Chat {
   project?: number; // Backend may send this instead of project_id
   type: ChatType;
   name?: string | null;
+  topic?: string | null;
+  description?: string | null;
+  created_by_id?: number | null;
   participants: ChatParticipant[];
   created_at: string;
   updated_at: string;
@@ -474,6 +479,11 @@ export interface MessageItemProps {
   onOpenThread?: () => void;
   /** True when this message's thread panel is open. */
   isThreadActive?: boolean;
+  onPin?: (messageId: number) => void;
+  onSave?: (messageId: number) => void;
+  onRemind?: (messageId: number) => void;
+  isPinned?: boolean;
+  isSaved?: boolean;
 }
 
 export interface MessageListProps {
@@ -500,6 +510,11 @@ export interface MessageListProps {
   onOpenThread?: (message: Message) => void;
   /** ID of the message whose thread panel is currently open (highlights the row). */
   activeThreadMessageId?: number | null;
+  onPinMessage?: (messageId: number) => void;
+  onSaveMessage?: (messageId: number) => void;
+  onRemindMessage?: (messageId: number) => void;
+  pinnedMessageIds?: Set<number>;
+  savedMessageIds?: Set<number>;
   /** Route-driven jump target from Files/search deep links. */
   jumpTarget?: {
     messageId: number;
@@ -597,9 +612,11 @@ export interface SearchMessagesParams {
   q: string;
   from_user?: string;
   in_chat?: number;
-  has?: 'file';
+  has?: 'file' | 'link';
   date_after?: string;
   date_before?: string;
+  threads_only?: boolean;
+  mentions_me?: string;
   limit?: number;
   offset?: number;
 }

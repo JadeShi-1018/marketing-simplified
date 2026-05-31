@@ -151,7 +151,7 @@ export default function FilesSidebarView({ selectedProjectId }: { selectedProjec
   return (
     <div className="flex-1 flex flex-col">
       <div className="px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">Files</div>
-      <div className="flex-1 overflow-y-auto">{content}</div>
+      <div className="task-tab-scrollbar flex-1 overflow-y-auto">{content}</div>
     </div>
   );
 }

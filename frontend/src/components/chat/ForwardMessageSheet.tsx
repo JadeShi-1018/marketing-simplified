@@ -169,7 +169,7 @@ export default function ForwardMessageSheet({
         </div>
 
         {/* Target List - Scrollable */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 min-h-0">
+        <div className="task-tab-scrollbar flex-1 overflow-y-auto px-3 py-4 min-h-0">
           <ForwardTargetList
             chats={filteredChats}
             projectMembers={filteredMembers}

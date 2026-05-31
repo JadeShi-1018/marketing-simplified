@@ -6,7 +6,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageMention, MessageStatus, ChatType, MessageAttachment, MessageReaction
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageMention, MessageStatus, ChatType, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
 from core.models import ProjectMember
 
 User = get_user_model()
@@ -95,18 +95,26 @@ class ChatParticipantSerializer(serializers.ModelSerializer):
     """Serializer for chat participants"""
     user = UserSimpleSerializer(read_only=True)
     unread_count = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = ChatParticipant
         fields = [
-            'id', 'user', 'chat', 'joined_at', 
-            'last_read_at', 'is_active', 'unread_count'
+            'id', 'user', 'chat', 'joined_at',
+            'last_read_at', 'is_active', 'is_muted', 'notification_level', 'unread_count'
         ]
         read_only_fields = ['id', 'joined_at']
-    
+
     def get_unread_count(self, obj):
         """Calculate unread message count for this participant using model method"""
         return obj.get_unread_count()
+
+
+class ParticipantNotificationSerializer(serializers.ModelSerializer):
+    """Serializer for updating is_muted / notification_level for the current user."""
+
+    class Meta:
+        model = ChatParticipant
+        fields = ['is_muted', 'notification_level']
 
 
 class MessageStatusSerializer(serializers.ModelSerializer):
@@ -546,15 +554,16 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     mention_unread_count = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name', 
+            'id', 'project', 'type', 'name', 'topic', 'description',
+            'created_by_id',
             'participants', 'last_message', 'unread_count', 'mention_unread_count',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_by_id', 'created_at', 'updated_at']
     
     def get_last_message(self, obj):
         """Get the last message in the chat"""
@@ -577,12 +586,13 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     last_message_time = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     mention_unread_count = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name',
-            'participants', 'participant_count', 'last_message', 
+            'id', 'project', 'type', 'name', 'topic', 'description',
+            'created_by_id',
+            'participants', 'participant_count', 'last_message',
             'last_message_time', 'unread_count', 'mention_unread_count',
             'updated_at'
         ]
@@ -605,6 +615,8 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
                 'is_online': OnlineStatusService.is_online(p.user.id)
             },
             'joined_at': p.joined_at.isoformat() if p.joined_at else None,
+            'is_muted': p.is_muted,
+            'notification_level': p.notification_level,
         } for p in participants]
     
     def get_participant_count(self, obj):
@@ -807,8 +819,8 @@ class ChatCreateSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         participant_ids = validated_data.pop('participant_ids')
         
-        # Create chat
-        chat = Chat.objects.create(**validated_data)
+        # Create chat — set created_by to the requesting user
+        chat = Chat.objects.create(created_by=request.user, **validated_data)
         
         # Add current user as participant
         ChatParticipant.objects.create(
@@ -826,6 +838,76 @@ class ChatCreateSerializer(serializers.ModelSerializer):
             )
         
         return chat
+
+
+class PinnedMessageSerializer(serializers.ModelSerializer):
+    """Serializer for pinned messages in a channel."""
+    message = serializers.SerializerMethodField()
+    pinned_by = UserSimpleSerializer(read_only=True)
+
+    class Meta:
+        model = PinnedMessage
+        fields = ['id', 'chat', 'message', 'pinned_by', 'created_at']
+        read_only_fields = fields
+
+    def get_message(self, obj):
+        return MessageSerializer(obj.message, context=self.context).data
+
+
+class SavedMessageSerializer(serializers.ModelSerializer):
+    message = serializers.SerializerMethodField()
+    chat_id = serializers.IntegerField(source='message.chat_id', read_only=True)
+    project_id = serializers.IntegerField(source='message.chat.project_id', read_only=True)
+    chat_name = serializers.SerializerMethodField()
+    chat_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SavedMessage
+        fields = ['id', 'message', 'chat_id', 'project_id', 'chat_name', 'chat_type', 'created_at']
+        read_only_fields = fields
+
+    def get_message(self, obj):
+        return MessageWithAttachmentsSerializer(obj.message, context=self.context).data
+
+    def get_chat_name(self, obj):
+        chat = obj.message.chat
+        if not chat:
+            return None
+        if chat.type == ChatType.PRIVATE:
+            # For DMs show the other participant's name instead of a generic label
+            request = self.context.get('request')
+            if request and request.user:
+                other = chat.participants.exclude(user=request.user).select_related('user').first()
+                if other and other.user:
+                    return other.user.username or other.user.email
+            return 'Direct message'
+        return chat.name or 'Unnamed channel'
+
+    def get_chat_type(self, obj):
+        chat = obj.message.chat
+        if not chat:
+            return None
+        # Normalise to 'direct'/'group' for the frontend
+        return 'direct' if chat.type == ChatType.PRIVATE else 'group'
+
+
+class ChatUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating channel name/topic/description (group chats only)."""
+
+    class Meta:
+        model = Chat
+        fields = ['name', 'topic', 'description']
+
+    def validate_name(self, value):
+        if value is not None and not value.strip():
+            raise serializers.ValidationError("Channel name cannot be blank")
+        return value.strip() if value else value
+
+    def validate_topic(self, value):
+        return (value or '').strip()
+
+    def validate_description(self, value):
+        return (value or '').strip()
 
 
 class MarkAsReadSerializer(serializers.Serializer):
@@ -1262,6 +1344,55 @@ class SetReminderSerializer(serializers.Serializer):
         if value <= timezone.now():
             raise serializers.ValidationError("Reminder time must be in the future")
         return value
+
+
+# ── Scheduled message serializers ─────────────────────────────────────────────
+
+class ScheduledMessageSerializer(serializers.ModelSerializer):
+    """Read serializer for a scheduled message (returned on create and list)."""
+
+    class Meta:
+        model = ScheduledMessage
+        fields = [
+            'id',
+            'chat',
+            'content',
+            'rich_body',
+            'attachment_ids',
+            'mention_ids',
+            'reply_to',
+            'scheduled_at',
+            'status',
+            'task_id',
+            'created_at',
+        ]
+        read_only_fields = fields
+
+
+class ScheduledMessageCreateSerializer(serializers.Serializer):
+    """Write serializer for creating a scheduled message."""
+    chat_id = serializers.IntegerField(required=True)
+    content = serializers.CharField(required=False, allow_blank=True, default='')
+    rich_body = serializers.JSONField(required=False, allow_null=True, default=None)
+    attachment_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list
+    )
+    mention_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list
+    )
+    reply_to_id = serializers.IntegerField(required=False, allow_null=True, default=None)
+    scheduled_at = serializers.DateTimeField(required=True)
+
+    def validate_scheduled_at(self, value):
+        from django.utils import timezone
+        if value <= timezone.now():
+            raise serializers.ValidationError("scheduled_at must be in the future.")
+        return value
+
+    def validate(self, data):
+        if not data.get('content') and not data.get('attachment_ids'):
+            raise serializers.ValidationError("A message must have content or at least one attachment.")
+        return data
 
 
 # ── Search result serializer ───────────────────────────────────────────────────

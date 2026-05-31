@@ -250,9 +250,11 @@ class ChatService:
         if chat.type != ChatType.GROUP:
             raise ValueError("Can only add participants to group chats")
         
-        # Check if added_by is a participant
-        if not ChatParticipant.objects.filter(chat=chat, user=added_by, is_active=True).exists():
-            raise ValueError("Only participants can add new members")
+        # Self-join is allowed (user joining themselves via Browse channels).
+        # When adding someone else, the caller must already be a participant.
+        if user != added_by:
+            if not ChatParticipant.objects.filter(chat=chat, user=added_by, is_active=True).exists():
+                raise ValueError("Only participants can add new members")
         
         # Check if user can join
         if not chat.can_user_join(user):

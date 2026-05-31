@@ -624,10 +624,11 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """Remove member from project."""
-        # Prevent removing project owner
-        if instance.role == 'owner':
+        # Only the authoritative project owner (project.owner_id) cannot be removed.
+        # Co-owners (role='owner' but not project.owner) can be removed normally.
+        if instance.user_id == instance.project.owner_id:
             raise ValidationError({
-                'error': 'Cannot remove project owner'
+                'error': 'Cannot remove the project owner. Transfer ownership first.'
             })
 
         removed_user = instance.user

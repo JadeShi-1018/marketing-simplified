@@ -17,6 +17,7 @@ interface SavedItemsPanelProps {
     messageId: number,
     chatId: number,
     parentMessageId?: number | null,
+    projectId?: number | null,
   ) => void;
 }
 
@@ -75,7 +76,8 @@ export default function SavedItemsPanel({ onClose, onJumpToMessage }: SavedItems
         ) : (
           <ul className="divide-y divide-gray-100">
             {items.map((item) => {
-              const chatId = (item.message as any).chat_id ?? (item.message as any).chat;
+              const chatId = item.chat_id ?? (item.message as any).chat_id ?? (item.message as any).chat;
+              const projectId = item.project_id ?? (item.message as any).project_id ?? null;
               return (
                 <li key={item.id} className="group flex items-start hover:bg-gray-50">
                   {/* Amber left-accent bar — every item here is saved */}
@@ -114,6 +116,7 @@ export default function SavedItemsPanel({ onClose, onJumpToMessage }: SavedItems
                               item.message.id,
                               Number(chatId),
                               item.message.parent_message_id ?? null,
+                              projectId ? Number(projectId) : null,
                             )
                           }
                           className="mt-0.5 text-[11px] text-teal-600 hover:underline"

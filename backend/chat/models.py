@@ -43,7 +43,26 @@ class Chat(TimeStampedModel):
         null=True,
         help_text="Name for group chats (optional for private chats)"
     )
-    
+    topic = models.CharField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text="Short topic line shown in the channel header"
+    )
+    description = models.TextField(
+        blank=True,
+        default='',
+        help_text="Longer description shown in the channel details drawer"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='created_chats',
+        help_text="User who created this channel (group chats only)"
+    )
+
     class Meta:
         ordering = ['-updated_at']
         indexes = [
@@ -178,7 +197,23 @@ class ChatParticipant(TimeStampedModel):
         default=True,
         help_text="Whether this user is still active in the chat"
     )
-    
+    is_muted = models.BooleanField(
+        default=False,
+        help_text="When True, suppress notifications for this chat for this user"
+    )
+
+    NOTIFICATION_LEVEL_CHOICES = [
+        ('all', 'All messages'),
+        ('mentions', 'Mentions only'),
+        ('none', 'Nothing'),
+    ]
+    notification_level = models.CharField(
+        max_length=20,
+        choices=NOTIFICATION_LEVEL_CHOICES,
+        default='all',
+        help_text="Notification level for this chat"
+    )
+
     class Meta:
         unique_together = ['chat', 'user']
         ordering = ['joined_at']
@@ -701,6 +736,69 @@ class MessageAttachment(TimeStampedModel):
         return True, None
 
 
+class PinnedMessage(TimeStampedModel):
+    """
+    A message pinned in a chat channel.
+    Only one pin record per message per chat (unique_together enforced).
+    """
+    chat = models.ForeignKey(
+        Chat,
+        on_delete=models.CASCADE,
+        related_name='pinned_messages',
+        help_text="Chat channel this pin belongs to",
+    )
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='pins',
+        help_text="Message that was pinned",
+    )
+    pinned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='pinned_messages',
+        help_text="User who pinned the message",
+    )
+
+    class Meta:
+        unique_together = ['chat', 'message']
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['chat', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Pin: message {self.message_id} in chat {self.chat_id}"
+
+
+class SavedMessage(TimeStampedModel):
+    """
+    User-bookmarked message ('save for later').
+    One record per (user, message) pair.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='saved_messages',
+    )
+    message = models.ForeignKey(
+        Message,
+        on_delete=models.CASCADE,
+        related_name='saves',
+    )
+
+    class Meta:
+        unique_together = ['user', 'message']
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} saved message {self.message_id}"
+
+
 class MessageReminder(TimeStampedModel):
     """
     Reminder for a message that should notify the user at a specific time.
@@ -750,3 +848,102 @@ class MessageReminder(TimeStampedModel):
 
     def __str__(self):
         return f"Reminder for {self.user.email} on message {self.message_id} at {self.remind_at}"
+
+
+class ScheduledMessage(TimeStampedModel):
+    """
+    A message queued to be sent at a specific future time (schedule-send).
+    A Celery task is dispatched with eta=scheduled_at and updates status on completion.
+    """
+    chat = models.ForeignKey(
+        Chat,
+        on_delete=models.CASCADE,
+        related_name='scheduled_messages',
+        help_text="Chat the message will be sent to",
+    )
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='scheduled_messages',
+        help_text="User who scheduled the message",
+    )
+    content = models.TextField(
+        blank=True,
+        default='',
+        help_text="Plain-text content (mirrors rich_body for search/display)",
+    )
+    rich_body = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Tiptap JSON document (same format as Message.rich_body)",
+    )
+    attachment_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of MessageAttachment IDs to link when the message is created",
+    )
+    mention_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of user IDs to @-mention",
+    )
+    reply_to = models.ForeignKey(
+        Message,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='scheduled_replies',
+        help_text="Message being quote-replied to",
+    )
+    scheduled_at = models.DateTimeField(
+        help_text="When the message should be sent (UTC)",
+        db_index=True,
+    )
+
+    STATUS_PENDING = 'pending'
+    STATUS_SENDING = 'sending'
+    STATUS_SENT = 'sent'
+    STATUS_CANCELLED = 'cancelled'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_SENDING, 'Sending'),
+        (STATUS_SENT, 'Sent'),
+        (STATUS_CANCELLED, 'Cancelled'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+    sent_message = models.ForeignKey(
+        Message,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='from_scheduled',
+        help_text="The Message created when this scheduled send fired",
+    )
+    task_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Celery task ID — used to revoke the task on cancellation",
+    )
+    error_message = models.TextField(
+        blank=True,
+        default='',
+        help_text="Error detail if status=failed",
+    )
+
+    class Meta:
+        ordering = ['scheduled_at']
+        indexes = [
+            models.Index(fields=['sender', 'status', 'scheduled_at']),
+            models.Index(fields=['chat', 'status', 'scheduled_at']),
+        ]
+
+    def __str__(self):
+        return f"ScheduledMessage by {self.sender_id} in chat {self.chat_id} at {self.scheduled_at} [{self.status}]"

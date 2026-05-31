@@ -54,7 +54,7 @@ function LoadingBrickRow({ widths, align = 'left' }: { widths: string[]; align?:
 function MessageListLoadingSkeleton({ compact = false }: { compact?: boolean }) {
   const groups = compact ? LOADING_GROUPS.slice(0, 1) : LOADING_GROUPS;
   return (
-    <div className={compact ? 'space-y-3 pb-3' : 'flex-1 overflow-y-auto p-4 space-y-6'}>
+    <div className={compact ? 'space-y-3 pb-3' : 'task-tab-scrollbar flex-1 overflow-y-auto p-4 space-y-6'}>
       {groups.map((group, groupIndex) => (
         <div key={`message-loading-group-${groupIndex}`} className="space-y-3">
           {group.lines.map((line, lineIndex) => (
@@ -129,6 +129,11 @@ export default function MessageList({
   onOpenThread,
   activeThreadMessageId,
   jumpTarget,
+  onPinMessage,
+  onSaveMessage,
+  onRemindMessage,
+  pinnedMessageIds,
+  savedMessageIds,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -218,7 +223,16 @@ export default function MessageList({
         return;
       }
 
-      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
+      const container = scrollRef.current;
+      if (!container) {
+        bottomSettleRemainingRef.current -= 1;
+        if (bottomSettleRemainingRef.current > 0) {
+          bottomSettleFrameRef.current = window.requestAnimationFrame(settle);
+        }
+        return;
+      }
+
+      container.scrollTo({ top: container.scrollHeight, behavior: 'instant' });
       bottomSettleRemainingRef.current -= 1;
 
       if (bottomSettleRemainingRef.current > 0) {
@@ -429,7 +443,8 @@ export default function MessageList({
 
     let frame: number | null = null;
     const observer = new ResizeObserver(() => {
-      if (!stickyBottomRef.current && !isAtBottom) return;
+      const isSettlingBottom = bottomSettleRemainingRef.current > 0;
+      if (!stickyBottomRef.current && !isAtBottom && !isSettlingBottom) return;
       if (isRestoringPrependRef.current || isLoadingMoreRef.current) return;
       if (frame !== null) window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
@@ -459,10 +474,11 @@ export default function MessageList({
       // Opening a conversation should land on the latest message. The unread
       // divider still renders in history, but it should not steal initial focus.
       stickyBottomRef.current = true;
-      scheduleBottomSettle();
+      scrollToBottom('instant');
+      scheduleBottomSettle(45);
     }
     lastMessageIdRef.current = lastMessageId;
-  }, [messages, scheduleBottomSettle]);
+  }, [messages, scheduleBottomSettle, scrollToBottom]);
 
   // ── Scroll to bottom on content changes ─────────────────────────────────────
   useLayoutEffect(() => {
@@ -471,7 +487,7 @@ export default function MessageList({
 
     if (stickyBottomRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'instant' });
-      scheduleBottomSettle();
+      scheduleBottomSettle(45);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flatItems.length, showSwitchLoadingSkeleton]);
@@ -586,10 +602,18 @@ export default function MessageList({
   const handleScroll = useCallback(() => {
     if (!scrollRef.current) return;
     const { scrollHeight, scrollTop, clientHeight } = scrollRef.current;
+    // When content is shorter than the viewport there's no scroll — treat as "at bottom"
     const distFromBottom = scrollHeight - scrollTop - clientHeight;
-    const isBottom = distFromBottom < 50;
+    const isBottom = scrollHeight <= clientHeight || distFromBottom < 50;
     setIsAtBottom(isBottom);
-    if (!isBottom) stickyBottomRef.current = false;
+    if (
+      !isBottom &&
+      bottomSettleRemainingRef.current === 0 &&
+      !activeJumpRequestRef.current &&
+      !isRestoringPrependRef.current
+    ) {
+      stickyBottomRef.current = false;
+    }
 
     // Only trigger load-more when the user has actually scrolled up (not at
     // bottom). This prevents firing on initial mount when content is short
@@ -598,6 +622,7 @@ export default function MessageList({
       !activeJumpRequestRef.current &&
       !isBottom &&
       scrollTop < 100 &&
+      bottomSettleRemainingRef.current === 0 &&
       hasMore &&
       !isLoading &&
       !isLoadingMoreRef.current &&
@@ -640,10 +665,9 @@ export default function MessageList({
               <div
                 ref={scrollRef}
                 onScroll={handleScroll}
-                className="h-full overflow-y-auto flex flex-col"
+                className="task-tab-scrollbar h-full overflow-y-auto flex flex-col"
               >
-                <div ref={contentRef} className="flex-1 pb-3 flex flex-col">
-                  <div className="flex-1" />
+                <div ref={contentRef} className="pb-3">
                   {flatItems.map((item, index) => {
                     return (
                       <div
@@ -693,6 +717,11 @@ export default function MessageList({
                             onEnterSelectMode={onEnterSelectMode}
                             onOpenThread={onOpenThread ? () => onOpenThread(item.message) : undefined}
                             isThreadActive={activeThreadMessageId === item.message.id}
+                            onPin={onPinMessage}
+                            onSave={onSaveMessage}
+                            onRemind={onRemindMessage}
+                            isPinned={pinnedMessageIds?.has(item.message.id)}
+                            isSaved={savedMessageIds?.has(item.message.id)}
                           />
                         )}
                       </div>

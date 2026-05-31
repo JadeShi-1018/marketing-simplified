@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckSquare, Forward, Hash, Info, X } from 'lucide-react';
+import { ArrowLeft, CheckSquare, Forward, Info, X } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/authStore';
@@ -19,7 +19,6 @@ import ForwardMessagesDialog from './ForwardMessagesDialog';
 import TypingIndicator from './TypingIndicator';
 import ThreadPanel from './ThreadPanel';
 import ChannelDetailsDrawer from './ChannelDetailsDrawer';
-import BrowseChannelsDialog from './BrowseChannelsDialog';
 import ReminderPickerSheet from './ReminderPickerSheet';
 
 interface ChatWindowProps {
@@ -55,7 +54,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   // ThreadPanel itself after the highlight fades.
   const [threadHighlightMessageId, setThreadHighlightMessageId] = useState<number | null>(null);
   const [showChannelDetails, setShowChannelDetails] = useState(false);
-  const [showBrowseChannels, setShowBrowseChannels] = useState(false);
   const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<number>>(new Set());
   const [savedMessageIds, setSavedMessageIds] = useState<Set<number>>(new Set());
@@ -200,7 +198,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setReplyingTo(null);
     setActiveThreadMessage(null);
     setShowChannelDetails(false);
-    setShowBrowseChannels(false);
     unreadCapturedForChatRef.current = null;
     jumpLoadAttemptsRef.current = 0;
     jumpedToMessageRef.current = null;
@@ -807,14 +804,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           .catch(() => toast.error('Failed to unmute channel'));
       },
     },
-    ...(chatProjectId ? [{
-      name: 'browse',
-      description: 'Browse and join channels in this project',
-      onExecute: (_args: string, clearEditor: () => void) => {
-        setShowBrowseChannels(true);
-        clearEditor();
-      },
-    }] : []),
   ], [chat.id, chatProjectId]);
 
   return (
@@ -862,31 +851,16 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
                 : 'border-gray-300 text-gray-700 hover:bg-gray-50',
             ].join(' ')}
             aria-label="Channel details"
-            title="Channel details"
           >
             <Info className="w-3.5 h-3.5" />
             <span className="hidden min-[380px]:inline">Details</span>
           </button>
-
-          {/* Browse channels button — only shown when project is known */}
-          {chatProjectId && (
-            <button
-              onClick={() => setShowBrowseChannels(true)}
-              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:px-2.5"
-              aria-label="Browse channels"
-              title="Browse channels"
-            >
-              <Hash className="w-3.5 h-3.5" />
-              <span className="hidden min-[380px]:inline">Browse</span>
-            </button>
-          )}
 
           {!isSelectMode ? (
             <button
               onClick={toggleSelectMode}
               className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:px-2.5"
               aria-label="Select messages"
-              title="Select messages"
             >
               <CheckSquare className="w-3.5 h-3.5" />
               <span className="hidden min-[380px]:inline">Select</span>
@@ -901,7 +875,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
                 disabled={selectedMessageIds.length === 0 || isForwarding}
                 className="inline-flex items-center gap-1 rounded-md bg-[#3CCED7] px-2 py-1.5 text-xs font-medium text-white hover:bg-[#2AB5BD] disabled:cursor-not-allowed disabled:opacity-50 sm:px-2.5"
                 aria-label="Forward selected messages"
-                title="Forward selected messages"
               >
                 <Forward className="w-3.5 h-3.5" />
                 <span className="hidden min-[380px]:inline">Forward</span>
@@ -910,7 +883,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
                 onClick={toggleSelectMode}
                 className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:px-2.5"
                 aria-label="Cancel message selection"
-                title="Cancel message selection"
               >
                 <X className="w-3.5 h-3.5" />
                 <span className="hidden min-[380px]:inline">Cancel</span>
@@ -1033,6 +1005,13 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
               currentUserId={currentUserId ?? 0}
               onClose={() => setShowChannelDetails(false)}
               onChatUpdated={handleChatUpdated}
+              onLeft={(chatId) => {
+                // Drop the channel from the store (clears currentChatId if active)
+                // and return to the list view.
+                useChatStore.getState().removeChat(chatId);
+                setShowChannelDetails(false);
+                onBack();
+              }}
               lastScheduledMsg={lastScheduledMsg}
               onJumpToMessage={(msgId, parentMsgId) => {
                 // Close the drawer so the message is visible, then fire the jump event.
@@ -1082,21 +1061,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
         onSubmit={handleForwardSubmit}
       />
 
-      {showBrowseChannels && chatProjectId && (
-        <BrowseChannelsDialog
-          projectId={chatProjectId}
-          currentUserId={currentUserId ?? 0}
-          onClose={() => setShowBrowseChannels(false)}
-          onJoinedChannel={(chatId) => {
-            setShowBrowseChannels(false);
-            // Fetch the full chat object and add it to the store so it
-            // appears in the sidebar immediately without waiting for a poll.
-            getChat(chatId)
-              .then((joined) => useChatStore.getState().addChat(joined))
-              .catch(() => {});
-          }}
-        />
-      )}
 
       <ReminderPickerSheet
         open={reminderMessageId !== null}

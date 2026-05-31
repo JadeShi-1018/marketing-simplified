@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Bookmark, MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
+import { Bookmark, Hash, MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
@@ -9,12 +9,14 @@ import { useChatData } from '@/hooks/useChatData';
 import { useProjectMemberRoles } from '@/hooks/useProjectMemberRoles';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
 import { useProjectStore } from '@/lib/projectStore';
+import { getChat } from '@/lib/api/chatApi';
 import ChatWindow from '@/components/chat/ChatWindow';
 import CreateChatDialog from '@/components/chat/CreateChatDialog';
 import SlackMessagesLayout from '@/components/messages/SlackMessagesLayout';
 import SearchPanel from '@/components/chat/search/SearchPanel';
 import SavedItemsPanel from '@/components/chat/SavedItemsPanel';
 import ChatCommandPalette from '@/components/chat/ChatCommandPalette';
+import BrowseChannelsDialog from '@/components/chat/BrowseChannelsDialog';
 import type { MessageSearchResult } from '@/types/chat';
 
 const MESSAGES_MOBILE_QUERY = '(max-width: 767px)';
@@ -26,6 +28,8 @@ export default function MessagePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isAuthenticated = useAuthStore(state => state.isAuthenticated);
+  const currentUser = useAuthStore(state => state.user);
+  const currentUserId = currentUser?.id ? Number(currentUser.id) : 0;
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -35,6 +39,7 @@ export default function MessagePageContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isSavedOpen, setIsSavedOpen] = useState(false);
+  const [isBrowseOpen, setIsBrowseOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
   // Chat store state
@@ -269,6 +274,65 @@ export default function MessagePageContent() {
     [selectedProjectId, setCurrentChat, replaceMessagesQuery]
   );
 
+  const handleSavedJump = useCallback(
+    async (
+      msgId: number,
+      chatId: number,
+      parentMsgId?: number | null,
+      savedProjectId?: number | null,
+    ) => {
+      setIsSavedOpen(false);
+
+      let targetProjectId =
+        savedProjectId && Number.isFinite(savedProjectId) && savedProjectId > 0
+          ? savedProjectId
+          : null;
+
+      let targetChat = targetProjectId
+        ? chatsByProject[targetProjectId]?.find((chat) => Number(chat.id) === Number(chatId))
+        : undefined;
+
+      if (!targetChat) {
+        targetChat = Object.values(chatsByProject)
+          .flat()
+          .find((chat) => Number(chat.id) === Number(chatId));
+      }
+
+      if (!targetChat) {
+        try {
+          targetChat = await getChat(chatId);
+          useChatStore.getState().addChat(targetChat);
+        } catch {
+          // Let ChatWindow's target resolution show the normal not-found state.
+        }
+      }
+
+      const rawProjectId = targetChat?.project_id ?? targetChat?.project ?? targetProjectId ?? selectedProjectId;
+      const parsedProjectId = rawProjectId ? Number(rawProjectId) : NaN;
+      if (Number.isFinite(parsedProjectId) && parsedProjectId > 0) {
+        targetProjectId = parsedProjectId;
+        setSelectedProjectId(parsedProjectId);
+      }
+
+      const params = new URLSearchParams(searchParams.toString());
+      if (targetProjectId) params.set('projectId', String(targetProjectId));
+      params.set('chatId', String(chatId));
+      params.set('jumpId', `saved:${chatId}:${parentMsgId ?? msgId}:${msgId}:${Date.now()}`);
+
+      if (parentMsgId) {
+        params.set('messageId', String(parentMsgId));
+        params.set('threadMessageId', String(msgId));
+      } else {
+        params.set('messageId', String(msgId));
+        params.delete('threadMessageId');
+      }
+
+      setCurrentChat(chatId);
+      router.push(`/messages?${params.toString()}`);
+    },
+    [chatsByProject, router, searchParams, selectedProjectId, setCurrentChat],
+  );
+
   // Sidebar chat-list filter input (mobile drawer only).
   const renderSearchInput = (testId: string) => (
     <div className="relative w-full">
@@ -310,38 +374,61 @@ export default function MessagePageContent() {
           <span className="hidden min-[380px]:inline">Chats</span>
         </button>
         <div className="ml-auto hidden items-center gap-1 md:flex">
-          <button
-            type="button"
-            onClick={() => {
-              setIsSearchOpen(true);
-              setIsSavedOpen(false);
-            }}
-            className="rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
-            data-testid="messages-search"
-            aria-label="Search messages"
-            title="Search messages"
-          >
-            <Search className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setIsSavedOpen((v) => !v);
-              setIsSearchOpen(false);
-            }}
-            className={[
-              'rounded-md p-2 transition',
-              isSavedOpen
-                ? 'bg-teal-50 text-teal-700'
-                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
-            ].join(' ')}
-            data-testid="messages-saved"
-            aria-label="Saved messages"
-            aria-pressed={isSavedOpen}
-            title="Saved messages"
-          >
-            <Bookmark className="h-4 w-4" />
-          </button>
+          {selectedProjectId && (
+            <div className="relative group/browse">
+              <button
+                type="button"
+                onClick={() => setIsBrowseOpen(true)}
+                className="rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Browse channels"
+              >
+                <Hash className="h-4 w-4" />
+              </button>
+              <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-50 whitespace-nowrap rounded-md bg-white px-2 py-1 text-xs text-gray-700 shadow-md ring-1 ring-gray-200 opacity-0 group-hover/browse:opacity-100 transition-opacity">
+                Browse channels
+              </div>
+            </div>
+          )}
+          <div className="relative group/search">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(true);
+                setIsSavedOpen(false);
+              }}
+              className="rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+              data-testid="messages-search"
+              aria-label="Search messages"
+            >
+              <Search className="h-4 w-4" />
+            </button>
+            <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-50 whitespace-nowrap rounded-md bg-white px-2 py-1 text-xs text-gray-700 shadow-md ring-1 ring-gray-200 opacity-0 group-hover/search:opacity-100 transition-opacity">
+              Search messages
+            </div>
+          </div>
+          <div className="relative group/saved">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSavedOpen((v) => !v);
+                setIsSearchOpen(false);
+              }}
+              className={[
+                'rounded-md p-2 transition',
+                isSavedOpen
+                  ? 'bg-teal-50 text-teal-700'
+                  : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
+              ].join(' ')}
+              data-testid="messages-saved"
+              aria-label="Saved messages"
+              aria-pressed={isSavedOpen}
+            >
+              <Bookmark className="h-4 w-4" />
+            </button>
+            <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-50 whitespace-nowrap rounded-md bg-white px-2 py-1 text-xs text-gray-700 shadow-md ring-1 ring-gray-200 opacity-0 group-hover/saved:opacity-100 transition-opacity">
+              Saved messages
+            </div>
+          </div>
         </div>
       </div>
 
@@ -387,23 +474,7 @@ export default function MessagePageContent() {
             <div className="h-full">
               <SavedItemsPanel
                 onClose={() => setIsSavedOpen(false)}
-                onJumpToMessage={(msgId, chatId, parentMsgId) => {
-                  // Navigate to the chat — same URL flow as cross-chat jumps.
-                  // The destination ChatWindow reads `messageId` + optional
-                  // `threadMessageId` and opens the thread/highlights the reply.
-                  setIsSavedOpen(false);
-                  const params = new URLSearchParams(searchParams.toString());
-                  params.set('chatId', String(chatId));
-                  if (parentMsgId) {
-                    params.set('messageId', String(parentMsgId));
-                    params.set('threadMessageId', String(msgId));
-                  } else {
-                    params.set('messageId', String(msgId));
-                    params.delete('threadMessageId');
-                  }
-                  setCurrentChat(chatId);
-                  router.push(`/messages?${params.toString()}`);
-                }}
+                onJumpToMessage={handleSavedJump}
               />
             </div>
           ) : projectSelectionLoading ? (
@@ -470,6 +541,21 @@ export default function MessagePageContent() {
             variant="channel"
           />
         </>
+      )}
+
+      {/* Browse channels dialog */}
+      {isBrowseOpen && selectedProjectId && (
+        <BrowseChannelsDialog
+          projectId={selectedProjectId}
+          currentUserId={currentUserId}
+          onClose={() => setIsBrowseOpen(false)}
+          onJoinedChannel={(chatId) => {
+            setIsBrowseOpen(false);
+            getChat(chatId)
+              .then((joined) => useChatStore.getState().addChat(joined))
+              .catch(() => {});
+          }}
+        />
       )}
 
       {/* Cmd/Ctrl-K conversation switcher */}

@@ -1,14 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
-import { Bell, FolderOpen, Hash, Home, MessageSquare, MessagesSquare, Plus, Search, Star, User, Users } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { createPortal } from 'react-dom';
+import { BellOff, Bell, BellRing, ChevronDown, ChevronRight, FolderOpen, Hash, Home, LogOut, MessageSquare, MessagesSquare, Pencil, Plus, Search, Star, Trash2, User, Users, X } from 'lucide-react';
+import { useCustomSections } from '@/hooks/useCustomSections';
+import type { CustomSection } from '@/hooks/useCustomSections';
 import type { Chat } from '@/types/chat';
 import { useAuthStore } from '@/lib/authStore';
+import { useChatStore } from '@/lib/chatStore';
 import {
+  leaveChat,
   listStarredChats,
+  markChatAsRead,
   reorderStarredChats,
   starChat,
   unstarChat,
+  updateNotificationSettings,
 } from '@/lib/api/chatApi';
 import toast from 'react-hot-toast';
 import type { MessagesNavView } from './NavRail';
@@ -119,6 +126,318 @@ function SearchEmptyIcon() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// ChatContextMenu
+// ---------------------------------------------------------------------------
+
+interface ContextMenuState {
+  chat: Chat;
+  x: number;
+  y: number;
+}
+
+interface ChatContextMenuProps {
+  menu: ContextMenuState;
+  currentUserId: number | null;
+  onClose: () => void;
+  onMarkAsRead: (chatId: number) => void;
+  onMuteToggle: (chat: Chat) => void;
+  onLeave: (chatId: number) => void;
+}
+
+function ChatContextMenu({ menu, currentUserId, onClose, onMarkAsRead, onMuteToggle, onLeave }: ChatContextMenuProps) {
+  const ref = useRef<HTMLDivElement>(null);
+  const { chat, x, y } = menu;
+
+  const myParticipant = (chat.participants ?? []).find((p) => p.user.id === currentUserId);
+  const isMuted = myParticipant?.is_muted ?? false;
+  const isGroup = chat.type === 'group';
+  const hasUnread = (chat.unread_count ?? 0) > 0;
+
+  // Adjust position so menu stays inside viewport
+  const [pos, setPos] = useState({ x, y });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setPos({
+      x: x + rect.width > window.innerWidth ? x - rect.width : x,
+      y: y + rect.height > window.innerHeight ? y - rect.height : y,
+    });
+  }, [x, y]);
+
+  // Close on outside click or Escape
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [onClose]);
+
+  const item = (icon: React.ReactNode, label: string, onClick: () => void, danger = false) => (
+    <button
+      type="button"
+      onClick={() => { onClick(); onClose(); }}
+      className={[
+        'flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm transition-colors',
+        danger
+          ? 'text-red-600 hover:bg-red-50'
+          : 'text-gray-700 hover:bg-gray-100',
+      ].join(' ')}
+    >
+      <span className="h-4 w-4 shrink-0">{icon}</span>
+      {label}
+    </button>
+  );
+
+  return createPortal(
+    <div
+      ref={ref}
+      style={{ left: pos.x, top: pos.y }}
+      className="fixed z-[200] min-w-[180px] rounded-xl border border-gray-200 bg-white py-1.5 shadow-xl"
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {hasUnread && item(<BellRing className="h-4 w-4" />, 'Mark as read', () => onMarkAsRead(chat.id))}
+      {item(
+        isMuted ? <BellOff className="h-4 w-4" /> : <BellOff className="h-4 w-4" />,
+        isMuted ? 'Unmute' : 'Mute',
+        () => onMuteToggle(chat),
+      )}
+      {isGroup && (
+        <>
+          <div className="my-1 border-t border-gray-100" />
+          {item(<LogOut className="h-4 w-4" />, 'Leave channel', () => onLeave(chat.id), true)}
+        </>
+      )}
+    </div>,
+    document.body,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CustomSectionBlock — a user-created collapsible section
+// ---------------------------------------------------------------------------
+
+interface CustomSectionBlockProps {
+  section: CustomSection;
+  availableChats: import('@/types/chat').Chat[];
+  currentChatId: number | null;
+  currentUserId: number | null;
+  onSelectChat: (chatId: number) => void;
+  onToggleCollapsed: () => void;
+  onRename: (name: string) => void;
+  onDelete: () => void;
+  onAddChat: (chatId: number) => void;
+  onRemoveChat: (chatId: number) => void;
+  onContextMenu: (chat: Chat) => (e: React.MouseEvent<HTMLElement>) => void;
+  starredIdSet: Set<number>;
+  onStarToggle: (chatId: number) => void;
+}
+
+function CustomSectionBlock({
+  section,
+  availableChats,
+  currentChatId,
+  currentUserId,
+  onSelectChat,
+  onToggleCollapsed,
+  onRename,
+  onDelete,
+  onAddChat,
+  onRemoveChat,
+  onContextMenu,
+  starredIdSet,
+  onStarToggle,
+}: CustomSectionBlockProps) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(section.name);
+  const [showPicker, setShowPicker] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Resolve chats in this section that still exist in the live chat list
+  const sectionChats = useMemo(
+    () => section.chatIds.map((id) => availableChats.find((c) => c.id === id)).filter(Boolean) as import('@/types/chat').Chat[],
+    [section.chatIds, availableChats]
+  );
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!showPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        pickerRef.current && !pickerRef.current.contains(e.target as Node) &&
+        addButtonRef.current && !addButtonRef.current.contains(e.target as Node)
+      ) {
+        setShowPicker(false);
+        setPickerQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showPicker]);
+
+  const commitRename = () => {
+    const trimmed = editValue.trim();
+    if (trimmed) onRename(trimmed);
+    setIsEditing(false);
+  };
+
+  const pickerChats = useMemo(() => {
+    const q = pickerQuery.toLowerCase();
+    return availableChats.filter((c) =>
+      (c.name ?? '').toLowerCase().includes(q)
+    );
+  }, [availableChats, pickerQuery]);
+
+  return (
+    <div className="mt-3">
+      {/* Section header */}
+      <div className="flex items-center gap-1 px-2">
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="shrink-0 rounded p-0.5 text-gray-400 hover:text-gray-700"
+          aria-label={section.collapsed ? 'Expand section' : 'Collapse section'}
+        >
+          {section.collapsed
+            ? <ChevronRight className="h-3.5 w-3.5" />
+            : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
+
+        {isEditing ? (
+          <input
+            ref={nameInputRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setEditValue(section.name); setIsEditing(false); } }}
+            className="flex-1 min-w-0 text-xs font-semibold uppercase tracking-wide text-gray-700 outline-none border-b border-teal-400 bg-transparent"
+            autoFocus
+          />
+        ) : (
+          <span className="flex-1 min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-gray-600">
+            {section.name}
+          </span>
+        )}
+
+        {/* Edit name */}
+        <button
+          type="button"
+          onClick={() => { setEditValue(section.name); setIsEditing(true); setTimeout(() => nameInputRef.current?.select(), 0); }}
+          className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition hover:text-gray-700 group-hover:opacity-100 [.custom-section:hover_&]:opacity-100"
+          aria-label="Rename section"
+          title="Rename section"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+
+        {/* Add channel */}
+        <div className="relative shrink-0">
+          <button
+            ref={addButtonRef}
+            type="button"
+            onClick={() => { setShowPicker((v) => !v); setPickerQuery(''); }}
+            className="rounded p-0.5 text-gray-400 hover:text-gray-700"
+            aria-label="Add channel to section"
+            title="Add channel"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
+
+          {showPicker && (
+            <div
+              ref={pickerRef}
+              className="absolute left-0 top-6 z-50 w-52 rounded-xl border border-gray-200 bg-white p-2 shadow-lg"
+            >
+              <input
+                type="text"
+                placeholder="Search channels…"
+                value={pickerQuery}
+                onChange={(e) => setPickerQuery(e.target.value)}
+                className="mb-1.5 w-full rounded-md border border-gray-200 px-2 py-1 text-xs outline-none focus:border-teal-400"
+                autoFocus
+              />
+              <ul className="task-tab-scrollbar max-h-48 overflow-y-auto">
+                {pickerChats.length === 0 ? (
+                  <li className="px-2 py-3 text-center text-xs text-gray-400">No channels found</li>
+                ) : pickerChats.map((c) => {
+                  const inSection = section.chatIds.includes(c.id);
+                  return (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (inSection) onRemoveChat(c.id);
+                          else onAddChat(c.id);
+                        }}
+                        className={[
+                          'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs',
+                          inSection ? 'bg-teal-50 text-teal-700' : 'text-gray-700 hover:bg-gray-50',
+                        ].join(' ')}
+                      >
+                        <Hash className="h-3 w-3 shrink-0" />
+                        <span className="flex-1 truncate">{c.name || 'untitled'}</span>
+                        {inSection && <X className="h-3 w-3 shrink-0" />}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Delete section */}
+        <button
+          type="button"
+          onClick={onDelete}
+          className="shrink-0 rounded p-0.5 text-gray-400 hover:text-red-500"
+          aria-label="Delete section"
+          title="Delete section"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      </div>
+
+      {/* Channel rows */}
+      {!section.collapsed && (
+        <div className="mt-1 mx-1 space-y-0.5">
+          {(() => {
+            const visibleSectionChats = sectionChats.filter((c) => !starredIdSet.has(c.id));
+            return visibleSectionChats.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-gray-400">
+                No channels yet — click <Plus className="inline h-3 w-3" /> to add some.
+              </p>
+            ) : visibleSectionChats.map((chat) => (
+              <SidebarChatRow
+                key={chat.id}
+                chat={chat}
+                isActive={chat.id === currentChatId}
+                displayName={chat.name || 'untitled'}
+                currentUserId={currentUserId}
+                onClick={() => onSelectChat(chat.id)}
+                showStarToggle
+                isStarred={starredIdSet.has(chat.id)}
+                onStarToggle={() => onStarToggle(chat.id)}
+                onContextMenu={onContextMenu(chat)}
+              />
+            ));
+          })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function HomeSidebar({
   view,
   onChangeView,
@@ -137,10 +456,60 @@ export default function HomeSidebar({
   isSearchActive = false,
 }: HomeSidebarProps) {
   const currentUserId = useAuthStore((s) => (s.user?.id ? Number(s.user.id) : null));
+
+  // ---- custom sidebar sections ----
+  const {
+    sections: customSections,
+    createSection,
+    deleteSection,
+    renameSection,
+    toggleCollapsed,
+    addChatToSection,
+    removeChatFromSection,
+  } = useCustomSections(selectedProjectId);
+
   const [starredOrder, setStarredOrder] = useState<number[]>([]);
   const [starLoading, setStarLoading] = useState(false);
   const [hasLoadedStarred, setHasLoadedStarred] = useState(false);
   const [draggingId, setDraggingId] = useState<number | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+  const openContextMenu = useCallback((chat: Chat) => (e: React.MouseEvent<HTMLElement>) => {
+    e.preventDefault();
+    setContextMenu({ chat, x: e.clientX, y: e.clientY });
+  }, []);
+
+  const handleMarkAsRead = useCallback(async (chatId: number) => {
+    try {
+      await markChatAsRead(chatId);
+      useChatStore.getState().updateChat(chatId, { unread_count: 0, mention_unread_count: 0 });
+    } catch {
+      toast.error('Could not mark as read');
+    }
+  }, []);
+
+  const handleMuteToggle = useCallback(async (chat: Chat) => {
+    const liveChat = chats.find((c) => c.id === chat.id) ?? chat;
+    const myParticipant = (liveChat.participants ?? []).find((p) => p.user.id === currentUserId);
+    const isMuted = myParticipant?.is_muted ?? false;
+    try {
+      await updateNotificationSettings(chat.id, { is_muted: !isMuted });
+      toast.success(isMuted ? 'Channel unmuted' : 'Channel muted');
+    } catch {
+      toast.error('Could not update mute setting');
+    }
+  }, [chats, currentUserId]);
+
+  const handleLeave = useCallback(async (chatId: number) => {
+    try {
+      await leaveChat(chatId);
+      const liveChat = chats.find((c) => c.id === chatId);
+      toast.success(`You left ${liveChat?.name ? `#${liveChat.name}` : 'the channel'}`);
+      useChatStore.getState().removeChat(chatId);
+    } catch {
+      toast.error('Could not leave the channel');
+    }
+  }, [chats]);
 
   const { groupChats, privateChats } = useMemo(() => {
     const group: Chat[] = [];
@@ -442,11 +811,47 @@ export default function HomeSidebar({
                     onDragOver={handleDragOver}
                     onDrop={handleDropOn(chat.id)}
                     isDragging={draggingId === chat.id}
+                    onContextMenu={openContextMenu(chat)}
                   />
                 ))}
               </div>
             )}
           </Section>
+        )}
+
+        {/* ── Custom sections (home view only) ── */}
+        {showHome && selectedProjectId && customSections.map((section) => (
+          <CustomSectionBlock
+            key={section.id}
+            section={section}
+            availableChats={groupChats}
+            currentChatId={currentChatId}
+            currentUserId={currentUserId}
+            onSelectChat={onSelectChat}
+            onToggleCollapsed={() => toggleCollapsed(section.id)}
+            onRename={(name) => renameSection(section.id, name)}
+            onDelete={() => deleteSection(section.id)}
+            onAddChat={(chatId) => addChatToSection(section.id, chatId)}
+            onRemoveChat={(chatId) => removeChatFromSection(section.id, chatId)}
+            onContextMenu={openContextMenu}
+            starredIdSet={starredIdSet}
+            onStarToggle={(chatId) => void toggleStar(chatId)}
+          />
+        ))}
+
+        {/* Add section button — sits between sections and Channels */}
+        {showHome && selectedProjectId && (
+          <div className="mt-2 px-3">
+            <button
+              type="button"
+              onClick={() => createSection()}
+              className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition-colors"
+              data-testid="messages-add-section"
+            >
+              <Plus className="h-3 w-3" />
+              Add section
+            </button>
+          </div>
         )}
 
         {showHome && (
@@ -471,7 +876,11 @@ export default function HomeSidebar({
               </button>
             </div>
             <div className="mt-2 mx-1">
-              {groupChats.length === 0 ? (
+              {(() => {
+                // Starred channels only appear in the Starred section
+                const sectionedIds = new Set(customSections.flatMap((s) => s.chatIds));
+                const visibleChannels = groupChats.filter((c) => !starredIdSet.has(c.id) && !sectionedIds.has(c.id));
+                return visibleChannels.length === 0 ? (
                 <div className="px-3 py-4 text-center text-xs text-gray-500">
                   <Hash className="mx-auto mb-1 h-5 w-5 text-gray-300" />
                   <p className="mb-2">{isSearchActive ? 'No matching channels' : 'No channels yet'}</p>
@@ -489,7 +898,7 @@ export default function HomeSidebar({
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {groupChats.map((chat) => (
+                  {visibleChannels.map((chat) => (
                     <SidebarChatRow
                       key={chat.id}
                       chat={chat}
@@ -497,12 +906,16 @@ export default function HomeSidebar({
                       displayName={rowDisplayName(chat)}
                       currentUserId={currentUserId}
                       onClick={() => onSelectChat(chat.id)}
+                      showStarToggle
+                      isStarred={starredIdSet.has(chat.id)}
+                      onStarToggle={() => void toggleStar(chat.id)}
                       draggable={!starredIdSet.has(chat.id)}
                       onDragStart={listDragStart(chat.id)}
+                      onContextMenu={openContextMenu(chat)}
                     />
                   ))}
                 </div>
-              )}
+              );})()}
             </div>
           </div>
         )}
@@ -528,7 +941,12 @@ export default function HomeSidebar({
               </button>
             }
           >
-            {privateChats.length === 0 ? (
+            {(() => {
+              // In home view, starred DMs live only in the Starred section
+              const visibleDMs = showHome
+                ? privateChats.filter((c) => !starredIdSet.has(c.id))
+                : privateChats;
+              return visibleDMs.length === 0 ? (
               <div className="px-3 py-4 text-center text-sm text-gray-500">
                 <MessagesSquare className="mx-auto mb-1 h-5 w-5 text-gray-300" />
                 <p className="mb-2 text-xs">{isSearchActive ? 'No matching direct messages' : 'No direct messages yet'}</p>
@@ -547,7 +965,7 @@ export default function HomeSidebar({
               </div>
             ) : (
               <div className="space-y-0.5 mx-1">
-                {privateChats.map((chat) => (
+                {visibleDMs.map((chat) => (
                   <SidebarChatRow
                     key={chat.id}
                     chat={chat}
@@ -561,10 +979,11 @@ export default function HomeSidebar({
                     onStarToggle={showHome ? () => void toggleStar(chat.id) : undefined}
                     draggable={showHome && !starredIdSet.has(chat.id)}
                     onDragStart={showHome ? listDragStart(chat.id) : undefined}
+                    onContextMenu={openContextMenu(chat)}
                   />
                 ))}
               </div>
-            )}
+            );})()}
           </Section>
         )}
 
@@ -625,7 +1044,18 @@ export default function HomeSidebar({
           );
         })}
       </div>
-      <div className="flex-1 overflow-y-auto">{mainListContent()}</div>
+      <div className="task-tab-scrollbar flex-1 overflow-y-auto">{mainListContent()}</div>
+
+      {contextMenu && (
+        <ChatContextMenu
+          menu={contextMenu}
+          currentUserId={currentUserId}
+          onClose={() => setContextMenu(null)}
+          onMarkAsRead={(chatId) => void handleMarkAsRead(chatId)}
+          onMuteToggle={(chat) => void handleMuteToggle(chat)}
+          onLeave={(chatId) => void handleLeave(chatId)}
+        />
+      )}
     </div>
   );
 }

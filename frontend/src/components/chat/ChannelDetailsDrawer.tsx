@@ -1,15 +1,19 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bell,
+  Calendar as CalendarIcon,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Clock,
   Download,
   FileText,
   Image,
   Loader2,
+  LogOut,
   Music,
   Pin,
   Plus,
@@ -19,10 +23,23 @@ import {
   Video,
   X,
 } from 'lucide-react';
-import { format } from 'date-fns';
+import {
+  addMonths,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameDay,
+  isSameMonth,
+  parseISO,
+  startOfDay,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+} from 'date-fns';
 import toast from 'react-hot-toast';
 import type { Chat, ChatParticipant } from '@/types/chat';
-import { addParticipant, cancelScheduledMessage, createScheduledMessage, listPins, listChatFiles, listScheduledMessages, removeParticipant, unpinMessage, updateChatDetails, updateNotificationSettings } from '@/lib/api/chatApi';
+import { addParticipant, cancelScheduledMessage, createScheduledMessage, leaveChat, listPins, listChatFiles, listScheduledMessages, removeParticipant, unpinMessage, updateChatDetails, updateNotificationSettings } from '@/lib/api/chatApi';
 import type { PinnedMessageRow, ChatFileRow, ScheduledMessageRow } from '@/lib/api/chatApi';
 import { ProjectAPI } from '@/lib/api/projectApi';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
@@ -261,6 +278,165 @@ function AddMemberPicker({ chatId, projectId, existingUserIds, onAdded, onClose 
   );
 }
 
+// ── Upward-opening date picker ────────────────────────────────────────────────
+// Native <input type="date"> always opens its calendar downward, which gets
+// clipped inside the drawer. This custom popover opens upward instead.
+
+interface DatePickerUpProps {
+  value: string;            // 'YYYY-MM-DD'
+  min?: string;             // 'YYYY-MM-DD' — days before this are disabled
+  onChange: (value: string) => void;
+  className?: string;
+}
+
+function DatePickerUp({ value, min, onChange, className }: DatePickerUpProps) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const selected = value ? parseISO(value) : null;
+  const minDate = min ? startOfDay(parseISO(min)) : null;
+  const [viewMonth, setViewMonth] = useState<Date>(selected ?? new Date());
+  // Fixed-position coords for the portal popover (anchored above the trigger)
+  const [coords, setCoords] = useState<{ left: number; bottom: number; width: number } | null>(null);
+
+  const updateCoords = useCallback(() => {
+    const el = triggerRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setCoords({
+      left: rect.left,
+      bottom: window.innerHeight - rect.top + 4, // sit just above the trigger
+      width: rect.width,
+    });
+  }, []);
+
+  // Re-centre the calendar on the selected month + measure position when opening
+  useLayoutEffect(() => {
+    if (!open) return;
+    setViewMonth(selected ?? new Date());
+    updateCoords();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Reposition while open (scroll/resize), and close on outside click / Escape
+  useEffect(() => {
+    if (!open) return;
+    const onScrollOrResize = () => updateCoords();
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (triggerRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true);
+      window.removeEventListener('resize', onScrollOrResize);
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, updateCoords]);
+
+  const days = eachDayOfInterval({
+    start: startOfWeek(startOfMonth(viewMonth), { weekStartsOn: 1 }),
+    end: endOfWeek(endOfMonth(viewMonth), { weekStartsOn: 1 }),
+  });
+
+  const pick = (day: Date) => {
+    onChange(format(day, 'yyyy-MM-dd'));
+    setOpen(false);
+  };
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex flex-1 items-center justify-between gap-1.5 ${className ?? ''}`}
+      >
+        <span className={selected ? 'text-gray-700' : 'text-gray-400'}>
+          {selected ? format(selected, 'MM/dd/yyyy') : 'Select date'}
+        </span>
+        <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+      </button>
+
+      {open && coords && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={popoverRef}
+          className="fixed z-[60] w-60 rounded-lg border border-gray-200 bg-white p-2 shadow-lg"
+          style={{ left: coords.left, bottom: coords.bottom }}
+        >
+          {/* Month header */}
+          <div className="mb-1.5 flex items-center justify-between px-1">
+            <button
+              type="button"
+              onClick={() => setViewMonth((m) => subMonths(m, 1))}
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              aria-label="Previous month"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="text-xs font-semibold text-gray-700">
+              {format(viewMonth, 'MMMM yyyy')}
+            </span>
+            <button
+              type="button"
+              onClick={() => setViewMonth((m) => addMonths(m, 1))}
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+              aria-label="Next month"
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* Weekday labels */}
+          <div className="mb-1 grid grid-cols-7 gap-0.5 text-center text-[10px] font-medium text-gray-400">
+            {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((d) => (
+              <span key={d}>{d}</span>
+            ))}
+          </div>
+
+          {/* Day grid */}
+          <div className="grid grid-cols-7 gap-0.5">
+            {days.map((day) => {
+              const disabled = minDate ? startOfDay(day) < minDate : false;
+              const isSelected = selected ? isSameDay(day, selected) : false;
+              const inMonth = isSameMonth(day, viewMonth);
+              return (
+                <button
+                  key={day.toISOString()}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => pick(day)}
+                  className={[
+                    'flex h-7 w-7 items-center justify-center rounded text-xs',
+                    isSelected
+                      ? 'bg-teal-500 font-semibold text-white'
+                      : inMonth
+                        ? 'text-gray-700 hover:bg-teal-50'
+                        : 'text-gray-300 hover:bg-gray-50',
+                    disabled ? 'cursor-not-allowed text-gray-200 hover:bg-transparent' : '',
+                  ].join(' ')}
+                >
+                  {format(day, 'd')}
+                </button>
+              );
+            })}
+          </div>
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
 // ── Collapsible section ───────────────────────────────────────────────────────
 
 function Section({ title, icon, defaultOpen = true, onOpen, children }: {
@@ -271,14 +447,22 @@ function Section({ title, icon, defaultOpen = true, onOpen, children }: {
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const headerRef = useRef<HTMLButtonElement>(null);
   return (
     <div className="border-b border-gray-100">
       <button
+        ref={headerRef}
         type="button"
         onClick={() => {
           const next = !open;
           setOpen(next);
-          if (next) onOpen?.();
+          if (next) {
+            onOpen?.();
+            // After the content renders, scroll the header to the top of the panel
+            setTimeout(() => {
+              headerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 50);
+          }
         }}
         className="flex w-full items-center gap-2 px-4 py-3 text-left hover:bg-gray-50"
       >
@@ -310,6 +494,8 @@ export interface ChannelDetailsDrawerProps {
   lastScheduledMsg?: ScheduledMessageRow | null;
   /** Called when a new participant is successfully added, so callers can update their mention list. */
   onParticipantAdded?: (p: ChatParticipant) => void;
+  /** Called after the current user leaves the channel, so the caller can drop it from the list and navigate away. */
+  onLeft?: (chatId: number) => void;
 }
 
 export default function ChannelDetailsDrawer({
@@ -320,6 +506,7 @@ export default function ChannelDetailsDrawer({
   onJumpToMessage,
   lastScheduledMsg,
   onParticipantAdded,
+  onLeft,
 }: ChannelDetailsDrawerProps) {
   const isGroup = chat.type === 'group';
   const [participants, setParticipants] = useState<ChatParticipant[]>(
@@ -338,6 +525,8 @@ export default function ChannelDetailsDrawer({
   const [scheduledLoaded, setScheduledLoaded] = useState(false);
   const [cancellingScheduledId, setCancellingScheduledId] = useState<number | null>(null);
   const [reschedulingId, setReschedulingId] = useState<number | null>(null);
+  const rescheduleFormRef = useRef<HTMLDivElement>(null);
+  const drawerBodyRef = useRef<HTMLDivElement>(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
   const [rescheduleSaving, setRescheduleSaving] = useState(false);
@@ -349,6 +538,11 @@ export default function ChannelDetailsDrawer({
     (myParticipant?.notification_level === 'mentions' ? 'mentions' : 'all')
   );
   const [savingNotif, setSavingNotif] = useState(false);
+
+  // Leave-channel confirmation + in-flight state
+  const [confirmingLeave, setConfirmingLeave] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const leaveConfirmRef = useRef<HTMLDivElement>(null);
 
   // Keep participants in sync when chat prop changes
   useEffect(() => {
@@ -426,6 +620,37 @@ export default function ChannelDetailsDrawer({
     setSavingNotif(true);
     try { await updateNotificationSettings(chat.id, { notification_level: level }); } catch { setNotifLevel(notifLevel); } finally { setSavingNotif(false); }
   };
+
+  const handleLeave = async () => {
+    setLeaving(true);
+    try {
+      await leaveChat(chat.id);
+      toast.success(`You left ${chat.name ? `#${chat.name}` : 'the channel'}`);
+      onLeft?.(chat.id);
+      onClose();
+    } catch {
+      toast.error('Could not leave the channel');
+      setLeaving(false);
+      setConfirmingLeave(false);
+    }
+  };
+
+  // Fetch counts on mount so each section header shows its count even before
+  // it's expanded. The onOpen loaders below become no-ops once *Loaded is true.
+  useEffect(() => {
+    setPinsLoaded(true);
+    listPins(chat.id).then(setPins).catch(() => {});
+
+    setFilesLoaded(true);
+    setFilesLoading(true);
+    listChatFiles(chat.id)
+      .then(({ results, total }) => { setFiles(results); setFilesTotal(total); })
+      .catch(() => {})
+      .finally(() => setFilesLoading(false));
+
+    setScheduledLoaded(true);
+    listScheduledMessages(chat.id).then(setScheduled).catch(() => {});
+  }, [chat.id]);
 
   const loadPins = useCallback(() => {
     if (pinsLoaded) return;
@@ -515,6 +740,36 @@ export default function ChannelDetailsDrawer({
     }
   };
 
+  // Scroll the outer drawer body so the reschedule form is visible
+  useEffect(() => {
+    if (!reschedulingId) return;
+    setTimeout(() => {
+      const form = rescheduleFormRef.current;
+      const body = drawerBodyRef.current;
+      if (!form || !body) return;
+      const formBottom = form.offsetTop + form.offsetHeight;
+      const bodyVisible = body.scrollTop + body.clientHeight;
+      if (formBottom > bodyVisible) {
+        body.scrollTo({ top: formBottom - body.clientHeight + 16, behavior: 'smooth' });
+      }
+    }, 50);
+  }, [reschedulingId]);
+
+  // Scroll the outer drawer body so the leave-confirmation box is visible
+  useEffect(() => {
+    if (!confirmingLeave) return;
+    setTimeout(() => {
+      const box = leaveConfirmRef.current;
+      const body = drawerBodyRef.current;
+      if (!box || !body) return;
+      const boxBottom = box.offsetTop + box.offsetHeight;
+      const bodyVisible = body.scrollTop + body.clientHeight;
+      if (boxBottom > bodyVisible) {
+        body.scrollTo({ top: boxBottom - body.clientHeight + 16, behavior: 'smooth' });
+      }
+    }, 50);
+  }, [confirmingLeave]);
+
   const pendingScheduled = scheduled.filter((m) => m.status === 'pending' || m.status === 'sending');
 
   return (
@@ -533,7 +788,7 @@ export default function ChannelDetailsDrawer({
       </div>
 
       {/* Scrollable body */}
-      <div className="task-tab-scrollbar flex-1 overflow-y-auto">
+      <div ref={drawerBodyRef} className="task-tab-scrollbar flex-1 overflow-y-auto">
 
         {/* About — group channels only */}
         {isGroup && (
@@ -817,14 +1072,13 @@ export default function ChannelDetailsDrawer({
 
                     {/* Inline reschedule form */}
                     {isRescheduling && (
-                      <div className="mt-2 ml-2.5 space-y-1.5">
+                      <div ref={rescheduleFormRef} className="mt-2 ml-2.5 space-y-1.5">
                         <div className="flex gap-1.5">
-                          <input
-                            type="date"
+                          <DatePickerUp
                             value={rescheduleDate}
                             min={todayStr}
-                            onChange={(e) => setRescheduleDate(e.target.value)}
-                            className="flex-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-700 focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
+                            onChange={setRescheduleDate}
+                            className="w-full rounded border border-gray-300 px-2 py-1 text-xs focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
                           />
                           <input
                             type="time"
@@ -915,6 +1169,51 @@ export default function ChannelDetailsDrawer({
             )}
           </div>
         </Section>
+
+        {/* Leave channel — group chats only */}
+        {isGroup && (
+          <div className="px-4 py-4">
+            {confirmingLeave ? (
+              <div ref={leaveConfirmRef} className="rounded-lg border border-red-200 bg-red-50 p-3">
+                <p className="text-sm font-medium text-gray-800">
+                  Leave {chat.name ? `#${chat.name}` : 'this channel'}?
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  You&apos;ll stop receiving messages and need to be re-added to rejoin.
+                </p>
+                <div className="mt-2.5 flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void handleLeave()}
+                    disabled={leaving}
+                    className="flex items-center gap-1 rounded bg-red-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50"
+                  >
+                    {leaving
+                      ? <><Loader2 className="h-3 w-3 animate-spin" /> Leaving…</>
+                      : 'Leave channel'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingLeave(false)}
+                    disabled={leaving}
+                    className="rounded px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingLeave(true)}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+              >
+                <LogOut className="h-4 w-4" />
+                Leave channel
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

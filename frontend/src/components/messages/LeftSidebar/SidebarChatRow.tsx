@@ -22,6 +22,8 @@ interface SidebarChatRowProps {
   onDragOver?: (e: DragEvent<HTMLElement>) => void;
   onDrop?: (e: DragEvent<HTMLElement>) => void;
   isDragging?: boolean;
+  // Context menu
+  onContextMenu?: (e: MouseEvent<HTMLElement>) => void;
   // Test IDs
   testId?: string;
 }
@@ -97,6 +99,7 @@ export default function SidebarChatRow({
   onDragOver,
   onDrop,
   isDragging,
+  onContextMenu,
   testId = 'messages-chat-row',
 }: SidebarChatRowProps) {
   const unreadCount = chat.unread_count ?? 0;
@@ -124,6 +127,7 @@ export default function SidebarChatRow({
         role="button"
         tabIndex={0}
         onClick={onClick}
+        onContextMenu={onContextMenu}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
