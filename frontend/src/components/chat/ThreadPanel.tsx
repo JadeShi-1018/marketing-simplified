@@ -47,6 +47,10 @@ interface RootMessageSummaryProps {
   onReactionAdd: (emoji: string) => void;
   onReactionRemove: (emoji: string) => void;
   onForward?: () => void;
+  onPin?: (messageId: number) => void;
+  onSave?: (messageId: number) => void;
+  isPinned?: boolean;
+  isSaved?: boolean;
 }
 
 function RootMessageSummary({
@@ -57,6 +61,10 @@ function RootMessageSummary({
   onReactionAdd,
   onReactionRemove,
   onForward,
+  onPin,
+  onSave,
+  isPinned = false,
+  isSaved = false,
 }: RootMessageSummaryProps) {
   const [isHovering, setIsHovering] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -82,7 +90,14 @@ function RootMessageSummary({
   const hasContent = !!message.content || !!message.rich_body;
 
   return (
-    <div className="border-b border-gray-100 px-4 py-3">
+    <div className="relative border-b border-gray-100 px-4 py-3">
+      {/* Pinned/saved accent bar — mirror MessageItem so it's obvious here too */}
+      {(isPinned || isSaved) && (
+        <div className="pointer-events-none absolute inset-y-0 left-0 flex w-0.5 flex-col">
+          <div className={`flex-1 ${isPinned ? 'bg-teal-400' : 'bg-amber-400'}`} />
+          {isPinned && isSaved && <div className="flex-1 bg-amber-400" />}
+        </div>
+      )}
       <div
         className="relative flex gap-3"
         onMouseEnter={handleMouseEnter}
@@ -136,6 +151,23 @@ function RootMessageSummary({
               </p>
             )
           )}
+
+          {(isPinned || isSaved) && (
+            <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+              {isPinned && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-teal-600">
+                  <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+                  Pinned to channel · visible to all members
+                </span>
+              )}
+              {isSaved && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-amber-500">
+                  <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+                  Saved for later · only visible to you
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {isHovering && !isEditing && (
@@ -154,8 +186,8 @@ function RootMessageSummary({
             onForward={() => onForward?.()}
             onCopy={handleCopyText}
             onCopyLink={() => {}}
-            onPin={() => {}}
-            onSave={() => {}}
+            onPin={() => onPin?.(message.id)}
+            onSave={() => onSave?.(message.id)}
             onRemind={() => {}}
             onMultiSelect={() => {}}
             onMenuOpenChange={(open) => {
@@ -182,6 +214,14 @@ interface ThreadPanelProps {
   currentUserId?: number;
   onClose: () => void;
   onForwardMessage?: (messageId: number) => void;
+  onPinMessage?: (messageId: number) => void;
+  onSaveMessage?: (messageId: number) => void;
+  pinnedMessageIds?: Set<number>;
+  savedMessageIds?: Set<number>;
+  /** When set, highlight + scroll to that reply (root message id matches → highlight root). */
+  highlightMessageId?: number | null;
+  /** Called after the highlight fades so the parent can clear its state. */
+  onHighlightCleared?: () => void;
 }
 
 export default function ThreadPanel({
@@ -190,6 +230,12 @@ export default function ThreadPanel({
   currentUserId,
   onClose,
   onForwardMessage,
+  onPinMessage,
+  onSaveMessage,
+  pinnedMessageIds,
+  savedMessageIds,
+  highlightMessageId = null,
+  onHighlightCleared,
 }: ThreadPanelProps) {
   const { isLoading, isSending, sendReply } = useThreadData(rootMessage);
   const repliesEndRef = useRef<HTMLDivElement>(null);
@@ -202,10 +248,31 @@ export default function ThreadPanel({
   const rootId = rootMessage?.id ?? null;
   const replies = rootId != null ? (threadReplies[rootId] ?? []) : [];
 
-  // Auto-scroll to bottom when new replies arrive
+  // Auto-scroll to bottom when new replies arrive — but skip when the parent
+  // asked us to highlight a specific reply (jumped here from pinned/saved).
   useEffect(() => {
+    if (highlightMessageId) return;
     repliesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [replies.length]);
+  }, [replies.length, highlightMessageId]);
+
+  // When a highlight target is set and replies are loaded, scroll the target
+  // into view and start a 4 s timer to clear the highlight (parent state).
+  useEffect(() => {
+    if (!highlightMessageId) return;
+    if (isLoading) return;
+    if (!replies.some((r) => r.id === highlightMessageId)) return;
+    const frame = window.requestAnimationFrame(() => {
+      const el = document.getElementById(`message-${highlightMessageId}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    const timer = window.setTimeout(() => {
+      onHighlightCleared?.();
+    }, 4000);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [highlightMessageId, isLoading, replies, onHighlightCleared]);
 
   const handleSendRich = async (data: RichSendData) => {
     await sendReply({
@@ -329,6 +396,10 @@ export default function ThreadPanel({
         onReactionAdd={handleReactionAddRoot}
         onReactionRemove={handleReactionRemoveRoot}
         onForward={onForwardMessage ? () => onForwardMessage(rootMessage.id) : undefined}
+        onPin={onPinMessage}
+        onSave={onSaveMessage}
+        isPinned={pinnedMessageIds?.has(rootMessage.id)}
+        isSaved={savedMessageIds?.has(rootMessage.id)}
       />
 
       {/* Reply count header */}
@@ -341,7 +412,7 @@ export default function ThreadPanel({
       )}
 
       {/* Replies list */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="task-tab-scrollbar flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-gray-300" />
@@ -360,11 +431,16 @@ export default function ThreadPanel({
                 isOwnMessage={reply.sender.id === currentUserId}
                 showSender
                 isThreadActive={false}
+                isHighlighted={reply.id === highlightMessageId}
                 onEdit={handleEditReply}
                 onDelete={handleDeleteReply}
                 onReactionAdd={(emoji) => handleReactionAdd(reply.id, emoji)}
                 onReactionRemove={(emoji) => handleReactionRemove(reply.id, emoji)}
                 onForwardSingle={onForwardMessage ? () => onForwardMessage(reply.id) : undefined}
+                onPin={onPinMessage}
+                onSave={onSaveMessage}
+                isPinned={pinnedMessageIds?.has(reply.id)}
+                isSaved={savedMessageIds?.has(reply.id)}
               />
             ))}
           </div>

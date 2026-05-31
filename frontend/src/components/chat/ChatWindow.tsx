@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, CheckSquare, Forward, X } from 'lucide-react';
+import { ArrowLeft, CheckSquare, Forward, Hash, Info, X } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/authStore';
@@ -9,14 +9,18 @@ import { useMessageData } from '@/hooks/useMessageData';
 import { useForwardMessages } from '@/hooks/useForwardMessages';
 import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useChatStore } from '@/lib/chatStore';
-import { editMessage, deleteMessage, addReaction, removeReaction, getMessage } from '@/lib/api/chatApi';
+import { editMessage, deleteMessage, addReaction, removeReaction, getMessage, getChat, pinMessage, unpinMessage, saveMessage, unsaveMessage, listPins, listSavedMessages, createScheduledMessage, listScheduledMessages, updateChatDetails, updateNotificationSettings } from '@/lib/api/chatApi';
 import type { Chat, Message } from '@/types/chat';
+import type { ScheduledMessageRow } from '@/lib/api/chatApi';
 import MessageList from './MessageList';
 import ChatComposer from './ChatComposer';
-import type { RichSendData } from './ChatComposer';
+import type { RichSendData, SlashCommand } from './ChatComposer';
 import ForwardMessagesDialog from './ForwardMessagesDialog';
 import TypingIndicator from './TypingIndicator';
 import ThreadPanel from './ThreadPanel';
+import ChannelDetailsDrawer from './ChannelDetailsDrawer';
+import BrowseChannelsDialog from './BrowseChannelsDialog';
+import ReminderPickerSheet from './ReminderPickerSheet';
 
 interface ChatWindowProps {
   chat: Chat;
@@ -46,7 +50,65 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<number | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   const [activeThreadMessage, setActiveThreadMessage] = useState<Message | null>(null);
+  // When a user jumps to a thread reply (e.g. from a pinned/saved entry), this
+  // is the reply id we want ThreadPanel to highlight + scroll to. Cleared by
+  // ThreadPanel itself after the highlight fades.
+  const [threadHighlightMessageId, setThreadHighlightMessageId] = useState<number | null>(null);
+  const [showChannelDetails, setShowChannelDetails] = useState(false);
+  const [showBrowseChannels, setShowBrowseChannels] = useState(false);
+  const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
+  const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<number>>(new Set());
+  const [savedMessageIds, setSavedMessageIds] = useState<Set<number>>(new Set());
+  const [pendingScheduledCount, setPendingScheduledCount] = useState(0);
+  const [lastScheduledMsg, setLastScheduledMsg] = useState<ScheduledMessageRow | null>(null);
+  // First-time channel description banner: shown once per (user, channel) and
+  // dismissed into localStorage so existing members never see it again.
+  const [showDescriptionBanner, setShowDescriptionBanner] = useState(false);
   const unreadCapturedForChatRef = useRef<number | null>(null);
+
+  // Reminder polling — check localStorage every 60 s and surface due reminders as toasts
+  useEffect(() => {
+    const check = () => {
+      const key = 'ms_reminders';
+      try {
+        const all = JSON.parse(localStorage.getItem(key) || '[]') as Array<{ messageId: number; time: number; chatId: number }>;
+        const now = Date.now();
+        const due = all.filter((r) => r.time <= now);
+        const remaining = all.filter((r) => r.time > now);
+        if (due.length > 0) {
+          localStorage.setItem(key, JSON.stringify(remaining));
+          due.forEach((r) => {
+            toast(`⏰ Reminder: message #${r.messageId}`, { duration: 8000 });
+          });
+        }
+      } catch { /* ignore */ }
+    };
+    check(); // run immediately on mount
+    const interval = setInterval(check, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Refresh pending scheduled message count for badge display
+  const refreshScheduledCount = useCallback(() => {
+    listScheduledMessages(chat.id)
+      .then((rows) => setPendingScheduledCount(rows.filter((r) => r.status === 'pending' || r.status === 'sending').length))
+      .catch(() => {});
+  }, [chat.id]);
+
+  // Load pinned + saved IDs for this chat so we can show indicators on messages
+  useEffect(() => {
+    setPinnedMessageIds(new Set());
+    setSavedMessageIds(new Set());
+    setPendingScheduledCount(0);
+    listPins(chat.id)
+      .then((pins) => setPinnedMessageIds(new Set(pins.map((p) => p.message.id))))
+      .catch(() => {});
+    listSavedMessages()
+      .then((saved) => setSavedMessageIds(new Set(saved.map((s) => s.message.id))))
+      .catch(() => {});
+    refreshScheduledCount();
+  }, [chat.id, refreshScheduledCount]);
+
   const { forward, isForwarding } = useForwardMessages();
 
   const handleSocketChatMessage = useCallback((event: ChatWsEvent) => {
@@ -125,6 +187,11 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     return (chatsByProject[chatProjectId] || []).filter((c) => c.id !== chat.id);
   }, [chatProjectId, chatsByProject, chat.id]);
 
+  const mentionParticipants = useMemo(
+    () => (chat.participants ?? []).filter((participant) => participant.user),
+    [chat.participants],
+  );
+
   useEffect(() => {
     setIsSelectMode(false);
     setSelectedMessageIds([]);
@@ -132,11 +199,45 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setFirstUnreadMessageId(null);
     setReplyingTo(null);
     setActiveThreadMessage(null);
+    setShowChannelDetails(false);
+    setShowBrowseChannels(false);
     unreadCapturedForChatRef.current = null;
     jumpLoadAttemptsRef.current = 0;
     jumpedToMessageRef.current = null;
     resolvingMissingTargetRef.current = null;
   }, [chat.id]);
+
+  // Show the channel-description banner once per (user, channel) — channels
+  // only (DMs don't have descriptions), and only when a description exists.
+  // Dismissed state lives in localStorage so existing members don't re-see it.
+  useEffect(() => {
+    setShowDescriptionBanner(false);
+    if (chat.type !== 'group') return;
+    const desc = chat.description?.trim();
+    if (!desc) return;
+    if (!currentUserId) return;
+    try {
+      const key = `mj:chat:descSeen:${currentUserId}:${chat.id}`;
+      if (typeof window !== 'undefined' && window.localStorage.getItem(key)) return;
+      setShowDescriptionBanner(true);
+    } catch {
+      // localStorage can throw in private mode — just show the banner.
+      setShowDescriptionBanner(true);
+    }
+  }, [chat.id, chat.type, chat.description, currentUserId]);
+
+  const dismissDescriptionBanner = useCallback(() => {
+    setShowDescriptionBanner(false);
+    if (!currentUserId) return;
+    try {
+      window.localStorage.setItem(
+        `mj:chat:descSeen:${currentUserId}:${chat.id}`,
+        '1',
+      );
+    } catch {
+      // ignore — banner just won't persist as dismissed for this session
+    }
+  }, [chat.id, currentUserId]);
 
   useEffect(() => {
     const previousChatId = previousChatIdRef.current;
@@ -172,6 +273,15 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
 
   const targetJumpId = useMemo(() => {
     return searchParams.get('jumpId') || null;
+  }, [searchParams]);
+
+  // When the URL carries `threadMessageId`, it means the user jumped to a thread
+  // reply from a different chat (saved/files/pinned cross-chat). `messageId` is
+  // the parent root; this is the reply to highlight inside the ThreadPanel.
+  const targetThreadMessageId = useMemo(() => {
+    const raw = searchParams.get('threadMessageId');
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }, [searchParams]);
 
   const targetJumpKey = useMemo(() => {
@@ -306,6 +416,42 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     targetMessageId,
   ]);
   
+  // When the URL carries `threadMessageId`, open the thread for the message at
+  // `messageId` (the parent) and highlight the reply inside it. Drives the
+  // cross-chat "Jump to message" from Saved/Files/Pinned for thread replies.
+  useEffect(() => {
+    if (!targetThreadMessageId || !targetMessageId) return;
+    if (activeThreadMessage?.id === targetMessageId) {
+      // Thread already open for the right parent — just set the highlight.
+      if (threadHighlightMessageId !== targetThreadMessageId) {
+        setThreadHighlightMessageId(targetThreadMessageId);
+      }
+      return;
+    }
+    let cancelled = false;
+    void getMessage(targetMessageId)
+      .then((parent) => {
+        if (cancelled) return;
+        setActiveThreadMessage(parent);
+        setThreadHighlightMessageId(targetThreadMessageId);
+        // Drop `threadMessageId` from the URL so closing the thread (or any
+        // subsequent re-render) doesn't auto-re-open it.
+        const params = new URLSearchParams(searchParams.toString());
+        params.delete('threadMessageId');
+        router.replace(params.size ? `?${params.toString()}` : window.location.pathname);
+      })
+      .catch(() => { /* fall through — at worst the parent jump still happens */ });
+
+    return () => { cancelled = true; };
+  }, [
+    activeThreadMessage?.id,
+    router,
+    searchParams,
+    targetMessageId,
+    targetThreadMessageId,
+    threadHighlightMessageId,
+  ]);
+
   // Mark messages as read when viewing - both on open AND when new messages arrive
   useEffect(() => {
     if (!chat.id || messages.length === 0) return;
@@ -522,6 +668,103 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setActiveThreadMessage((prev) => (prev?.id === message.id ? null : message));
   }, []);
 
+  const handleChatUpdated = useCallback((updated: Chat) => {
+    const updates: Partial<Chat> = {
+      name: updated.name,
+      topic: updated.topic,
+      description: updated.description,
+    };
+    if (updated.participants) {
+      updates.participants = updated.participants;
+    }
+    useChatStore.getState().updateChat(updated.id, updates);
+  }, []);
+
+  const handlePinMessage = useCallback(async (messageId: number) => {
+    const alreadyPinned = pinnedMessageIds.has(messageId);
+    try {
+      if (alreadyPinned) {
+        await unpinMessage(chat.id, messageId);
+        setPinnedMessageIds((prev) => { const next = new Set(prev); next.delete(messageId); return next; });
+        toast.success('Message unpinned');
+      } else {
+        await pinMessage(chat.id, messageId);
+        setPinnedMessageIds((prev) => new Set([...prev, messageId]));
+        toast.success('Message pinned');
+      }
+    } catch {
+      toast.error(alreadyPinned ? 'Failed to unpin message' : 'Failed to pin message');
+    }
+  }, [chat.id, pinnedMessageIds]);
+
+  const handleSaveMessage = useCallback(async (messageId: number) => {
+    const alreadySaved = savedMessageIds.has(messageId);
+    try {
+      if (alreadySaved) {
+        // Find the saved record id — not stored locally; just refresh the list
+        await listSavedMessages().then((saved) => {
+          const record = saved.find((s) => s.message.id === messageId);
+          if (record) return unsaveMessage(record.id);
+        });
+        setSavedMessageIds((prev) => { const next = new Set(prev); next.delete(messageId); return next; });
+        toast.success('Removed from saved');
+      } else {
+        await saveMessage(messageId);
+        setSavedMessageIds((prev) => new Set([...prev, messageId]));
+        toast.success('Saved for later');
+      }
+    } catch {
+      toast.error(alreadySaved ? 'Failed to remove saved' : 'Failed to save message');
+    }
+  }, [savedMessageIds]);
+
+  const handleRemindMessage = useCallback((messageId: number) => {
+    setReminderMessageId(messageId);
+  }, []);
+
+  const handleReminderConfirm = useCallback((time: Date) => {
+    if (!reminderMessageId) return;
+    // Store reminder in localStorage — a polling effect surfaces it as a toast
+    const key = 'ms_reminders';
+    try {
+      const existing = JSON.parse(localStorage.getItem(key) || '[]') as Array<{ messageId: number; time: number; chatId: number }>;
+      existing.push({ messageId: reminderMessageId, time: time.getTime(), chatId: chat.id });
+      localStorage.setItem(key, JSON.stringify(existing));
+      toast.success(`Reminder set for ${time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+    } catch {
+      toast.error('Failed to set reminder');
+    }
+    setReminderMessageId(null);
+  }, [reminderMessageId, chat.id]);
+
+  const handleScheduleSend = useCallback(async (data: RichSendData, scheduledAt: Date) => {
+    if (!chatProjectId) return;
+    try {
+      const newMsg = await createScheduledMessage({
+        chat_id: chat.id,
+        content: data.content,
+        rich_body: data.rich_body as object,
+        mention_ids: data.mention_ids,
+        attachment_ids: data.attachment_ids ?? [],
+        reply_to_id: data.reply_to_id ?? null,
+        scheduled_at: scheduledAt.toISOString(),
+      });
+      toast.success(`Message scheduled for ${scheduledAt.toLocaleString()}`);
+      setLastScheduledMsg(newMsg);
+      refreshScheduledCount();
+    } catch (err: unknown) {
+      // Surface the API validation message when available, otherwise fall back.
+      const apiData = (err as any)?.response?.data;
+      const apiMsg: string | undefined =
+        typeof apiData?.detail === 'string' ? apiData.detail :
+        typeof apiData?.scheduled_at?.[0] === 'string' ? apiData.scheduled_at[0] :
+        typeof apiData?.non_field_errors?.[0] === 'string' ? apiData.non_field_errors[0] :
+        typeof apiData === 'string' ? apiData :
+        undefined;
+      toast.error(apiMsg ?? 'Failed to schedule message');
+    }
+  }, [chat.id, chatProjectId, refreshScheduledCount]);
+
   const handleTypingStart = useCallback(() => {
     sendTypingStart(chat.id);
   }, [chat.id, sendTypingStart]);
@@ -530,6 +773,49 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     sendTypingStop(chat.id);
   }, [chat.id, sendTypingStop]);
 
+  // Slash commands wired for this chat
+  const slashCommands = useMemo<SlashCommand[]>(() => [
+    {
+      name: 'topic',
+      description: 'Set the channel topic  /topic <new topic>',
+      onExecute: (args, clearEditor) => {
+        if (!args) { toast.error('Usage: /topic <new topic>'); return; }
+        updateChatDetails(chat.id, { topic: args })
+          .then((updated) => {
+            useChatStore.getState().updateChat(chat.id, { topic: updated.topic });
+            toast.success('Topic updated');
+            clearEditor();
+          })
+          .catch(() => toast.error('Failed to update topic'));
+      },
+    },
+    {
+      name: 'mute',
+      description: 'Mute notifications for this channel',
+      onExecute: (_args, clearEditor) => {
+        updateNotificationSettings(chat.id, { is_muted: true })
+          .then(() => { toast.success('Channel muted'); clearEditor(); })
+          .catch(() => toast.error('Failed to mute channel'));
+      },
+    },
+    {
+      name: 'unmute',
+      description: 'Unmute notifications for this channel',
+      onExecute: (_args, clearEditor) => {
+        updateNotificationSettings(chat.id, { is_muted: false })
+          .then(() => { toast.success('Channel unmuted'); clearEditor(); })
+          .catch(() => toast.error('Failed to unmute channel'));
+      },
+    },
+    ...(chatProjectId ? [{
+      name: 'browse',
+      description: 'Browse and join channels in this project',
+      onExecute: (_args: string, clearEditor: () => void) => {
+        setShowBrowseChannels(true);
+        clearEditor();
+      },
+    }] : []),
+  ], [chat.id, chatProjectId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -558,8 +844,43 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
               </span>
             )}
           </div>
+          {chat.type === 'group' && chat.participants && (
+            <p className="text-xs text-gray-400 leading-tight">
+              {chat.participants.length} member{chat.participants.length !== 1 ? 's' : ''}
+              {chat.topic ? ` · ${chat.topic}` : ''}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Channel details toggle */}
+          <button
+            onClick={() => setShowChannelDetails((v) => !v)}
+            className={[
+              'inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium transition sm:px-2.5',
+              showChannelDetails
+                ? 'border-teal-300 bg-teal-50 text-teal-700'
+                : 'border-gray-300 text-gray-700 hover:bg-gray-50',
+            ].join(' ')}
+            aria-label="Channel details"
+            title="Channel details"
+          >
+            <Info className="w-3.5 h-3.5" />
+            <span className="hidden min-[380px]:inline">Details</span>
+          </button>
+
+          {/* Browse channels button — only shown when project is known */}
+          {chatProjectId && (
+            <button
+              onClick={() => setShowBrowseChannels(true)}
+              className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 sm:px-2.5"
+              aria-label="Browse channels"
+              title="Browse channels"
+            >
+              <Hash className="w-3.5 h-3.5" />
+              <span className="hidden min-[380px]:inline">Browse</span>
+            </button>
+          )}
+
           {!isSelectMode ? (
             <button
               onClick={toggleSelectMode}
@@ -603,9 +924,33 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* Timeline column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {showDescriptionBanner && chat.description && (
+            <div className="flex shrink-0 items-start gap-3 border-b border-[#3CCED7]/30 bg-[#3CCED7]/5 px-4 py-2.5">
+              <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#3CCED7]/15 text-[#3CCED7]">
+                <Info className="h-3.5 w-3.5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-[#3CCED7]">
+                  Welcome to #{chat.name || 'this channel'}
+                </p>
+                <p className="mt-0.5 whitespace-pre-wrap text-sm text-gray-800 [overflow-wrap:anywhere]">
+                  {chat.description}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={dismissDescriptionBanner}
+                className="rounded p-1 text-gray-400 transition hover:bg-white hover:text-gray-600"
+                aria-label="Dismiss"
+                title="Dismiss"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
           <div className="flex-1 overflow-hidden">
             <MessageList
-              key={chat.id}
+              key={`${chat.id}:${currentUserId ?? 'anonymous'}`}
               messages={messages}
               currentUserId={currentUserId ?? 0}
               onLoadMore={loadMoreMessages}
@@ -629,6 +974,11 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
               onOpenThread={handleOpenThread}
               activeThreadMessageId={activeThreadMessage?.id ?? null}
               jumpTarget={jumpTarget}
+              onPinMessage={handlePinMessage}
+              onSaveMessage={handleSaveMessage}
+              onRemindMessage={handleRemindMessage}
+              pinnedMessageIds={pinnedMessageIds}
+              savedMessageIds={savedMessageIds}
             />
           </div>
 
@@ -639,13 +989,16 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           <div className="flex-shrink-0">
             <ChatComposer
               onSendRich={handleSendRich}
+              onScheduleSend={chatProjectId ? handleScheduleSend : undefined}
+              scheduledCount={pendingScheduledCount}
+              slashCommands={slashCommands}
               disabled={isSending || isSelectMode || isForwarding}
               chatId={chat.id}
               onTypingStart={handleTypingStart}
               onTypingStop={handleTypingStop}
               replyingTo={replyingTo}
               onClearReply={() => setReplyingTo(null)}
-              participants={chat.participants}
+              participants={mentionParticipants}
             />
           </div>
         </div>
@@ -655,10 +1008,64 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           <div className="hidden w-80 shrink-0 md:flex md:flex-col xl:w-96">
             <ThreadPanel
               rootMessage={activeThreadMessage}
-              participants={chat.participants}
+              participants={mentionParticipants}
               currentUserId={currentUserId ?? undefined}
-              onClose={() => setActiveThreadMessage(null)}
+              onClose={() => {
+                setActiveThreadMessage(null);
+                setThreadHighlightMessageId(null);
+              }}
               onForwardMessage={handleForwardSingle}
+              onPinMessage={handlePinMessage}
+              onSaveMessage={handleSaveMessage}
+              pinnedMessageIds={pinnedMessageIds}
+              savedMessageIds={savedMessageIds}
+              highlightMessageId={threadHighlightMessageId}
+              onHighlightCleared={() => setThreadHighlightMessageId(null)}
+            />
+          </div>
+        )}
+
+        {/* Channel details drawer */}
+        {showChannelDetails && (
+          <div className="hidden w-72 shrink-0 md:flex md:flex-col xl:w-80">
+            <ChannelDetailsDrawer
+              chat={chat}
+              currentUserId={currentUserId ?? 0}
+              onClose={() => setShowChannelDetails(false)}
+              onChatUpdated={handleChatUpdated}
+              lastScheduledMsg={lastScheduledMsg}
+              onJumpToMessage={(msgId, parentMsgId) => {
+                // Close the drawer so the message is visible, then fire the jump event.
+                // The custom event path appends Date.now() to the requestId so every
+                // click is treated as a fresh jump — avoids the completedJumpRequestRef
+                // de-dup that silently skips re-jumps to the same message.
+                setShowChannelDetails(false);
+                if (parentMsgId) {
+                  // Pinned message is a thread reply — open the thread for the
+                  // parent and highlight the reply inside it. Also jump the main
+                  // timeline to the parent so the user sees the source message.
+                  void getMessage(parentMsgId)
+                    .then((parent) => {
+                      setActiveThreadMessage(parent);
+                      setThreadHighlightMessageId(msgId);
+                      window.dispatchEvent(
+                        new CustomEvent('mj:chat:jumpToMessage', {
+                          detail: { messageId: parentMsgId },
+                        }),
+                      );
+                    })
+                    .catch(() => {
+                      // Fall back to jumping to the reply id directly if parent fetch fails.
+                      window.dispatchEvent(
+                        new CustomEvent('mj:chat:jumpToMessage', { detail: { messageId: msgId } }),
+                      );
+                    });
+                  return;
+                }
+                window.dispatchEvent(
+                  new CustomEvent('mj:chat:jumpToMessage', { detail: { messageId: msgId } })
+                );
+              }}
             />
           </div>
         )}
@@ -673,6 +1080,28 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
         selectedMessageCount={selectedMessageIds.length}
         isForwarding={isForwarding}
         onSubmit={handleForwardSubmit}
+      />
+
+      {showBrowseChannels && chatProjectId && (
+        <BrowseChannelsDialog
+          projectId={chatProjectId}
+          currentUserId={currentUserId ?? 0}
+          onClose={() => setShowBrowseChannels(false)}
+          onJoinedChannel={(chatId) => {
+            setShowBrowseChannels(false);
+            // Fetch the full chat object and add it to the store so it
+            // appears in the sidebar immediately without waiting for a poll.
+            getChat(chatId)
+              .then((joined) => useChatStore.getState().addChat(joined))
+              .catch(() => {});
+          }}
+        />
+      )}
+
+      <ReminderPickerSheet
+        open={reminderMessageId !== null}
+        onOpenChange={(open) => { if (!open) setReminderMessageId(null); }}
+        onConfirm={handleReminderConfirm}
       />
     </div>
   );

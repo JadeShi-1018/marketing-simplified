@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
+import { Bookmark, MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
@@ -13,6 +13,7 @@ import ChatWindow from '@/components/chat/ChatWindow';
 import CreateChatDialog from '@/components/chat/CreateChatDialog';
 import SlackMessagesLayout from '@/components/messages/SlackMessagesLayout';
 import SearchPanel from '@/components/chat/search/SearchPanel';
+import SavedItemsPanel from '@/components/chat/SavedItemsPanel';
 import ChatCommandPalette from '@/components/chat/ChatCommandPalette';
 import type { MessageSearchResult } from '@/types/chat';
 
@@ -33,6 +34,7 @@ export default function MessagePageContent() {
   const [isConversationDrawerOpen, setIsConversationDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isSavedOpen, setIsSavedOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
   // Chat store state
@@ -176,6 +178,7 @@ export default function MessagePageContent() {
   
   const handleSelectChat = (chatId: number) => {
     setIsSearchOpen(false);
+    setIsSavedOpen(false);
     // Clicking the already-open chat closes it and returns to the list
     if (chatId === currentChatId) {
       setCurrentChat(null);
@@ -306,16 +309,40 @@ export default function MessagePageContent() {
           <PanelLeftOpen className="h-4 w-4" />
           <span className="hidden min-[380px]:inline">Chats</span>
         </button>
-        <button
-          type="button"
-          onClick={() => setIsSearchOpen(true)}
-          className="ml-auto hidden rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 md:block"
-          data-testid="messages-search"
-          aria-label="Search messages"
-          title="Search messages"
-        >
-          <Search className="h-4 w-4" />
-        </button>
+        <div className="ml-auto hidden items-center gap-1 md:flex">
+          <button
+            type="button"
+            onClick={() => {
+              setIsSearchOpen(true);
+              setIsSavedOpen(false);
+            }}
+            className="rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+            data-testid="messages-search"
+            aria-label="Search messages"
+            title="Search messages"
+          >
+            <Search className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSavedOpen((v) => !v);
+              setIsSearchOpen(false);
+            }}
+            className={[
+              'rounded-md p-2 transition',
+              isSavedOpen
+                ? 'bg-teal-50 text-teal-700'
+                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
+            ].join(' ')}
+            data-testid="messages-saved"
+            aria-label="Saved messages"
+            aria-pressed={isSavedOpen}
+            title="Saved messages"
+          >
+            <Bookmark className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <SlackMessagesLayout
@@ -354,6 +381,29 @@ export default function MessagePageContent() {
                 chats={chats}
                 onSelectResult={handleSelectSearchResult}
                 onClose={() => setIsSearchOpen(false)}
+              />
+            </div>
+          ) : isSavedOpen ? (
+            <div className="h-full">
+              <SavedItemsPanel
+                onClose={() => setIsSavedOpen(false)}
+                onJumpToMessage={(msgId, chatId, parentMsgId) => {
+                  // Navigate to the chat — same URL flow as cross-chat jumps.
+                  // The destination ChatWindow reads `messageId` + optional
+                  // `threadMessageId` and opens the thread/highlights the reply.
+                  setIsSavedOpen(false);
+                  const params = new URLSearchParams(searchParams.toString());
+                  params.set('chatId', String(chatId));
+                  if (parentMsgId) {
+                    params.set('messageId', String(parentMsgId));
+                    params.set('threadMessageId', String(msgId));
+                  } else {
+                    params.set('messageId', String(msgId));
+                    params.delete('threadMessageId');
+                  }
+                  setCurrentChat(chatId);
+                  router.push(`/messages?${params.toString()}`);
+                }}
               />
             </div>
           ) : projectSelectionLoading ? (

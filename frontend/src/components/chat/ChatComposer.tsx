@@ -15,6 +15,8 @@ import {
 import { createPortal } from 'react-dom';
 import {
   Send,
+  Clock,
+  ChevronDown,
   Smile,
   Plus,
   X,
@@ -56,6 +58,21 @@ import dynamic from 'next/dynamic';
 import toast from 'react-hot-toast';
 import { EditorContent, useEditor } from '@tiptap/react';
 import type { Editor } from '@tiptap/react';
+import {
+  addMonths,
+  subMonths,
+  startOfMonth,
+  endOfMonth,
+  startOfWeek,
+  endOfWeek,
+  eachDayOfInterval,
+  isSameMonth,
+  isSameDay,
+  isAfter,
+  isBefore,
+  format as dateFnsFormat,
+  parseISO,
+} from 'date-fns';
 import type { TiptapJSONContent } from '@/types/comment';
 import type { Message, MessageAttachment, ChatParticipant } from '@/types/chat';
 import {
@@ -66,6 +83,7 @@ import {
 } from '@/lib/api/attachmentApi';
 import {
   createChatEditorExtensions,
+  insertChatCodeBlockAndFocus,
   CHAT_EDITOR_CONTENT_CLASS,
 } from './editor/chatEditorExtensions';
 import type { CommentUserSummary } from '@/types/comment';
@@ -80,6 +98,19 @@ export interface RichSendData {
   mention_ids: number[];
   attachment_ids?: number[];
   reply_to_id?: number | null;
+}
+
+export interface SlashCommand {
+  /** Command name without the leading slash, e.g. "topic", "mute" */
+  name: string;
+  /** Short description shown in the command picker */
+  description: string;
+  /**
+   * Called when the user selects this command.
+   * `args` is everything after the command name (trimmed).
+   * `clearEditor` clears + resets the editor so the command call site doesn't need to know about Tiptap.
+   */
+  onExecute: (args: string, clearEditor: () => void) => void;
 }
 
 interface PendingAttachment {
@@ -110,6 +141,21 @@ export interface ChatComposerProps {
   placeholder?: string;
   /** When true, the formatting toolbar collapses to one row with a "more" overflow button. */
   compact?: boolean;
+  /**
+   * Called when the user picks a schedule-send time.
+   * Receives the same rich message data as onSendRich plus the target Date.
+   */
+  onScheduleSend?: (data: RichSendData, scheduledAt: Date) => void | Promise<void>;
+  /**
+   * Number of pending scheduled messages in this channel.
+   * When > 0, shown as a badge on the schedule button.
+   */
+  scheduledCount?: number;
+  /**
+   * Slash commands shown when the user types "/" at the start of a message.
+   * If empty or omitted, slash-command detection is disabled.
+   */
+  slashCommands?: SlashCommand[];
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +260,11 @@ function extractMentionIds(doc: TiptapJSONContent | null | undefined): number[] 
 }
 
 /** Convert ChatParticipant[] to CommentUserSummary[] (the shape MentionPicker expects). */
+/** Returns today's date as a local yyyy-MM-dd string (NOT UTC). */
+function localDateString(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function participantsToUserSummaries(participants: ChatParticipant[]): CommentUserSummary[] {
   return participants.map((p) => ({
     id: p.user.id,
@@ -222,12 +273,183 @@ function participantsToUserSummaries(participants: ChatParticipant[]): CommentUs
   }));
 }
 
+// ---------------------------------------------------------------------------
+// MinimalDatePicker — opens upward, no external library
+// ---------------------------------------------------------------------------
+
+const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+
+function MinimalDatePicker({
+  value,
+  onChange,
+  min,
+}: {
+  value: string;       // yyyy-MM-dd or ''
+  onChange: (v: string) => void;
+  min?: string;        // yyyy-MM-dd
+}) {
+  const [open, setOpen] = useState(false);
+  const today = new Date();
+  const initial = value ? parseISO(value) : today;
+  const [view, setView] = useState<Date>(startOfMonth(initial));
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const days = eachDayOfInterval({
+    start: startOfWeek(startOfMonth(view), { weekStartsOn: 0 }),
+    end: endOfWeek(endOfMonth(view), { weekStartsOn: 0 }),
+  });
+
+  // Parse min as a LOCAL date string (yyyy-MM-dd), not UTC.
+  const minDate = min ? new Date(`${min}T00:00:00`) : null;
+  const selectedDate = value ? new Date(`${value}T00:00:00`) : null;
+
+  // Disable days strictly before today (same day is allowed).
+  const isDisabled = (d: Date) =>
+    minDate ? isBefore(d, minDate) && !isSameDay(d, minDate) : false;
+
+  return (
+    <div ref={containerRef} className="relative flex-1">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full rounded-md border border-gray-200 px-2 py-1 text-left text-xs text-gray-700 outline-none hover:border-teal-400 focus:border-teal-400"
+      >
+        {selectedDate ? dateFnsFormat(selectedDate, 'MM/dd/yyyy') : <span className="text-gray-400">Pick date</span>}
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-10 mb-1 w-56 rounded-lg border border-gray-200 bg-white p-2 shadow-lg">
+          {/* Month navigation */}
+          <div className="mb-1.5 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setView((v) => subMonths(v, 1))}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-gray-100 text-gray-600"
+            >
+              ‹
+            </button>
+            <span className="text-xs font-semibold text-gray-700">
+              {dateFnsFormat(view, 'MMMM yyyy')}
+            </span>
+            <button
+              type="button"
+              onClick={() => setView((v) => addMonths(v, 1))}
+              className="flex h-6 w-6 items-center justify-center rounded hover:bg-gray-100 text-gray-600"
+            >
+              ›
+            </button>
+          </div>
+
+          {/* Day-of-week headers */}
+          <div className="mb-0.5 grid grid-cols-7">
+            {DAY_LABELS.map((d) => (
+              <span key={d} className="text-center text-[10px] font-medium text-gray-400">
+                {d}
+              </span>
+            ))}
+          </div>
+
+          {/* Day grid */}
+          <div className="grid grid-cols-7 gap-y-0.5">
+            {days.map((d) => {
+              const outside = !isSameMonth(d, view);
+              const selected = selectedDate ? isSameDay(d, selectedDate) : false;
+              const isToday = isSameDay(d, today);
+              const disabled = isDisabled(d);
+              return (
+                <button
+                  key={d.toISOString()}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    onChange(dateFnsFormat(d, 'yyyy-MM-dd'));
+                    setOpen(false);
+                  }}
+                  className={[
+                    'flex h-6 w-full items-center justify-center rounded text-[11px] transition-colors',
+                    outside ? 'text-gray-300' : 'text-gray-700',
+                    selected ? 'bg-teal-500 text-white font-semibold' : '',
+                    !selected && isToday ? 'font-semibold text-teal-600' : '',
+                    !selected && !disabled && !outside ? 'hover:bg-gray-100' : '',
+                    disabled ? 'cursor-not-allowed opacity-30' : '',
+                  ].join(' ')}
+                >
+                  {d.getDate()}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Toolbar
+// ---------------------------------------------------------------------------
+
 const toolbarButtonClassName = [
   'inline-flex h-7 w-7 items-center justify-center rounded-md text-gray-500 transition',
   'hover:bg-gray-100 hover:text-gray-800',
   'disabled:cursor-not-allowed disabled:opacity-40',
   'data-[active=true]:bg-[#3CCED7]/15 data-[active=true]:text-[#168E96]',
 ].join(' ');
+
+function ToolbarTooltip({ label, children }: { label: string; children: ReactNode }) {
+  const triggerRef = useRef<HTMLSpanElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) setPos({ top: rect.bottom + 6, left: rect.left + rect.width / 2 });
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open]);
+
+  return (
+    <span
+      ref={triggerRef}
+      className="inline-flex"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      {children}
+      {open && typeof document !== 'undefined'
+        ? createPortal(
+            <span
+              className="pointer-events-none fixed z-[10000] -translate-x-1/2 whitespace-nowrap rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium text-gray-700 shadow-sm"
+              style={{ top: pos.top, left: pos.left }}
+            >
+              {label}
+            </span>,
+            document.body,
+          )
+        : null}
+    </span>
+  );
+}
 
 function ToolbarButton({
   label,
@@ -246,17 +468,18 @@ function ToolbarButton({
 }) {
   const tooltip = shortcut ? `${label} (${shortcut})` : label;
   return (
-    <button
-      type="button"
-      aria-label={tooltip}
-      title={tooltip}
-      data-active={active}
-      disabled={disabled}
-      onClick={onClick}
-      className={toolbarButtonClassName}
-    >
-      {children}
-    </button>
+    <ToolbarTooltip label={tooltip}>
+      <button
+        type="button"
+        aria-label={tooltip}
+        data-active={active}
+        disabled={disabled}
+        onClick={onClick}
+        className={toolbarButtonClassName}
+      >
+        {children}
+      </button>
+    </ToolbarTooltip>
   );
 }
 
@@ -404,7 +627,7 @@ function ChatFormattingToolbar({
             <ToolbarButton label="Quote" active={Boolean(editor?.isActive('blockquote'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleBlockquote().run()}>
               <Quote className="h-3.5 w-3.5" />
             </ToolbarButton>
-            <ToolbarButton label="Code block" active={Boolean(editor?.isActive('codeBlock'))} disabled={inactive} onClick={() => editor?.chain().focus().toggleCodeBlock().run()}>
+            <ToolbarButton label="Code block" active={Boolean(editor?.isActive('codeBlock'))} disabled={inactive} onClick={() => editor && insertChatCodeBlockAndFocus(editor)}>
               <Code2 className="h-3.5 w-3.5" />
             </ToolbarButton>
             <ToolbarSeparator />
@@ -509,10 +732,9 @@ function ChatFormattingToolbar({
       </ToolbarButton>
       <ToolbarButton
         label="Code block"
-        shortcut="```"
         active={Boolean(editor?.isActive('codeBlock'))}
         disabled={inactive}
-        onClick={() => editor?.chain().focus().toggleCodeBlock().run()}
+        onClick={() => editor && insertChatCodeBlockAndFocus(editor)}
       >
         <Code2 className="h-3.5 w-3.5" />
       </ToolbarButton>
@@ -567,8 +789,27 @@ export default function ChatComposer({
   participants = [],
   placeholder = 'Type a message…',
   compact = false,
+  onScheduleSend,
+  slashCommands = [],
+  scheduledCount = 0,
 }: ChatComposerProps) {
   const [showFormattingToolbar, setShowFormattingToolbar] = useState(true);
+
+  // ---- schedule-send state ----
+  const [showSchedulePicker, setShowSchedulePicker] = useState(false);
+  const [customScheduleDate, setCustomScheduleDate] = useState('');
+  const [customScheduleTime, setCustomScheduleTime] = useState(() => {
+    // Default to now + 15 min so today's date is always valid on first open.
+    const t = new Date(Date.now() + 15 * 60 * 1000);
+    return `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  });
+  const [schedulePickerPos, setSchedulePickerPos] = useState<{ bottom: number; right: number } | null>(null);
+  const scheduleButtonRef = useRef<HTMLButtonElement>(null);
+  const schedulePickerRef = useRef<HTMLDivElement>(null);
+
+  // ---- slash command state ----
+  const [slashQuery, setSlashQuery] = useState<string | null>(null);
+  const slashQueryRef = useRef<string | null>(null);
 
   // ---- attachment state ----
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
@@ -608,7 +849,7 @@ export default function ChatComposer({
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState('');
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState('');
   const [permissionBanner, setPermissionBanner] = useState<string | null>(null);
-  const [permissionBannerDevice, setPermissionBannerDevice] = useState<'camera' | 'mic' | null>(null);
+  const [permissionBannerDevice, setPermissionBannerDevice] = useState<'camera' | 'mic' | 'screen' | null>(null);
   const [permissionBannerOsLink, setPermissionBannerOsLink] = useState<string | null>(null);
   const permissionRetryRef = useRef<(() => void) | null>(null);
   const [showVideoSettings, setShowVideoSettings] = useState(false);
@@ -627,15 +868,31 @@ export default function ChatComposer({
   const [, setToolbarVersion] = useState(0);
 
   // ---- participants as mention summaries ----
-  const mentionableUsers = useMemo(
+  // Keep the list in a ref so the Tiptap extensions closure always reads the
+  // latest participants WITHOUT needing to recreate the extensions (and thus
+  // the editor) every time the participant list changes. Recreating the editor
+  // causes a brief height change in the composer which flips stickyBottomRef
+  // in MessageList to false, breaking the scroll-to-bottom on chat open.
+  const mentionableUsersRef = useRef<ReturnType<typeof participantsToUserSummaries>>([]);
+  mentionableUsersRef.current = useMemo(
     () => participantsToUserSummaries(participants),
     [participants],
   );
 
-  // ---- Tiptap extensions (memoised; re-created only when participants/placeholder change) ----
+  // ---- Tiptap extensions (memoised; re-created only when placeholder changes) ----
   const extensions = useMemo(
-    () => createChatEditorExtensions({ placeholder, participants: mentionableUsers }),
-    [placeholder, mentionableUsers],
+    () => createChatEditorExtensions({ placeholder, getMentionableUsers: (q) => {
+      const all = mentionableUsersRef.current;
+      if (!q) return all;
+      const lower = q.toLowerCase();
+      return all.filter(
+        (p) =>
+          (p.username && p.username.toLowerCase().includes(lower)) ||
+          (p.email && p.email.toLowerCase().includes(lower)),
+      );
+    }}),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [placeholder], // intentionally omit mentionableUsersRef — read via ref, no recreation needed
   );
 
   // ---- Editor ----
@@ -645,6 +902,12 @@ export default function ChatComposer({
     editorProps: {
       attributes: { class: CHAT_EDITOR_CONTENT_CLASS },
       handleKeyDown: (_view, event) => {
+        // Escape → dismiss slash-command picker if open
+        if (event.key === 'Escape' && slashQueryRef.current !== null) {
+          slashQueryRef.current = null;
+          setSlashQuery(null);
+          return true;
+        }
         // Enter (without Shift) → send; Shift+Enter → new line (default Tiptap behaviour)
         if (event.key === 'Enter' && !event.shiftKey) {
           if (
@@ -678,6 +941,19 @@ export default function ChatComposer({
           localStorage.setItem(DRAFT_KEY(chatId), JSON.stringify(ed.getJSON()));
         } catch {
           // localStorage quota exceeded — silently ignore
+        }
+      }
+      // Slash-command detection: single paragraph, text starts with '/', no spaces yet
+      if (slashCommands.length > 0) {
+        const text = ed.getText({ blockSeparator: '\n' }).trimEnd();
+        const isSinglePara = ed.state.doc.childCount === 1;
+        if (isSinglePara && text.startsWith('/') && !text.slice(1).includes(' ')) {
+          const q = text.slice(1);
+          slashQueryRef.current = q;
+          setSlashQuery(q);
+        } else {
+          slashQueryRef.current = null;
+          setSlashQuery(null);
         }
       }
     },
@@ -851,6 +1127,92 @@ export default function ChatComposer({
 
   // Keep submitRef always pointing at the current handleSend
   submitRef.current = handleSend;
+
+  // ---- Schedule send ----
+  const handleSchedule = useCallback(async (scheduledAt: Date) => {
+    if (!editor || disabled || !onScheduleSend) return;
+
+    const rich_body = editor.getJSON() as TiptapJSONContent;
+    const content = editor.getText({ blockSeparator: '\n' }).trim();
+    const uploadedAttachments = pendingAttachments.filter((a) => a.uploaded && !a.uploading && !a.error);
+
+    if (!content && uploadedAttachments.length === 0) return;
+    if (pendingAttachments.some((a) => a.uploading)) {
+      toast.error('Please wait for uploads to complete');
+      return;
+    }
+    if (pendingAttachments.some((a) => a.error)) {
+      toast.error('Some files failed to upload. Remove them and try again.');
+      return;
+    }
+
+    stopTyping();
+    editor.commands.clearContent(true);
+    setIsEditorEmpty(true);
+    setPendingAttachments([]);
+    setShowSchedulePicker(false);
+    setCustomScheduleDate('');
+    const resetT = new Date(Date.now() + 15 * 60 * 1000);
+    setCustomScheduleTime(`${String(resetT.getHours()).padStart(2, '0')}:${String(resetT.getMinutes()).padStart(2, '0')}`);
+    if (chatId) {
+      try { localStorage.removeItem(DRAFT_KEY(chatId)); } catch { /* ignore */ }
+    }
+
+    const mention_ids = extractMentionIds(rich_body);
+    const attachment_ids = uploadedAttachments
+      .map((a) => a.uploaded?.id)
+      .filter((id): id is number => id !== undefined);
+    const reply_to_id = replyingTo?.id ?? null;
+
+    await onScheduleSend({ content, rich_body, mention_ids, attachment_ids, reply_to_id }, scheduledAt);
+    onClearReply?.();
+    editor.commands.focus();
+  }, [
+    editor,
+    disabled,
+    pendingAttachments,
+    chatId,
+    replyingTo,
+    stopTyping,
+    onScheduleSend,
+    onClearReply,
+  ]);
+
+  // Close schedule picker on outside click
+  useEffect(() => {
+    if (!showSchedulePicker) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        schedulePickerRef.current && !schedulePickerRef.current.contains(e.target as Node) &&
+        scheduleButtonRef.current && !scheduleButtonRef.current.contains(e.target as Node)
+      ) {
+        setShowSchedulePicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showSchedulePicker]);
+
+  // ---------------------------------------------------------------------------
+  // Slash commands
+  // ---------------------------------------------------------------------------
+
+  const filteredSlashCommands = useMemo(() => {
+    if (slashQuery === null || slashCommands.length === 0) return [];
+    const q = slashQuery.toLowerCase();
+    return slashCommands.filter((c) => c.name.toLowerCase().startsWith(q));
+  }, [slashQuery, slashCommands]);
+
+  const executeSlashCommand = useCallback((cmd: SlashCommand) => {
+    const args = slashQuery?.slice(cmd.name.length).trim() ?? '';
+    slashQueryRef.current = null;
+    setSlashQuery(null);
+    const clearEditor = () => {
+      editor?.commands.clearContent(true);
+      setIsEditorEmpty(true);
+    };
+    cmd.onExecute(args, clearEditor);
+  }, [slashQuery, editor]);
 
   // ---------------------------------------------------------------------------
   // Emoji
@@ -1085,6 +1447,10 @@ export default function ChatComposer({
       if (name === 'NotReadableError' || name === 'TrackStartError') {
         toast.error('Microphone is in use by another app', { id: 'mic-permission' });
       } else if (name === 'NotAllowedError') {
+        setPermissionBanner('Microphone access is blocked. Safari may stop showing the prompt after repeated denies. Set localhost to Ask or Allow in Safari Settings > Websites > Microphone, then try again.');
+        setPermissionBannerDevice('mic');
+        setPermissionBannerOsLink(null);
+        permissionRetryRef.current = () => { void startAudioRecording(); };
         toast.error('Allow microphone access to record audio', { id: 'mic-permission' });
       } else {
         toast.error('Could not access microphone', { id: 'mic-permission' });
@@ -1142,14 +1508,17 @@ export default function ChatComposer({
           siteGranted = ps?.state === 'granted';
         } catch { /* Permissions API unavailable */ }
         if (siteGranted) {
-          setPermissionBanner('Camera is blocked by your system. Open System Settings to allow access.');
-          setPermissionBannerDevice(null);
+          setPermissionBanner('Camera is blocked by macOS. Allow Safari in System Settings, then try again.');
+          setPermissionBannerDevice('camera');
           setPermissionBannerOsLink('x-apple.systempreferences:com.apple.preference.security?Privacy_Camera');
+          permissionRetryRef.current = () => { void startCameraPreview(deviceId); };
+          toast.error('Allow camera access in macOS System Settings', { id: 'camera-permission' });
         } else {
-          setPermissionBanner('Allow camera access in your browser settings, then try again');
+          setPermissionBanner('Camera access is blocked. Safari may stop showing the prompt after repeated denies. Set localhost to Ask or Allow in Safari Settings > Websites > Camera, then try again.');
           setPermissionBannerDevice('camera');
           setPermissionBannerOsLink(null);
-          permissionRetryRef.current = () => { void startCameraPreview(); };
+          permissionRetryRef.current = () => { void startCameraPreview(deviceId); };
+          toast.error('Allow camera access for localhost, then try again', { id: 'camera-permission' });
         }
       } else {
         setPermissionBanner('Could not access camera');
@@ -1203,14 +1572,17 @@ export default function ChatComposer({
           siteGranted = ps?.state === 'granted';
         } catch { /* Permissions API unavailable */ }
         if (siteGranted) {
-          setPermissionBanner('Microphone is blocked by your system. Open System Settings to allow access.');
-          setPermissionBannerDevice(null);
+          setPermissionBanner('Microphone is blocked by macOS. Allow Safari in System Settings, then try again.');
+          setPermissionBannerDevice('mic');
           setPermissionBannerOsLink('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+          permissionRetryRef.current = () => { void startMicPreview(deviceId); };
+          toast.error('Allow microphone access in macOS System Settings', { id: 'mic-permission' });
         } else {
-          setPermissionBanner('Allow microphone access in your browser settings, then try again');
+          setPermissionBanner('Microphone access is blocked. Safari may stop showing the prompt after repeated denies. Set localhost to Ask or Allow in Safari Settings > Websites > Microphone, then try again.');
           setPermissionBannerDevice('mic');
           setPermissionBannerOsLink(null);
-          permissionRetryRef.current = () => { void startMicPreview(); };
+          permissionRetryRef.current = () => { void startMicPreview(deviceId); };
+          toast.error('Allow microphone access for localhost, then try again', { id: 'mic-permission' });
         }
       } else {
         setPermissionBanner('Could not access microphone');
@@ -1268,6 +1640,36 @@ export default function ChatComposer({
     await startMicPreview();
   }, [isMicEnabled, startMicPreview]);
 
+  // Returns platform-appropriate banner text + optional OS settings deeplink.
+  const getScreenPermissionInfo = (): { message: string; osLink: string | null } => {
+    const ua = navigator.userAgent;
+    if (/Mac OS X/.test(ua) && !/iPhone|iPad/.test(ua)) {
+      return {
+        message:
+          'Screen recording is blocked. On macOS, enable it for your browser in System Settings → Privacy & Security → Screen Recording. In Safari, also check Settings → Websites → Screen Sharing.',
+        osLink: 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture',
+      };
+    }
+    if (/Windows/.test(ua)) {
+      return {
+        message:
+          'Screen recording is blocked. In Chrome or Edge, open site settings and allow screen capture. In Firefox, check site permissions. You can also check Windows Privacy & Security settings.',
+        osLink: 'ms-settings:privacy',
+      };
+    }
+    if (/Linux/.test(ua)) {
+      return {
+        message:
+          "Screen recording is blocked. Check your browser's site permissions for screen capture and try again.",
+        osLink: null,
+      };
+    }
+    return {
+      message: 'Screen recording is blocked. Check your browser or system settings and try again.',
+      osLink: null,
+    };
+  };
+
   const toggleScreenShare = useCallback(async () => {
     const mediaDevices = navigator.mediaDevices as MediaDevicesWithDisplayMedia | undefined;
     if (isScreenEnabled) {
@@ -1283,11 +1685,21 @@ export default function ChatComposer({
       return;
     }
 
+    // Track elapsed time to distinguish two NotAllowedError variants:
+    //   • User saw the picker and clicked Cancel → ~600ms+ elapsed
+    //   • Browser/OS denied without ever showing the picker → ~0–50ms elapsed
+    //     (Safari does this when the site has been auto-blocked, or when
+    //     macOS Screen Recording is off for the browser.)
+    const startedAt = performance.now();
+
     try {
       const stream = await mediaDevices.getDisplayMedia({ video: true, audio: false });
       screenStreamRef.current = stream;
       setIsScreenEnabled(true);
       setVideoPreviewStream(stream);
+      setPermissionBanner(null);
+      setPermissionBannerDevice(null);
+      setPermissionBannerOsLink(null);
       stream.getVideoTracks().forEach((track) => {
         track.addEventListener('ended', () => {
           if (screenStreamRef.current === stream) {
@@ -1299,11 +1711,29 @@ export default function ChatComposer({
       });
     } catch (err) {
       setIsScreenEnabled(false);
-      // NotAllowedError / AbortError = user dismissed the picker — no toast needed.
       const name = (err as DOMException)?.name;
-      if (name !== 'NotAllowedError' && name !== 'AbortError') {
-        toast.error('Screen sharing failed');
+      const elapsedMs = performance.now() - startedAt;
+
+      // AbortError is always "user dismissed" — nothing else throws it here.
+      if (name === 'AbortError') return;
+
+      if (name === 'NotAllowedError') {
+        // If the rejection came back almost instantly, the picker was never
+        // shown — surface a banner explaining what to check. If it took a
+        // realistic amount of time, the user saw the picker and cancelled.
+        if (elapsedMs < 250) {
+          const { message: screenMsg, osLink: screenOsLink } = getScreenPermissionInfo();
+          setPermissionBanner(screenMsg);
+          setPermissionBannerDevice('screen');
+          setPermissionBannerOsLink(screenOsLink);
+          permissionRetryRef.current = () => { void toggleScreenShare(); };
+          toast.error('Screen recording is blocked — see banner', {
+            id: 'screen-permission',
+          });
+        }
+        return;
       }
+      toast.error('Screen sharing failed');
     }
   }, [isScreenEnabled]);
 
@@ -1364,6 +1794,10 @@ export default function ChatComposer({
   // the permission banner is visible, and auto-retry when they do.
   useEffect(() => {
     if (!permissionBannerDevice || !navigator.permissions?.query) return;
+    // Safari doesn't expose `display-capture` through the Permissions API, and
+    // macOS Screen Recording isn't surfaced here either — fall back to the
+    // user's "Try again" button instead.
+    if (permissionBannerDevice === 'screen') return;
     const permName = permissionBannerDevice === 'camera' ? 'camera' : 'microphone';
     let didCancel = false;
     let cleanup: (() => void) | null = null;
@@ -1442,6 +1876,35 @@ export default function ChatComposer({
       {isDragOver && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-[#3CCED7] bg-[#3CCED7]/5">
           <p className="text-sm font-medium text-[#3CCED7]">Drop files to attach</p>
+        </div>
+      )}
+
+      {/* Slash command picker */}
+      {filteredSlashCommands.length > 0 && (
+        <div className="absolute bottom-full left-3 right-3 z-50 mb-1 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg sm:left-4 sm:right-4">
+          <div className="border-b border-gray-100 px-3 py-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Commands</p>
+          </div>
+          <ul>
+            {filteredSlashCommands.map((cmd) => (
+              <li key={cmd.name}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    // mousedown so we act before blur dismisses the editor
+                    e.preventDefault();
+                    executeSlashCommand(cmd);
+                  }}
+                  className="flex w-full items-start gap-3 px-3 py-2 text-left hover:bg-gray-50"
+                >
+                  <span className="shrink-0 font-mono text-sm font-semibold text-teal-600">
+                    /{cmd.name}
+                  </span>
+                  <span className="text-sm text-gray-500">{cmd.description}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -1647,21 +2110,153 @@ export default function ChatComposer({
             className="hidden"
           />
 
-          {/* Send button */}
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={!canSend || disabled || Boolean(recordingMode)}
-            className={`ml-auto inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50 ${
-              variant === 'drawer'
-                ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] shadow-sm'
-                : 'bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:opacity-100'
-            }`}
-            aria-label="Send message"
-            title="Send message (Enter)"
-          >
-            <Send className="h-5 w-5" />
-          </button>
+          {/* Schedule-send + Send button group */}
+          <div className="relative ml-auto flex shrink-0 items-center">
+            {/* Schedule-send button (clock + caret) — only when onScheduleSend is wired */}
+            {onScheduleSend && (
+              <>
+                <button
+                  ref={scheduleButtonRef}
+                  type="button"
+                  onClick={() => {
+                    setShowSchedulePicker((v) => {
+                      if (!v && scheduleButtonRef.current) {
+                        const rect = scheduleButtonRef.current.getBoundingClientRect();
+                        setSchedulePickerPos({
+                          bottom: window.innerHeight - rect.top + 8,
+                          right: window.innerWidth - rect.right,
+                        });
+                      }
+                      return !v;
+                    });
+                  }}
+                  disabled={!canSend || disabled || Boolean(recordingMode)}
+                  className="inline-flex h-8 items-center gap-0.5 rounded-l-lg border border-r-0 border-gray-300 bg-white px-1.5 text-gray-500 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Schedule send"
+                  title="Schedule send"
+                >
+                  <span className="relative inline-flex items-center gap-0.5">
+                    <Clock className="h-3.5 w-3.5" />
+                    {scheduledCount > 0 && (
+                      <span className="absolute -right-2 -top-2 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-400 text-[9px] font-bold leading-none text-white">
+                        {scheduledCount > 9 ? '9+' : scheduledCount}
+                      </span>
+                    )}
+                  </span>
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+
+                {/* Schedule picker popover — fixed so parent overflow:hidden never clips it */}
+                {showSchedulePicker && schedulePickerPos && typeof document !== 'undefined' && createPortal(
+                  <div
+                    ref={schedulePickerRef}
+                    className="fixed z-[9999] w-56 rounded-xl border border-gray-200 bg-white p-2 shadow-lg"
+                    style={{ bottom: schedulePickerPos.bottom, right: schedulePickerPos.right }}
+                  >
+                    <p className="mb-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                      Schedule send
+                    </p>
+                    {[
+                      { label: 'In 30 minutes', minutes: 30 },
+                      { label: 'In 1 hour', minutes: 60 },
+                      { label: 'In 4 hours', minutes: 240 },
+                      { label: 'Tomorrow 9 AM', minutes: null },
+                    ].map(({ label, minutes }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => {
+                          let target: Date;
+                          if (minutes !== null) {
+                            target = new Date(Date.now() + minutes * 60 * 1000);
+                          } else {
+                            const t = new Date();
+                            t.setDate(t.getDate() + 1);
+                            t.setHours(9, 0, 0, 0);
+                            target = t;
+                          }
+                          void handleSchedule(target);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50"
+                      >
+                        <Clock className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                        {label}
+                      </button>
+                    ))}
+                    <div className="my-1.5 border-t border-gray-100" />
+                    <p className="mb-1 px-1 text-[11px] text-gray-400">Custom date & time</p>
+                    <div className="flex flex-col gap-1.5 px-1">
+                      {(() => {
+                        const todayStr = localDateString();
+                        const isToday = customScheduleDate === todayStr;
+                        // Minimum selectable time when today is selected: now + 2 min buffer
+                        const nowPlus2 = new Date(Date.now() + 2 * 60 * 1000);
+                        const minTimeStr = `${String(nowPlus2.getHours()).padStart(2, '0')}:${String(nowPlus2.getMinutes()).padStart(2, '0')}`;
+
+                        return (
+                          <div className="flex gap-1.5">
+                            <MinimalDatePicker
+                              value={customScheduleDate}
+                              onChange={(d) => {
+                                setCustomScheduleDate(d);
+                                // If user picks today and current time is already past the selected time, advance it.
+                                if (d === todayStr && customScheduleTime <= minTimeStr) {
+                                  setCustomScheduleTime(minTimeStr);
+                                }
+                              }}
+                              min={todayStr}
+                            />
+                            <input
+                              type="time"
+                              value={customScheduleTime}
+                              min={isToday ? minTimeStr : undefined}
+                              onChange={(e) => setCustomScheduleTime(e.target.value)}
+                              className="w-24 rounded-md border border-gray-200 px-2 py-1 text-xs outline-none focus:border-teal-400"
+                            />
+                          </div>
+                        );
+                      })()}
+                      <button
+                        type="button"
+                        disabled={!customScheduleDate || !customScheduleTime}
+                        onClick={() => {
+                          if (!customScheduleDate || !customScheduleTime) return;
+                          const scheduledAt = new Date(`${customScheduleDate}T${customScheduleTime}`);
+                          if (scheduledAt <= new Date()) {
+                            toast.error('Scheduled time must be in the future');
+                            return;
+                          }
+                          void handleSchedule(scheduledAt);
+                        }}
+                        className="w-full rounded-md bg-teal-500 py-1 text-xs font-medium text-white hover:bg-teal-600 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Set
+                      </button>
+                    </div>
+                  </div>,
+                  document.body,
+                )}
+              </>
+            )}
+
+            {/* Send button */}
+            <button
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={!canSend || disabled || Boolean(recordingMode)}
+              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50 ${
+                onScheduleSend ? 'rounded-r-lg' : 'rounded-lg'
+              } ${
+                variant === 'drawer'
+                  ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] shadow-sm'
+                  : 'bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:opacity-100'
+              }`}
+              aria-label="Send message"
+              title="Send message (Enter)"
+            >
+              <Send className="h-5 w-5" />
+            </button>
+          </div>
         </div>
       </div>
 

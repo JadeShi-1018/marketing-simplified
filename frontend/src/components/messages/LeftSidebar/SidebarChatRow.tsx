@@ -102,6 +102,14 @@ export default function SidebarChatRow({
   const unreadCount = chat.unread_count ?? 0;
   const hasUnread = unreadCount > 0;
   const timestamp = compactTimestamp(chat.last_message?.created_at);
+  const currentParticipant = currentUserId !== null
+    ? (chat.participants ?? []).find((p) => p.user.id === currentUserId)
+    : undefined;
+  const isMuted = currentParticipant?.is_muted ?? false;
+  const notificationLevel = currentParticipant?.notification_level ?? 'all';
+  // Grey badge: muted OR set to mentions-only (non-mention unreads are low-priority)
+  const isQuiet = isMuted || notificationLevel === 'mentions' || notificationLevel === 'none';
+  const hasMention = (chat.mention_unread_count ?? 0) > 0;
 
   const Icon = chat.type === 'group' ? Hash : isBot ? Bot : Users;
 
@@ -134,7 +142,6 @@ export default function SidebarChatRow({
         ].join(' ')}
         data-testid={testId}
         data-chat-id={String(chat.id)}
-        title={displayName}
       >
         {/* Icon */}
         <div
@@ -196,7 +203,7 @@ export default function SidebarChatRow({
                 <span
                   className={[
                     'text-[11px]',
-                    hasUnread ? 'font-semibold text-[#3CCED7]' : 'text-gray-400',
+                    hasUnread && !isQuiet ? 'font-semibold text-[#3CCED7]' : 'text-gray-400',
                   ].join(' ')}
                 >
                   {timestamp}
@@ -215,14 +222,28 @@ export default function SidebarChatRow({
             >
               {buildPreview(chat, currentUserId)}
             </p>
-            {hasUnread && (
-              <span
-                className="flex h-[18px] min-w-[20px] flex-shrink-0 items-center justify-center rounded-full bg-[#3CCED7] px-1 text-[10px] font-bold text-white shadow-sm"
-                data-testid="messages-unread-badge"
-              >
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
-            )}
+            <div className="flex flex-shrink-0 items-center gap-1">
+              {hasMention && (
+                <span
+                  className={`flex h-[18px] w-[18px] flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white shadow-sm ${isMuted ? 'bg-gray-400' : 'bg-rose-500'}`}
+                  data-testid="messages-mention-badge"
+                  aria-label="You were mentioned"
+                >
+                  @
+                </span>
+              )}
+              {hasUnread && (
+                <span
+                  className={[
+                    'flex h-[18px] min-w-[20px] flex-shrink-0 items-center justify-center rounded-full px-1 text-[10px] font-bold text-white shadow-sm',
+                    isQuiet ? 'bg-gray-400' : 'bg-[#3CCED7]',
+                  ].join(' ')}
+                  data-testid="messages-unread-badge"
+                >
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
