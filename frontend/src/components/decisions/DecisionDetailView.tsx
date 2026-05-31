@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { OriginMeetingBlock } from "@/components/meetings/OriginMeetingBlock";
+import { openAgentSidePanel } from "@/lib/agentSidePanelStore";
 import SignalsPanel from "@/components/decisions/SignalsPanel";
 import DecisionReviewPanel from "@/components/decisions/DecisionReviewPanel";
 import TaskPanel from "@/components/decisions/TaskPanel";
@@ -41,19 +41,18 @@ const DecisionDetailView = ({
   onApproveRequest,
   approving = false,
 }: DecisionDetailViewProps) => {
-  const router = useRouter();
   const options = (decision.options || []) as DecisionOptionDraft[];
   const selectedOption = options.find((option) => option.isSelected);
   const decisionLink = projectId
     ? `/decisions/${decision.id}?project_id=${projectId}`
     : `/decisions/${decision.id}`;
 
-  /** Navigate to the Agent page and open the existing session that created this decision. */
+  /** Open the Dashboard Agent side panel with the session that created this decision. */
   const handleOpenAgentSession = () => {
     if (decision.agentSessionId) {
       sessionStorage.setItem("agent-session-id", decision.agentSessionId);
     }
-    router.push("/agent");
+    openAgentSidePanel();
   };
 
   return (

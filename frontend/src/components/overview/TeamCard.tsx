@@ -38,7 +38,7 @@ export default function TeamCard({
 
       <CardContent className="px-4 pb-4 space-y-3">
         <button
-          onClick={() => router.push('/projects')}
+          onClick={() => router.push('/select-project')}
           className="w-full flex items-center gap-2 px-2 py-2 rounded-md bg-[#3CCED7]/10 border border-[#3CCED7]/20 hover:bg-[#3CCED7]/15 transition-colors"
         >
           <Mail className="w-4 h-4 text-[#3CCED7]" />

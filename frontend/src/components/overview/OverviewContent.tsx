@@ -30,7 +30,7 @@ export default function OverviewContent({
       </div>
       <MeetingsCard upcoming={data.upcomingMeetings} actions={data.actionItems} />
       <RecentActivityCard activities={data.taskSummary.recent_activity} />
-      <div className="xl:col-span-2">
+      <div className="xl:col-span-2 scroll-mt-24" id="project-team">
         <TeamManagementSection projectId={projectId} projectName={projectName} />
       </div>
     </div>
