@@ -89,7 +89,15 @@ export default function SearchFilterBar({ filters, onChangeFilters, chats = [] }
       <button
         type="button"
         onClick={() =>
-          onChangeFilters({ fromUser: '', inChat: null, has: '', dateAfter: '', dateBefore: '' })
+          onChangeFilters({
+            fromUser: '',
+            inChat: null,
+            has: '',
+            dateAfter: '',
+            dateBefore: '',
+            threadsOnly: false,
+            mentionsMe: '',
+          })
         }
         className="ml-auto text-xs text-gray-400 hover:text-gray-600"
       >

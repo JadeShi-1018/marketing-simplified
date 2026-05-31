@@ -51,6 +51,7 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 e2e/.auth/
+e2e/auth/.auth/
 
 # Lighthouse CI
 /.lighthouseci/
