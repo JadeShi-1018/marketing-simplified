@@ -396,6 +396,13 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
             try:
                 from notifications.services import create_notification
                 from notifications.models import NotificationCategory, NotificationEventType
+                sender_participant = ChatParticipant.objects.filter(
+                    chat=message.chat,
+                    user_id=message.sender_id,
+                    is_active=True,
+                ).first()
+                if sender_participant and sender_participant.is_currently_muted():
+                    return
                 create_notification(
                     recipient_id=message.sender_id,
                     actor_id=user_id,

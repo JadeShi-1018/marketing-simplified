@@ -613,7 +613,7 @@ export default function MessageItem({
               onCopyLink={handleCopyLink}
               onEdit={isOwnMessage && onEdit ? () => setIsEditing(true) : undefined}
               onForward={() => onForwardSingle?.()}
-              onPin={() => onPin ? onPin(message.id) : handlePlaceholderAction('Pin')}
+              onPin={onPin ? () => onPin(message.id) : undefined}
               onSave={() => onSave ? onSave(message.id) : handlePlaceholderAction('Save')}
               onRemind={() => onRemind ? onRemind(message.id) : handlePlaceholderAction('Remind me')}
               onMultiSelect={() => onEnterSelectMode?.()}

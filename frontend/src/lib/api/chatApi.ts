@@ -3,6 +3,7 @@ import api from '../api';
 import type {
   Chat,
   ChatParticipant,
+  ChannelVisibility,
   ChatStarRow,
   Message,
   CreateChatRequest,
@@ -115,6 +116,7 @@ export interface BrowseChannelRow {
   name: string;
   topic: string;
   description: string;
+  visibility: ChannelVisibility;
   participant_count: number;
   is_member: boolean;
 }
@@ -155,8 +157,8 @@ export const unsaveMessage = async (savedId: number): Promise<void> => {
 
 export const updateNotificationSettings = async (
   chatId: number,
-  data: { is_muted?: boolean; notification_level?: 'all' | 'mentions' | 'none' }
-): Promise<{ is_muted: boolean; notification_level: string }> => {
+  data: { is_muted?: boolean; muted_until?: string | null; notification_level?: 'all' | 'mentions' | 'none' }
+): Promise<{ is_muted: boolean; muted_until: string | null; notification_level: string }> => {
   const response = await api.patch(`/api/chat/chats/${chatId}/notification_settings/`, data);
   return response.data;
 };
@@ -165,7 +167,7 @@ export const updateNotificationSettings = async (
 
 export const updateChatDetails = async (
   chatId: number,
-  data: { name?: string; topic?: string; description?: string }
+  data: { name?: string; topic?: string; description?: string; visibility?: ChannelVisibility }
 ): Promise<Chat> => {
   const response = await api.patch(`/api/chat/chats/${chatId}/update_details/`, data);
   return response.data;
@@ -214,6 +216,18 @@ export const removeParticipant = async (chatId: number, userId: number): Promise
   await api.post(`/api/chat/chats/${chatId}/remove_participant/`, {
     user_id: userId,
   });
+};
+
+export const updateParticipantManager = async (
+  chatId: number,
+  userId: number,
+  isManager: boolean
+): Promise<ChatParticipant> => {
+  const response = await api.patch(`/api/chat/chats/${chatId}/manager/`, {
+    user_id: userId,
+    is_manager: isManager,
+  });
+  return response.data;
 };
 
 // ==================== Message Endpoints ====================

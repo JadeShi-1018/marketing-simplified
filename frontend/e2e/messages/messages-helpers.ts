@@ -14,6 +14,11 @@ type MessagesUserSeed = {
 	[key: string]: unknown;
 };
 
+export function isChatListEndpoint(url: string): boolean {
+	const pathname = new URL(url).pathname.replace(/\/+$/, '');
+	return pathname === '/api/chat/chats';
+}
+
 export const DEFAULT_MESSAGES_E2E_USER: MessagesUserSeed = {
 	id: 1,
 	email: 'e2e@example.com',
@@ -107,6 +112,36 @@ export async function mockProjectShellApis(page: Page) {
 		});
 	});
 
+	await page.route('**/api/chat/saved/**', async (route) => {
+		const method = route.request().method();
+		if (method === 'GET') {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+			});
+			return;
+		}
+		if (method === 'DELETE') {
+			await route.fulfill({ status: 204, body: '' });
+			return;
+		}
+		await route.fallback();
+	});
+
+	await page.route('**/api/chat/scheduled/**', async (route) => {
+		const method = route.request().method();
+		if (method === 'GET') {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+			});
+			return;
+		}
+		await route.fallback();
+	});
+
 	await page.route('**/api/core/invitations/pending**', async (route) => {
 		await route.fulfill({
 			status: 200,
@@ -172,6 +207,19 @@ export async function mockProjectShellApis(page: Page) {
 	});
 
 	await page.route('**/api/chat/chats/**', async (route) => {
+		const pathname = new URL(route.request().url()).pathname;
+		if (/\/api\/chat\/chats\/\d+\/pins\/?$/.test(pathname)) {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([]),
+			});
+			return;
+		}
+		if (!isChatListEndpoint(route.request().url())) {
+			await route.fallback();
+			return;
+		}
 		if (route.request().method() !== 'GET') {
 			await route.fallback();
 			return;

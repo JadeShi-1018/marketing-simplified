@@ -4,6 +4,7 @@ import type { DragEvent, MouseEvent, ReactNode } from 'react';
 import { Bot, Hash, Star, User, Users } from 'lucide-react';
 import { format } from 'date-fns';
 import type { Chat } from '@/types/chat';
+import { isParticipantCurrentlyMuted } from '@/lib/chatMute';
 
 interface SidebarChatRowProps {
   chat: Chat;
@@ -108,7 +109,7 @@ export default function SidebarChatRow({
   const currentParticipant = currentUserId !== null
     ? (chat.participants ?? []).find((p) => p.user.id === currentUserId)
     : undefined;
-  const isMuted = currentParticipant?.is_muted ?? false;
+  const isMuted = isParticipantCurrentlyMuted(currentParticipant);
   const notificationLevel = currentParticipant?.notification_level ?? 'all';
   // Grey badge: muted OR set to mentions-only (non-mention unreads are low-priority)
   const isQuiet = isMuted || notificationLevel === 'mentions' || notificationLevel === 'none';

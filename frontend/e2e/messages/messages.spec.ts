@@ -13,6 +13,7 @@ import {
 	assertChatListOrEmptyState,
 	openFirstChatIfPresent,
 	trySendMessage,
+	isChatListEndpoint,
 } from './messages-helpers';
 
 async function mockProjects(page: any, projects: Array<Record<string, any>>) {
@@ -76,7 +77,7 @@ test.describe('Messages and main layout', () => {
 		});
 
 		await page.route('**/api/chat/chats/**', async (route) => {
-			if (route.request().method() !== 'GET') {
+			if (!isChatListEndpoint(route.request().url()) || route.request().method() !== 'GET') {
 				await route.fallback();
 				return;
 			}
@@ -122,7 +123,7 @@ test.describe('Messages and main layout', () => {
 		});
 
 		await page.route('**/api/chat/chats/**', async (route) => {
-			if (route.request().method() !== 'GET') { await route.fallback(); return; }
+			if (!isChatListEndpoint(route.request().url()) || route.request().method() !== 'GET') { await route.fallback(); return; }
 			await route.fulfill({
 				status: 200,
 				contentType: 'application/json',
@@ -204,7 +205,7 @@ test.describe('Messages and main layout', () => {
 		});
 
 		await page.route('**/api/chat/chats/**', async (route) => {
-			if (route.request().method() !== 'GET') {
+			if (!isChatListEndpoint(route.request().url()) || route.request().method() !== 'GET') {
 				await route.fallback();
 				return;
 			}
@@ -347,6 +348,10 @@ test.describe('Messages and main layout', () => {
 			const req = route.request();
 			const method = req.method();
 			const url = new URL(req.url());
+			if (!isChatListEndpoint(req.url())) {
+				await route.fallback();
+				return;
+			}
 			const isPrivateLookup = url.searchParams.get('type') === 'private';
 
 			if (method === 'GET') {
@@ -502,7 +507,7 @@ test.describe('Messages edge cases without mock', () => {
 			});
 		});
 		await page.route('**/api/chat/chats/**', async (route) => {
-			if (route.request().method() !== 'GET') {
+			if (!isChatListEndpoint(route.request().url()) || route.request().method() !== 'GET') {
 				await route.fallback();
 				return;
 			}
@@ -538,7 +543,7 @@ test('Open chat then back to list (mocked)', async ({ page }) => {
 		});
 
 		await page.route('**/api/chat/chats/**', async (route) => {
-			if (route.request().method() !== 'GET') {
+			if (!isChatListEndpoint(route.request().url()) || route.request().method() !== 'GET') {
 				await route.fallback();
 				return;
 			}

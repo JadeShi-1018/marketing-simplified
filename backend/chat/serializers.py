@@ -2,15 +2,17 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import transaction
+from django.utils import timezone
 import logging
 import os
 import subprocess
 import tempfile
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageMention, MessageStatus, ChatType, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageMention, MessageStatus, ChatType, ChannelVisibility, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
 from core.models import ProjectMember
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+MAX_CHANNEL_NAME_LENGTH = 40
 
 
 # ==================== Mixins for DRY ====================
@@ -100,7 +102,7 @@ class ChatParticipantSerializer(serializers.ModelSerializer):
         model = ChatParticipant
         fields = [
             'id', 'user', 'chat', 'joined_at',
-            'last_read_at', 'is_active', 'is_muted', 'notification_level', 'unread_count'
+            'last_read_at', 'is_active', 'is_manager', 'is_muted', 'muted_until', 'notification_level', 'unread_count'
         ]
         read_only_fields = ['id', 'joined_at']
 
@@ -114,7 +116,25 @@ class ParticipantNotificationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatParticipant
-        fields = ['is_muted', 'notification_level']
+        fields = ['is_muted', 'muted_until', 'notification_level']
+
+    def validate_muted_until(self, value):
+        if value is not None and value <= timezone.now():
+            raise serializers.ValidationError("Temporary mute expiry must be in the future")
+        return value
+
+    def update(self, instance, validated_data):
+        has_is_muted = 'is_muted' in validated_data
+        has_muted_until = 'muted_until' in validated_data
+
+        if validated_data.get('is_muted') is False:
+            validated_data['muted_until'] = None
+        elif has_muted_until and validated_data.get('muted_until') is not None:
+            validated_data['is_muted'] = True
+        elif has_is_muted and validated_data.get('is_muted') is True and not has_muted_until:
+            validated_data['muted_until'] = None
+
+        return super().update(instance, validated_data)
 
 
 class MessageStatusSerializer(serializers.ModelSerializer):
@@ -551,6 +571,7 @@ class MessageCreateSerializer(MessageContentValidationMixin, ChatParticipantVali
 class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     """Serializer for chat conversations"""
     participants = ChatParticipantSerializer(many=True, read_only=True)
+    created_by = UserSimpleSerializer(read_only=True)
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     mention_unread_count = serializers.SerializerMethodField()
@@ -558,12 +579,12 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name', 'topic', 'description',
-            'created_by_id',
+            'id', 'project', 'type', 'name', 'topic', 'description', 'visibility',
+            'created_by_id', 'created_by',
             'participants', 'last_message', 'unread_count', 'mention_unread_count',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_by_id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_by_id', 'created_by', 'created_at', 'updated_at']
     
     def get_last_message(self, obj):
         """Get the last message in the chat"""
@@ -581,6 +602,7 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
 class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     """Simplified serializer for chat list (performance optimized)"""
     participants = serializers.SerializerMethodField()
+    created_by = UserSimpleSerializer(read_only=True)
     participant_count = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
     last_message_time = serializers.SerializerMethodField()
@@ -590,11 +612,11 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name', 'topic', 'description',
-            'created_by_id',
+            'id', 'project', 'type', 'name', 'topic', 'description', 'visibility',
+            'created_by_id', 'created_by',
             'participants', 'participant_count', 'last_message',
             'last_message_time', 'unread_count', 'mention_unread_count',
-            'updated_at'
+            'created_at', 'updated_at'
         ]
     
     def get_participants(self, obj):
@@ -615,7 +637,9 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
                 'is_online': OnlineStatusService.is_online(p.user.id)
             },
             'joined_at': p.joined_at.isoformat() if p.joined_at else None,
+            'is_manager': p.is_manager,
             'is_muted': p.is_muted,
+            'muted_until': p.muted_until.isoformat() if p.muted_until else None,
             'notification_level': p.notification_level,
         } for p in participants]
     
@@ -797,6 +821,11 @@ class ChatCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "Group chat must have a name"
                 )
+
+            if len(data.get('name', '').strip()) > MAX_CHANNEL_NAME_LENGTH:
+                raise serializers.ValidationError(
+                    f"Channel name cannot be longer than {MAX_CHANNEL_NAME_LENGTH} characters"
+                )
             
             # Validate all participants are project members
             all_user_ids = participant_ids + [request.user.id]
@@ -826,7 +855,8 @@ class ChatCreateSerializer(serializers.ModelSerializer):
         ChatParticipant.objects.create(
             chat=chat,
             user=request.user,
-            is_active=True
+            is_active=True,
+            is_manager=validated_data.get('type') == ChatType.GROUP,
         )
         
         # Add other participants
@@ -896,18 +926,27 @@ class ChatUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Chat
-        fields = ['name', 'topic', 'description']
+        fields = ['name', 'topic', 'description', 'visibility']
 
     def validate_name(self, value):
         if value is not None and not value.strip():
             raise serializers.ValidationError("Channel name cannot be blank")
-        return value.strip() if value else value
+        cleaned = value.strip() if value else value
+        if cleaned and len(cleaned) > MAX_CHANNEL_NAME_LENGTH:
+            raise serializers.ValidationError(f"Channel name cannot be longer than {MAX_CHANNEL_NAME_LENGTH} characters")
+        return cleaned
 
     def validate_topic(self, value):
         return (value or '').strip()
 
     def validate_description(self, value):
         return (value or '').strip()
+
+    def validate_visibility(self, value):
+        valid_values = {choice[0] for choice in ChannelVisibility.CHOICES}
+        if value not in valid_values:
+            raise serializers.ValidationError("Invalid channel visibility")
+        return value
 
 
 class MarkAsReadSerializer(serializers.Serializer):

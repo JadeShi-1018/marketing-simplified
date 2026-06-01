@@ -5,6 +5,7 @@
  * Scoped per project via the `projectId` key.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { MAX_SIDEBAR_SECTION_NAME_LENGTH, normalizeLimitedName } from '@/lib/messages/nameLimits';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +78,8 @@ export function useCustomSections(projectId: number | null) {
 
   const createSection = useCallback(
     (name = 'New section') => {
-      const next: CustomSection = { id: uid(), name, chatIds: [], collapsed: false };
+      const nextName = normalizeLimitedName(name, MAX_SIDEBAR_SECTION_NAME_LENGTH) || 'New section';
+      const next: CustomSection = { id: uid(), name: nextName, chatIds: [], collapsed: false };
       persist([...sections, next]);
     },
     [sections, persist]
@@ -92,7 +94,9 @@ export function useCustomSections(projectId: number | null) {
 
   const renameSection = useCallback(
     (id: string, name: string) => {
-      persist(sections.map((s) => (s.id === id ? { ...s, name } : s)));
+      const nextName = normalizeLimitedName(name, MAX_SIDEBAR_SECTION_NAME_LENGTH);
+      if (!nextName) return;
+      persist(sections.map((s) => (s.id === id ? { ...s, name: nextName } : s)));
     },
     [sections, persist]
   );

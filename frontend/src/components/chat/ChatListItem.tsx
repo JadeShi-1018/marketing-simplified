@@ -7,6 +7,7 @@ import type { ChatListItemProps } from '@/types/chat';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
 import { deleteChat } from '@/lib/api/chatApi';
+import { isParticipantCurrentlyMuted } from '@/lib/chatMute';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import toast from 'react-hot-toast';
 
@@ -36,7 +37,7 @@ export default function ChatListItem({
   
   const currentUserId = currentUser?.id ? Number(currentUser.id) : null;
   const myParticipant = chat.participants?.find((p) => p.user.id === currentUserId);
-  const isMuted = myParticipant?.is_muted ?? false;
+  const isMuted = isParticipantCurrentlyMuted(myParticipant);
 
   // Get the other participant (not current user) for private chats
   const getOtherParticipant = () => {

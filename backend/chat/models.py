@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.contrib.postgres.search import SearchVectorField
 from django.contrib.postgres.indexes import GinIndex
+from django.utils import timezone
 from core.models import TimeStampedModel, Project, Team
 
 
@@ -13,6 +14,19 @@ class ChatType:
     CHOICES = [
         (PRIVATE, 'Private Chat'),
         (GROUP, 'Group Chat'),
+    ]
+
+
+class ChannelVisibility:
+    """Access policy for project-scoped group channels."""
+    PUBLIC = 'public'
+    MEMBER_INVITE = 'member_invite'
+    MANAGER_INVITE = 'manager_invite'
+
+    CHOICES = [
+        (PUBLIC, 'Public: project members can find and join'),
+        (MEMBER_INVITE, 'Invite-only: any channel member can add people'),
+        (MANAGER_INVITE, 'Restricted: only managers can add people'),
     ]
 
 
@@ -53,6 +67,12 @@ class Chat(TimeStampedModel):
         blank=True,
         default='',
         help_text="Longer description shown in the channel details drawer"
+    )
+    visibility = models.CharField(
+        max_length=32,
+        choices=ChannelVisibility.CHOICES,
+        default=ChannelVisibility.PUBLIC,
+        help_text="Who can discover or add members to this channel"
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -197,9 +217,18 @@ class ChatParticipant(TimeStampedModel):
         default=True,
         help_text="Whether this user is still active in the chat"
     )
+    is_manager = models.BooleanField(
+        default=False,
+        help_text="Whether this participant can manage channel members and settings"
+    )
     is_muted = models.BooleanField(
         default=False,
         help_text="When True, suppress notifications for this chat for this user"
+    )
+    muted_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Optional expiry time for a temporary mute"
     )
 
     NOTIFICATION_LEVEL_CHOICES = [
@@ -224,6 +253,14 @@ class ChatParticipant(TimeStampedModel):
     
     def __str__(self):
         return f"{self.user.email} in {self.chat}"
+
+    def is_currently_muted(self):
+        """Return True when the participant's mute is active right now."""
+        if not self.is_muted:
+            return False
+        if self.muted_until is None:
+            return True
+        return self.muted_until > timezone.now()
     
     def get_unread_count(self):
         """

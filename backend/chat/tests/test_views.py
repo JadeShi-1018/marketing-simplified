@@ -6,7 +6,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
 from core.models import Project, Organization, Team, TeamMember, ProjectMember
-from chat.models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType
+from chat.models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType, ChannelVisibility
 from chat.services import MessageService
 from chat.serializers import MessageSerializer
 from notifications.models import Notification, NotificationEventType
@@ -224,6 +224,95 @@ class ChatAPITest(TestCase):
         # Verify participant was soft-deleted
         participant = ChatParticipant.objects.get(chat=chat, user=self.user3)
         self.assertFalse(participant.is_active)
+
+    def test_manager_can_promote_and_demote_channel_manager(self):
+        """Managers can manage the channel manager list."""
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Test Group',
+            created_by=self.user1,
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True, is_manager=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        url = reverse('chat-set-manager', kwargs={'pk': chat.id})
+        promote = self.client.patch(url, {'user_id': self.user2.id, 'is_manager': True}, format='json')
+        self.assertEqual(promote.status_code, status.HTTP_200_OK)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+        demote = self.client.patch(url, {'user_id': self.user2.id, 'is_manager': False}, format='json')
+        self.assertEqual(demote.status_code, status.HTTP_200_OK)
+        self.assertFalse(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+    def test_non_manager_cannot_promote_channel_manager(self):
+        """Regular channel members cannot see/use manager controls server-side."""
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Test Group',
+            created_by=self.user1,
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True, is_manager=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        self.client.force_authenticate(user=self.user2)
+        url = reverse('chat-set-manager', kwargs={'pk': chat.id})
+        response = self.client.patch(url, {'user_id': self.user2.id, 'is_manager': True}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_manager_invite_channel_only_allows_managers_to_add_members(self):
+        """Restricted channels let managers add people, but block regular members."""
+        ProjectMember.objects.create(user=self.user3, project=self.project, role='member', is_active=True)
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Restricted Group',
+            created_by=self.user1,
+            visibility=ChannelVisibility.MANAGER_INVITE,
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True, is_manager=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        url = reverse('chat-add-participant', kwargs={'pk': chat.id})
+
+        self.client.force_authenticate(user=self.user2)
+        blocked = self.client.post(url, {'user_id': self.user3.id}, format='json')
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.client.force_authenticate(user=self.user1)
+        allowed = self.client.post(url, {'user_id': self.user3.id}, format='json')
+        self.assertEqual(allowed.status_code, status.HTTP_201_CREATED)
+
+    def test_browse_channels_only_returns_public_project_channels(self):
+        """Browse exposes only public project channels."""
+        public_chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Public Group',
+            visibility=ChannelVisibility.PUBLIC,
+        )
+        hidden_chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Hidden Group',
+            visibility=ChannelVisibility.MEMBER_INVITE,
+        )
+        ChatParticipant.objects.create(chat=public_chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=hidden_chat, user=self.user1, is_active=True)
+
+        url = reverse('chat-browse')
+        response = self.client.get(url, {'project_id': self.project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = {row['name'] for row in response.data}
+        self.assertIn('Public Group', names)
+        self.assertNotIn('Hidden Group', names)
+
+        self.client.force_authenticate(user=self.user3)
+        forbidden = self.client.get(url, {'project_id': self.project.id})
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_leave_chat(self):
         """Test user leaving a chat"""

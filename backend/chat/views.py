@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.core.cache import cache
 from datetime import datetime
-from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
+from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, ChannelVisibility, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
 from .serializers import (
     ChatSerializer,
     ChatListSerializer,
@@ -41,6 +41,7 @@ from .serializers import (
 )
 from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
 from .tasks import notify_new_message, send_scheduled_message
+from core.models import ProjectMember
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +141,16 @@ class ChatViewSet(viewsets.ModelViewSet):
     """
     
     permission_classes = [IsAuthenticated]
+
+    def _get_active_participant(self, chat, user):
+        return ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
+
+    def _get_fallback_manager_user_id(self, chat):
+        """Legacy channels may predate managers; treat the first active member as manager."""
+        return ChatService.get_fallback_manager_user_id(chat)
+
+    def _is_channel_manager(self, chat, user):
+        return ChatService.is_channel_manager(chat, user)
     
     def get_queryset(self):
         """Get chats where user is a participant"""
@@ -243,6 +254,7 @@ class ChatViewSet(viewsets.ModelViewSet):
                 'type': chat.type,
                 'name': chat.name,
                 'project': chat.project.id,
+                'visibility': chat.visibility,
                 'created_at': chat.created_at.isoformat(),
                 'participants': [
                     {
@@ -253,6 +265,7 @@ class ChatViewSet(viewsets.ModelViewSet):
                             'email': p.user.email,
                         },
                         'joined_at': p.joined_at.isoformat() if p.joined_at else None,
+                        'is_manager': p.is_manager,
                     }
                     for p in chat.participants.filter(is_active=True).select_related('user')
                 ],
@@ -362,10 +375,10 @@ class ChatViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Only the channel creator can remove others
-        if chat.created_by_id and request.user.id != chat.created_by_id:
+        # Only channel managers can remove others.
+        if not self._is_channel_manager(chat, request.user):
             return Response(
-                {'error': 'Only the channel creator can remove members'},
+                {'error': 'Only channel managers can remove members'},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -373,6 +386,14 @@ class ChatViewSet(viewsets.ModelViewSet):
             from django.contrib.auth import get_user_model
             User = get_user_model()
             user = User.objects.get(id=user_id)
+
+            if chat.created_by_id and user.id == chat.created_by_id and request.user.id != user.id:
+                return Response({'error': 'The channel creator cannot be removed by another manager'}, status=status.HTTP_400_BAD_REQUEST)
+            target_participant = ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
+            if target_participant and target_participant.is_manager:
+                active_manager_count = ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).count()
+                if active_manager_count <= 1:
+                    return Response({'error': 'A channel must have at least one manager'}, status=status.HTTP_400_BAD_REQUEST)
 
             ChatService.remove_participant(chat, user, request.user)
             logger.info(f"User {request.user.id} removed user {user_id} from chat {chat.id}")
@@ -386,6 +407,55 @@ class ChatViewSet(viewsets.ModelViewSet):
         except ValueError as e:
             logger.warning(f"Failed to remove user {user_id} from chat {chat.id}: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['patch'], url_path='manager')
+    def set_manager(self, request, pk=None):
+        """
+        Promote or demote a channel participant as manager.
+
+        Body:
+        - user_id: participant user id
+        - is_manager: boolean
+        """
+        chat = self.get_object()
+        if chat.type != ChatType.GROUP:
+            return Response({'error': 'Only group chats have managers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        legacy_manager_can_manage = not chat.created_by_id and self._is_channel_manager(chat, request.user)
+        if not self._is_channel_manager(chat, request.user) and not legacy_manager_can_manage:
+            return Response({'error': 'Only channel managers can assign managers'}, status=status.HTTP_403_FORBIDDEN)
+
+        user_id = request.data.get('user_id')
+        is_manager = request.data.get('is_manager')
+        if user_id is None or is_manager is None:
+            return Response({'error': 'user_id and is_manager are required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(is_manager, bool):
+            return Response({'error': 'is_manager must be a boolean'}, status=status.HTTP_400_BAD_REQUEST)
+
+        participant = ChatParticipant.objects.filter(chat=chat, user_id=user_id, is_active=True).select_related('user').first()
+        if not participant:
+            return Response({'error': 'User is not a participant'}, status=status.HTTP_404_NOT_FOUND)
+
+        if chat.created_by_id and participant.user_id == chat.created_by_id and not is_manager:
+            return Response({'error': 'The channel creator must remain a manager'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_manager and not participant.is_manager:
+            assigned_manager_count = ChatParticipant.objects.filter(
+                chat=chat,
+                is_active=True,
+                is_manager=True,
+            ).exclude(user_id=chat.created_by_id).count()
+            if assigned_manager_count >= 5 and participant.user_id != chat.created_by_id:
+                return Response({'error': 'A channel can have at most 5 assigned managers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not is_manager and participant.is_manager:
+            active_manager_count = ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).count()
+            if active_manager_count <= 1:
+                return Response({'error': 'A channel must have at least one manager'}, status=status.HTTP_400_BAD_REQUEST)
+
+        participant.is_manager = is_manager
+        participant.save(update_fields=['is_manager', 'updated_at'])
+        return Response(ChatParticipantSerializer(participant).data)
     
     @action(detail=True, methods=['post'])
     def mark_as_read(self, request, pk=None):
@@ -429,11 +499,14 @@ class ChatViewSet(viewsets.ModelViewSet):
         # Verify user is a participant
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
             return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+            return Response({'error': 'Only channel managers can update channel details'}, status=status.HTTP_403_FORBIDDEN)
 
         # Only group chats can have their name changed via this endpoint
         data = request.data.copy()
-        if chat.type != 'group' and 'name' in data:
-            data.pop('name')
+        if chat.type != ChatType.GROUP:
+            data.pop('name', None)
+            data.pop('visibility', None)
 
         serializer = ChatUpdateSerializer(chat, data=data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -505,6 +578,8 @@ class ChatViewSet(viewsets.ModelViewSet):
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
             return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+            return Response({'error': 'Only channel managers can pin messages'}, status=status.HTTP_403_FORBIDDEN)
         message_id = request.data.get('message_id')
         if not message_id:
             return Response({'error': 'message_id is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -527,6 +602,8 @@ class ChatViewSet(viewsets.ModelViewSet):
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
             return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+            return Response({'error': 'Only channel managers can unpin messages'}, status=status.HTTP_403_FORBIDDEN)
         deleted, _ = PinnedMessage.objects.filter(chat=chat, message_id=message_id).delete()
         if not deleted:
             return Response({'error': 'Pin not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -548,10 +625,14 @@ class ChatViewSet(viewsets.ModelViewSet):
         except (TypeError, ValueError):
             return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not ProjectMember.objects.filter(project_id=project_id, user=request.user, is_active=True).exists():
+            return Response({'error': 'You are not a member of this project'}, status=status.HTTP_403_FORBIDDEN)
+
         # All group chats in this project
         chats = Chat.objects.filter(
             project_id=project_id,
             type=ChatType.GROUP,
+            visibility=ChannelVisibility.PUBLIC,
         ).order_by('name')
 
         user_chat_ids = set(
@@ -567,6 +648,7 @@ class ChatViewSet(viewsets.ModelViewSet):
                 'name': chat.name or 'Unnamed',
                 'topic': chat.topic,
                 'description': chat.description,
+                'visibility': chat.visibility,
                 'participant_count': chat.participants.filter(is_active=True).count(),
                 'is_member': chat.id in user_chat_ids,
             })
@@ -773,7 +855,7 @@ class MessageViewSet(viewsets.ModelViewSet):
                 from notifications.services import create_or_update_chat_notification
 
                 for recipient in recipients:
-                    if recipient.is_muted:
+                    if recipient.is_currently_muted():
                         continue
                     if recipient.notification_level == 'mentions':
                         continue  # only mention pings for this user, handled below
@@ -797,7 +879,7 @@ class MessageViewSet(viewsets.ModelViewSet):
                 from notifications.models import NotificationCategory, NotificationEventType
 
                 # Build a quick lookup of mute status for all participants
-                participant_mute = {r.user_id: r.is_muted for r in recipients}
+                participant_mute = {r.user_id: r.is_currently_muted() for r in recipients}
 
                 for mention in message.mentions.select_related('mentioned_user').all():
                     if mention.mentioned_user_id == request.user.id:
@@ -836,11 +918,15 @@ class MessageViewSet(viewsets.ModelViewSet):
                     root = message.parent_message
 
                     # Fetch mute status for this chat so we can skip muted participants
-                    muted_user_ids = set(
-                        ChatParticipant.objects.filter(
-                            chat=message.chat, is_active=True, is_muted=True
-                        ).values_list('user_id', flat=True)
-                    )
+                    muted_user_ids = {
+                        participant.user_id
+                        for participant in ChatParticipant.objects.filter(
+                            chat=message.chat,
+                            is_active=True,
+                            is_muted=True,
+                        )
+                        if participant.is_currently_muted()
+                    }
 
                     # Notify everyone who has previously replied in the thread
                     # (including the root author) except the sender of this reply.

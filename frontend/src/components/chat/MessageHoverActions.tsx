@@ -44,7 +44,7 @@ interface MessageHoverActionsProps {
   onCopyLink: () => void;
   onEdit?: () => void;         // own messages only
   onForward: () => void;
-  onPin: () => void;
+  onPin?: () => void;
   onSave: () => void;
   onRemind: () => void;
   onMultiSelect: () => void;
@@ -170,13 +170,15 @@ export default function MessageHoverActions({
             Forward
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={onPin}>
-            <Pin className="mr-2 h-4 w-4 shrink-0" />
-            <div className="flex flex-col">
-              <span>Pin to channel</span>
-              <span className="text-[11px] font-normal text-gray-400">Highlights for all members</span>
-            </div>
-          </DropdownMenuItem>
+          {onPin && (
+            <DropdownMenuItem onSelect={onPin}>
+              <Pin className="mr-2 h-4 w-4 shrink-0" />
+              <div className="flex flex-col">
+                <span>Pin to channel</span>
+                <span className="text-[11px] font-normal text-gray-400">Highlights for all members</span>
+              </div>
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onSelect={onSave}>
             <Bookmark className="mr-2 h-4 w-4 shrink-0" />
             <div className="flex flex-col">

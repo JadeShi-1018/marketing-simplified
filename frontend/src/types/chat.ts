@@ -22,6 +22,7 @@ export interface UserWithName extends User {
 // ==================== Chat Types ====================
 
 export type ChatType = 'private' | 'group';
+export type ChannelVisibility = 'public' | 'member_invite' | 'manager_invite';
 
 export interface ChatParticipant {
   id: number;
@@ -29,7 +30,9 @@ export interface ChatParticipant {
   chat_id: number;
   joined_at: string;
   last_read_at?: string | null;
+  is_manager?: boolean;
   is_muted?: boolean;
+  muted_until?: string | null;
   notification_level?: 'all' | 'mentions' | 'none';
 }
 
@@ -41,7 +44,9 @@ export interface Chat {
   name?: string | null;
   topic?: string | null;
   description?: string | null;
+  visibility?: ChannelVisibility;
   created_by_id?: number | null;
+  created_by?: User | null;
   participants: ChatParticipant[];
   created_at: string;
   updated_at: string;

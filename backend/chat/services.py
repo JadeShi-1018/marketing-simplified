@@ -8,7 +8,7 @@ from django.db import transaction
 from django.db.models import Count, Q, Prefetch, Max
 from django.core.cache import cache
 from django.utils import timezone
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType, ThreadReadStatus
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType, ChannelVisibility, ThreadReadStatus
 from core.models import ProjectMember
 
 User = get_user_model()
@@ -108,6 +108,28 @@ class OnlineStatusService:
 
 class ChatService:
     """Service for chat-related business logic"""
+
+    @staticmethod
+    def get_fallback_manager_user_id(chat: Chat) -> Optional[int]:
+        return (
+            ChatParticipant.objects.filter(chat=chat, is_active=True)
+            .order_by('joined_at', 'id')
+            .values_list('user_id', flat=True)
+            .first()
+        )
+
+    @staticmethod
+    def is_channel_manager(chat: Chat, user: User) -> bool:
+        participant = ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
+        if not participant:
+            return False
+        if participant.is_manager:
+            return True
+        if chat.created_by_id and chat.created_by_id == user.id:
+            return True
+        if not ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).exists():
+            return ChatService.get_fallback_manager_user_id(chat) == user.id
+        return False
     
     @staticmethod
     @transaction.atomic
@@ -190,12 +212,18 @@ class ChatService:
         chat = Chat.objects.create(
             project_id=project_id,
             type=ChatType.GROUP,
-            name=name
+            name=name,
+            created_by=current_user,
         )
         
         # Add participants
         ChatParticipant.objects.bulk_create([
-            ChatParticipant(chat=chat, user_id=user_id, is_active=True)
+            ChatParticipant(
+                chat=chat,
+                user_id=user_id,
+                is_active=True,
+                is_manager=user_id == current_user.id,
+            )
             for user_id in all_user_ids
         ])
         
@@ -229,7 +257,7 @@ class ChatService:
                 'participants',
                 queryset=ChatParticipant.objects.select_related('user').filter(is_active=True)
             )
-        ).select_related('project')
+        ).select_related('project', 'created_by')
         
         return query
     
@@ -251,10 +279,18 @@ class ChatService:
             raise ValueError("Can only add participants to group chats")
         
         # Self-join is allowed (user joining themselves via Browse channels).
-        # When adding someone else, the caller must already be a participant.
+        # It is only allowed for public channels that appear in Browse channels.
+        if user == added_by and chat.visibility != ChannelVisibility.PUBLIC:
+            raise ValueError("This channel can only be joined by invitation")
+
+        # When adding someone else, the caller must already be a participant,
+        # and restricted channels require a manager.
         if user != added_by:
-            if not ChatParticipant.objects.filter(chat=chat, user=added_by, is_active=True).exists():
+            added_by_participant = ChatParticipant.objects.filter(chat=chat, user=added_by, is_active=True).first()
+            if not added_by_participant:
                 raise ValueError("Only participants can add new members")
+            if chat.visibility == ChannelVisibility.MANAGER_INVITE and not ChatService.is_channel_manager(chat, added_by):
+                raise ValueError("Only channel managers can add members")
         
         # Check if user can join
         if not chat.can_user_join(user):
@@ -269,6 +305,7 @@ class ChatService:
             else:
                 # Reactivate
                 existing.is_active = True
+                existing.is_manager = False
                 existing.joined_at = timezone.now()
                 existing.save()
                 logger.info(f"Reactivated participant {user.id} in chat {chat.id}")
@@ -476,6 +513,8 @@ class MessageService:
             from notifications.services import create_or_update_chat_notification
 
             for recipient in recipients:
+                if recipient.is_currently_muted() or recipient.notification_level == 'mentions':
+                    continue
                 create_or_update_chat_notification(
                     recipient_id=recipient.user_id,
                     actor_id=sender.id,
