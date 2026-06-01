@@ -1,20 +1,24 @@
 import logging
+from datetime import timedelta
 from io import BytesIO
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 from core.models import Project, Organization
-from chat.models import Chat, ChatParticipant, Message, MessageAttachment, MessageMention, ChatType
+from chat.models import Chat, ChatParticipant, Message, MessageAttachment, MessageMention, ScheduledMessage, ChatType
 from chat.serializers import (
     MessageAttachmentSerializer,
     AttachmentUploadSerializer,
     MessageWithAttachmentsSerializer,
     MessageCreateWithAttachmentsSerializer,
+    ScheduledMessageCreateSerializer,
     ChatSerializer,
     ChatListSerializer,
     MessageSerializer,
 )
+from chat.tasks import send_scheduled_message
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -482,6 +486,54 @@ class MessageCreateWithAttachmentsSerializerTest(TestCase):
 
         self.assertFalse(serializer.is_valid())
         self.assertIn('mention_ids', serializer.errors)
+
+    def test_reply_target_must_belong_to_same_chat(self):
+        """Quote replies cannot point at a message from another chat."""
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.unrelated_user, is_active=True)
+        other_message = Message.objects.create(
+            chat=other_chat,
+            sender=self.unrelated_user,
+            content='Outside message',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': 'Cross-chat quote',
+                'reply_to_id': other_message.id,
+            },
+            context={'request': request}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('reply_to_id', serializer.errors)
+
+    def test_thread_parent_must_belong_to_same_chat(self):
+        """Thread replies cannot point at a parent message from another chat."""
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.unrelated_user, is_active=True)
+        other_message = Message.objects.create(
+            chat=other_chat,
+            sender=self.unrelated_user,
+            content='Outside parent',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': 'Cross-chat thread',
+                'parent_message_id': other_message.id,
+            },
+            context={'request': request}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('parent_message_id', serializer.errors)
     
     def test_create_message_with_attachments(self):
         """Test creating a message with attachments"""
@@ -506,6 +558,88 @@ class MessageCreateWithAttachmentsSerializerTest(TestCase):
         self.assertEqual(message.attachments.count(), 1)
         self.assertEqual(self.unlinked_attachment.message, message)
         self.assertTrue(message.has_attachments)
+
+    def test_scheduled_attachments_must_be_owned_unlinked(self):
+        """Schedule-send cannot reserve another user's uploaded attachment."""
+        other_attachment = MessageAttachment.objects.create(
+            message=None,
+            uploader=self.unrelated_user,
+            file=SimpleUploadedFile('other.txt', b'content'),
+            file_type='document',
+            file_size=7,
+            original_filename='other.txt',
+            mime_type='text/plain',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = ScheduledMessageCreateSerializer(
+            data={
+                'chat_id': self.chat.id,
+                'attachment_ids': [other_attachment.id],
+                'scheduled_at': (timezone.now() + timedelta(hours=1)).isoformat(),
+            },
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('attachment_ids', serializer.errors)
+
+    def test_scheduled_reply_target_must_belong_to_same_chat(self):
+        """Schedule-send quote replies cannot point at another chat."""
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.unrelated_user, is_active=True)
+        other_message = Message.objects.create(
+            chat=other_chat,
+            sender=self.unrelated_user,
+            content='Outside message',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = ScheduledMessageCreateSerializer(
+            data={
+                'chat_id': self.chat.id,
+                'content': 'Scheduled cross-chat quote',
+                'reply_to_id': other_message.id,
+                'scheduled_at': (timezone.now() + timedelta(hours=1)).isoformat(),
+            },
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('reply_to_id', serializer.errors)
+
+    def test_scheduled_send_revalidates_attachment_before_linking(self):
+        """A queued send fails if its attachment was linked before the task runs."""
+        existing_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='Already sent',
+        )
+        self.unlinked_attachment.message = existing_message
+        self.unlinked_attachment.save(update_fields=['message'])
+        scheduled = ScheduledMessage.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='Scheduled message',
+            attachment_ids=[self.unlinked_attachment.id],
+            scheduled_at=timezone.now() + timedelta(minutes=1),
+        )
+
+        send_scheduled_message.run(scheduled.id)
+
+        scheduled.refresh_from_db()
+        self.unlinked_attachment.refresh_from_db()
+        self.assertEqual(scheduled.status, ScheduledMessage.STATUS_FAILED)
+        self.assertEqual(self.unlinked_attachment.message_id, existing_message.id)
+        self.assertFalse(
+            Message.objects.filter(
+                chat=self.chat,
+                sender=self.user,
+                content='Scheduled message',
+            ).exists()
+        )
     
     def test_require_content_or_attachments(self):
         """Test that either content or attachments is required"""

@@ -1123,7 +1123,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
 
         replies = (
-            Message.objects.filter(parent_message=root)
+            Message.objects.filter(parent_message=root, chat=root.chat)
             .select_related('sender', 'reply_to', 'reply_to__sender')
             .prefetch_related('attachments', 'mentions')
             .order_by('created_at')
@@ -1152,7 +1152,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         ).exists():
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
 
-        last_reply = root.thread_replies.order_by('-created_at').first()
+        last_reply = root.thread_replies.filter(chat=root.chat).order_by('-created_at').first()
         if last_reply:
             ThreadReadStatus.objects.update_or_create(
                 user=request.user,
@@ -1916,7 +1916,7 @@ class ScheduledMessageViewSet(
         return qs.order_by('scheduled_at')
 
     def create(self, request, *args, **kwargs):
-        ser = ScheduledMessageCreateSerializer(data=request.data)
+        ser = ScheduledMessageCreateSerializer(data=request.data, context={'request': request})
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
 

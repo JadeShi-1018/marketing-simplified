@@ -1,4 +1,5 @@
 import { QUICK_START_BLUEPRINT_VERSION } from '@/types/quickStart';
+import type { QuickStartBlueprint } from '@/types/quickStart';
 import type { QuickStartPreviewPayload } from './types';
 
 function deriveTitle(prompt: string): string {
@@ -48,7 +49,7 @@ export function buildMockQuickStartPreview(
     ],
   };
 
-  const blueprint = {
+  const blueprint: QuickStartBlueprint = {
     version: QUICK_START_BLUEPRINT_VERSION,
     project: { name: title, description },
     tasks: tasks.map((task, index) => ({
@@ -74,16 +75,6 @@ export function buildMockQuickStartPreview(
             ],
           },
         ],
-      },
-    ],
-    decisions: [
-      { title: 'Channel budget split' },
-      { title: 'Creative testing approach' },
-    ],
-    miro_boards: [
-      {
-        name: 'Campaign planning',
-        sticky_notes: ['Goals and KPIs', 'Launch milestones'],
       },
     ],
     calendar_events: [

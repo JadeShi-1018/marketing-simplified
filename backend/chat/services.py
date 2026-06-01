@@ -573,6 +573,7 @@ class MessageService:
         # Root messages only — thread replies are fetched via the thread_replies endpoint
         thread_replies_for_summary = (
             Message.objects
+            .filter(chat=chat)
             .select_related('sender')
             .only(
                 'id',
@@ -629,10 +630,12 @@ class MessageService:
         ).annotate(
             _thread_reply_count=Count(
                 'thread_replies',
+                filter=Q(thread_replies__chat=chat),
                 distinct=True,
             ),
             _thread_last_reply_at=Max(
                 'thread_replies__created_at',
+                filter=Q(thread_replies__chat=chat),
             ),
         )
 

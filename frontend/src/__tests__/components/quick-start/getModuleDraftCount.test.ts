@@ -2,9 +2,10 @@ import {
   getModuleDraftCount,
   moduleNeedsRegenerate,
 } from '@/components/quick-start/getModuleDraftCount';
+import type { QuickStartBlueprint } from '@/types/quickStart';
 import { QUICK_START_BLUEPRINT_VERSION } from '@/types/quickStart';
 
-const blueprint = {
+const blueprint: QuickStartBlueprint = {
   version: QUICK_START_BLUEPRINT_VERSION,
   project: { name: 'Launch' },
   tasks: [{ summary: 'A' }],

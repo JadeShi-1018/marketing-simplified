@@ -636,6 +636,31 @@ class MessageAPITest(TestCase):
         msg_status = MessageStatus.objects.get(message=message, user=self.user1)
         self.assertEqual(msg_status.status, 'read')
         self.assertIsNotNone(msg_status.read_at)
+
+    def test_thread_replies_endpoint_filters_cross_chat_rows(self):
+        """Defensive filter: a corrupted cross-chat parent link must not leak into a thread."""
+        root = Message.objects.create(chat=self.chat, sender=self.user1, content='Root')
+        same_chat_reply = Message.objects.create(
+            chat=self.chat,
+            sender=self.user2,
+            content='Visible reply',
+            parent_message=root,
+        )
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.user2, is_active=True)
+        Message.objects.create(
+            chat=other_chat,
+            sender=self.user2,
+            content='Should not leak',
+            parent_message=root,
+        )
+
+        url = reverse('message-thread-replies', kwargs={'pk': root.id})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [message['id'] for message in response.data['results']]
+        self.assertEqual(ids, [same_chat_reply.id])
     
     def test_get_unread_count(self):
         """Test getting unread message count"""

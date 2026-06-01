@@ -220,7 +220,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             return list(replies)
         cached_replies = self._get_prefetched_related(obj, 'thread_replies')
         if cached_replies is not None:
-            return list(cached_replies)
+            return [reply for reply in cached_replies if reply.chat_id == obj.chat_id]
         return None
 
     def _get_thread_read_status_for_user(self, obj):
@@ -499,7 +499,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         replies = self._get_thread_replies_for_summary(obj)
         if replies is not None:
             return len(replies)
-        return obj.thread_replies.count()
+        return obj.thread_replies.filter(chat=obj.chat).count()
 
     def get_thread_last_reply_at(self, obj):
         """ISO timestamp of the most recent thread reply, or None."""
@@ -512,7 +512,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if replies is not None:
             last = replies[-1] if replies else None
             return last.created_at.isoformat() if last else None
-        last = obj.thread_replies.order_by('-created_at').first()
+        last = obj.thread_replies.filter(chat=obj.chat).order_by('-created_at').first()
         return last.created_at.isoformat() if last else None
 
     def get_thread_participants(self, obj):
@@ -524,7 +524,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             return []
         replies = self._get_thread_replies_for_summary(obj)
         if replies is None:
-            replies = obj.thread_replies.select_related('sender').order_by('created_at')
+            replies = obj.thread_replies.filter(chat=obj.chat).select_related('sender').order_by('created_at')
         seen_ids = set()
         participants = []
         for reply in replies:
@@ -556,7 +556,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if replies is not None:
             last_reply = replies[-1] if replies else None
         else:
-            last_reply = obj.thread_replies.order_by('-created_at').first()
+            last_reply = obj.thread_replies.filter(chat=obj.chat).order_by('-created_at').first()
         if not last_reply:
             return False
         prefetched_status = self._get_thread_read_status_for_user(obj)
@@ -1292,13 +1292,13 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
             )
 
         mention_ids = data.get('mention_ids') or []
+        chat = data.get('chat')
         if mention_ids:
             if len(mention_ids) != len(set(mention_ids)):
                 raise serializers.ValidationError({
                     'mention_ids': 'Duplicate mentioned users are not allowed.'
                 })
 
-            chat = data.get('chat')
             valid_ids = set(
                 ChatParticipant.objects.filter(
                     chat=chat,
@@ -1310,6 +1310,44 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
             if invalid_ids:
                 raise serializers.ValidationError({
                     'mention_ids': 'Mentioned users must be active participants in this chat.'
+                })
+
+        reply_to_id = data.get('reply_to_id')
+        if reply_to_id:
+            try:
+                reply_to = Message.objects.get(id=reply_to_id)
+            except Message.DoesNotExist:
+                raise serializers.ValidationError({
+                    'reply_to_id': 'Reply target message not found.'
+                })
+            if reply_to.chat_id != chat.id:
+                raise serializers.ValidationError({
+                    'reply_to_id': 'Reply target message must belong to this chat.'
+                })
+            if reply_to.is_deleted or reply_to.is_revoked:
+                raise serializers.ValidationError({
+                    'reply_to_id': 'Reply target message is no longer available.'
+                })
+
+        parent_message_id = data.get('parent_message_id')
+        if parent_message_id:
+            try:
+                parent_message = Message.objects.get(id=parent_message_id)
+            except Message.DoesNotExist:
+                raise serializers.ValidationError({
+                    'parent_message_id': 'Thread parent message not found.'
+                })
+            if parent_message.chat_id != chat.id:
+                raise serializers.ValidationError({
+                    'parent_message_id': 'Thread parent message must belong to this chat.'
+                })
+            if parent_message.parent_message_id:
+                raise serializers.ValidationError({
+                    'parent_message_id': 'Thread replies must target a root message.'
+                })
+            if parent_message.is_deleted or parent_message.is_revoked:
+                raise serializers.ValidationError({
+                    'parent_message_id': 'Thread parent message is no longer available.'
                 })
 
         return data
@@ -1449,8 +1487,73 @@ class ScheduledMessageCreateSerializer(serializers.Serializer):
         return value
 
     def validate(self, data):
-        if not data.get('content') and not data.get('attachment_ids'):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError("Request context required.")
+
+        chat_id = data.get('chat_id')
+        try:
+            chat = Chat.objects.get(id=chat_id)
+        except Chat.DoesNotExist:
+            raise serializers.ValidationError({'chat_id': 'Chat not found.'})
+
+        if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
+            raise serializers.ValidationError({'chat_id': 'You are not a participant of this chat.'})
+
+        attachment_ids = data.get('attachment_ids') or []
+        if len(attachment_ids) != len(set(attachment_ids)):
+            raise serializers.ValidationError({
+                'attachment_ids': 'Duplicate attachment IDs are not allowed.'
+            })
+
+        if not data.get('content') and not data.get('rich_body') and not attachment_ids:
             raise serializers.ValidationError("A message must have content or at least one attachment.")
+
+        if attachment_ids:
+            valid_attachment_count = MessageAttachment.objects.filter(
+                id__in=attachment_ids,
+                uploader=request.user,
+                message__isnull=True,
+            ).count()
+            if valid_attachment_count != len(attachment_ids):
+                raise serializers.ValidationError({
+                    'attachment_ids': 'Attachments must be unlinked files uploaded by you.'
+                })
+
+        mention_ids = data.get('mention_ids') or []
+        if len(mention_ids) != len(set(mention_ids)):
+            raise serializers.ValidationError({
+                'mention_ids': 'Duplicate mentioned users are not allowed.'
+            })
+
+        if mention_ids:
+            valid_mention_ids = set(
+                ChatParticipant.objects.filter(
+                    chat=chat,
+                    is_active=True,
+                    user_id__in=mention_ids,
+                ).values_list('user_id', flat=True)
+            )
+            if set(mention_ids) != valid_mention_ids:
+                raise serializers.ValidationError({
+                    'mention_ids': 'Mentioned users must be active participants in this chat.'
+                })
+
+        reply_to_id = data.get('reply_to_id')
+        if reply_to_id:
+            try:
+                reply_to = Message.objects.get(id=reply_to_id)
+            except Message.DoesNotExist:
+                raise serializers.ValidationError({'reply_to_id': 'Reply target message not found.'})
+            if reply_to.chat_id != chat.id:
+                raise serializers.ValidationError({
+                    'reply_to_id': 'Reply target message must belong to this chat.'
+                })
+            if reply_to.is_deleted or reply_to.is_revoked:
+                raise serializers.ValidationError({
+                    'reply_to_id': 'Reply target message is no longer available.'
+                })
+
         return data
 
 

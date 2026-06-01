@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional
 from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import transaction
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage
@@ -472,29 +473,37 @@ def send_scheduled_message(self, scheduled_message_id: int):
     sm.save(update_fields=['status', 'updated_at'])
 
     try:
-        # Create the message
-        message = Message.objects.create(
-            chat=sm.chat,
-            sender=sm.sender,
-            content=sm.content,
-            rich_body=sm.rich_body,
-            reply_to_id=sm.reply_to_id,
-        )
+        with transaction.atomic():
+            # Create the message
+            message = Message.objects.create(
+                chat=sm.chat,
+                sender=sm.sender,
+                content=sm.content,
+                rich_body=sm.rich_body,
+                reply_to_id=sm.reply_to_id,
+            )
 
-        # Link attachments
-        attachment_ids = sm.attachment_ids or []
-        if attachment_ids:
-            MessageAttachment.objects.filter(id__in=attachment_ids).update(message=message)
-            message.has_attachments = True
-            message.save(update_fields=['has_attachments'])
+            # Link only still-unlinked attachments uploaded by the scheduling user.
+            attachment_ids = list(dict.fromkeys(sm.attachment_ids or []))
+            if attachment_ids:
+                attachments = MessageAttachment.objects.select_for_update().filter(
+                    id__in=attachment_ids,
+                    uploader=sm.sender,
+                    message__isnull=True,
+                )
+                if attachments.count() != len(attachment_ids):
+                    raise ValueError("Scheduled message attachments are no longer available.")
+                attachments.update(message=message)
+                message.has_attachments = True
+                message.save(update_fields=['has_attachments'])
 
-        # Create mention records
-        mention_ids = sm.mention_ids or []
-        for uid in mention_ids:
-            try:
-                MessageMention.objects.get_or_create(message=message, mentioned_user_id=uid)
-            except Exception:
-                pass
+            # Create mention records
+            mention_ids = sm.mention_ids or []
+            for uid in mention_ids:
+                try:
+                    MessageMention.objects.get_or_create(message=message, mentioned_user_id=uid)
+                except Exception:
+                    pass
 
         # Finalize
         sm.status = ScheduledMessage.STATUS_SENT
@@ -517,4 +526,6 @@ def send_scheduled_message(self, scheduled_message_id: int):
                 sm.save(update_fields=['status', 'error_message', 'updated_at'])
             except Exception:
                 pass
+        if isinstance(exc, ValueError):
+            return
         raise self.retry(exc=exc)

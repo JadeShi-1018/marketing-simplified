@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import api from '@/lib/api';
 import { QuickStartAPI, getQuickStartErrorDetail } from '@/lib/api/quickStartApi';
 import type { QuickStartBlueprint } from '@/types/quickStart';
@@ -100,16 +100,16 @@ describe('QuickStartAPI', () => {
 
 describe('getQuickStartErrorDetail', () => {
   it('returns backend detail for Quick Start error shape', () => {
-    const error = new axios.AxiosError(
+    const error = new AxiosError(
       'Request failed',
-      axios.AxiosError.ERR_BAD_RESPONSE,
+      AxiosError.ERR_BAD_RESPONSE,
       undefined,
       undefined,
       {
         status: 502,
         statusText: 'Bad Gateway',
         headers: {},
-        config: {} as axios.InternalAxiosRequestConfig,
+        config: {} as InternalAxiosRequestConfig,
         data: { error: 'llm_generation_failed', detail: 'Gemini unavailable' },
       }
     );
