@@ -72,6 +72,7 @@ function QuickChip({
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={active}
       className={[
         'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
         active
@@ -306,7 +307,10 @@ function FilterAutocompleteInput({
       </div>
 
       {showSuggestions && (
-        <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-lg">
+        <div
+          className="absolute left-0 right-0 top-full z-50 mt-1 max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white py-1 shadow-lg"
+          data-testid="messages-search-filter-suggestions"
+        >
           {suggestions.map((s) => (
             <button
               key={s.chatId ?? s.value}
@@ -683,6 +687,7 @@ export default function SearchPanel({ projectId, chats = [], onSelectResult, onC
               type="button"
               onClick={() => setFilters({ fromUser: '', inChat: null, has: '', dateAfter: '', dateBefore: '', threadsOnly: false, mentionsMe: '' })}
               className="ml-auto text-xs text-gray-400 hover:text-gray-600"
+              data-testid="messages-search-clear-filters"
             >
               Clear all
             </button>

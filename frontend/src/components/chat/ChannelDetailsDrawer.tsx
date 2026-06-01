@@ -1006,7 +1006,7 @@ export default function ChannelDetailsDrawer({
   const pendingScheduled = scheduled.filter((m) => m.status === 'pending' || m.status === 'sending');
 
   return (
-    <div className="flex h-full w-full flex-col border-l border-gray-200 bg-white">
+    <div className="flex h-full w-full flex-col border-l border-gray-200 bg-white" data-testid="channel-details-drawer">
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
         <span className="text-sm font-semibold text-gray-800">{isGroup ? 'Channel details' : 'Direct message'}</span>

@@ -97,6 +97,7 @@ export default function MessageHoverActions({
         <PopoverTrigger asChild>
           <button
             className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+            aria-label="Add reaction"
             title="Add reaction"
           >
             <Smile className="h-4 w-4" />
@@ -123,6 +124,7 @@ export default function MessageHoverActions({
         <button
           onClick={onReplyInThread}
           className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+          aria-label="Reply in thread"
           title="Reply in thread"
         >
           <MessageSquare className="h-4 w-4" />
@@ -134,6 +136,7 @@ export default function MessageHoverActions({
         <button
           onClick={onQuoteReply}
           className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+          aria-label="Reply"
           title="Reply"
         >
           <TextQuote className="h-4 w-4" />
@@ -145,6 +148,7 @@ export default function MessageHoverActions({
         <DropdownMenuTrigger asChild>
           <button
             className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+            aria-label="More actions"
             title="More actions"
           >
             <MoreHorizontal className="h-4 w-4" />

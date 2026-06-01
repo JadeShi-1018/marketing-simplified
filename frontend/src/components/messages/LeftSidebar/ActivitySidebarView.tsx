@@ -205,7 +205,7 @@ export default function ActivitySidebarView() {
           )}
           {confirmingClear ? (
             <div className="flex items-center gap-1">
-              <span className="text-[10px] text-gray-400">Can't be undone.</span>
+              <span className="text-[10px] text-gray-400">Can&apos;t be undone.</span>
               <button
                 type="button"
                 onClick={() => { clearRead(); setConfirmingClear(false); }}
@@ -225,6 +225,7 @@ export default function ActivitySidebarView() {
             <button
               type="button"
               onClick={() => setConfirmingClear(true)}
+              data-testid="activity-clear-btn"
               title="Clear read notifications"
               className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500"
             >
@@ -239,7 +240,7 @@ export default function ActivitySidebarView() {
         {groups.length === 0 ? (
           <div className="flex flex-col items-center gap-2 px-4 py-16 text-center text-gray-400">
             <Check className="h-8 w-8 opacity-20" />
-            <p className="text-sm">You're all caught up!</p>
+            <p className="text-sm">You&apos;re all caught up!</p>
             <p className="text-xs text-gray-300">Mentions, replies, reactions and DMs will appear here.</p>
           </div>
         ) : (

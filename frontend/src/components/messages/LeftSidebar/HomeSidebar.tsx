@@ -210,6 +210,7 @@ function ChatContextMenu({ menu, currentUserId, onClose, onMarkAsRead, onNotific
       ref={ref}
       style={{ left: pos.x, top: pos.y }}
       className="fixed z-[200] min-w-[180px] rounded-xl border border-gray-200 bg-white py-1.5 shadow-xl"
+      data-testid="messages-context-menu"
       onContextMenu={(e) => e.preventDefault()}
     >
       {hasUnread && item(<BellRing className="h-4 w-4" />, 'Mark as read', () => onMarkAsRead(chat.id))}
@@ -403,6 +404,7 @@ function CustomSectionBlock({
             className="rounded p-0.5 text-gray-400 hover:text-gray-700"
             aria-label="Add channel to section"
             title="Add channel"
+            data-testid="messages-custom-section-add-channel"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>

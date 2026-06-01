@@ -1910,7 +1910,10 @@ export default function ChatComposer({
 
       {/* Reply preview */}
       {replyingTo && (
-        <div className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5">
+        <div
+          className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5"
+          data-testid="chat-composer-reply-preview"
+        >
           <div className="min-w-0 flex-1">
             <p className="text-[11px] font-medium text-[#3CCED7]">
               Replying to {replyingTo.sender.username}
