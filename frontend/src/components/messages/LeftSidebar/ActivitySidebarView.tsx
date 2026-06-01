@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { formatDistanceToNow } from 'date-fns';
 import {
@@ -149,6 +150,7 @@ export default function ActivitySidebarView() {
   const router = useRouter();
   const { groups, isLoading, error, unreadCount, markRead, markAllRead, clearRead } =
     useActivityFeed();
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   const handleNavigate = (url: string) => {
     router.push(url);
@@ -191,7 +193,7 @@ export default function ActivitySidebarView() {
           )}
         </div>
         <div className="flex items-center gap-1">
-          {unreadCount > 0 && (
+          {unreadCount > 0 && !confirmingClear && (
             <button
               type="button"
               onClick={markAllRead}
@@ -201,14 +203,34 @@ export default function ActivitySidebarView() {
               <CheckCheck className="h-3.5 w-3.5" />
             </button>
           )}
-          <button
-            type="button"
-            onClick={clearRead}
-            title="Clear read notifications"
-            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {confirmingClear ? (
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-gray-400">Can't be undone.</span>
+              <button
+                type="button"
+                onClick={() => { clearRead(); setConfirmingClear(false); }}
+                className="rounded px-1.5 py-0.5 text-[11px] font-medium text-white bg-red-500 hover:bg-red-600"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingClear(false)}
+                className="rounded px-1.5 py-0.5 text-[11px] font-medium text-gray-500 hover:bg-gray-100"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingClear(true)}
+              title="Clear read notifications"
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-red-500"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       </div>
 

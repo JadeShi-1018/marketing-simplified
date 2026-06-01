@@ -10,6 +10,7 @@ import { useForwardMessages } from '@/hooks/useForwardMessages';
 import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useChatStore } from '@/lib/chatStore';
 import { editMessage, deleteMessage, addReaction, removeReaction, getMessage, getChat, pinMessage, unpinMessage, saveMessage, unsaveMessage, listPins, listSavedMessages, createScheduledMessage, listScheduledMessages, updateChatDetails, updateNotificationSettings } from '@/lib/api/chatApi';
+import { MAX_CHANNEL_NAME_LENGTH, limitName } from '@/lib/messages/nameLimits';
 import type { Chat, Message } from '@/types/chat';
 import type { ScheduledMessageRow } from '@/lib/api/chatApi';
 import MessageList from './MessageList';
@@ -31,14 +32,21 @@ interface ChatWindowProps {
    * Default false — preserves the floating-widget back behavior.
    */
   hideBackOnDesktop?: boolean;
+  /** Set to { chatId, seq } to imperatively open the channel details panel for that chat. */
+  openDetailsSignal?: { chatId: number; seq: number };
 }
 
-export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDesktop }: ChatWindowProps) {
+export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDesktop, openDetailsSignal }: ChatWindowProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Use selector for stable reference
   const user = useAuthStore(state => state.user);
   const currentUserId = user?.id ? Number(user.id) : null;
+  const myChatParticipant = currentUserId !== null
+    ? chat.participants?.find((p) => p.user.id === currentUserId)
+    : undefined;
+  const canManageChannel = chat.type !== 'group'
+    || Boolean(myChatParticipant?.is_manager || (chat.created_by_id && chat.created_by_id === currentUserId));
   const chatsByProject = useChatStore(state => state.chatsByProject);
   // Snapshot taken at click-time in setCurrentChat — immune to subsequent setChatsForProject resets
   const capturedUnreadCount = useChatStore(state => state.capturedUnreadCounts[chat.id] ?? 0);
@@ -54,6 +62,16 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   // ThreadPanel itself after the highlight fades.
   const [threadHighlightMessageId, setThreadHighlightMessageId] = useState<number | null>(null);
   const [showChannelDetails, setShowChannelDetails] = useState(false);
+  // Single owner of showChannelDetails: open when signal targets this chat, close otherwise.
+  // Watching both deps means it fires correctly whether chat navigation and signal
+  // land in the same render or in separate ones.
+  useEffect(() => {
+    if (openDetailsSignal && openDetailsSignal.chatId === chat.id) {
+      setShowChannelDetails(true);
+    } else if (!openDetailsSignal || openDetailsSignal.chatId !== chat.id) {
+      setShowChannelDetails(false);
+    }
+  }, [chat.id, openDetailsSignal]);
   const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<number>>(new Set());
   const [savedMessageIds, setSavedMessageIds] = useState<Set<number>>(new Set());
@@ -197,7 +215,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setFirstUnreadMessageId(null);
     setReplyingTo(null);
     setActiveThreadMessage(null);
-    setShowChannelDetails(false);
     unreadCapturedForChatRef.current = null;
     jumpLoadAttemptsRef.current = 0;
     jumpedToMessageRef.current = null;
@@ -659,7 +676,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       ? roleByUserId?.[otherParticipant.user.id]
       : undefined;
   const chatName = chat.type === 'group' 
-    ? (chat.name || 'Group Chat')
+    ? limitName(chat.name || 'Group Chat', MAX_CHANNEL_NAME_LENGTH)
     : (otherParticipant?.user?.username || 'Chat');
   const handleOpenThread = useCallback((message: Message) => {
     setActiveThreadMessage((prev) => (prev?.id === message.id ? null : message));
@@ -670,6 +687,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       name: updated.name,
       topic: updated.topic,
       description: updated.description,
+      visibility: updated.visibility,
     };
     if (updated.participants) {
       updates.participants = updated.participants;
@@ -824,7 +842,10 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
         
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 min-w-0">
-            <h3 className="font-semibold text-gray-900 truncate">
+            <h3
+              className="max-w-[min(42rem,55vw)] truncate font-semibold text-gray-900"
+              title={chat.type === 'group' ? chat.name || 'Group Chat' : chatName}
+            >
               {chatName}
             </h3>
             {chat.type === 'private' && otherParticipantRole && (
@@ -834,7 +855,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
             )}
           </div>
           {chat.type === 'group' && chat.participants && (
-            <p className="text-xs text-gray-400 leading-tight">
+            <p className="truncate text-xs leading-tight text-gray-400" title={chat.topic || undefined}>
               {chat.participants.length} member{chat.participants.length !== 1 ? 's' : ''}
               {chat.topic ? ` · ${chat.topic}` : ''}
             </p>
@@ -946,7 +967,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
               onOpenThread={handleOpenThread}
               activeThreadMessageId={activeThreadMessage?.id ?? null}
               jumpTarget={jumpTarget}
-              onPinMessage={handlePinMessage}
+              onPinMessage={canManageChannel ? handlePinMessage : undefined}
               onSaveMessage={handleSaveMessage}
               onRemindMessage={handleRemindMessage}
               pinnedMessageIds={pinnedMessageIds}
@@ -987,7 +1008,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
                 setThreadHighlightMessageId(null);
               }}
               onForwardMessage={handleForwardSingle}
-              onPinMessage={handlePinMessage}
+              onPinMessage={canManageChannel ? handlePinMessage : undefined}
               onSaveMessage={handleSaveMessage}
               pinnedMessageIds={pinnedMessageIds}
               savedMessageIds={savedMessageIds}

@@ -29,6 +29,8 @@ interface SlackMessagesLayoutProps {
   onMobileSidebarOpenChange: (open: boolean) => void;
   mobileSidebarHeader?: React.ReactNode;
   isSearchActive?: boolean;
+  onSearchInChat?: (chatId: number) => void;
+  onOpenChannelDetails?: (chatId: number) => void;
 }
 
 export default function SlackMessagesLayout({
@@ -49,6 +51,8 @@ export default function SlackMessagesLayout({
   onMobileSidebarOpenChange,
   mobileSidebarHeader,
   isSearchActive = false,
+  onSearchInChat,
+  onOpenChannelDetails,
 }: SlackMessagesLayoutProps) {
   const [navView, setNavView] = useState<MessagesNavView>('home');
 
@@ -75,6 +79,8 @@ export default function SlackMessagesLayout({
         onMobileSidebarOpenChange(false);
       }}
       isSearchActive={isSearchActive}
+      onSearchInChat={onSearchInChat}
+      onOpenChannelDetails={onOpenChannelDetails}
     />
   );
 

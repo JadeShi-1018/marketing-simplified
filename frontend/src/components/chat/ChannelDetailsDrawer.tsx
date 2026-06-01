@@ -11,6 +11,7 @@ import {
   Clock,
   Download,
   FileText,
+  Globe2,
   Image,
   Loader2,
   LogOut,
@@ -18,6 +19,7 @@ import {
   Pin,
   Plus,
   Search,
+  ShieldCheck,
   Trash2,
   Users,
   Video,
@@ -38,8 +40,11 @@ import {
   subMonths,
 } from 'date-fns';
 import toast from 'react-hot-toast';
-import type { Chat, ChatParticipant } from '@/types/chat';
-import { addParticipant, cancelScheduledMessage, createScheduledMessage, leaveChat, listPins, listChatFiles, listScheduledMessages, removeParticipant, unpinMessage, updateChatDetails, updateNotificationSettings } from '@/lib/api/chatApi';
+import type { Chat, ChatParticipant, ChannelVisibility } from '@/types/chat';
+import { useChatStore } from '@/lib/chatStore';
+import { addParticipant, cancelScheduledMessage, createScheduledMessage, getChat, leaveChat, listPins, listChatFiles, listScheduledMessages, removeParticipant, unpinMessage, updateChatDetails, updateNotificationSettings, updateParticipantManager } from '@/lib/api/chatApi';
+import { TEMP_MUTE_OPTIONS, formatMutedUntil, getTemporaryMuteUntil, isParticipantCurrentlyMuted } from '@/lib/chatMute';
+import { MAX_CHANNEL_NAME_LENGTH, limitName, normalizeLimitedName } from '@/lib/messages/nameLimits';
 import type { PinnedMessageRow, ChatFileRow, ScheduledMessageRow } from '@/lib/api/chatApi';
 import { ProjectAPI } from '@/lib/api/projectApi';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
@@ -56,6 +61,28 @@ function localDateString(d = new Date()): string {
 const AVATAR_COLORS = [
   'bg-blue-500', 'bg-emerald-500', 'bg-violet-500', 'bg-orange-500',
   'bg-pink-500', 'bg-teal-500', 'bg-red-500', 'bg-indigo-500',
+];
+
+const CHANNEL_VISIBILITY_OPTIONS: Array<{
+  value: ChannelVisibility;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: 'public',
+    label: 'Public browse and join',
+    description: 'Project members can find this channel in Browse channels and join themselves.',
+  },
+  {
+    value: 'member_invite',
+    label: 'Hidden, members can add',
+    description: 'Hidden from Browse channels. Any channel member can add project members.',
+  },
+  {
+    value: 'manager_invite',
+    label: 'Hidden, managers add only',
+    description: 'Hidden from Browse channels. Only channel managers can add project members.',
+  },
 ];
 
 function getAvatarColor(userId: number) {
@@ -86,10 +113,12 @@ interface EditableFieldProps {
   value: string;
   placeholder: string;
   multiline?: boolean;
+  disabled?: boolean;
+  maxLength?: number;
   onSave: (value: string) => Promise<void>;
 }
 
-function EditableField({ label, hint, value, placeholder, multiline = false, onSave }: EditableFieldProps) {
+function EditableField({ label, hint, value, placeholder, multiline = false, disabled = false, maxLength, onSave }: EditableFieldProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -126,8 +155,9 @@ function EditableField({ label, hint, value, placeholder, multiline = false, onS
             <textarea
               ref={inputRef as React.RefObject<HTMLTextAreaElement>}
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => setDraft(maxLength ? limitName(e.target.value, maxLength) : e.target.value)}
               onKeyDown={handleKeyDown}
+              maxLength={maxLength}
               rows={3}
               className="w-full resize-none rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-800 focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
             />
@@ -136,10 +166,14 @@ function EditableField({ label, hint, value, placeholder, multiline = false, onS
               ref={inputRef as React.RefObject<HTMLInputElement>}
               type="text"
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => setDraft(maxLength ? limitName(e.target.value, maxLength) : e.target.value)}
               onKeyDown={handleKeyDown}
+              maxLength={maxLength}
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm text-gray-800 focus:border-teal-400 focus:outline-none focus:ring-1 focus:ring-teal-400"
             />
+          )}
+          {maxLength && (
+            <p className="text-[10px] text-gray-400">{draft.length}/{maxLength}</p>
           )}
           <div className="flex gap-1.5">
             <button
@@ -160,7 +194,7 @@ function EditableField({ label, hint, value, placeholder, multiline = false, onS
           </div>
         </div>
       ) : (
-        <button type="button" onClick={startEdit} className="w-full text-left">
+        <button type="button" onClick={startEdit} disabled={disabled} className="w-full text-left disabled:cursor-default">
           {value ? (
             <p className="text-sm text-gray-700 [overflow-wrap:anywhere]">{value}</p>
           ) : (
@@ -439,11 +473,12 @@ function DatePickerUp({ value, min, onChange, className }: DatePickerUpProps) {
 
 // ── Collapsible section ───────────────────────────────────────────────────────
 
-function Section({ title, icon, defaultOpen = true, onOpen, children }: {
+function Section({ title, icon, defaultOpen = true, onOpen, contentClassName, children }: {
   title: string;
   icon: React.ReactNode;
   defaultOpen?: boolean;
   onOpen?: () => void;
+  contentClassName?: string;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -472,7 +507,11 @@ function Section({ title, icon, defaultOpen = true, onOpen, children }: {
           ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
           : <ChevronRight className="h-3.5 w-3.5 text-gray-400" />}
       </button>
-      {open && <div className="task-tab-scrollbar max-h-64 overflow-y-auto px-4 pb-4">{children}</div>}
+      {open && (
+        <div className={contentClassName ?? 'task-tab-scrollbar max-h-64 overflow-y-auto px-4 pb-4'}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }
@@ -525,18 +564,25 @@ export default function ChannelDetailsDrawer({
   const [scheduledLoaded, setScheduledLoaded] = useState(false);
   const [cancellingScheduledId, setCancellingScheduledId] = useState<number | null>(null);
   const [reschedulingId, setReschedulingId] = useState<number | null>(null);
+  const [managerSavingId, setManagerSavingId] = useState<number | null>(null);
+  const [metadataChat, setMetadataChat] = useState<Chat | null>(null);
+  const [savingVisibility, setSavingVisibility] = useState(false);
   const rescheduleFormRef = useRef<HTMLDivElement>(null);
   const drawerBodyRef = useRef<HTMLDivElement>(null);
+  const notificationsSectionRef = useRef<HTMLDivElement>(null);
+  const leaveSectionRef = useRef<HTMLDivElement>(null);
+  const scrollNotificationsAfterUnmuteRef = useRef(false);
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [rescheduleTime, setRescheduleTime] = useState('');
   const [rescheduleSaving, setRescheduleSaving] = useState(false);
 
-  // Notification / mute state — derived from current user's participant record
+  // Notification / mute state — derived live from participants so changes are reflected immediately
   const myParticipant = participants.find((p) => p.user.id === currentUserId);
-  const [isMuted, setIsMuted] = useState(myParticipant?.is_muted ?? false);
-  const [notifLevel, setNotifLevel] = useState<'all' | 'mentions'>(
-    (myParticipant?.notification_level === 'mentions' ? 'mentions' : 'all')
-  );
+  const isMuted = isParticipantCurrentlyMuted(myParticipant);
+  const mutedUntilLabel = isMuted && myParticipant?.muted_until
+    ? formatMutedUntil(myParticipant.muted_until)
+    : null;
+  const notifLevel: 'all' | 'mentions' = myParticipant?.notification_level === 'mentions' ? 'mentions' : 'all';
   const [savingNotif, setSavingNotif] = useState(false);
 
   // Leave-channel confirmation + in-flight state
@@ -569,9 +615,74 @@ export default function ChannelDetailsDrawer({
     const raw = (chat as any).project_id ?? (chat as any).project;
     return Number(raw) || 0;
   })();
+  const metadataSource = metadataChat ?? chat;
+  const createdDateLabel = metadataSource.created_at ? format(parseISO(metadataSource.created_at), 'MMM d, yyyy') : null;
+  const creatorParticipants = (metadataSource.participants ?? participants).filter((p) => p.user);
+  const inferredCreator = [...creatorParticipants].sort((a, b) => {
+    const aTime = a.joined_at ? new Date(a.joined_at).getTime() : Number.MAX_SAFE_INTEGER;
+    const bTime = b.joined_at ? new Date(b.joined_at).getTime() : Number.MAX_SAFE_INTEGER;
+    return aTime - bTime;
+  })[0]?.user ?? null;
+  const creator = metadataSource.created_by
+    ?? (metadataSource.created_by_id
+      ? participants.find((p) => p.user.id === Number(metadataSource.created_by_id))?.user
+      : null)
+    ?? inferredCreator;
+  const creatorLabel = creator?.username || creator?.email || null;
+  const createdMetaLabel = creatorLabel && createdDateLabel
+    ? `Created by ${creatorLabel} on ${createdDateLabel}`
+    : createdDateLabel
+      ? `Created on ${createdDateLabel}`
+      : null;
+  const managerCount = participants.filter((p) => p.is_manager).length;
+  const assignedManagerCount = participants.filter((p) => p.is_manager && p.user.id !== metadataSource.created_by_id).length;
+  const hasExplicitManager = managerCount > 0;
+  const isEffectiveManager = (participant: ChatParticipant) => Boolean(
+    participant.is_manager
+    || (metadataSource.created_by_id && participant.user.id === metadataSource.created_by_id)
+    || (!hasExplicitManager && inferredCreator?.id === participant.user.id)
+  );
+  const managerParticipants = participants.filter(isEffectiveManager);
+  const nonManagerParticipants = participants.filter((p) => !isEffectiveManager(p));
+  const channelVisibility: ChannelVisibility = metadataSource.visibility ?? 'public';
+  const canManageChannel = isGroup && Boolean(
+    myParticipant?.is_manager
+    || (metadataSource.created_by_id && metadataSource.created_by_id === currentUserId)
+    || (!hasExplicitManager && inferredCreator?.id === currentUserId)
+  );
+  const canAddMembers = isGroup && (channelVisibility !== 'manager_invite' || canManageChannel);
+
+  useEffect(() => {
+    if (!canAddMembers) setShowAddPicker(false);
+  }, [canAddMembers]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMetadataChat(null);
+    getChat(chat.id)
+      .then((details) => {
+        if (cancelled) return;
+        setMetadataChat(details);
+        if (details.participants?.length) {
+          setParticipants(details.participants.filter((p: ChatParticipant) => p.user));
+        }
+        useChatStore.getState().updateChat(chat.id, {
+          created_at: details.created_at,
+          created_by: details.created_by,
+          created_by_id: details.created_by_id,
+          visibility: details.visibility,
+          participants: details.participants,
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, [chat.id]);
 
   const handleSaveName = useCallback(async (value: string) => {
-    const updated = await updateChatDetails(chat.id, { name: value });
+    const updated = await updateChatDetails(chat.id, { name: normalizeLimitedName(value, MAX_CHANNEL_NAME_LENGTH) });
     onChatUpdated(updated);
   }, [chat.id, onChatUpdated]);
 
@@ -584,6 +695,29 @@ export default function ChannelDetailsDrawer({
     const updated = await updateChatDetails(chat.id, { description: value });
     onChatUpdated(updated);
   }, [chat.id, onChatUpdated]);
+
+  const handleVisibilityChange = async (visibility: ChannelVisibility) => {
+    if (visibility === channelVisibility || savingVisibility) return;
+
+    const previousMetadata = metadataChat;
+    const previousVisibility = channelVisibility;
+    setSavingVisibility(true);
+    setMetadataChat((prev) => prev ? { ...prev, visibility } : { ...chat, visibility });
+    useChatStore.getState().updateChat(chat.id, { visibility });
+
+    try {
+      const updated = await updateChatDetails(chat.id, { visibility });
+      setMetadataChat(updated);
+      onChatUpdated(updated);
+      toast.success('Channel access updated');
+    } catch (error: any) {
+      setMetadataChat(previousMetadata);
+      useChatStore.getState().updateChat(chat.id, { visibility: previousVisibility });
+      toast.error(error?.response?.data?.error ?? 'Could not update channel access');
+    } finally {
+      setSavingVisibility(false);
+    }
+  };
 
   const handleParticipantAdded = useCallback((p: ChatParticipant) => {
     const nextParticipants = participants.some((participant) => participant.user.id === p.user.id)
@@ -608,17 +742,116 @@ export default function ChannelDetailsDrawer({
     }
   };
 
+  const handleManagerToggle = async (participant: ChatParticipant) => {
+    const nextIsManager = !participant.is_manager;
+    const previousParticipants = participants;
+    setManagerSavingId(participant.user.id);
+    const nextParticipants = participants.map((p) =>
+      p.user.id === participant.user.id ? { ...p, is_manager: nextIsManager } : p
+    );
+    setParticipants(nextParticipants);
+    useChatStore.getState().updateChat(chat.id, { participants: nextParticipants });
+
+    try {
+      const updated = await updateParticipantManager(chat.id, participant.user.id, nextIsManager);
+      const syncedParticipants = nextParticipants.map((p) =>
+        p.user.id === participant.user.id ? { ...p, ...updated } : p
+      );
+      setParticipants(syncedParticipants);
+      setMetadataChat((prev) => prev ? { ...prev, participants: syncedParticipants } : prev);
+      useChatStore.getState().updateChat(chat.id, { participants: syncedParticipants });
+      onChatUpdated({ ...chat, participants: syncedParticipants });
+      toast.success(nextIsManager ? 'Manager added' : 'Manager removed');
+    } catch (error: any) {
+      setParticipants(previousParticipants);
+      useChatStore.getState().updateChat(chat.id, { participants: previousParticipants });
+      const status = error?.response?.status;
+      toast.error(
+        error?.response?.data?.error
+        ?? (status === 404 ? 'Manager controls are not available yet. Please refresh after the backend restarts.' : 'Could not update manager')
+      );
+    } finally {
+      setManagerSavingId(null);
+    }
+  };
+
+  const updateMyParticipant = (patch: Partial<ChatParticipant>) => {
+    const next = participants.map((p) => p.user.id === currentUserId ? { ...p, ...patch } : p);
+    setParticipants(next);
+    useChatStore.getState().updateChat(chat.id, { participants: next });
+  };
+
+  const scrollDrawerTargetIntoView = useCallback((target: HTMLElement | null, padding = 16) => {
+    const body = drawerBodyRef.current;
+    if (!target || !body) return;
+
+    const bodyRect = body.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const bottomOverflow = targetRect.bottom + padding - bodyRect.bottom;
+    const topOverflow = targetRect.top - padding - bodyRect.top;
+
+    if (bottomOverflow > 0) {
+      body.scrollBy({ top: bottomOverflow, behavior: 'smooth' });
+    } else if (topOverflow < 0) {
+      body.scrollBy({ top: topOverflow, behavior: 'smooth' });
+    }
+  }, []);
+
   const handleMuteToggle = async () => {
     const next = !isMuted;
-    setIsMuted(next);
+    const prevMuted = myParticipant?.is_muted ?? false;
+    const prevMutedUntil = myParticipant?.muted_until ?? null;
+    if (!next) {
+      scrollNotificationsAfterUnmuteRef.current = true;
+    }
+    updateMyParticipant({ is_muted: next, muted_until: null });
     setSavingNotif(true);
-    try { await updateNotificationSettings(chat.id, { is_muted: next }); } catch { setIsMuted(!next); } finally { setSavingNotif(false); }
+    try {
+      await updateNotificationSettings(chat.id, { is_muted: next, muted_until: null });
+    } catch {
+      updateMyParticipant({ is_muted: prevMuted, muted_until: prevMutedUntil });
+    } finally {
+      setSavingNotif(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isMuted || !scrollNotificationsAfterUnmuteRef.current) return;
+    scrollNotificationsAfterUnmuteRef.current = false;
+    window.setTimeout(() => {
+      scrollDrawerTargetIntoView(leaveSectionRef.current ?? notificationsSectionRef.current, 18);
+    }, 80);
+  }, [isMuted, scrollDrawerTargetIntoView]);
+
+  const handleTemporaryMute = async (preset: '1h' | 'tomorrow' | '1w') => {
+    const prevMuted = myParticipant?.is_muted ?? false;
+    const prevMutedUntil = myParticipant?.muted_until ?? null;
+    const mutedUntil = getTemporaryMuteUntil(preset).toISOString();
+
+    updateMyParticipant({ is_muted: true, muted_until: mutedUntil });
+    setSavingNotif(true);
+    try {
+      await updateNotificationSettings(chat.id, { is_muted: true, muted_until: mutedUntil });
+      toast.success(`Muted until ${formatMutedUntil(mutedUntil)}`);
+    } catch {
+      updateMyParticipant({ is_muted: prevMuted, muted_until: prevMutedUntil });
+      toast.error('Could not update notification settings');
+    } finally {
+      setSavingNotif(false);
+    }
   };
 
   const handleNotifLevel = async (level: 'all' | 'mentions') => {
-    setNotifLevel(level);
+    const prev = notifLevel;
+    updateMyParticipant({ notification_level: level });
     setSavingNotif(true);
-    try { await updateNotificationSettings(chat.id, { notification_level: level }); } catch { setNotifLevel(notifLevel); } finally { setSavingNotif(false); }
+    try {
+      await updateNotificationSettings(chat.id, { notification_level: level });
+    } catch {
+      updateMyParticipant({ notification_level: prev });
+    } finally {
+      setSavingNotif(false);
+    }
   };
 
   const handleLeave = async () => {
@@ -795,15 +1028,18 @@ export default function ChannelDetailsDrawer({
           <div className="border-b border-gray-100 px-4 py-4 space-y-4">
             <EditableField
               label="Channel name"
-              value={chat.name ?? ''}
+              value={limitName(metadataSource.name ?? '', MAX_CHANNEL_NAME_LENGTH)}
               placeholder="Add a name…"
+              disabled={!canManageChannel}
+              maxLength={MAX_CHANNEL_NAME_LENGTH}
               onSave={handleSaveName}
             />
             <EditableField
               label="Topic"
-              hint={'What is this channel focused on right now? Update it as things change — e.g. "Q2 launch · deadline Jun 15" or "Blocked on design handoff".'}
+              hint={'What is this channel focused on right now? Update it as things change — e.g. "Q2 launch · deadline Jun 15".'}
               value={chat.topic ?? ''}
               placeholder="e.g. Q2 campaign launch · deadline Jun 15"
+              disabled={!canManageChannel}
               onSave={handleSaveTopic}
             />
             <EditableField
@@ -812,6 +1048,7 @@ export default function ChannelDetailsDrawer({
               value={chat.description ?? ''}
               placeholder="e.g. All paid social work for APAC. Tag @media-buyer for urgent requests."
               multiline
+              disabled={!canManageChannel}
               onSave={handleSaveDescription}
             />
           </div>
@@ -822,55 +1059,78 @@ export default function ChannelDetailsDrawer({
           <Section
             title={`Members · ${participants.length}`}
             icon={<Users className="h-4 w-4" />}
+            defaultOpen={!canManageChannel}
           >
             <div className="relative mb-3">
-              <button
-                type="button"
-                onClick={() => setShowAddPicker((v) => !v)}
-                className="flex items-center gap-1.5 rounded-md border border-dashed border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-500 hover:border-teal-400 hover:text-teal-600"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Add member
-              </button>
-              {showAddPicker && (
-                <AddMemberPicker
-                  chatId={chat.id}
-                  projectId={projectId}
-                  existingUserIds={existingUserIds}
-                  currentUserId={currentUserId}
-                  onAdded={handleParticipantAdded}
-                  onClose={() => setShowAddPicker(false)}
-                />
+              {canAddMembers ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPicker((v) => !v)}
+                    className="flex items-center gap-1.5 rounded-md border border-dashed border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-500 hover:border-teal-400 hover:text-teal-600"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add member
+                  </button>
+                  {showAddPicker && (
+                    <AddMemberPicker
+                      chatId={chat.id}
+                      projectId={projectId}
+                      existingUserIds={existingUserIds}
+                      currentUserId={currentUserId}
+                      onAdded={handleParticipantAdded}
+                      onClose={() => setShowAddPicker(false)}
+                    />
+                  )}
+                </>
+              ) : (
+                <p className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                  Only managers can add members to this channel.
+                </p>
               )}
             </div>
 
             <ul className="space-y-1">
-              {participants.map((p: ChatParticipant) => (
-                <li key={p.id} className="group flex items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-gray-50">
-                  <Avatar user={p.user} />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-gray-800">
-                      {p.user.username || p.user.email}
-                    </p>
-                    {p.user.username && p.user.email && (
-                      <p className="truncate text-xs text-gray-400">{p.user.email}</p>
+              {participants.map((p: ChatParticipant) => {
+                const isCreator = Boolean(metadataSource.created_by_id && p.user.id === metadataSource.created_by_id);
+                const isManager = isEffectiveManager(p);
+                const canRemoveMember = canManageChannel && p.user.id !== currentUserId && !isCreator;
+
+                return (
+                  <li key={p.id} className="group flex items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-gray-50">
+                    <Avatar user={p.user} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <p className="truncate text-sm font-medium text-gray-800">
+                          {p.user.username || p.user.email}
+                        </p>
+                        {isManager && (
+                          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium text-teal-700">
+                            <ShieldCheck className="h-3 w-3" />
+                            Manager
+                          </span>
+                        )}
+                      </div>
+                      {p.user.username && p.user.email && (
+                        <p className="truncate text-xs text-gray-400">{p.user.email}</p>
+                      )}
+                    </div>
+                    {canRemoveMember && (
+                      <button
+                        type="button"
+                        onClick={() => void handleRemove(p)}
+                        disabled={removingId === p.user.id}
+                        className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 group-hover:block disabled:opacity-50"
+                        aria-label={`Remove ${p.user.username || p.user.email}`}
+                      >
+                        {removingId === p.user.id
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <Trash2 className="h-3.5 w-3.5" />}
+                      </button>
                     )}
-                  </div>
-                  {p.user.id !== currentUserId && currentUserId === chat.created_by_id && (
-                    <button
-                      type="button"
-                      onClick={() => void handleRemove(p)}
-                      disabled={removingId === p.user.id}
-                      className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 group-hover:block disabled:opacity-50"
-                      aria-label={`Remove ${p.user.username || p.user.email}`}
-                    >
-                      {removingId === p.user.id
-                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        : <Trash2 className="h-3.5 w-3.5" />}
-                    </button>
-                  )}
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           </Section>
         ) : (
@@ -892,6 +1152,140 @@ export default function ChannelDetailsDrawer({
                 </div>
               ))}
           </div>
+        )}
+
+        {isGroup && canManageChannel && (
+          <Section
+            title={`Managers · ${managerParticipants.length}`}
+            icon={<ShieldCheck className="h-4 w-4" />}
+            defaultOpen
+            contentClassName="px-4 pb-4"
+          >
+            <div className="space-y-3">
+              <p className="text-xs leading-snug text-gray-500">
+                Managers can edit channel details, manage members, pin messages, and change access settings.
+              </p>
+
+              <div>
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Current managers</p>
+                <ul className="space-y-1">
+                  {managerParticipants.map((p) => {
+                    const isCreator = Boolean(metadataSource.created_by_id && p.user.id === metadataSource.created_by_id);
+                    const canRemoveManager = p.is_manager && !isCreator && managerCount > 1;
+                    return (
+                      <li key={`manager-${p.id}`} className="group flex items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-gray-50">
+                        <Avatar user={p.user} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <p className="truncate text-sm font-medium text-gray-800">
+                              {p.user.username || p.user.email}
+                            </p>
+                            {isCreator && (
+                              <span className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500">
+                                Creator
+                              </span>
+                            )}
+                          </div>
+                          {p.user.username && p.user.email && (
+                            <p className="truncate text-xs text-gray-400">{p.user.email}</p>
+                          )}
+                        </div>
+                        {canRemoveManager && (
+                          <button
+                            type="button"
+                            onClick={() => void handleManagerToggle(p)}
+                            disabled={managerSavingId === p.user.id}
+                            className="hidden shrink-0 rounded px-2 py-1 text-[11px] font-medium text-gray-400 hover:bg-red-50 hover:text-red-500 group-hover:block disabled:opacity-50"
+                          >
+                            {managerSavingId === p.user.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Remove'}
+                          </button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+
+              <div>
+                <div className="mb-1.5 flex items-center justify-between gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Add manager</p>
+                  <span className="text-[10px] text-gray-400">{assignedManagerCount}/5 assigned</span>
+                </div>
+                {nonManagerParticipants.length === 0 ? (
+                  <p className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                    Everyone in this channel is already a manager.
+                  </p>
+                ) : (
+                  <ul className="space-y-1">
+                    {nonManagerParticipants.map((p) => {
+                      const managerLimitReached = assignedManagerCount >= 5;
+                      return (
+                        <li key={`manager-add-${p.id}`} className="group flex items-center gap-2.5 rounded-md px-1 py-1.5 hover:bg-gray-50">
+                          <Avatar user={p.user} />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-gray-800">
+                              {p.user.username || p.user.email}
+                            </p>
+                            {p.user.username && p.user.email && (
+                              <p className="truncate text-xs text-gray-400">{p.user.email}</p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void handleManagerToggle(p)}
+                            disabled={managerSavingId === p.user.id || managerLimitReached}
+                            title={managerLimitReached ? 'Manager limit reached' : undefined}
+                            className="shrink-0 rounded px-2 py-1 text-[11px] font-medium text-teal-700 hover:bg-teal-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {managerSavingId === p.user.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Make manager'}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </Section>
+        )}
+
+        {isGroup && canManageChannel && (
+          <Section
+            title="Channel access"
+            icon={<Globe2 className="h-4 w-4" />}
+            defaultOpen
+            contentClassName="px-4 pb-4"
+          >
+            <div className="space-y-2">
+              {CHANNEL_VISIBILITY_OPTIONS.map((option) => {
+                const selected = channelVisibility === option.value;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => void handleVisibilityChange(option.value)}
+                    disabled={savingVisibility || selected}
+                    className={[
+                      'flex w-full items-start gap-2 rounded-md border px-3 py-2 text-left transition disabled:cursor-default',
+                      selected
+                        ? 'border-teal-100 bg-teal-50 text-teal-800'
+                        : 'border-gray-200 text-gray-700 hover:border-teal-200 hover:bg-teal-50/60',
+                    ].join(' ')}
+                  >
+                    <span className={[
+                      'mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border-2',
+                      selected ? 'border-teal-500 bg-teal-500' : 'border-gray-300',
+                    ].join(' ')} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-xs font-semibold">{option.label}</span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-gray-500">{option.description}</span>
+                    </span>
+                    {savingVisibility && selected && <Loader2 className="mt-0.5 h-3.5 w-3.5 shrink-0 animate-spin text-teal-500" />}
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
         )}
 
         {/* Files */}
@@ -996,17 +1390,19 @@ export default function ChannelDetailsDrawer({
                       </p>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleUnpin(pin)}
-                    disabled={unpinningId === pin.id}
-                    className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 group-hover:block disabled:opacity-50"
-                    aria-label="Unpin"
-                  >
-                    {unpinningId === pin.id
-                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      : <X className="h-3.5 w-3.5" />}
-                  </button>
+                  {canManageChannel && (
+                    <button
+                      type="button"
+                      onClick={() => void handleUnpin(pin)}
+                      disabled={unpinningId === pin.id}
+                      className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 group-hover:block disabled:opacity-50"
+                      aria-label="Unpin"
+                    >
+                      {unpinningId === pin.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <X className="h-3.5 w-3.5" />}
+                    </button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1118,99 +1514,136 @@ export default function ChannelDetailsDrawer({
         </Section>
 
         {/* Notification settings */}
-        <Section title="Notifications" icon={<Bell className="h-4 w-4" />} defaultOpen={false}>
-          <div className="space-y-3">
-            {/* Mute toggle */}
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-700">Mute channel</p>
-                <p className="text-xs text-gray-400">Silence all notifications</p>
+        <div ref={notificationsSectionRef}>
+          <Section title="Notifications" icon={<Bell className="h-4 w-4" />} defaultOpen={false} contentClassName="px-4 pb-2">
+            <div className="space-y-3">
+              {/* Mute toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-700">Mute channel</p>
+                  <p className="text-xs text-gray-400">
+                    {mutedUntilLabel ? `Muted until ${mutedUntilLabel}` : isMuted ? 'Muted until you turn it back on' : 'Silence all notifications'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleMuteToggle()}
+                  disabled={savingNotif}
+                  className={[
+                    'relative h-5 w-9 rounded-full transition-colors disabled:opacity-50',
+                    isMuted ? 'bg-[#3CCED7]' : 'bg-gray-300',
+                  ].join(' ')}
+                  role="switch"
+                  aria-checked={isMuted}
+                >
+                  <span className={[
+                    'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform',
+                    isMuted ? 'translate-x-4' : 'translate-x-0.5',
+                  ].join(' ')} />
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => void handleMuteToggle()}
-                disabled={savingNotif}
-                className={[
-                  'relative h-5 w-9 rounded-full transition-colors disabled:opacity-50',
-                  isMuted ? 'bg-[#3CCED7]' : 'bg-gray-300',
-                ].join(' ')}
-                role="switch"
-                aria-checked={isMuted}
-              >
-                <span className={[
-                  'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform',
-                  isMuted ? 'translate-x-4' : 'translate-x-0.5',
-                ].join(' ')} />
-              </button>
-            </div>
 
-            {/* Notification level — only shown when not muted */}
-            {!isMuted && (
               <div>
-                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Notify me about</p>
-                <div className="space-y-1">
-                  {(['all', 'mentions'] as const).map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      onClick={() => void handleNotifLevel(level)}
-                      disabled={savingNotif}
-                      className={[
-                        'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm disabled:opacity-50',
-                        notifLevel === level ? 'bg-teal-50 font-medium text-teal-700' : 'text-gray-600 hover:bg-gray-50',
-                      ].join(' ')}
-                    >
-                      <span className={`h-3.5 w-3.5 rounded-full border-2 ${notifLevel === level ? 'border-teal-500 bg-teal-500' : 'border-gray-300'}`} />
-                      {level === 'all' ? 'All messages' : 'Mentions only'}
-                    </button>
-                  ))}
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Temporarily mute</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {TEMP_MUTE_OPTIONS.map((option) => {
+                    const label = option.id === '1h' ? '1 hour' : option.id === 'tomorrow' ? 'Tomorrow' : '1 week';
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        onClick={() => void handleTemporaryMute(option.id)}
+                        disabled={savingNotif}
+                        className="h-7 rounded-full border border-gray-200 px-3 text-[11px] font-medium text-gray-600 hover:border-teal-200 hover:bg-teal-50 hover:text-teal-700 disabled:opacity-50"
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            )}
-          </div>
-        </Section>
+
+              {/* Notification level — only shown when not muted */}
+              {!isMuted && (
+                <div>
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Notify me about</p>
+                  <div className="space-y-1">
+                    {(['all', 'mentions'] as const).map((level) => (
+                      <button
+                        key={level}
+                        type="button"
+                        onClick={() => void handleNotifLevel(level)}
+                        disabled={savingNotif}
+                        className={[
+                          'flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs disabled:opacity-50',
+                          notifLevel === level ? 'bg-teal-50 font-medium text-teal-700' : 'text-gray-600 hover:bg-gray-50',
+                        ].join(' ')}
+                      >
+                        <span className={`h-3 w-3 rounded-full border-2 ${notifLevel === level ? 'border-teal-500 bg-teal-500' : 'border-gray-300'}`} />
+                        {level === 'all' ? 'All messages' : 'Mentions only'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </Section>
+        </div>
 
         {/* Leave channel — group chats only */}
         {isGroup && (
-          <div className="px-4 py-4">
+          <div ref={leaveSectionRef} className="border-b border-gray-100">
             {confirmingLeave ? (
-              <div ref={leaveConfirmRef} className="rounded-lg border border-red-200 bg-red-50 p-3">
-                <p className="text-sm font-medium text-gray-800">
-                  Leave {chat.name ? `#${chat.name}` : 'this channel'}?
-                </p>
-                <p className="mt-0.5 text-xs text-gray-500">
-                  You&apos;ll stop receiving messages and need to be re-added to rejoin.
-                </p>
-                <div className="mt-2.5 flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => void handleLeave()}
-                    disabled={leaving}
-                    className="flex items-center gap-1 rounded bg-red-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50"
-                  >
-                    {leaving
-                      ? <><Loader2 className="h-3 w-3 animate-spin" /> Leaving…</>
-                      : 'Leave channel'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmingLeave(false)}
-                    disabled={leaving}
-                    className="rounded px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
+              <>
+                <div className="flex w-full items-center gap-2 px-4 py-3 text-left text-red-600">
+                  <LogOut className="h-4 w-4 shrink-0" />
+                  <span className="flex-1 text-sm font-semibold">Leave channel</span>
                 </div>
-              </div>
+                <div className="px-4 pb-4">
+                  <div ref={leaveConfirmRef} className="rounded-lg border border-red-200 bg-red-50 p-3">
+                    <p className="text-sm font-medium text-gray-800">
+                      Leave {chat.name ? `#${chat.name}` : 'this channel'}?
+                    </p>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      You&apos;ll stop receiving messages and need to be re-added to rejoin.
+                    </p>
+                    <div className="mt-2.5 flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleLeave()}
+                        disabled={leaving}
+                        className="flex items-center gap-1 rounded bg-red-500 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-600 disabled:opacity-50"
+                      >
+                        {leaving
+                          ? <><Loader2 className="h-3 w-3 animate-spin" /> Leaving…</>
+                          : 'Leave channel'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmingLeave(false)}
+                        disabled={leaving}
+                        className="rounded px-2.5 py-1 text-xs font-medium text-gray-500 hover:bg-gray-100 disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </>
             ) : (
               <button
                 type="button"
                 onClick={() => setConfirmingLeave(true)}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
+                className="flex w-full items-center gap-2 px-4 py-3 text-left text-red-600 hover:bg-red-50"
               >
-                <LogOut className="h-4 w-4" />
-                Leave channel
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span className="flex-1 text-sm font-semibold">Leave channel</span>
               </button>
+            )}
+            {createdMetaLabel && (
+              <p className="px-4 pb-3 text-[11px] text-gray-400">
+                {createdMetaLabel}
+              </p>
             )}
           </div>
         )}

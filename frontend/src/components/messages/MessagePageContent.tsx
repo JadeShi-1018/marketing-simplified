@@ -18,6 +18,7 @@ import SavedItemsPanel from '@/components/chat/SavedItemsPanel';
 import ChatCommandPalette from '@/components/chat/ChatCommandPalette';
 import BrowseChannelsDialog from '@/components/chat/BrowseChannelsDialog';
 import type { MessageSearchResult } from '@/types/chat';
+import type { SearchFilters } from '@/hooks/useMessageSearch';
 
 const MESSAGES_MOBILE_QUERY = '(max-width: 767px)';
 
@@ -38,6 +39,9 @@ export default function MessagePageContent() {
   const [isConversationDrawerOpen, setIsConversationDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchInitialFilters, setSearchInitialFilters] = useState<Partial<SearchFilters> | undefined>();
+  const [searchFilterSignal, setSearchFilterSignal] = useState(0);
+  const [detailsSignal, setDetailsSignal] = useState<{ chatId: number; seq: number } | null>(null);
   const [isSavedOpen, setIsSavedOpen] = useState(false);
   const [isBrowseOpen, setIsBrowseOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -274,6 +278,24 @@ export default function MessagePageContent() {
     [selectedProjectId, setCurrentChat, replaceMessagesQuery]
   );
 
+  const handleSearchInChat = useCallback((chatId: number) => {
+    setSearchInitialFilters({ inChat: chatId });
+    setSearchFilterSignal((n) => n + 1);
+    setIsSearchOpen(true);
+  }, []);
+
+  const handleOpenChannelDetails = useCallback((chatId: number) => {
+    setIsSearchOpen(false);
+    setIsSavedOpen(false);
+    setCurrentChat(chatId);
+    replaceMessagesQuery({
+      projectId: selectedProjectId,
+      chatId,
+      messageId: null,
+    });
+    setDetailsSignal((prev) => ({ chatId, seq: (prev?.seq ?? 0) + 1 }));
+  }, [replaceMessagesQuery, selectedProjectId, setCurrentChat]);
+
   const handleSavedJump = useCallback(
     async (
       msgId: number,
@@ -448,6 +470,8 @@ export default function MessagePageContent() {
         onMobileSidebarOpenChange={setIsConversationDrawerOpen}
         mobileSidebarHeader={renderSearchInput('messages-mobile-search')}
         isSearchActive={isSearchingConversations}
+        onSearchInChat={handleSearchInChat}
+        onOpenChannelDetails={handleOpenChannelDetails}
         chatListEmptyState={
           selectedProjectId ? (
             <div className="p-6 text-sm text-gray-500">No chats yet</div>
@@ -468,6 +492,8 @@ export default function MessagePageContent() {
                 chats={chats}
                 onSelectResult={handleSelectSearchResult}
                 onClose={() => setIsSearchOpen(false)}
+                initialFilters={searchInitialFilters}
+                filterSignal={searchFilterSignal}
               />
             </div>
           ) : isSavedOpen ? (
@@ -518,6 +544,7 @@ export default function MessagePageContent() {
                 onBack={handleBackToList}
                 roleByUserId={roleByUserId}
                 hideBackOnDesktop
+                openDetailsSignal={detailsSignal ?? undefined}
               />
             </div>
           )

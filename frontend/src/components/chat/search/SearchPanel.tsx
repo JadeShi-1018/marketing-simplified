@@ -22,10 +22,13 @@ interface Props {
   chats?: Chat[];
   onSelectResult: (result: MessageSearchResult) => void;
   onClose: () => void;
+  initialFilters?: Partial<SearchFilters>;
+  /** Increment to re-apply initialFilters even when the panel is already open. */
+  filterSignal?: number;
 }
 
 // ── Filter dropdown options ────────────────────────────────────────────────
-type FilterKey = 'fromUser' | 'inChat' | 'has' | 'dateAfter' | 'dateBefore';
+type FilterKey = 'fromUser' | 'inChat' | 'inConversation' | 'has' | 'dateAfter' | 'dateBefore';
 
 interface FilterOption {
   key: FilterKey;
@@ -35,17 +38,19 @@ interface FilterOption {
 }
 
 const FILTER_OPTIONS: FilterOption[] = [
-  { key: 'fromUser',   label: 'From someone',  shortcut: 'from:',   icon: <User className="h-4 w-4" /> },
-  { key: 'inChat',     label: 'In channel',     shortcut: 'in:',     icon: <Hash className="h-4 w-4" /> },
-  { key: 'has',        label: 'Has file',       shortcut: 'has:',    icon: <Paperclip className="h-4 w-4" /> },
-  { key: 'dateAfter',  label: 'After date',     shortcut: 'after:',  icon: <Calendar className="h-4 w-4" /> },
-  { key: 'dateBefore', label: 'Before date',    shortcut: 'before:', icon: <Calendar className="h-4 w-4" /> },
+  { key: 'fromUser',       label: 'From someone',    shortcut: 'from:',   icon: <User className="h-4 w-4" /> },
+  { key: 'inChat',         label: 'In channel',       shortcut: 'in:',     icon: <Hash className="h-4 w-4" /> },
+  { key: 'inConversation', label: 'In conversation',  shortcut: 'in:',     icon: <MessageSquare className="h-4 w-4" /> },
+  { key: 'has',            label: 'Has file',         shortcut: 'has:',    icon: <Paperclip className="h-4 w-4" /> },
+  { key: 'dateAfter',      label: 'After date',       shortcut: 'after:',  icon: <Calendar className="h-4 w-4" /> },
+  { key: 'dateBefore',     label: 'Before date',      shortcut: 'before:', icon: <Calendar className="h-4 w-4" /> },
 ];
 
 // ── Active filter chip ─────────────────────────────────────────────────────
-function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+function FilterChip({ label, icon, onRemove }: { label: string; icon?: React.ReactNode; onRemove: () => void }) {
   return (
     <span className="inline-flex items-center gap-1 rounded-full border border-[#3CCED7]/50 bg-[#3CCED7]/10 px-2.5 py-0.5 text-xs font-medium text-[#2AB5BD]">
+      {icon && <span className="shrink-0">{icon}</span>}
       {label}
       <button
         type="button"
@@ -212,6 +217,8 @@ function FilterAutocompleteInput({
   onChangeDraft, onApply, onSelectSuggestion, onCancel, filterOptionLabel,
 }: AutocompleteInputProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const currentUser = useAuthStore((s) => s.user);
+  const currentUsername = currentUser?.username ?? '';
 
   // Build suggestion list
   const suggestions: { label: string; sublabel?: string; value: string; chatId?: number }[] = (() => {
@@ -221,6 +228,17 @@ function FilterAutocompleteInput({
         .filter((c) => c.type === 'group' && (c.name ?? '').toLowerCase().includes(q))
         .slice(0, 8)
         .map((c) => ({ label: `#${c.name ?? 'untitled'}`, value: c.name ?? '', chatId: c.id }));
+    }
+    if (activeInput === 'inConversation') {
+      return chats
+        .filter((c) => c.type === 'private')
+        .map((c) => {
+          const other = c.participants?.find((p) => p.user?.username !== currentUsername);
+          const username = other?.user?.username ?? '';
+          return { label: username, value: username, chatId: c.id };
+        })
+        .filter((s) => s.label && (!q || s.label.toLowerCase().includes(q)))
+        .slice(0, 8);
     }
     if (activeInput === 'fromUser') {
       const seen = new Set<string>();
@@ -242,7 +260,7 @@ function FilterAutocompleteInput({
     return [];
   })();
 
-  const showSuggestions = suggestions.length > 0 && (activeInput === 'fromUser' || activeInput === 'inChat');
+  const showSuggestions = suggestions.length > 0 && (activeInput === 'fromUser' || activeInput === 'inChat' || activeInput === 'inConversation');
 
   // Close on outside click
   useEffect(() => {
@@ -279,7 +297,7 @@ function FilterAutocompleteInput({
             if (e.key === 'Enter') onApply();
             if (e.key === 'Escape') onCancel();
           }}
-          placeholder={activeInput === 'inChat' ? 'channel name…' : activeInput === 'fromUser' ? 'username…' : ''}
+          placeholder={activeInput === 'inChat' ? 'channel name…' : (activeInput === 'fromUser' || activeInput === 'inConversation') ? 'username…' : ''}
           className="flex-1 bg-transparent text-xs text-gray-900 placeholder-gray-400 focus:outline-none"
           autoComplete="off"
         />
@@ -298,7 +316,9 @@ function FilterAutocompleteInput({
             >
               {activeInput === 'inChat'
                 ? <Hash className="h-3.5 w-3.5 shrink-0 text-gray-400" />
-                : <User className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
+                : activeInput === 'inConversation'
+                  ? <MessageSquare className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                  : <User className="h-3.5 w-3.5 shrink-0 text-gray-400" />}
               <span className="flex-1 truncate text-sm text-gray-800">{s.label}</span>
               {s.sublabel && <span className="truncate text-xs text-gray-400">{s.sublabel}</span>}
             </button>
@@ -312,22 +332,24 @@ function FilterAutocompleteInput({
 // ── History entry helpers ──────────────────────────────────────────────────
 function getHistoryLabel(entry: string): string {
   if (entry.startsWith('mentions_me:')) return `@${entry.slice(12)}`;
+  if (entry.startsWith('in:#')) return `in:${entry.slice(4)}`; // strip '#', shown as icon
   return entry;
 }
 
 function getHistoryMeta(entry: string): { isFilter: boolean; icon: React.ReactNode } {
   if (entry.startsWith('from:'))       return { isFilter: true, icon: <User className="h-3 w-3" /> };
-  if (entry.startsWith('in:#'))        return { isFilter: true, icon: null };
+  if (entry.startsWith('in:#'))        return { isFilter: true, icon: <Hash className="h-3 w-3" /> };
+  if (entry.startsWith('in:') && !entry.startsWith('in:#')) return { isFilter: true, icon: <MessageSquare className="h-3 w-3" /> };
   if (entry === 'has:file')            return { isFilter: true, icon: <Paperclip className="h-3 w-3" /> };
   if (entry === 'has:link')            return { isFilter: true, icon: <Link2 className="h-3 w-3" /> };
-  if (entry === 'threads')        return { isFilter: true, icon: <MessageSquare className="h-3 w-3" /> };
+  if (entry === 'threads')             return { isFilter: true, icon: <MessageSquare className="h-3 w-3" /> };
   if (entry.startsWith('mentions_me:'))return { isFilter: true, icon: null };
   if (entry.startsWith('after:') || entry.startsWith('before:'))
                                        return { isFilter: true, icon: <Calendar className="h-3 w-3" /> };
   return { isFilter: false, icon: <Search className="h-3 w-3" /> };
 }
 
-export default function SearchPanel({ projectId, chats = [], onSelectResult, onClose }: Props) {
+export default function SearchPanel({ projectId, chats = [], onSelectResult, onClose, initialFilters, filterSignal }: Props) {
   const currentUser = useAuthStore((s) => s.user);
   const currentUsername = currentUser?.username ?? '';
 
@@ -354,6 +376,14 @@ export default function SearchPanel({ projectId, chats = [], onSelectResult, onC
   const commitQuery = () => {
     if (query.trim().length >= 2) addEntry(query.trim());
   };
+
+  // Apply initial filters on mount and whenever filterSignal increments
+  useEffect(() => {
+    if (initialFilters && Object.keys(initialFilters).length > 0) {
+      setFilters((f) => ({ ...f, ...initialFilters }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterSignal]);
 
   // Auto-focus on mount
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -409,6 +439,13 @@ export default function SearchPanel({ projectId, chats = [], onSelectResult, onC
       const name = entry.slice(4); // strip 'in:#'
       const chat = chats.find((c) => c.type === 'group' && c.name === name);
       if (chat) setFilters({ ...base, inChat: chat.id });
+    } else if (entry.startsWith('in:') && !entry.startsWith('in:#')) {
+      const username = entry.slice(3); // strip 'in:'
+      const chat = chats.find(
+        (c) => c.type === 'private' &&
+               c.participants?.some((p) => p.user?.username === username)
+      );
+      if (chat) setFilters({ ...base, inChat: chat.id });
     } else if (entry === 'has:file') {
       setFilters({ ...base, has: 'file' });
     } else if (entry === 'has:link') {
@@ -440,6 +477,15 @@ export default function SearchPanel({ projectId, chats = [], onSelectResult, onC
       if (chat) {
         setFilters({ ...filters, inChat: chat.id });
         addEntry(`in:#${chat.name ?? draft}`);
+      }
+    } else if (activeInput === 'inConversation' && draft) {
+      const chat = chats.find(
+        (c) => c.type === 'private' &&
+               c.participants?.some((p) => p.user?.username?.toLowerCase() === draft.toLowerCase())
+      );
+      if (chat) {
+        setFilters({ ...filters, inChat: chat.id });
+        addEntry(`in:${draft}`);
       }
     } else if (activeInput === 'fromUser' && draft) {
       setFilters({ ...filters, fromUser: draft });
@@ -481,18 +527,22 @@ export default function SearchPanel({ projectId, chats = [], onSelectResult, onC
   const fromMeActive = !!(currentUsername && filters.fromUser === currentUsername);
   const includesMeActive = !!(currentUsername && filters.mentionsMe === currentUsername);
 
-  const activeChips: { label: string; onRemove: () => void }[] = [];
-  if (filters.fromUser && !fromMeActive) activeChips.push({ label: `from:${filters.fromUser}`, onRemove: () => setFilters({ ...filters, fromUser: '' }) });
+  const activeChips: { label: string; icon?: React.ReactNode; onRemove: () => void }[] = [];
+  if (filters.fromUser && !fromMeActive) activeChips.push({ label: `from:${filters.fromUser}`, icon: <User className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, fromUser: '' }) });
   if (filters.inChat) {
     const chat = chats.find((c) => c.id === filters.inChat);
-    const label = chat ? (chat.type === 'group' ? `in:#${chat.name}` : `in:${chat.participants?.[0]?.user?.username ?? filters.inChat}`) : `in:${filters.inChat}`;
-    activeChips.push({ label, onRemove: () => setFilters({ ...filters, inChat: null }) });
+    if (chat?.type === 'group') {
+      activeChips.push({ label: `in:${chat.name}`, icon: <Hash className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, inChat: null }) });
+    } else {
+      const otherUser = chat?.participants?.find((p) => p.user?.username !== currentUsername)?.user?.username ?? filters.inChat;
+      activeChips.push({ label: `in:${otherUser}`, icon: <MessageSquare className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, inChat: null }) });
+    }
   }
-  if (hasFileActive && !last7Active) activeChips.push({ label: 'has:file', onRemove: () => setFilters({ ...filters, has: '' }) });
-  if (hasLinkActive) activeChips.push({ label: 'has:link', onRemove: () => setFilters({ ...filters, has: '' }) });
-  if (filters.dateAfter && !last7Active) activeChips.push({ label: `after:${filters.dateAfter}`, onRemove: () => setFilters({ ...filters, dateAfter: '' }) });
-  if (filters.dateBefore) activeChips.push({ label: `before:${filters.dateBefore}`, onRemove: () => setFilters({ ...filters, dateBefore: '' }) });
-  if (filters.mentionsMe && !includesMeActive) activeChips.push({ label: `mentions:${filters.mentionsMe}`, onRemove: () => setFilters({ ...filters, mentionsMe: '' }) });
+  if (hasFileActive && !last7Active) activeChips.push({ label: 'has:file', icon: <Paperclip className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, has: '' }) });
+  if (hasLinkActive) activeChips.push({ label: 'has:link', icon: <Link2 className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, has: '' }) });
+  if (filters.dateAfter && !last7Active) activeChips.push({ label: `after:${filters.dateAfter}`, icon: <Calendar className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, dateAfter: '' }) });
+  if (filters.dateBefore) activeChips.push({ label: `before:${filters.dateBefore}`, icon: <Calendar className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, dateBefore: '' }) });
+  if (filters.mentionsMe && !includesMeActive) activeChips.push({ label: `mentions:${filters.mentionsMe}`, icon: <AtSign className="h-3 w-3" />, onRemove: () => setFilters({ ...filters, mentionsMe: '' }) });
 
   const hasAnyFilter = !!(filters.fromUser || filters.inChat || filters.has || filters.dateAfter || filters.dateBefore || filters.threadsOnly || filters.mentionsMe);
 
@@ -651,9 +701,11 @@ export default function SearchPanel({ projectId, chats = [], onSelectResult, onC
             onSelectSuggestion={(value, chatId) => {
               if (activeInput === 'inChat' && chatId != null) {
                 setFilters({ ...filters, inChat: chatId });
-                // Find channel name for history
                 const ch = chats.find((c) => c.id === chatId);
                 addEntry(`in:#${ch?.name ?? value}`);
+              } else if (activeInput === 'inConversation' && chatId != null) {
+                setFilters({ ...filters, inChat: chatId });
+                addEntry(`in:${value}`);
               } else if (activeInput === 'fromUser') {
                 setFilters({ ...filters, fromUser: value });
                 addEntry(`from:${value}`);
@@ -673,7 +725,7 @@ export default function SearchPanel({ projectId, chats = [], onSelectResult, onC
       {activeChips.length > 0 && (
         <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-gray-100 px-4 py-2">
           {activeChips.map((chip) => (
-            <FilterChip key={chip.label} label={chip.label} onRemove={chip.onRemove} />
+            <FilterChip key={chip.label} label={chip.label} icon={chip.icon} onRemove={chip.onRemove} />
           ))}
         </div>
       )}

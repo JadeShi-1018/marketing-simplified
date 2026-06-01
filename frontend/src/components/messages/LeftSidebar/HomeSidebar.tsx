@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { BellOff, Bell, BellRing, ChevronDown, ChevronRight, FolderOpen, Hash, Home, LogOut, MessageSquare, MessagesSquare, Pencil, Plus, Search, Star, Trash2, User, Users, X } from 'lucide-react';
+import { AtSign, BellOff, Bell, BellRing, Check, ChevronDown, ChevronRight, Clock, FolderOpen, Hash, Home, Info, LogOut, MessageSquare, MessagesSquare, Pencil, Plus, Search, Star, Trash2, User, Users, X } from 'lucide-react';
 import { useCustomSections } from '@/hooks/useCustomSections';
 import type { CustomSection } from '@/hooks/useCustomSections';
 import type { Chat } from '@/types/chat';
@@ -17,6 +17,7 @@ import {
   unstarChat,
   updateNotificationSettings,
 } from '@/lib/api/chatApi';
+import { TEMP_MUTE_OPTIONS, formatMutedUntil, getTemporaryMuteUntil, isParticipantCurrentlyMuted } from '@/lib/chatMute';
 import toast from 'react-hot-toast';
 import type { MessagesNavView } from './NavRail';
 import FilesSidebarView from './FilesSidebarView';
@@ -25,6 +26,7 @@ import ProjectMembersSection from './ProjectMembersSection';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
 import { Skeleton } from '@/components/ui/skeleton';
 import SidebarChatRow from './SidebarChatRow';
+import { MAX_CHANNEL_NAME_LENGTH, MAX_SIDEBAR_SECTION_NAME_LENGTH, limitName, normalizeLimitedName } from '@/lib/messages/nameLimits';
 
 function normalizeChat(c: Chat): Chat {
   const raw = c.project_id ?? (c as { project?: number }).project;
@@ -54,6 +56,8 @@ interface HomeSidebarProps {
   isLoadingMembers: boolean;
   onStartDM: (userId: number) => void;
   isSearchActive?: boolean;
+  onSearchInChat?: (chatId: number) => void;
+  onOpenChannelDetails?: (chatId: number) => void;
 }
 
 function Section({
@@ -78,7 +82,7 @@ function Section({
         ].join(' ')}
       >
         <span className="text-gray-500">{icon}</span>
-        <span className="flex-1 min-w-0">{title}</span>
+        <span className="min-w-0 flex-1 truncate" title={title}>{title}</span>
         {headerExtra}
       </div>
       <div className="mt-2">{children}</div>
@@ -141,16 +145,21 @@ interface ChatContextMenuProps {
   currentUserId: number | null;
   onClose: () => void;
   onMarkAsRead: (chatId: number) => void;
-  onMuteToggle: (chat: Chat) => void;
+  onNotificationChange: (chat: Chat, level: 'all' | 'mentions' | 'muted', mutedUntil?: string | null) => void;
   onLeave: (chatId: number) => void;
+  onOpenChannelDetails: (chatId: number) => void;
+  onSearchInChat: (chatId: number) => void;
 }
 
-function ChatContextMenu({ menu, currentUserId, onClose, onMarkAsRead, onMuteToggle, onLeave }: ChatContextMenuProps) {
+function ChatContextMenu({ menu, currentUserId, onClose, onMarkAsRead, onNotificationChange, onLeave, onOpenChannelDetails, onSearchInChat }: ChatContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   const { chat, x, y } = menu;
 
   const myParticipant = (chat.participants ?? []).find((p) => p.user.id === currentUserId);
-  const isMuted = myParticipant?.is_muted ?? false;
+  const isMuted = isParticipantCurrentlyMuted(myParticipant);
+  const isTemporarilyMuted = Boolean(isMuted && myParticipant?.muted_until);
+  const notifLevel = myParticipant?.notification_level ?? 'all';
+  const activeLevel: 'all' | 'mentions' | 'muted' = isMuted ? 'muted' : notifLevel === 'mentions' ? 'mentions' : 'all';
   const isGroup = chat.type === 'group';
   const hasUnread = (chat.unread_count ?? 0) > 0;
 
@@ -204,10 +213,47 @@ function ChatContextMenu({ menu, currentUserId, onClose, onMarkAsRead, onMuteTog
       onContextMenu={(e) => e.preventDefault()}
     >
       {hasUnread && item(<BellRing className="h-4 w-4" />, 'Mark as read', () => onMarkAsRead(chat.id))}
-      {item(
-        isMuted ? <BellOff className="h-4 w-4" /> : <BellOff className="h-4 w-4" />,
-        isMuted ? 'Unmute' : 'Mute',
-        () => onMuteToggle(chat),
+      {item(<Info className="h-4 w-4" />, isGroup ? 'Channel details' : 'Conversation details', () => onOpenChannelDetails(chat.id))}
+      {item(<Search className="h-4 w-4" />, isGroup ? 'Search in channel' : 'Search in conversation', () => onSearchInChat(chat.id))}
+      <div className="my-1 border-t border-gray-100" />
+      <p className="px-3 pb-1 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-400">Notify you about…</p>
+      {(['all', 'mentions', 'muted'] as const).map((level) => {
+        const active = activeLevel === level;
+        const icon = level === 'all' ? <Bell className="h-4 w-4" /> : level === 'mentions' ? <AtSign className="h-4 w-4" /> : <BellOff className="h-4 w-4" />;
+        const label = level === 'all' ? 'All new posts' : level === 'mentions' ? 'Just mentions' : 'Mute and hide';
+        return (
+          <button
+            key={level}
+            type="button"
+            onClick={() => { onNotificationChange(chat, level); onClose(); }}
+            className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+          >
+            <span className="h-4 w-4 shrink-0 text-gray-400">{icon}</span>
+            <span className="flex-1">{label}</span>
+            {active && <Check className="h-3.5 w-3.5 shrink-0 text-[#3CCED7]" />}
+          </button>
+        );
+      })}
+      <div className="my-1 border-t border-gray-100" />
+      <p className="px-3 pb-1 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-gray-400">Temporarily mute</p>
+      {TEMP_MUTE_OPTIONS.map((option) => {
+        const mutedUntil = getTemporaryMuteUntil(option.id).toISOString();
+        return (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => { onNotificationChange(chat, 'muted', mutedUntil); onClose(); }}
+            className="flex w-full items-center gap-2.5 rounded-md px-3 py-1.5 text-left text-sm text-gray-700 transition-colors hover:bg-gray-100"
+          >
+            <Clock className="h-4 w-4 shrink-0 text-gray-400" />
+            <span className="flex-1">{option.label}</span>
+          </button>
+        );
+      })}
+      {isTemporarilyMuted && myParticipant?.muted_until && (
+        <p className="px-3 py-1 text-xs text-gray-400">
+          Muted until {formatMutedUntil(myParticipant.muted_until)}
+        </p>
       )}
       {isGroup && (
         <>
@@ -259,6 +305,8 @@ function CustomSectionBlock({
   const [editValue, setEditValue] = useState(section.name);
   const [showPicker, setShowPicker] = useState(false);
   const [pickerQuery, setPickerQuery] = useState('');
+  const [pickerPos, setPickerPos] = useState({ top: 0, left: 0 });
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
@@ -286,7 +334,7 @@ function CustomSectionBlock({
   }, [showPicker]);
 
   const commitRename = () => {
-    const trimmed = editValue.trim();
+    const trimmed = normalizeLimitedName(editValue, MAX_SIDEBAR_SECTION_NAME_LENGTH);
     if (trimmed) onRename(trimmed);
     setIsEditing(false);
   };
@@ -299,9 +347,9 @@ function CustomSectionBlock({
   }, [availableChats, pickerQuery]);
 
   return (
-    <div className="mt-3">
+    <div className="custom-section mt-3">
       {/* Section header */}
-      <div className="flex items-center gap-1 px-2">
+      <div className="group flex items-center gap-1 px-2">
         <button
           type="button"
           onClick={onToggleCollapsed}
@@ -317,22 +365,23 @@ function CustomSectionBlock({
           <input
             ref={nameInputRef}
             value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
+            onChange={(e) => setEditValue(limitName(e.target.value, MAX_SIDEBAR_SECTION_NAME_LENGTH))}
             onBlur={commitRename}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setEditValue(section.name); setIsEditing(false); } }}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { setEditValue(limitName(section.name, MAX_SIDEBAR_SECTION_NAME_LENGTH)); setIsEditing(false); } }}
+            maxLength={MAX_SIDEBAR_SECTION_NAME_LENGTH}
             className="flex-1 min-w-0 text-xs font-semibold uppercase tracking-wide text-gray-700 outline-none border-b border-teal-400 bg-transparent"
             autoFocus
           />
         ) : (
-          <span className="flex-1 min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-gray-600">
-            {section.name}
+          <span className="flex-1 min-w-0 truncate text-xs font-semibold uppercase tracking-wide text-gray-600" title={section.name}>
+            {limitName(section.name, MAX_SIDEBAR_SECTION_NAME_LENGTH)}
           </span>
         )}
 
         {/* Edit name */}
         <button
           type="button"
-          onClick={() => { setEditValue(section.name); setIsEditing(true); setTimeout(() => nameInputRef.current?.select(), 0); }}
+          onClick={() => { setEditValue(limitName(section.name, MAX_SIDEBAR_SECTION_NAME_LENGTH)); setIsEditing(true); setTimeout(() => nameInputRef.current?.select(), 0); }}
           className="shrink-0 rounded p-0.5 text-gray-400 opacity-0 transition hover:text-gray-700 group-hover:opacity-100 [.custom-section:hover_&]:opacity-100"
           aria-label="Rename section"
           title="Rename section"
@@ -345,7 +394,12 @@ function CustomSectionBlock({
           <button
             ref={addButtonRef}
             type="button"
-            onClick={() => { setShowPicker((v) => !v); setPickerQuery(''); }}
+            onClick={() => {
+              const rect = addButtonRef.current?.getBoundingClientRect();
+              if (rect) setPickerPos({ top: rect.bottom + 4, left: rect.left });
+              setShowPicker((v) => !v);
+              setPickerQuery('');
+            }}
             className="rounded p-0.5 text-gray-400 hover:text-gray-700"
             aria-label="Add channel to section"
             title="Add channel"
@@ -353,10 +407,11 @@ function CustomSectionBlock({
             <Plus className="h-3.5 w-3.5" />
           </button>
 
-          {showPicker && (
+          {showPicker && createPortal(
             <div
               ref={pickerRef}
-              className="absolute left-0 top-6 z-50 w-52 rounded-xl border border-gray-200 bg-white p-2 shadow-lg"
+              style={{ top: pickerPos.top, left: pickerPos.left }}
+              className="fixed z-[200] w-52 rounded-xl border border-gray-200 bg-white p-2 shadow-lg"
             >
               <input
                 type="text"
@@ -392,20 +447,46 @@ function CustomSectionBlock({
                   );
                 })}
               </ul>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
 
         {/* Delete section */}
-        <button
-          type="button"
-          onClick={onDelete}
-          className="shrink-0 rounded p-0.5 text-gray-400 hover:text-red-500"
-          aria-label="Delete section"
-          title="Delete section"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
+        {confirmingDelete ? (
+          <span className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => { onDelete(); setConfirmingDelete(false); }}
+              className="rounded bg-red-500 px-1.5 py-0.5 text-[10px] font-semibold text-white hover:bg-red-600"
+            >
+              Delete
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(false)}
+              className="rounded px-1.5 py-0.5 text-[10px] text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <div className="group/del relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(true)}
+              className="rounded p-0.5 text-gray-400 hover:text-red-500"
+              aria-label="Delete section"
+            >
+              <Trash2 className="h-3 w-3" />
+            </button>
+            <div className="pointer-events-none absolute bottom-full right-0 mb-1.5 hidden group-hover/del:block z-50">
+              <div className="whitespace-nowrap rounded-md bg-white px-2 py-1 text-[11px] text-gray-700 shadow-md ring-1 ring-gray-200">
+                Delete section
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Channel rows */}
@@ -454,6 +535,8 @@ export default function HomeSidebar({
   isLoadingMembers,
   onStartDM,
   isSearchActive = false,
+  onSearchInChat,
+  onOpenChannelDetails,
 }: HomeSidebarProps) {
   const currentUserId = useAuthStore((s) => (s.user?.id ? Number(s.user.id) : null));
 
@@ -488,15 +571,38 @@ export default function HomeSidebar({
     }
   }, []);
 
-  const handleMuteToggle = useCallback(async (chat: Chat) => {
-    const liveChat = chats.find((c) => c.id === chat.id) ?? chat;
-    const myParticipant = (liveChat.participants ?? []).find((p) => p.user.id === currentUserId);
-    const isMuted = myParticipant?.is_muted ?? false;
+  const handleNotificationChange = useCallback(async (chat: Chat, level: 'all' | 'mentions' | 'muted', mutedUntil: string | null = null) => {
     try {
-      await updateNotificationSettings(chat.id, { is_muted: !isMuted });
-      toast.success(isMuted ? 'Channel unmuted' : 'Channel muted');
+      const isMuted = level === 'muted';
+      const liveChat = chats.find((c) => c.id === chat.id) ?? chat;
+      const existingParticipant = (liveChat.participants ?? []).find((p) => p.user.id === currentUserId);
+      const fallbackLevel = existingParticipant?.notification_level === 'mentions' ? 'mentions' : 'all';
+      const notifLevel = isMuted ? (mutedUntil ? fallbackLevel : 'none') : level;
+      await updateNotificationSettings(chat.id, {
+        is_muted: isMuted,
+        muted_until: isMuted ? mutedUntil : null,
+        notification_level: notifLevel as 'all' | 'mentions' | 'none',
+      });
+
+      // Update local store immediately so the UI reflects the change without a refresh
+      const updatedParticipants = (liveChat.participants ?? []).map((p) =>
+        p.user.id === currentUserId
+          ? { ...p, is_muted: isMuted, muted_until: isMuted ? mutedUntil : null, notification_level: notifLevel as 'all' | 'mentions' | 'none' }
+          : p
+      );
+      useChatStore.getState().updateChat(chat.id, { participants: updatedParticipants });
+
+      toast.success(
+        isMuted
+          ? mutedUntil
+            ? `Muted until ${formatMutedUntil(mutedUntil)}`
+            : 'Notifications muted'
+          : level === 'all'
+            ? 'Notifying for all new posts'
+            : 'Notifying for mentions only'
+      );
     } catch {
-      toast.error('Could not update mute setting');
+      toast.error('Could not update notification settings');
     }
   }, [chats, currentUserId]);
 
@@ -539,7 +645,7 @@ export default function HomeSidebar({
 
   const getPrivateChatDisplayName = useCallback(
     (chat: Chat) => {
-      if (chat.type !== 'private') return chat.name || 'Group chat';
+      if (chat.type !== 'private') return limitName(chat.name || 'Group chat', MAX_CHANNEL_NAME_LENGTH);
       if (!currentUserId) return chat.name || 'Direct message';
 
       const other = chat.participants?.find((p) => p.user.id !== currentUserId);
@@ -566,7 +672,7 @@ export default function HomeSidebar({
 
   const rowDisplayName = useCallback(
     (chat: Chat): string =>
-      chat.type === 'private' ? getPrivateChatDisplayName(chat) : chat.name || 'untitled',
+      chat.type === 'private' ? getPrivateChatDisplayName(chat) : limitName(chat.name || 'untitled', MAX_CHANNEL_NAME_LENGTH),
     [getPrivateChatDisplayName]
   );
 
@@ -1052,8 +1158,10 @@ export default function HomeSidebar({
           currentUserId={currentUserId}
           onClose={() => setContextMenu(null)}
           onMarkAsRead={(chatId) => void handleMarkAsRead(chatId)}
-          onMuteToggle={(chat) => void handleMuteToggle(chat)}
+          onNotificationChange={(chat, level, mutedUntil) => void handleNotificationChange(chat, level, mutedUntil)}
           onLeave={(chatId) => void handleLeave(chatId)}
+          onOpenChannelDetails={(chatId) => { setContextMenu(null); onOpenChannelDetails?.(chatId); }}
+          onSearchInChat={(chatId) => { setContextMenu(null); onSearchInChat?.(chatId); }}
         />
       )}
     </div>
