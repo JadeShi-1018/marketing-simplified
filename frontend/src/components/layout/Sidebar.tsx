@@ -72,7 +72,7 @@ const getNavigationItems = (
     },
     {
       name: t ? t("sidebar.projects") : "Projects",
-      href: "/projects",
+      href: "/select-project",
       icon: FolderOpen,
       description: t ? t("sidebar.manage_projects") : "Manage your projects",
     },

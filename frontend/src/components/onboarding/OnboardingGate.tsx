@@ -1,14 +1,17 @@
 'use client';
 
-import React from 'react';
-import { useEffect } from 'react';
-import { usePathname } from 'next/navigation';
+import React, { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useAuthStore } from '@/lib/authStore';
+import OnboardingProjectChooser from './OnboardingProjectChooser';
 import OnboardingWizard from './OnboardingWizard';
+
+type OnboardingOverlayMode = 'chooser' | 'classic';
 
 const OnboardingGate = ({ children }: { children: React.ReactNode }) => {
   const pathname = usePathname();
+  const router = useRouter();
   const clearAuth = useAuthStore((state) => state.clearAuth);
   const isPublicAuthRoute =
     pathname?.startsWith('/login') ||
@@ -27,13 +30,25 @@ const OnboardingGate = ({ children }: { children: React.ReactNode }) => {
     pathname === '/solutions' ||
     pathname === '/pricing' ||
     pathname === '/policy';
+  const isQuickStartRoute = pathname?.startsWith('/projects/quick-start');
   const { needsOnboarding, checking } = useOnboarding();
-  const shouldShowOnboardingWizard = !isAuthRoute && !isRootRoute && !isPublicSeoRoute && needsOnboarding;
-  // Legacy "Preparing your workspace" blue spinner is intentionally disabled
-  // (G-09): per-page skeletons in dashboard-v2 already cover the brief check
-  // window, and stacking two overlays in a row was jarring.
+  const [overlayMode, setOverlayMode] = useState<OnboardingOverlayMode>('chooser');
+
+  const shouldShowOnboardingOverlay =
+    !isAuthRoute &&
+    !isRootRoute &&
+    !isPublicSeoRoute &&
+    !isQuickStartRoute &&
+    needsOnboarding;
+
   const shouldShowBlockingCheck = false;
-  const shouldBlockBackground = shouldShowOnboardingWizard || shouldShowBlockingCheck;
+  const shouldBlockBackground = shouldShowOnboardingOverlay || shouldShowBlockingCheck;
+
+  useEffect(() => {
+    if (!needsOnboarding) {
+      setOverlayMode('chooser');
+    }
+  }, [needsOnboarding]);
 
   useEffect(() => {
     // Requirement: after signup, entering localhost should reset to logged-out
@@ -56,9 +71,16 @@ const OnboardingGate = ({ children }: { children: React.ReactNode }) => {
         <div className="pointer-events-none fixed inset-0 z-[9998] bg-white/30 backdrop-blur-md" />
       )}
 
-      {shouldShowOnboardingWizard && (
+      {shouldShowOnboardingOverlay && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto px-4 py-8">
-          <OnboardingWizard />
+          {overlayMode === 'chooser' ? (
+            <OnboardingProjectChooser
+              onQuickStart={() => router.push('/projects/quick-start')}
+              onClassic={() => setOverlayMode('classic')}
+            />
+          ) : (
+            <OnboardingWizard onExit={() => setOverlayMode('chooser')} />
+          )}
         </div>
       )}
     </div>

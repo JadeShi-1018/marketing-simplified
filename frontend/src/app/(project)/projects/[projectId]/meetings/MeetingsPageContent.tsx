@@ -822,7 +822,7 @@ function MeetingsPageInner() {
                         <p className="font-semibold">{errorTitle}</p>
                         <p className="mt-1 text-sm text-red-700">{error}</p>
                         <Link
-                          href="/projects"
+                          href="/select-project"
                           className="mt-2 inline-block text-sm font-medium text-[#1a9ba3] hover:underline"
                         >
                           Go to Projects

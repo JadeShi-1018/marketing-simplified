@@ -1,11 +1,6 @@
-import ProjectsPage from '@/components/projects/ProjectsPage';
+import { redirect } from 'next/navigation';
 
-const AllProjectsPage = () => (
-  <ProjectsPage
-    title="All Projects"
-    description="Everything you have access to across your organization."
-    filter="all"
-  />
-);
-
-export default AllProjectsPage;
+/** @deprecated Use /select-project — All Projects hub is no longer a standalone entry. */
+export default function AllProjectsPage() {
+  redirect('/select-project');
+}

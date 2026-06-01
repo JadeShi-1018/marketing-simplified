@@ -1,11 +1,6 @@
-import ProjectsPage from '@/components/projects/ProjectsPage';
+import { redirect } from 'next/navigation';
 
-const ActiveProjectsPage = () => (
-  <ProjectsPage
-    title="Active Projects"
-    description="Projects currently marked as active for your account."
-    filter="active"
-  />
-);
-
-export default ActiveProjectsPage;
+/** @deprecated Use /select-project — filtered project lists live on the select-project page. */
+export default function ActiveProjectsPage() {
+  redirect('/select-project');
+}

@@ -658,12 +658,14 @@ def _build_calendar_view_payload(
     from .serializers import CalendarEventSerializer
 
     organization = get_user_organization(user)
-    derived_qs = CalendarEvent.objects.filter(
+    from .services import get_calendar_events
+
+    derived_qs = get_calendar_events(
         organization=organization,
-        start_time__lt=end_dt,
-        end_time__gt=start_dt,
-        is_deleted=False,
-    )
+        start=start_dt.isoformat(),
+        end=end_dt.isoformat(),
+        project_id=str(project_id) if project_id is not None else None,
+    ).filter(is_deleted=False)
     derived_data = CalendarEventSerializer(derived_qs, many=True).data
 
     # Combine two types of events

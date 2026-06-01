@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import time
 
 import requests
 from django.conf import settings
@@ -16,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 _GEMINI_BASE = "https://aiplatform.googleapis.com/v1/publishers/google/models"
+
+# Retries for HTTP 429 (rate limit) before surfacing to callers.
+_RATE_LIMIT_MAX_ATTEMPTS = 4
+_RATE_LIMIT_BACKOFF_SECONDS = (2.0, 4.0, 8.0)
 
 
 def _get_api_key() -> str:
@@ -54,8 +59,38 @@ def call_gemini(
         len(user_prompt),
     )
 
-    response = requests.post(url, json=body, timeout=timeout, stream=True)
-    response.raise_for_status()
+    last_http_error: requests.exceptions.HTTPError | None = None
+    for attempt in range(1, _RATE_LIMIT_MAX_ATTEMPTS + 1):
+        try:
+            response = requests.post(url, json=body, timeout=timeout, stream=True)
+            response.raise_for_status()
+            last_http_error = None
+            break
+        except requests.exceptions.HTTPError as exc:
+            last_http_error = exc
+            status_code = exc.response.status_code if exc.response is not None else None
+            if status_code == 429 and attempt < _RATE_LIMIT_MAX_ATTEMPTS:
+                wait_seconds = _RATE_LIMIT_BACKOFF_SECONDS[
+                    min(attempt - 1, len(_RATE_LIMIT_BACKOFF_SECONDS) - 1)
+                ]
+                logger.warning(
+                    "Gemini rate-limited (429); retrying in %.1fs (attempt %s/%s)",
+                    wait_seconds,
+                    attempt + 1,
+                    _RATE_LIMIT_MAX_ATTEMPTS,
+                )
+                time.sleep(wait_seconds)
+                continue
+            if status_code == 429:
+                raise RuntimeError("Gemini rate limited (HTTP 429).") from exc
+            raise RuntimeError(
+                f"Gemini request failed with HTTP {status_code or 'unknown'}."
+            ) from exc
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError("Gemini network error.") from exc
+    else:
+        if last_http_error is not None:
+            raise RuntimeError("Gemini rate limited (HTTP 429).") from last_http_error
 
     buffer = b""
     for chunk in response.iter_content(chunk_size=None):
@@ -141,7 +176,8 @@ def call_gemini_json(
     user_prompt: str,
     temperature: float = 0.3,
     timeout: int = 300,
-    _retry: bool = True,
+    _attempt: int = 1,
+    _max_attempts: int = 3,
 ) -> dict:
     """Call Gemini and parse the response as JSON. Raises RuntimeError on failure."""
     text = call_gemini(
@@ -161,16 +197,26 @@ def call_gemini_json(
             return json.loads(extracted)
         except json.JSONDecodeError as exc:
             logger.error("Gemini returned non-JSON: %s...", clean[:300])
-            if _retry:
-                logger.warning("Retrying Gemini call after JSON parse failure")
+            if _attempt < _max_attempts:
+                wait_seconds = min(1.5 * _attempt, 3.0)
+                logger.warning(
+                    "Retrying Gemini call after JSON parse failure (attempt %s/%s, wait %.1fs)",
+                    _attempt + 1,
+                    _max_attempts,
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
                 return call_gemini_json(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     temperature=temperature,
                     timeout=timeout,
-                    _retry=False,
+                    _attempt=_attempt + 1,
+                    _max_attempts=_max_attempts,
                 )
-            raise RuntimeError(f"Gemini response is not valid JSON: {exc}") from exc
+            raise RuntimeError(
+                "Gemini returned malformed output. Please retry generation."
+            ) from exc
 
 
 def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/webm", timeout: int = 120) -> str:

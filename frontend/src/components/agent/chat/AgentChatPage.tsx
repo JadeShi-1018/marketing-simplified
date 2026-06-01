@@ -19,6 +19,11 @@ import type { SSEEvent, AgentAction, AgentMessage, AnalysisResult, WorkflowStepS
 import { AGENT_MESSAGES } from "@/lib/agentMessages"
 import type { StepProgressItem } from "./StepProgress"
 import type { TaskGenerationStatus } from "./TaskListCard"
+import {
+  AGENT_PANEL_OPENED_EVENT,
+  consumeCalendarPreload,
+  type CalendarPreload,
+} from "@/lib/agentLaunchContext"
 
 function getPendingMiroWorkflowRunIds(messages: ChatMessage[]): string[] {
   // Only treat "miro_board_created" as done — a prior failure can be retried for the same
@@ -157,8 +162,6 @@ function mergeMiroGenerationStartedIntoMessages(
   return dedupeMiroGenerationStartedMessages(stripped)
 }
 
-type CalendarPreload = { message: string; context: Record<string, unknown> }
-
 function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMessage[] {
   if (event.type !== "miro_status") return prev
   const eventType = event.data?.event_type
@@ -229,34 +232,8 @@ function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMess
   return prev
 }
 
-// Module-level flag — persists across React StrictMode's unmount+remount cycles.
-// Reset to false each time new calendar context is loaded so the auto-send fires once per navigation.
+// Reset when new calendar context is consumed so auto-send fires once per launch.
 let _calendarAutoSendFired = false
-
-function buildCalendarPreload(): CalendarPreload | null {
-  if (typeof window === "undefined") return null
-  const raw = sessionStorage.getItem("agent-calendar-context")
-  if (!raw) return null
-  sessionStorage.removeItem("agent-calendar-context")
-  _calendarAutoSendFired = false  // new context arrived — allow one send
-  try {
-    const ctx = JSON.parse(raw)
-    let message: string
-    if (ctx.type === "event") {
-      const start = new Date(ctx.startDatetime)
-      const end = new Date(ctx.endDatetime)
-      const dateStr = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
-      const startTime = start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      const endTime = end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      message = `I'm looking at a calendar event: "${ctx.eventTitle}" on ${dateStr} from ${startTime} to ${endTime}.${ctx.description ? ` Description: ${ctx.description}.` : ""} Can you help me understand this event and suggest what I should prepare or do?`
-    } else {
-      message = `I'm viewing my calendar (${ctx.currentView ?? "week"} view). Can you help me understand my calendar events, check my availability, or assist with scheduling?`
-    }
-    return { message, context: ctx }
-  } catch {
-    return null
-  }
-}
 
 type AgentChatPageProps = {
   /** Hide title + approval row; used when the floating window title bar shows them. */
@@ -310,7 +287,13 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const abortRef = useRef<AbortController | null>(null)
   const activeStreamTokenRef = useRef(0)
   const sessionLoadRequestRef = useRef(0)
-  const [pendingCalendarPreload] = useState<CalendarPreload | null>(buildCalendarPreload)
+  const [pendingCalendarPreload, setPendingCalendarPreload] = useState<CalendarPreload | null>(() => {
+    const preload = consumeCalendarPreload()
+    if (preload) {
+      _calendarAutoSendFired = false
+    }
+    return preload
+  })
   // Persist calendar context for the lifetime of this session so follow-up messages
   // also go through the calendar workflow, not the generic fallback.
   const [sessionCalendarContext, setSessionCalendarContext] = useState<Record<string, unknown> | null>(
@@ -719,6 +702,43 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       setApprovalRequired(getApprovalPref())
     }
   }, [getApprovalPref, loadSessionById])
+
+  // Calendar context staged while the panel was closed (Calendar → Ask Agent).
+  useEffect(() => {
+    const onPanelOpened = () => {
+      const preload = consumeCalendarPreload()
+      if (!preload) {
+        return
+      }
+      sessionLoadRequestRef.current += 1
+      invalidateActiveStreams()
+      resetTransientChatUiState()
+      setSessionId(null)
+      sessionStorage.removeItem("agent-session-calendar-context")
+      setMessages([])
+      setHasStarted(false)
+      setFollowUpAvailable(false)
+      setFollowUpStarted(false)
+      setSessionTitle("Chat")
+      setApprovalRequired(getApprovalPref())
+      setStepState({ analysisComplete: false, tasksCreated: false })
+      setGeneratedTaskIndexes([])
+      setSkippedTaskIndexes([])
+      setCreatedTaskIdByIndex({})
+      setTaskGenerationStatus("idle")
+      setSessionCalendarContext(preload.context)
+      setPendingCalendarPreload(preload)
+      _calendarAutoSendFired = false
+    }
+
+    window.addEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpened)
+    return () => window.removeEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpened)
+  }, [
+    getApprovalPref,
+    invalidateActiveStreams,
+    resetTransientChatUiState,
+    setSessionId,
+  ])
 
   // Listen for sidebar events
   useEffect(() => {

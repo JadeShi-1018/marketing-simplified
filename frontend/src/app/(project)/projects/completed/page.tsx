@@ -1,11 +1,6 @@
-import ProjectsPage from '@/components/projects/ProjectsPage';
+import { redirect } from 'next/navigation';
 
-const CompletedProjectsPage = () => (
-  <ProjectsPage
-    title="Completed Projects"
-    description="Archived or completed projects will appear here once the backend marks them as finished."
-    filter="completed"
-  />
-);
-
-export default CompletedProjectsPage;
+/** @deprecated Use /select-project — filtered project lists live on the select-project page. */
+export default function CompletedProjectsPage() {
+  redirect('/select-project');
+}

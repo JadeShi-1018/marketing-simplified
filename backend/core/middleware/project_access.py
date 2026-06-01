@@ -16,6 +16,7 @@ class CheckProjectAccessMiddleware(MiddlewareMixin):
     EXEMPT_PATHS = [
         '/api/core/check-project-membership/',
         '/api/core/projects/onboarding/',
+        '/api/core/projects/quick-start/',
         '/auth/',
         '/api/authentication/',
         '/admin/',
