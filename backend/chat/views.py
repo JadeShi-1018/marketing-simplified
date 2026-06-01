@@ -1123,7 +1123,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
 
         replies = (
-            Message.objects.filter(parent_message=root, is_deleted=False)
+            Message.objects.filter(parent_message=root)
             .select_related('sender', 'reply_to', 'reply_to__sender')
             .prefetch_related('attachments', 'mentions')
             .order_by('created_at')
@@ -1152,7 +1152,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         ).exists():
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
 
-        last_reply = root.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
+        last_reply = root.thread_replies.order_by('-created_at').first()
         if last_reply:
             ThreadReadStatus.objects.update_or_create(
                 user=request.user,
@@ -1526,10 +1526,11 @@ class MessageViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         """
-        Delete a message (hard delete from database).
+        Delete a message for everyone by soft-deleting it.
 
         Rules:
         - Only sender can delete their own messages
+        - Keep a tombstone row in the timeline
         """
         message = self.get_object()
 
@@ -1541,14 +1542,31 @@ class MessageViewSet(viewsets.ModelViewSet):
             )
 
         message_id = message.id
-        chat_id = message.chat_id
 
-        # Hard delete the message
-        message.delete()
+        if not message.is_deleted:
+            message.is_deleted = True
+            message.deleted_at = timezone.now()
+            message.content = ''
+            message.rich_body = None
+            message.has_attachments = False
+            message.is_edited = False
+            message.save(update_fields=[
+                'is_deleted',
+                'deleted_at',
+                'content',
+                'rich_body',
+                'has_attachments',
+                'is_edited',
+                'updated_at',
+            ])
 
-        logger.info(f"User {request.user.id} deleted message {message_id}")
+        logger.info(f"User {request.user.id} soft-deleted message {message_id}")
 
-        return Response({'status': 'deleted'}, status=status.HTTP_204_NO_CONTENT)
+        response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+        return Response({
+            'status': 'deleted',
+            'message': response_serializer.data,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def hide(self, request, pk=None):

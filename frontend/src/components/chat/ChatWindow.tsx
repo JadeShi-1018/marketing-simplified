@@ -179,7 +179,6 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     hasFetchedInitially,
     sendRich,
     loadMoreMessages,
-    removeMessage,
     markAllAsRead,
   } = useMessageData({ chatId: chat.id, autoFetch: true });
   
@@ -386,7 +385,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     // the main timeline, so resolve old links to the root message before warning.
     void getMessage(targetMessageId)
       .then((target) => {
-        if (target.is_deleted || target.is_revoked) {
+        if (target.is_revoked) {
           clearStaleTarget();
           return;
         }
@@ -562,15 +561,31 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   };
 
   const handleDeleteMessage = async (messageId: number) => {
-    // removeMessage clears from both localMessages (React state) and the Zustand store,
-    // preventing the merge in useMessageData from resurrecting the deleted message.
-    removeMessage(messageId);
+    const original = messages.find((message) => message.id === messageId);
+    const { updateMessage, triggerFilesRefresh } = useChatStore.getState();
+    updateMessage(messageId, {
+      is_deleted: true,
+      deleted_at: new Date().toISOString(),
+      content: '',
+      rich_body: null,
+      attachments: [],
+      has_attachments: false,
+      attachment_count: 0,
+      reactions: [],
+      mentioned_user_ids: [],
+      missing_forwarded_attachments: [],
+      reply_to: null,
+      forwarded_from: null,
+      is_edited: false,
+      can_revoke: false,
+    });
     try {
-      await deleteMessage(messageId);
-      // Refresh Files tab after the backend confirms the delete (CASCADE removes the attachment).
-      useChatStore.getState().triggerFilesRefresh();
+      const response = await deleteMessage(messageId);
+      updateMessage(messageId, response.message);
+      // Refresh Files tab after the backend confirms attachments should no longer be listed.
+      triggerFilesRefresh();
     } catch {
-      // rollback not implemented — message is already gone from UI
+      if (original) updateMessage(messageId, original);
     }
   };
 

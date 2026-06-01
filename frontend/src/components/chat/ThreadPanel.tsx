@@ -241,7 +241,6 @@ export default function ThreadPanel({
   const repliesEndRef = useRef<HTMLDivElement>(null);
   const updateThreadReply = useChatStore((s) => s.updateThreadReply);
   const updateMessage = useChatStore((s) => s.updateMessage);
-  const removeMessage = useChatStore((s) => s.removeMessage);
 
   // Subscribe directly to threadReplies so this component re-renders on every edit/reaction.
   const threadReplies = useChatStore((s) => s.threadReplies);
@@ -301,8 +300,8 @@ export default function ThreadPanel({
 
   const handleDeleteReply = useCallback(async (messageId: number) => {
     try {
-      await deleteMessage(messageId);
-      updateThreadReply(messageId, { is_deleted: true, content: '' });
+      const response = await deleteMessage(messageId);
+      updateThreadReply(messageId, response.message);
     } catch {
       // silently fail
     }
@@ -344,12 +343,12 @@ export default function ThreadPanel({
 
   const handleDeleteRoot = useCallback(async (messageId: number) => {
     try {
-      await deleteMessage(messageId);
-      removeMessage(messageId);
+      const response = await deleteMessage(messageId);
+      updateMessage(messageId, response.message);
     } catch {
       // silently fail
     }
-  }, [removeMessage]);
+  }, [updateMessage]);
 
   const handleReactionAddRoot = useCallback(async (emoji: string) => {
     try {
@@ -424,7 +423,7 @@ export default function ThreadPanel({
           </div>
         ) : (
           <div className="py-2">
-            {replies.filter((r) => !r.is_deleted).map((reply) => (
+            {replies.map((reply) => (
               <MessageItem
                 key={reply.id}
                 message={reply}

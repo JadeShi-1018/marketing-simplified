@@ -151,6 +151,7 @@ export interface Message {
   is_read?: boolean;
   is_edited?: boolean;
   is_deleted?: boolean;
+  deleted_at?: string | null;
   is_revoked?: boolean;
   revoked_at?: string | null;
   can_revoke?: boolean;

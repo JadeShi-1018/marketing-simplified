@@ -481,12 +481,12 @@ export const revokeMessage = async (
 };
 
 /**
- * Delete a message (hard delete from database)
- * The message will be completely removed
+ * Delete a message for everyone.
+ * The backend keeps a tombstone so the timeline does not collapse.
  */
 export const deleteMessage = async (
   messageId: number
-): Promise<{ status: 'deleted' }> => {
+): Promise<{ status: 'deleted'; message: Message }> => {
   const response = await api.delete(`/api/chat/messages/${messageId}/`);
   return response.data;
 };

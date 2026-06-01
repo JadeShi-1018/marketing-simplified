@@ -197,7 +197,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         model = Message
         fields = [
             'id', 'chat', 'sender', 'content', 'rich_body', 'status', 'statuses',
-            'created_at', 'updated_at', 'is_edited', 'is_deleted', 'is_revoked', 'revoked_at',
+            'created_at', 'updated_at', 'is_edited', 'is_deleted', 'deleted_at', 'is_revoked', 'revoked_at',
             'has_attachments', 'attachment_count',
             'is_forwarded', 'forwarded_from', 'reply_to', 'reactions', 'can_revoke',
             'is_hidden_by_me', 'mentioned_user_ids',
@@ -220,7 +220,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             return list(replies)
         cached_replies = self._get_prefetched_related(obj, 'thread_replies')
         if cached_replies is not None:
-            return [reply for reply in cached_replies if not reply.is_deleted]
+            return list(cached_replies)
         return None
 
     def _get_thread_read_status_for_user(self, obj):
@@ -254,6 +254,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         return 'document'
 
     def get_mentioned_user_ids(self, obj):
+        if obj.is_deleted:
+            return []
         mentions = self._get_prefetched_related(obj, 'mentions')
         if mentions is not None:
             return [mention.mentioned_user_id for mention in mentions]
@@ -261,6 +263,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_missing_forwarded_attachments(self, obj):
         """Tombstones for forwarded attachments whose original message is gone."""
+        if obj.is_deleted:
+            return []
         if not self._forward_source_is_unavailable(obj):
             return []
 
@@ -330,6 +334,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_has_attachments(self, obj):
         """Whether message contains attachments."""
+        if obj.is_deleted:
+            return False
         if self._forward_source_is_unavailable(obj):
             return False
         attachments = self._get_prefetched_related(obj, 'attachments')
@@ -339,6 +345,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_attachment_count(self, obj):
         """Number of attachments linked to this message."""
+        if obj.is_deleted:
+            return 0
         if self._forward_source_is_unavailable(obj):
             return 0
         attachments = self._get_prefetched_related(obj, 'attachments')
@@ -348,6 +356,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_forwarded_from(self, obj):
         """Forwarded source metadata."""
+        if obj.is_deleted:
+            return None
         if not self.get_is_forwarded(obj):
             return None
 
@@ -359,6 +369,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_reply_to(self, obj):
         """Quote reply source metadata."""
+        if obj.is_deleted:
+            return None
         if not obj.reply_to_id:
             return None
 
@@ -400,6 +412,9 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         Get aggregated reactions for this message.
         Groups by emoji and includes count, users list, and whether current user reacted.
         """
+        if obj.is_deleted:
+            return []
+
         request = self.context.get('request')
         current_user_id = request.user.id if request and request.user.is_authenticated else None
 
@@ -442,6 +457,9 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if not request or not request.user.is_authenticated:
             return False
 
+        if obj.is_deleted:
+            return False
+
         # Check if user is sender
         if obj.sender != request.user:
             return False
@@ -481,7 +499,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         replies = self._get_thread_replies_for_summary(obj)
         if replies is not None:
             return len(replies)
-        return obj.thread_replies.filter(is_deleted=False).count()
+        return obj.thread_replies.count()
 
     def get_thread_last_reply_at(self, obj):
         """ISO timestamp of the most recent thread reply, or None."""
@@ -494,7 +512,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if replies is not None:
             last = replies[-1] if replies else None
             return last.created_at.isoformat() if last else None
-        last = obj.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
+        last = obj.thread_replies.order_by('-created_at').first()
         return last.created_at.isoformat() if last else None
 
     def get_thread_participants(self, obj):
@@ -506,7 +524,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
             return []
         replies = self._get_thread_replies_for_summary(obj)
         if replies is None:
-            replies = obj.thread_replies.filter(is_deleted=False).select_related('sender').order_by('created_at')
+            replies = obj.thread_replies.select_related('sender').order_by('created_at')
         seen_ids = set()
         participants = []
         for reply in replies:
@@ -538,7 +556,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if replies is not None:
             last_reply = replies[-1] if replies else None
         else:
-            last_reply = obj.thread_replies.filter(is_deleted=False).order_by('-created_at').first()
+            last_reply = obj.thread_replies.order_by('-created_at').first()
         if not last_reply:
             return False
         prefetched_status = self._get_thread_read_status_for_user(obj)
@@ -1201,6 +1219,8 @@ class MessageWithAttachmentsSerializer(MessageSerializer):
         fields = MessageSerializer.Meta.fields + ['attachments']
 
     def get_attachments(self, obj):
+        if obj.is_deleted:
+            return []
         if self._forward_source_is_unavailable(obj):
             return []
         attachments = self._get_prefetched_related(obj, 'attachments')

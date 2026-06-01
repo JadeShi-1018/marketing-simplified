@@ -185,18 +185,19 @@ export default function MessageItem({
   }, [isEditing]);
 
   const messageContent = message.content || '';
+  const isDeleted = Boolean(message.is_deleted);
   const isForwarded = Boolean(message.is_forwarded && message.forwarded_from);
   const forwardedFrom = message.forwarded_from?.sender_display?.trim() || '';
-  const hasContent = Boolean(messageContent.trim());
-  const hasAttachments = Boolean(message.attachments?.length);
+  const hasContent = !isDeleted && Boolean(messageContent.trim());
+  const hasAttachments = !isDeleted && Boolean(message.attachments?.length);
   const missingForwardedAttachments = message.missing_forwarded_attachments ?? [];
-  const hasReplyTo = Boolean(message.reply_to?.id);
+  const hasReplyTo = !isDeleted && Boolean(message.reply_to?.id);
   const replyToAttachment = message.reply_to?.attachments?.[0] ?? null;
   const replyToContent = message.reply_to
     ? message.reply_to.content || null
     : null;
-  const hasReactions = Boolean(message.reactions && message.reactions.length > 0);
-  const hasThreadReplies = (message.thread_reply_count ?? 0) > 0;
+  const hasReactions = !isDeleted && Boolean(message.reactions && message.reactions.length > 0);
+  const hasThreadReplies = !isDeleted && (message.thread_reply_count ?? 0) > 0;
 
   let hasUrls = false;
   try {
@@ -207,8 +208,8 @@ export default function MessageItem({
 
   const taskIds = extractTaskIds(messageContent);
   const taskPreviewId = taskIds[0];
-  const showTaskPreview = Boolean(taskPreviewId);
-  const showLinkPreview = hasUrls && !showTaskPreview;
+  const showTaskPreview = !isDeleted && Boolean(taskPreviewId);
+  const showLinkPreview = !isDeleted && hasUrls && !showTaskPreview;
   const bot = isAgentBot(message.sender);
   const time = formatTime(message.created_at);
   const initials = bot ? 'AI' : (message.sender.username[0] ?? '?').toUpperCase();
@@ -386,214 +387,220 @@ export default function MessageItem({
                 </span>
               ) : null}
               <span className="text-[11px] text-gray-400">{time}</span>
-              {isOwnMessage && <MessageStatus message={message} />}
+              {isOwnMessage && !isDeleted && <MessageStatus message={message} />}
             </div>
           )}
 
-          {isForwarded && (
-            <div className="mb-1 flex items-center gap-1 text-[11px] text-gray-500">
-              <Forward className="h-3 w-3 shrink-0" />
-              <span className="truncate">Forwarded from {forwardedFrom}</span>
-            </div>
-          )}
-
-          {isEditing ? (
-            <div className="flex flex-col gap-1">
-              <textarea
-                ref={editRef}
-                value={editContent}
-                onChange={(e) => setEditContent(e.target.value)}
-                onKeyDown={handleEditKeyDown}
-                rows={3}
-                className="w-full resize-none rounded-lg border border-[#3CCED7] bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
-              />
-              <div className="flex items-center justify-end gap-1.5 text-xs">
-                <span className="text-gray-400">Enter to save · Esc to cancel</span>
-                <button
-                  type="button"
-                  onClick={() => { setEditContent(message.content); setIsEditing(false); }}
-                  className="rounded px-2 py-0.5 text-gray-500 hover:bg-gray-100"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveEdit}
-                  className="rounded bg-[#3CCED7] px-2 py-0.5 text-white hover:bg-[#33b8c0]"
-                >
-                  Save
-                </button>
-              </div>
-            </div>
+          {isDeleted ? (
+            <p className="px-0.5 text-sm italic text-gray-400">Message deleted</p>
           ) : (
             <>
-              {hasContent && (
-                message.rich_body ? (
-                  <div className="[overflow-wrap:anywhere]">
-                    <ChatRichTextRenderer body={message.rich_body} />
-                    {message.is_edited && (
-                      <span className="text-[10px] text-gray-400">(edited)</span>
-                    )}
+              {isForwarded && (
+                <div className="mb-1 flex items-center gap-1 text-[11px] text-gray-500">
+                  <Forward className="h-3 w-3 shrink-0" />
+                  <span className="truncate">Forwarded from {forwardedFrom}</span>
+                </div>
+              )}
+
+              {isEditing ? (
+                <div className="flex flex-col gap-1">
+                  <textarea
+                    ref={editRef}
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    onKeyDown={handleEditKeyDown}
+                    rows={3}
+                    className="w-full resize-none rounded-lg border border-[#3CCED7] bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
+                  />
+                  <div className="flex items-center justify-end gap-1.5 text-xs">
+                    <span className="text-gray-400">Enter to save · Esc to cancel</span>
+                    <button
+                      type="button"
+                      onClick={() => { setEditContent(message.content); setIsEditing(false); }}
+                      className="rounded px-2 py-0.5 text-gray-500 hover:bg-gray-100"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveEdit}
+                      className="rounded bg-[#3CCED7] px-2 py-0.5 text-white hover:bg-[#33b8c0]"
+                    >
+                      Save
+                    </button>
                   </div>
-                ) : (
-                  <p className="whitespace-pre-wrap text-sm text-gray-900 [overflow-wrap:anywhere]">
-                    {messageContent}
-                    {message.is_edited && (
-                      <span className="ml-1 text-[10px] text-gray-400">(edited)</span>
-                    )}
-                  </p>
-                )
-              )}
-
-              {showTaskPreview && taskPreviewId ? (
-                <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
-              ) : null}
-
-              {showLinkPreview && <LinkPreview content={messageContent} />}
-
-              {hasAttachments && (
-                <AttachmentDisplay
-                  attachments={message.attachments!}
-                  isOwnMessage={isOwnMessage}
-                />
-              )}
-
-              {missingForwardedAttachments.length > 0 && (
-                <div className="mt-2 flex w-full min-w-0 max-w-full flex-col gap-2">
-                  {missingForwardedAttachments.map((item) => (
-                    <MissingForwardedAttachmentCard key={item.id} item={item} />
-                  ))}
                 </div>
-              )}
-
-              {hasReplyTo && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = message.reply_to?.id;
-                    if (!id) return;
-                    window.dispatchEvent(
-                      new CustomEvent('mj:chat:jumpToMessage', {
-                        detail: { messageId: id, requestId: `reply:${id}:${Date.now()}` },
-                      })
-                    );
-                  }}
-                  className="mt-1 w-full max-w-[320px] rounded border border-gray-200 bg-gray-50 px-2 py-1 text-left hover:bg-gray-100 transition-colors"
-                >
-                  <span className="block text-[11px] font-medium text-teal-600 truncate">
-                    {message.reply_to?.sender.username}
-                  </span>
-                  {replyToAttachment ? (
-                    <span className="flex items-center gap-1 text-xs text-gray-500 truncate mt-0.5">
-                      {replyToAttachment.file_type === 'image' ? (
-                        <span>🖼</span>
-                      ) : replyToAttachment.file_type === 'video' ? (
-                        <span>🎬</span>
-                      ) : replyToAttachment.mime_type?.startsWith('audio/') ||
-                        replyToAttachment.original_filename?.match(/\.(webm|mp3|ogg|m4a|wav)$/i) ? (
-                        <span>🎙</span>
-                      ) : (
-                        <span>📄</span>
-                      )}
-                      <span className="truncate">
-                        {replyToContent || replyToAttachment.original_filename || 'Attachment'}
-                      </span>
-                    </span>
-                  ) : (
-                    <span className="block text-xs text-gray-500 truncate mt-0.5">
-                      {replyToContent || '[Attachment]'}
-                    </span>
+              ) : (
+                <>
+                  {hasContent && (
+                    message.rich_body ? (
+                      <div className="[overflow-wrap:anywhere]">
+                        <ChatRichTextRenderer body={message.rich_body} />
+                        {message.is_edited && (
+                          <span className="text-[10px] text-gray-400">(edited)</span>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap text-sm text-gray-900 [overflow-wrap:anywhere]">
+                        {messageContent}
+                        {message.is_edited && (
+                          <span className="ml-1 text-[10px] text-gray-400">(edited)</span>
+                        )}
+                      </p>
+                    )
                   )}
-                </button>
-              )}
 
-              {(isPinned || isSaved) && (
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-                  {isPinned && (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-teal-600">
-                      <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
-                      Pinned to channel · visible to all members
-                    </span>
+                  {showTaskPreview && taskPreviewId ? (
+                    <TaskSharePreview taskId={taskPreviewId} className="mt-2" />
+                  ) : null}
+
+                  {showLinkPreview && <LinkPreview content={messageContent} />}
+
+                  {hasAttachments && (
+                    <AttachmentDisplay
+                      attachments={message.attachments!}
+                      isOwnMessage={isOwnMessage}
+                    />
                   )}
-                  {isSaved && (
-                    <span className="inline-flex items-center gap-1 text-[11px] text-amber-500">
-                      <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
-                      Saved for later · only visible to you
-                    </span>
-                  )}
-                </div>
-              )}
 
-              {hasReactions && (
-                <ReactionsDisplay
-                  reactions={message.reactions!}
-                  onReactionClick={(emoji, isReactedByMe) => {
-                    onReactionClick?.(emoji, isReactedByMe);
-                    if (isReactedByMe) onReactionRemove?.(emoji);
-                    else onReactionAdd?.(emoji);
-                  }}
-                  align="left"
-                />
-              )}
-
-              {hasThreadReplies && (
-                <button
-                  type="button"
-                  onClick={() => onOpenThread?.()}
-                  className={[
-                    'mt-1.5 flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors hover:border-teal-300 hover:bg-teal-50',
-                    isThreadActive
-                      ? 'border-teal-300 bg-teal-50'
-                      : 'border-gray-200 bg-white',
-                  ].join(' ')}
-                >
-                  {/* Participant avatar stack */}
-                  {message.thread_participants && message.thread_participants.length > 0 && (
-                    <span className="flex -space-x-1">
-                      {message.thread_participants.slice(0, 4).map((p) => (
-                        p.avatar ? (
-                          <img
-                            key={p.id}
-                            src={p.avatar}
-                            alt={p.username}
-                            title={p.username}
-                            className="h-4 w-4 rounded-full border border-white object-cover"
-                          />
-                        ) : (
-                          <span
-                            key={p.id}
-                            title={p.username}
-                            className={`flex h-4 w-4 items-center justify-center rounded-full border border-white text-[8px] font-semibold text-white ${avatarColor(p.id)}`}
-                          >
-                            {(p.username[0] ?? '?').toUpperCase()}
-                          </span>
-                        )
+                  {missingForwardedAttachments.length > 0 && (
+                    <div className="mt-2 flex w-full min-w-0 max-w-full flex-col gap-2">
+                      {missingForwardedAttachments.map((item) => (
+                        <MissingForwardedAttachmentCard key={item.id} item={item} />
                       ))}
-                    </span>
+                    </div>
                   )}
 
-                  <span className="font-semibold text-teal-600">
-                    {message.thread_reply_count}{' '}
-                    {message.thread_reply_count === 1 ? 'reply' : 'replies'}
-                  </span>
-
-                  {message.thread_last_reply_at && (
-                    <span className="text-gray-400">
-                      · Last reply{' '}
-                      {formatDistanceToNow(new Date(message.thread_last_reply_at), { addSuffix: true })}
-                    </span>
+                  {hasReplyTo && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = message.reply_to?.id;
+                        if (!id) return;
+                        window.dispatchEvent(
+                          new CustomEvent('mj:chat:jumpToMessage', {
+                            detail: { messageId: id, requestId: `reply:${id}:${Date.now()}` },
+                          })
+                        );
+                      }}
+                      className="mt-1 w-full max-w-[320px] rounded border border-gray-200 bg-gray-50 px-2 py-1 text-left hover:bg-gray-100 transition-colors"
+                    >
+                      <span className="block text-[11px] font-medium text-teal-600 truncate">
+                        {message.reply_to?.sender.username}
+                      </span>
+                      {replyToAttachment ? (
+                        <span className="flex items-center gap-1 text-xs text-gray-500 truncate mt-0.5">
+                          {replyToAttachment.file_type === 'image' ? (
+                            <span>🖼</span>
+                          ) : replyToAttachment.file_type === 'video' ? (
+                            <span>🎬</span>
+                          ) : replyToAttachment.mime_type?.startsWith('audio/') ||
+                            replyToAttachment.original_filename?.match(/\.(webm|mp3|ogg|m4a|wav)$/i) ? (
+                            <span>🎙</span>
+                          ) : (
+                            <span>📄</span>
+                          )}
+                          <span className="truncate">
+                            {replyToContent || replyToAttachment.original_filename || 'Attachment'}
+                          </span>
+                        </span>
+                      ) : (
+                        <span className="block text-xs text-gray-500 truncate mt-0.5">
+                          {replyToContent || '[Attachment]'}
+                        </span>
+                      )}
+                    </button>
                   )}
 
-                  {message.has_unread_thread_replies && (
-                    <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-teal-500" />
+                  {(isPinned || isSaved) && (
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {isPinned && (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-teal-600">
+                          <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></svg>
+                          Pinned to channel · visible to all members
+                        </span>
+                      )}
+                      {isSaved && (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-amber-500">
+                          <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></svg>
+                          Saved for later · only visible to you
+                        </span>
+                      )}
+                    </div>
                   )}
-                </button>
+
+                  {hasReactions && (
+                    <ReactionsDisplay
+                      reactions={message.reactions!}
+                      onReactionClick={(emoji, isReactedByMe) => {
+                        onReactionClick?.(emoji, isReactedByMe);
+                        if (isReactedByMe) onReactionRemove?.(emoji);
+                        else onReactionAdd?.(emoji);
+                      }}
+                      align="left"
+                    />
+                  )}
+
+                  {hasThreadReplies && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenThread?.()}
+                      className={[
+                        'mt-1.5 flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors hover:border-teal-300 hover:bg-teal-50',
+                        isThreadActive
+                          ? 'border-teal-300 bg-teal-50'
+                          : 'border-gray-200 bg-white',
+                      ].join(' ')}
+                    >
+                      {/* Participant avatar stack */}
+                      {message.thread_participants && message.thread_participants.length > 0 && (
+                        <span className="flex -space-x-1">
+                          {message.thread_participants.slice(0, 4).map((p) => (
+                            p.avatar ? (
+                              <img
+                                key={p.id}
+                                src={p.avatar}
+                                alt={p.username}
+                                title={p.username}
+                                className="h-4 w-4 rounded-full border border-white object-cover"
+                              />
+                            ) : (
+                              <span
+                                key={p.id}
+                                title={p.username}
+                                className={`flex h-4 w-4 items-center justify-center rounded-full border border-white text-[8px] font-semibold text-white ${avatarColor(p.id)}`}
+                              >
+                                {(p.username[0] ?? '?').toUpperCase()}
+                              </span>
+                            )
+                          ))}
+                        </span>
+                      )}
+
+                      <span className="font-semibold text-teal-600">
+                        {message.thread_reply_count}{' '}
+                        {message.thread_reply_count === 1 ? 'reply' : 'replies'}
+                      </span>
+
+                      {message.thread_last_reply_at && (
+                        <span className="text-gray-400">
+                          · Last reply{' '}
+                          {formatDistanceToNow(new Date(message.thread_last_reply_at), { addSuffix: true })}
+                        </span>
+                      )}
+
+                      {message.has_unread_thread_replies && (
+                        <span className="ml-0.5 h-1.5 w-1.5 rounded-full bg-teal-500" />
+                      )}
+                    </button>
+                  )}
+                </>
               )}
             </>
           )}
         </div>
 
-        {isHovering && !isEditing && (
+        {isHovering && !isEditing && !isDeleted && (
           renderActions ? (
             renderActions()
           ) : (

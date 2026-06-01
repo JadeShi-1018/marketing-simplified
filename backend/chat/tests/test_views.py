@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 from core.models import Project, Organization, Team, TeamMember, ProjectMember
@@ -561,6 +562,65 @@ class MessageAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['id'], message.id)
         self.assertEqual(response.data['content'], 'Test message')
+
+    def test_delete_message_soft_deletes_and_returns_tombstone(self):
+        """Deleting a message keeps a timeline tombstone instead of removing the row."""
+        message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Secret launch plan',
+            rich_body={'type': 'doc', 'content': [{'type': 'paragraph'}]},
+            has_attachments=True,
+        )
+        MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=message,
+            file=SimpleUploadedFile('secret.txt', b'content'),
+            file_type='document',
+            file_size=7,
+            original_filename='secret.txt',
+            mime_type='text/plain',
+        )
+
+        url = reverse('message-detail', kwargs={'pk': message.id})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'deleted')
+        self.assertEqual(response.data['message']['id'], message.id)
+        self.assertTrue(response.data['message']['is_deleted'])
+        self.assertEqual(response.data['message']['content'], '')
+        self.assertIsNone(response.data['message']['rich_body'])
+        self.assertEqual(response.data['message']['attachments'], [])
+        self.assertEqual(response.data['message']['attachment_count'], 0)
+
+        message.refresh_from_db()
+        self.assertTrue(message.is_deleted)
+        self.assertEqual(message.content, '')
+        self.assertIsNone(message.rich_body)
+        self.assertIsNotNone(message.deleted_at)
+
+    def test_list_messages_includes_deleted_tombstone(self):
+        """Message history should still include soft-deleted messages."""
+        deleted_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='',
+            is_deleted=True,
+            deleted_at=timezone.now(),
+        )
+        Message.objects.create(chat=self.chat, sender=self.user2, content='Still here')
+
+        url = reverse('message-list')
+        response = self.client.get(url, {'chat_id': self.chat.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [message['id'] for message in response.data['results']]
+        self.assertIn(deleted_message.id, ids)
+        tombstone = next(message for message in response.data['results'] if message['id'] == deleted_message.id)
+        self.assertTrue(tombstone['is_deleted'])
+        self.assertEqual(tombstone['content'], '')
+        self.assertEqual(tombstone['attachments'], [])
     
     def test_mark_message_as_read(self):
         """Test marking a message as read"""
