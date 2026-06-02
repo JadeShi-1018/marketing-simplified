@@ -531,6 +531,10 @@ export interface ChannelDetailsDrawerProps {
   onJumpToMessage?: (messageId: number, parentMessageId?: number | null) => void;
   /** A newly-created scheduled message to push into the drawer list immediately. */
   lastScheduledMsg?: ScheduledMessageRow | null;
+  /** Incremented when timeline pin state changes so the drawer can refresh immediately. */
+  pinRefreshKey?: number;
+  /** Called when a pin is removed inside the drawer so the timeline can update too. */
+  onPinRemoved?: (messageId: number) => void;
   /** Called when a new participant is successfully added, so callers can update their mention list. */
   onParticipantAdded?: (p: ChatParticipant) => void;
   /** Called after the current user leaves the channel, so the caller can drop it from the list and navigate away. */
@@ -544,12 +548,14 @@ export default function ChannelDetailsDrawer({
   onChatUpdated,
   onJumpToMessage,
   lastScheduledMsg,
+  pinRefreshKey = 0,
+  onPinRemoved,
   onParticipantAdded,
   onLeft,
 }: ChannelDetailsDrawerProps) {
   const isGroup = chat.type === 'group';
   const [participants, setParticipants] = useState<ChatParticipant[]>(
-    (chat.participants ?? []).filter((p: ChatParticipant) => p.user)
+    (chat.participants ?? []).filter((p: ChatParticipant) => p.user && p.is_active !== false)
   );
   const [showAddPicker, setShowAddPicker] = useState(false);
   const [removingId, setRemovingId] = useState<number | null>(null);
@@ -590,10 +596,26 @@ export default function ChannelDetailsDrawer({
   const [leaving, setLeaving] = useState(false);
   const leaveConfirmRef = useRef<HTMLDivElement>(null);
 
-  // Keep participants in sync when chat prop changes
+  const activeParticipants = useCallback((items?: ChatParticipant[]) =>
+    (items ?? []).filter((p: ChatParticipant) => p.user && p.is_active !== false),
+  []);
+
+  const syncChatDetails = useCallback((details: Chat) => {
+    const syncedParticipants = activeParticipants(details.participants);
+    const syncedChat = { ...details, participants: syncedParticipants };
+    setMetadataChat(syncedChat);
+    setParticipants(syncedParticipants);
+    useChatStore.getState().updateChat(chat.id, syncedChat);
+    onChatUpdated(syncedChat);
+    return syncedChat;
+  }, [activeParticipants, chat.id, onChatUpdated]);
+
+  // Keep participants in sync when chat prop changes, unless fresh drawer
+  // metadata has already replaced the prop-level snapshot.
   useEffect(() => {
-    setParticipants((chat.participants ?? []).filter((p: ChatParticipant) => p.user));
-  }, [chat.participants]);
+    if (metadataChat?.id === chat.id) return;
+    setParticipants(activeParticipants(chat.participants));
+  }, [activeParticipants, chat.id, chat.participants, metadataChat?.id]);
 
   // When a new scheduled message is created via the composer, append it to the
   // local list immediately — no need to refetch.
@@ -662,24 +684,14 @@ export default function ChannelDetailsDrawer({
     getChat(chat.id)
       .then((details) => {
         if (cancelled) return;
-        setMetadataChat(details);
-        if (details.participants?.length) {
-          setParticipants(details.participants.filter((p: ChatParticipant) => p.user));
-        }
-        useChatStore.getState().updateChat(chat.id, {
-          created_at: details.created_at,
-          created_by: details.created_by,
-          created_by_id: details.created_by_id,
-          visibility: details.visibility,
-          participants: details.participants,
-        });
+        syncChatDetails(details);
       })
       .catch(() => {});
 
     return () => {
       cancelled = true;
     };
-  }, [chat.id]);
+  }, [chat.id, syncChatDetails]);
 
   const handleSaveName = useCallback(async (value: string) => {
     const updated = await updateChatDetails(chat.id, { name: normalizeLimitedName(value, MAX_CHANNEL_NAME_LENGTH) });
@@ -735,8 +747,13 @@ export default function ChannelDetailsDrawer({
       const nextParticipants = participants.filter((p) => p.user.id !== participant.user.id);
       setParticipants(nextParticipants);
       onChatUpdated({ ...chat, participants: nextParticipants });
-    } catch {
-      /* silently ignore */
+    } catch (error: any) {
+      try {
+        syncChatDetails(await getChat(chat.id));
+      } catch {
+        // Keep the visible state unchanged if the refresh also fails.
+      }
+      toast.error(error?.response?.data?.error ?? 'Could not remove member');
     } finally {
       setRemovingId(null);
     }
@@ -754,17 +771,35 @@ export default function ChannelDetailsDrawer({
 
     try {
       const updated = await updateParticipantManager(chat.id, participant.user.id, nextIsManager);
-      const syncedParticipants = nextParticipants.map((p) =>
+      const fallbackParticipants = nextParticipants.map((p) =>
         p.user.id === participant.user.id ? { ...p, ...updated } : p
       );
+      let syncedChat: Chat | null = null;
+      try {
+        syncedChat = await getChat(chat.id);
+      } catch {
+        // Keep the optimistic single-participant update if the follow-up refresh fails.
+      }
+      const syncedParticipants = activeParticipants(syncedChat?.participants ?? fallbackParticipants);
       setParticipants(syncedParticipants);
-      setMetadataChat((prev) => prev ? { ...prev, participants: syncedParticipants } : prev);
-      useChatStore.getState().updateChat(chat.id, { participants: syncedParticipants });
-      onChatUpdated({ ...chat, participants: syncedParticipants });
+      setMetadataChat((prev) =>
+        syncedChat
+          ? { ...syncedChat, participants: syncedParticipants }
+          : prev ? { ...prev, participants: syncedParticipants } : prev
+      );
+      useChatStore.getState().updateChat(
+        chat.id,
+        syncedChat ? { ...syncedChat, participants: syncedParticipants } : { participants: syncedParticipants }
+      );
+      onChatUpdated(syncedChat ? { ...syncedChat, participants: syncedParticipants } : { ...chat, participants: syncedParticipants });
       toast.success(nextIsManager ? 'Manager added' : 'Manager removed');
     } catch (error: any) {
-      setParticipants(previousParticipants);
-      useChatStore.getState().updateChat(chat.id, { participants: previousParticipants });
+      try {
+        syncChatDetails(await getChat(chat.id));
+      } catch {
+        setParticipants(previousParticipants);
+        useChatStore.getState().updateChat(chat.id, { participants: previousParticipants });
+      }
       const status = error?.response?.status;
       toast.error(
         error?.response?.data?.error
@@ -868,12 +903,16 @@ export default function ChannelDetailsDrawer({
     }
   };
 
-  // Fetch counts on mount so each section header shows its count even before
-  // it's expanded. The onOpen loaders below become no-ops once *Loaded is true.
+  // Keep pins fresh while the drawer is open; the timeline bumps pinRefreshKey
+  // after pin/unpin actions so this section updates immediately.
   useEffect(() => {
     setPinsLoaded(true);
     listPins(chat.id).then(setPins).catch(() => {});
+  }, [chat.id, pinRefreshKey]);
 
+  // Fetch counts on mount so each section header shows its count even before
+  // it's expanded. The onOpen loaders below become no-ops once *Loaded is true.
+  useEffect(() => {
     setFilesLoaded(true);
     setFilesLoading(true);
     listChatFiles(chat.id)
@@ -912,6 +951,7 @@ export default function ChannelDetailsDrawer({
     try {
       await unpinMessage(chat.id, pin.message.id);
       setPins((prev) => prev.filter((p) => p.id !== pin.id));
+      onPinRemoved?.(pin.message.id);
     } catch {
       /* silently ignore */
     } finally {

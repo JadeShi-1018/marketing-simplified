@@ -190,6 +190,7 @@ function RootMessageSummary({
             onSave={() => onSave?.(message.id)}
             onRemind={() => {}}
             onMultiSelect={() => {}}
+            isPinned={isPinned}
             onMenuOpenChange={(open) => {
               menuOpenRef.current = open;
               if (open) {

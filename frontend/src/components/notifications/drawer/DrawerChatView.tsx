@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { AlertCircle, X } from 'lucide-react';
+import { AlertCircle, Trash2, X } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import type { NotificationItem } from '@/types/notifications';
@@ -13,6 +13,8 @@ import { useChatData } from '@/hooks/useChatData';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
 import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useAuthStore } from '@/lib/authStore';
+import { notificationsApi } from '@/lib/api/notificationsApi';
+import { useNotificationStore } from '@/lib/notificationStore';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages, { type DrawerChatMessagesHandle } from './DrawerChatMessages';
 import ChatComposer from '@/components/chat/ChatComposer';
@@ -41,6 +43,7 @@ export default function DrawerChatView({
   // Only highlight the message if this notification is still unread.
   // This ensures highlight/scroll only happens on the first view.
   const shouldHighlight = !notification.is_read;
+  const triggerNotificationRefresh = useNotificationStore((state) => state.triggerRefresh);
 
   const {
     chat,
@@ -288,6 +291,18 @@ export default function DrawerChatView({
     }
   };
 
+  const handleRemoveNotification = useCallback(async () => {
+    try {
+      await notificationsApi.clear({ scope: 'ids', ids: [notification.id] });
+      triggerNotificationRefresh();
+      toast.success('Notification removed');
+      onClose();
+    } catch (err) {
+      console.error('Failed to remove notification:', err);
+      toast.error('Could not remove notification');
+    }
+  }, [notification.id, onClose, triggerNotificationRefresh]);
+
   const handleRevoke = async (messageId: number) => {
     try {
       const result = await revokeMessage(messageId);
@@ -362,13 +377,23 @@ export default function DrawerChatView({
           chat={null}
           onClose={onClose}
           isLoading={false}
+          fallbackName="Conversation unavailable"
+          fallbackSubtitle="Missing chat information"
         />
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-gray-500">
           <AlertCircle className="w-12 h-12 text-gray-300 mb-3" />
-          <p className="text-sm font-medium">Unable to load chat</p>
-          <p className="text-xs text-gray-400 mt-1">
-            Chat information is missing from this notification
+          <p className="text-sm font-semibold text-gray-800">Conversation unavailable</p>
+          <p className="mt-1 max-w-[260px] text-center text-xs text-gray-400">
+            Chat information is missing from this notification.
           </p>
+          <button
+            type="button"
+            onClick={handleRemoveNotification}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Remove notification
+          </button>
         </div>
       </div>
     );
@@ -383,11 +408,23 @@ export default function DrawerChatView({
           projectId={projectId}
           onClose={onClose}
           isLoading={false}
+          fallbackName="Conversation unavailable"
+          fallbackSubtitle="This chat may have been deleted"
         />
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-gray-500">
           <AlertCircle className="w-12 h-12 text-red-300 mb-3" />
-          <p className="text-sm font-medium text-red-600">Error loading chat</p>
-          <p className="text-xs text-gray-400 mt-1 text-center">{error}</p>
+          <p className="text-sm font-semibold text-gray-800">Conversation unavailable</p>
+          <p className="mt-1 max-w-[260px] text-center text-xs text-gray-400">
+            This notification points to a chat you can no longer open.
+          </p>
+          <button
+            type="button"
+            onClick={handleRemoveNotification}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Remove notification
+          </button>
         </div>
       </div>
     );

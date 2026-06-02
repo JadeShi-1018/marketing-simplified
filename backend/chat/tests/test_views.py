@@ -164,6 +164,20 @@ class ChatAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['id'], chat.id)
         self.assertEqual(len(response.data['participants']), 2)
+
+    def test_retrieve_chat_excludes_inactive_participants(self):
+        """Chat details should not return removed participants."""
+        chat = Chat.objects.create(project=self.project, type=ChatType.GROUP, name='Test Group')
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user3, is_active=False)
+
+        url = reverse('chat-detail', kwargs={'pk': chat.id})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        participant_user_ids = {p['user']['id'] for p in response.data['participants']}
+        self.assertEqual(participant_user_ids, {self.user1.id, self.user2.id})
     
     def test_retrieve_chat_without_permission(self):
         """Test retrieving a chat user is not part of fails"""
@@ -247,6 +261,32 @@ class ChatAPITest(TestCase):
         demote = self.client.patch(url, {'user_id': self.user2.id, 'is_manager': False}, format='json')
         self.assertEqual(demote.status_code, status.HTTP_200_OK)
         self.assertFalse(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+    def test_legacy_manager_can_demote_then_remove_member(self):
+        """Fallback managers should stay explicit after assigning managers."""
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Legacy Group',
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        manager_url = reverse('chat-set-manager', kwargs={'pk': chat.id})
+        promote = self.client.patch(manager_url, {'user_id': self.user2.id, 'is_manager': True}, format='json')
+        self.assertEqual(promote.status_code, status.HTTP_200_OK)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user1).is_manager)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+        demote = self.client.patch(manager_url, {'user_id': self.user2.id, 'is_manager': False}, format='json')
+        self.assertEqual(demote.status_code, status.HTTP_200_OK)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user1).is_manager)
+        self.assertFalse(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+        remove_url = reverse('chat-remove-participant', kwargs={'pk': chat.id})
+        remove = self.client.post(remove_url, {'user_id': self.user2.id}, format='json')
+        self.assertEqual(remove.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ChatParticipant.objects.get(chat=chat, user=self.user2).is_active)
 
     def test_non_manager_cannot_promote_channel_manager(self):
         """Regular channel members cannot see/use manager controls server-side."""

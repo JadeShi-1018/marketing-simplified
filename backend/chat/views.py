@@ -453,8 +453,8 @@ class ChatViewSet(viewsets.ModelViewSet):
         if chat.type != ChatType.GROUP:
             return Response({'error': 'Only group chats have managers'}, status=status.HTTP_400_BAD_REQUEST)
 
-        legacy_manager_can_manage = not chat.created_by_id and self._is_channel_manager(chat, request.user)
-        if not self._is_channel_manager(chat, request.user) and not legacy_manager_can_manage:
+        is_request_manager = self._is_channel_manager(chat, request.user)
+        if not is_request_manager:
             return Response({'error': 'Only channel managers can assign managers'}, status=status.HTTP_403_FORBIDDEN)
 
         user_id = request.data.get('user_id')
@@ -467,6 +467,15 @@ class ChatViewSet(viewsets.ModelViewSet):
         participant = ChatParticipant.objects.filter(chat=chat, user_id=user_id, is_active=True).select_related('user').first()
         if not participant:
             return Response({'error': 'User is not a participant'}, status=status.HTTP_404_NOT_FOUND)
+
+        request_participant = ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).first()
+        had_explicit_manager = ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).exists()
+        request_user_is_legacy_manager = bool(
+            not chat.created_by_id
+            and not had_explicit_manager
+            and request_participant
+            and ChatService.get_fallback_manager_user_id(chat) == request.user.id
+        )
 
         if chat.created_by_id and participant.user_id == chat.created_by_id and not is_manager:
             return Response({'error': 'The channel creator must remain a manager'}, status=status.HTTP_400_BAD_REQUEST)
@@ -484,6 +493,10 @@ class ChatViewSet(viewsets.ModelViewSet):
             active_manager_count = ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).count()
             if active_manager_count <= 1:
                 return Response({'error': 'A channel must have at least one manager'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request_user_is_legacy_manager and request_participant and not request_participant.is_manager:
+            request_participant.is_manager = True
+            request_participant.save(update_fields=['is_manager', 'updated_at'])
 
         participant.is_manager = is_manager
         participant.save(update_fields=['is_manager', 'updated_at'])

@@ -634,6 +634,7 @@ export default function MessageItem({
               onRemind={() => onRemind ? onRemind(message.id) : handlePlaceholderAction('Remind me')}
               onMultiSelect={() => onEnterSelectMode?.()}
               onDelete={isOwnMessage && onDelete ? () => onDelete(message.id) : undefined}
+              isPinned={isPinned}
               onMenuOpenChange={(open) => {
                 menuOpenRef.current = open;
                 if (open) {

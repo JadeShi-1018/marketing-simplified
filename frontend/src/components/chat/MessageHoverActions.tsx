@@ -52,6 +52,7 @@ interface MessageHoverActionsProps {
   onRevoke?: () => void;       // own messages only, placeholder
   onDelete?: () => void;       // own messages only
   onMenuOpenChange?: (isOpen: boolean) => void;
+  isPinned?: boolean;
 }
 
 export default function MessageHoverActions({
@@ -70,6 +71,7 @@ export default function MessageHoverActions({
   onRevoke,
   onDelete,
   onMenuOpenChange,
+  isPinned = false,
 }: MessageHoverActionsProps) {
   const [isEmojiOpen, setIsEmojiOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -178,8 +180,10 @@ export default function MessageHoverActions({
             <DropdownMenuItem onSelect={onPin}>
               <Pin className="mr-2 h-4 w-4 shrink-0" />
               <div className="flex flex-col">
-                <span>Pin to channel</span>
-                <span className="text-[11px] font-normal text-gray-400">Highlights for all members</span>
+                <span>{isPinned ? 'Unpin from channel' : 'Pin to channel'}</span>
+                <span className="text-[11px] font-normal text-gray-400">
+                  {isPinned ? 'Remove from channel highlights' : 'Highlights for all members'}
+                </span>
               </div>
             </DropdownMenuItem>
           )}

@@ -74,6 +74,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   }, [chat.id, openDetailsSignal]);
   const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<number>>(new Set());
+  const [pinRefreshKey, setPinRefreshKey] = useState(0);
   const [savedMessageIds, setSavedMessageIds] = useState<Set<number>>(new Set());
   const [pendingScheduledCount, setPendingScheduledCount] = useState(0);
   const [lastScheduledMsg, setLastScheduledMsg] = useState<ScheduledMessageRow | null>(null);
@@ -729,10 +730,12 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       if (alreadyPinned) {
         await unpinMessage(chat.id, messageId);
         setPinnedMessageIds((prev) => { const next = new Set(prev); next.delete(messageId); return next; });
+        setPinRefreshKey((prev) => prev + 1);
         toast.success('Message unpinned');
       } else {
         await pinMessage(chat.id, messageId);
         setPinnedMessageIds((prev) => new Set([...prev, messageId]));
+        setPinRefreshKey((prev) => prev + 1);
         toast.success('Message pinned');
       }
     } catch {
@@ -1063,6 +1066,15 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
                 onBack();
               }}
               lastScheduledMsg={lastScheduledMsg}
+              pinRefreshKey={pinRefreshKey}
+              onPinRemoved={(messageId) => {
+                setPinnedMessageIds((prev) => {
+                  const next = new Set(prev);
+                  next.delete(messageId);
+                  return next;
+                });
+                setPinRefreshKey((prev) => prev + 1);
+              }}
               onJumpToMessage={(msgId, parentMsgId) => {
                 // Close the drawer so the message is visible, then fire the jump event.
                 // The custom event path appends Date.now() to the requestId so every

@@ -30,6 +30,7 @@ export interface ChatParticipant {
   chat_id: number;
   joined_at: string;
   last_read_at?: string | null;
+  is_active?: boolean;
   is_manager?: boolean;
   is_muted?: boolean;
   muted_until?: string | null;

@@ -633,7 +633,7 @@ class MessageCreateSerializer(MessageContentValidationMixin, ChatParticipantVali
 
 class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     """Serializer for chat conversations"""
-    participants = ChatParticipantSerializer(many=True, read_only=True)
+    participants = serializers.SerializerMethodField()
     created_by = UserSimpleSerializer(read_only=True)
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
@@ -660,6 +660,14 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
         if last_msg:
             return MessageSerializer(last_msg, context=self.context).data
         return None
+
+    def get_participants(self, obj):
+        """Return active participants only."""
+        participants = ChatParticipant.objects.filter(
+            chat=obj,
+            is_active=True,
+        ).select_related('user')
+        return ChatParticipantSerializer(participants, many=True, context=self.context).data
 
 
 class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
