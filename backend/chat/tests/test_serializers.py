@@ -17,11 +17,29 @@ from chat.serializers import (
     ChatSerializer,
     ChatListSerializer,
     MessageSerializer,
+    UserSimpleSerializer,
 )
 from chat.tasks import send_scheduled_message
+from chat.services import OnlineStatusService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+class UserSimpleSerializerTest(TestCase):
+    """Test cases for chat user serialization."""
+
+    def test_includes_online_status(self):
+        user = User.objects.create_user(
+            email='online@example.com',
+            username='onlineuser',
+            password='testpass123',
+        )
+        OnlineStatusService.set_online(user.id)
+
+        data = UserSimpleSerializer(user).data
+
+        self.assertTrue(data['is_online'])
 
 
 class MessageAttachmentSerializerTest(TestCase):

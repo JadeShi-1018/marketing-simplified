@@ -2,6 +2,7 @@ import logging
 import json
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.cache import cache
@@ -60,7 +61,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         )
         
         # Mark user as online
-        await database_sync_to_async(OnlineStatusService.set_online)(self.user.id)
+        await sync_to_async(OnlineStatusService.set_online, thread_sensitive=False)(self.user.id)
         
         await self.accept()
         logger.info(f"[WebSocket] User {self.user_id} ({self.user.username}) connected and marked as ONLINE")
@@ -79,7 +80,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
             
             # Mark user as offline
             if hasattr(self, 'user') and self.user:
-                await database_sync_to_async(OnlineStatusService.set_offline)(self.user.id)
+                await sync_to_async(OnlineStatusService.set_offline, thread_sensitive=False)(self.user.id)
                 logger.info(f"[WebSocket] User {self.user_id} ({self.user.username}) disconnected and marked as OFFLINE (code: {close_code})")
             else:
                 logger.info(f"[WebSocket] User {self.user_id} disconnected (code: {close_code})")
@@ -260,7 +261,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_heartbeat(self, data):
         """Handle heartbeat to keep connection alive"""
         # Update online status
-        await database_sync_to_async(OnlineStatusService.set_online)(self.user.id)
+        await sync_to_async(OnlineStatusService.set_online, thread_sensitive=False)(self.user.id)
         logger.debug(f"[WebSocket] Heartbeat from user {self.user_id}, refreshed online status")
         
         # Send pong response

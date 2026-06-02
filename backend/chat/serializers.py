@@ -87,11 +87,16 @@ class ChatParticipantValidationMixin:
 
 class UserSimpleSerializer(serializers.ModelSerializer):
     """Simplified user serializer for chat context"""
-    
+    is_online = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'avatar']
-        read_only_fields = fields
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'avatar', 'is_online']
+        read_only_fields = ['id', 'username', 'email', 'first_name', 'last_name', 'avatar']
+
+    def get_is_online(self, obj):
+        from .services import OnlineStatusService
+        return OnlineStatusService.is_online(obj.id)
 
 
 class ChatParticipantSerializer(serializers.ModelSerializer):
