@@ -299,7 +299,6 @@ export interface AgentWorkflowRun {
 // ==================== Template & Binding Types ====================
 
 export type TemplateCategory = 'review' | 'optimization' | 'analysis' | 'reporting' | 'other';
-export type TemplateShareScope = 'private' | 'organization' | 'public';
 export type TriggerMode = 'file_upload' | 'analyze_action' | 'message_keyword';
 
 export interface AgentWorkflowTemplate {
@@ -307,14 +306,18 @@ export interface AgentWorkflowTemplate {
   name: string;
   description?: string;
   category: TemplateCategory;
-  share_scope: TemplateShareScope;
   workflow_definition?: string;
   workflow_name?: string;
   workflow_step_count?: number;
   /** Ordered list of step_type strings for each active step in the template's workflow. */
   workflow_step_types?: WorkflowStepType[];
   created_by: string;
+  /** Set when shared at org level; all org members can see this template. */
   organization?: string;
+  organization_name?: string;
+  /** Set when shared at project level; all project members can see this template. */
+  project?: string;
+  project_name?: string;
   applied_project_count?: number;
   created_at: string;
   updated_at?: string;
@@ -325,14 +328,20 @@ export interface CreateTemplateRequest {
   name: string;
   description?: string;
   category: TemplateCategory;
-  share_scope: TemplateShareScope;
+  /** UUID of organization to share with (optional). */
+  organization_id?: string | null;
+  /** UUID of project to share with (optional). */
+  project_id?: string | null;
 }
 
 export interface UpdateTemplateRequest {
   name?: string;
   description?: string;
   category?: TemplateCategory;
-  share_scope?: TemplateShareScope;
+  /** Pass null to remove org sharing, UUID to set. */
+  organization_id?: string | null;
+  /** Pass null to remove project sharing, UUID to set. */
+  project_id?: string | null;
 }
 
 export interface AgentProjectWorkflowBinding {

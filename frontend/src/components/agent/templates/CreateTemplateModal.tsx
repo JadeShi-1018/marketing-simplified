@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Select,
   SelectContent,
@@ -22,13 +23,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { AgentAPI } from "@/lib/api/agentApi"
+import { ProjectAPI } from "@/lib/api/projectApi"
+import { useAuthStore } from "@/lib/authStore"
 import type {
   AgentWorkflowTemplate,
   AgentWorkflowDefinition,
   TemplateCategory,
-  TemplateShareScope,
 } from "@/types/agent"
 
 interface CreateTemplateModalProps {
@@ -54,60 +55,88 @@ export function CreateTemplateModal({
   defaultDescription,
   lockSourceWorkflow = false,
 }: CreateTemplateModalProps) {
+  const user = useAuthStore((s) => s.user)
+  const userOrg = user?.organization ?? null
+
   const [workflows, setWorkflows] = useState<AgentWorkflowDefinition[]>([])
   const [loadingWorkflows, setLoadingWorkflows] = useState(false)
+  const [projects, setProjects] = useState<{ id: number; name: string }[]>([])
+  const [loadingProjects, setLoadingProjects] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const [sourceWorkflowId, setSourceWorkflowId] = useState("")
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [category, setCategory] = useState<TemplateCategory>("other")
-  const [shareScope, setShareScope] = useState<TemplateShareScope>("private")
+
+  // Sharing
+  const [shareOrg, setShareOrg] = useState(false)
+  const [shareProject, setShareProject] = useState(false)
+  const [selectedProjectId, setSelectedProjectId] = useState<string>("")
 
   const isEditMode = !!template
-
-  useEffect(() => {
-    if (open) {
-      if (isEditMode && template) {
-        setName(template.name)
-        setDescription(template.description || "")
-        setCategory(template.category)
-        setShareScope(template.share_scope)
-      } else {
-        setName(defaultName || "")
-        setDescription(defaultDescription || "")
-        setCategory("other")
-        setShareScope("private")
-        setSourceWorkflowId(defaultSourceWorkflowId || "")
-        if (!lockSourceWorkflow) {
-          fetchWorkflows()
-        }
-      }
-    }
-  }, [open, template, defaultSourceWorkflowId, defaultName, defaultDescription, lockSourceWorkflow])
 
   const fetchWorkflows = async () => {
     setLoadingWorkflows(true)
     try {
       const data = await AgentAPI.listWorkflows()
-      const available = data.filter((w) => w.status === "active")
-      setWorkflows(available)
-    } catch (error) {
-      console.error("Failed to fetch workflows:", error)
+      setWorkflows(data.filter((w) => w.status === "active"))
+    } catch {
+      // silent
     } finally {
       setLoadingWorkflows(false)
     }
   }
 
+  const fetchProjects = async () => {
+    setLoadingProjects(true)
+    try {
+      const data = await ProjectAPI.getProjects()
+      setProjects(data.map((p) => ({ id: p.id, name: p.name })))
+    } catch {
+      // silent
+    } finally {
+      setLoadingProjects(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return
+    if (isEditMode && template) {
+      setName(template.name)
+      setDescription(template.description || "")
+      setCategory(template.category)
+      setShareOrg(!!template.organization)
+      setShareProject(!!template.project)
+      setSelectedProjectId(template.project || "")
+    } else {
+      setName(defaultName || "")
+      setDescription(defaultDescription || "")
+      setCategory("other")
+      setShareOrg(false)
+      setShareProject(false)
+      setSelectedProjectId("")
+      setSourceWorkflowId(defaultSourceWorkflowId || "")
+      if (!lockSourceWorkflow) {
+        fetchWorkflows()
+      }
+    }
+    fetchProjects()
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSubmit = async () => {
     setSubmitting(true)
     try {
+      const orgId = shareOrg && userOrg ? String(userOrg.id) : null
+      const projId = shareProject && selectedProjectId ? selectedProjectId : null
+
       if (isEditMode && template) {
         await AgentAPI.updateTemplate(template.id, {
           name,
           description: description || undefined,
           category,
-          share_scope: shareScope,
+          organization_id: orgId,
+          project_id: projId,
         })
       } else {
         await AgentAPI.createTemplate({
@@ -115,13 +144,13 @@ export function CreateTemplateModal({
           name,
           description: description || undefined,
           category,
-          share_scope: shareScope,
+          organization_id: orgId,
+          project_id: projId,
         })
       }
       onSuccess()
       onClose()
-    } catch (error) {
-      console.error("Failed to save template:", error)
+    } catch {
       toast.error("Failed to save template")
     } finally {
       setSubmitting(false)
@@ -145,7 +174,7 @@ export function CreateTemplateModal({
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          {/* Workflow Selection (create mode only) */}
+          {/* Source workflow (create mode only) */}
           {!isEditMode && (
             <div>
               <Label htmlFor="workflow" className="text-sm font-medium">
@@ -170,17 +199,15 @@ export function CreateTemplateModal({
                         No active workflows available
                       </div>
                     ) : (
-                      workflows.map((workflow) => (
-                        <SelectItem key={workflow.id} value={workflow.id}>
+                      workflows.map((wf) => (
+                        <SelectItem key={wf.id} value={wf.id}>
                           <div className="flex flex-col items-start">
                             <span className="font-medium">
-                              {workflow.name}
-                              {workflow.is_system ? " (System)" : ""}
+                              {wf.name}
+                              {wf.is_system ? " (System)" : ""}
                             </span>
-                            {workflow.description && (
-                              <span className="text-xs text-muted-foreground">
-                                {workflow.description}
-                              </span>
+                            {wf.description && (
+                              <span className="text-xs text-muted-foreground">{wf.description}</span>
                             )}
                           </div>
                         </SelectItem>
@@ -195,7 +222,7 @@ export function CreateTemplateModal({
             </div>
           )}
 
-          {/* Template Name */}
+          {/* Name */}
           <div>
             <Label htmlFor="name" className="text-sm font-medium">
               Template Name <span className="text-destructive">*</span>
@@ -243,29 +270,67 @@ export function CreateTemplateModal({
             </Select>
           </div>
 
-          {/* Share Scope */}
-          <div>
-            <Label className="text-sm font-medium">
-              Share Scope <span className="text-destructive">*</span>
-            </Label>
-            <RadioGroup
-              value={shareScope}
-              onValueChange={(v) => setShareScope(v as TemplateShareScope)}
-              className="mt-2 space-y-2"
-            >
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="private" id="private" />
-                <Label htmlFor="private" className="text-sm font-normal cursor-pointer">
-                  <span className="font-medium">Private</span> - Only visible to you
+          {/* Sharing */}
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">Sharing</Label>
+            <p className="text-xs text-muted-foreground -mt-1">
+              Choose who else can see this template. Leave both unchecked to keep it private.
+            </p>
+
+            {/* Organization */}
+            {userOrg ? (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="share-org"
+                  checked={shareOrg}
+                  onCheckedChange={(v) => setShareOrg(!!v)}
+                />
+                <Label htmlFor="share-org" className="text-sm font-normal cursor-pointer">
+                  Share with organization&nbsp;
+                  <span className="font-medium text-foreground">{userOrg.name}</span>
                 </Label>
               </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="organization" id="organization" />
-                <Label htmlFor="organization" className="text-sm font-normal cursor-pointer">
-                  <span className="font-medium">Organization</span> - Visible to your entire organization
+            ) : (
+              <p className="text-xs text-muted-foreground italic">
+                You are not part of an organization — org sharing is unavailable.
+              </p>
+            )}
+
+            {/* Project */}
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="share-project"
+                checked={shareProject}
+                onCheckedChange={(v) => {
+                  setShareProject(!!v)
+                  if (!v) setSelectedProjectId("")
+                }}
+                className="mt-0.5"
+              />
+              <div className="flex-1 space-y-1.5">
+                <Label htmlFor="share-project" className="text-sm font-normal cursor-pointer">
+                  Share with a specific project
                 </Label>
+                {shareProject && (
+                  loadingProjects ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  ) : (
+                    <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select project…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {projects.map((p) => (
+                          <SelectItem key={p.id} value={String(p.id)}>
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )
+                )}
               </div>
-            </RadioGroup>
+            </div>
           </div>
         </div>
 
@@ -273,15 +338,12 @@ export function CreateTemplateModal({
           <Button variant="outline" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={!canSubmit || submitting}>
-            {submitting ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                {isEditMode ? "Updating..." : "Creating..."}
-              </>
-            ) : (
-              isEditMode ? "Update Template" : "Create Template"
-            )}
+          <Button
+            onClick={handleSubmit}
+            disabled={!canSubmit || submitting || (shareProject && !selectedProjectId)}
+          >
+            {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            {isEditMode ? "Save Changes" : "Create Template"}
           </Button>
         </DialogFooter>
       </DialogContent>

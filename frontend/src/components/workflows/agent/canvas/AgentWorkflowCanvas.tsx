@@ -24,6 +24,7 @@ import AgentAddNode, { type AgentAddNodeData } from "./nodes/AgentAddNode"
 import StepPickerPanel from "./panels/StepPickerPanel"
 import StepConfigPanel from "./panels/StepConfigPanel"
 import CanvasToolbar from "./CanvasToolbar"
+import { CreateTemplateModal } from "@/components/agent/templates/CreateTemplateModal"
 
 // ── Unsaved-changes guard dialog ──────────────────────────────────────────────
 interface UnsavedChangesDialogProps {
@@ -110,6 +111,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null)
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
   const [isSavingAndLeaving, setIsSavingAndLeaving] = useState(false)
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
   // picker state: insertion index + viewport anchor coordinates
   const [pickerState, setPickerState] = useState<{
     insertAfter: number
@@ -359,6 +361,21 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
         onRedo={() => dispatch({ type: "REDO" })}
         onSave={handleSave}
         onStatusChange={onStatusChange}
+        onSaveAsTemplate={() => setShowTemplateModal(true)}
+      />
+
+      {/* Save as Template modal */}
+      <CreateTemplateModal
+        open={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onSuccess={() => {
+          setShowTemplateModal(false)
+          toast.success("Template created successfully")
+        }}
+        defaultSourceWorkflowId={workflowId}
+        defaultName={workflow.name}
+        defaultDescription={workflow.description}
+        lockSourceWorkflow
       />
     </div>
   )

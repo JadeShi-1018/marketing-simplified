@@ -1,12 +1,13 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Layers, Loader2, Search } from "lucide-react"
+import { Building2, FolderKanban, Layers, Loader2, Lock, Search } from "lucide-react"
 import toast from "react-hot-toast"
 import ConfirmDialog from "@/components/common/ConfirmDialog"
 import { CreateTemplateModal } from "@/components/agent/templates/CreateTemplateModal"
 import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
 import { AgentAPI } from "@/lib/api/agentApi"
+import { useAuthStore } from "@/lib/authStore"
 import { useProjectStore } from "@/lib/projectStore"
 import TemplateCard from "../cards/TemplateCard"
 import ApplyTemplateModal from "./ApplyTemplateModal"
@@ -24,9 +25,29 @@ interface TemplatesTabProps {
   refreshKey?: number
 }
 
+function SectionHeading({
+  icon: Icon,
+  label,
+  count,
+}: {
+  icon: React.ElementType
+  label: string
+  count: number
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <Icon className="h-4 w-4 text-gray-400" />
+      <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+        {label}
+      </h3>
+      <span className="text-xs text-gray-400">({count})</span>
+    </div>
+  )
+}
+
 export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
+  const user = useAuthStore((s) => s.user)
   const activeProject = useProjectStore((s) => s.activeProject)
-  const currentUserId = useProjectStore((s) => s.activeProject?.id)
 
   const [templates, setTemplates] = useState<AgentWorkflowTemplate[]>([])
   const [loading, setLoading] = useState(true)
@@ -64,6 +85,13 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
         t.description?.toLowerCase().includes(q)
     )
   }, [templates, search])
+
+  // Three groups: org → project → private
+  const orgTemplates = filtered.filter((t) => !!t.organization)
+  const projectTemplates = filtered.filter((t) => !t.organization && !!t.project)
+  const privateTemplates = filtered.filter((t) => !t.organization && !t.project)
+
+  const isOwner = (t: AgentWorkflowTemplate) => t.created_by === String(user?.id)
 
   const handleDeleteTemplate = async () => {
     if (!deletingTemplate) return
@@ -129,16 +157,63 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {filtered.map((template) => (
-            <TemplateCard
-              key={template.id}
-              template={template}
-              onApply={() => setApplyingTemplate(template)}
-              onEdit={() => setEditingTemplate(template)}
-              onDelete={() => setDeletingTemplate(template)}
-            />
-          ))}
+        <div className="space-y-10">
+          {/* Organization section */}
+          {orgTemplates.length > 0 && (
+            <section>
+              <SectionHeading icon={Building2} label="Organization" count={orgTemplates.length} />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {orgTemplates.map((t) => (
+                  <TemplateCard
+                    key={t.id}
+                    template={t}
+                    onApply={() => setApplyingTemplate(t)}
+                    onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
+                    onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
+                    isOwner={isOwner(t)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Project section */}
+          {projectTemplates.length > 0 && (
+            <section>
+              <SectionHeading icon={FolderKanban} label="Project" count={projectTemplates.length} />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {projectTemplates.map((t) => (
+                  <TemplateCard
+                    key={t.id}
+                    template={t}
+                    onApply={() => setApplyingTemplate(t)}
+                    onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
+                    onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
+                    isOwner={isOwner(t)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Private section */}
+          {privateTemplates.length > 0 && (
+            <section>
+              <SectionHeading icon={Lock} label="Private" count={privateTemplates.length} />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {privateTemplates.map((t) => (
+                  <TemplateCard
+                    key={t.id}
+                    template={t}
+                    onApply={() => setApplyingTemplate(t)}
+                    onEdit={() => setEditingTemplate(t)}
+                    onDelete={() => setDeletingTemplate(t)}
+                    isOwner={true}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
 

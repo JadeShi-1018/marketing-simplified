@@ -467,11 +467,10 @@ export const AgentAPI = {
 
   listTemplates: async (params?: {
     category?: string;
-    share_scope?: string;
     search?: string;
     project_id?: string;
   }): Promise<AgentWorkflowTemplate[]> => {
-    const response = await api.get<AgentWorkflowTemplate[]>(
+    const response = await api.get<AgentWorkflowTemplate[] | { results?: AgentWorkflowTemplate[] }>(
       '/api/agent/templates/',
       { params }
     );

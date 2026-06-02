@@ -3,6 +3,7 @@
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
+import { Building2, FolderKanban, Lock } from "lucide-react"
 import StepIconStack from "./StepIconStack"
 import { useHoverCard } from "./useHoverCard"
 import HoverCardPortal from "./HoverCardPortal"
@@ -19,10 +20,33 @@ const CATEGORY_CONFIG: Record<
   other:        { label: "Other",        bg: "bg-gray-100",  text: "text-gray-600" },
 }
 
-const SCOPE_CONFIG = {
-  private:      { label: "Private", bg: "bg-gray-100",  text: "text-gray-600" },
-  organization: { label: "Org",     bg: "bg-teal-50",   text: "text-teal-700" },
-  public:       { label: "Public",  bg: "bg-indigo-50", text: "text-indigo-700" },
+function ScopeBadges({ template }: { template: AgentWorkflowTemplate }) {
+  const badges: React.ReactNode[] = []
+  if (template.organization) {
+    badges.push(
+      <span key="org" className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700">
+        <Building2 className="h-2.5 w-2.5" />
+        {template.organization_name ?? "Org"}
+      </span>
+    )
+  }
+  if (template.project) {
+    badges.push(
+      <span key="proj" className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+        <FolderKanban className="h-2.5 w-2.5" />
+        {template.project_name ?? "Project"}
+      </span>
+    )
+  }
+  if (badges.length === 0) {
+    badges.push(
+      <span key="private" className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+        <Lock className="h-2.5 w-2.5" />
+        Private
+      </span>
+    )
+  }
+  return <>{badges}</>
 }
 
 interface TemplateCardProps {
@@ -43,7 +67,6 @@ export default function TemplateCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const category = CATEGORY_CONFIG[template.category] ?? CATEGORY_CONFIG.other
-  const scope = SCOPE_CONFIG[template.share_scope] ?? SCOPE_CONFIG.private
   const { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers } = useHoverCard()
 
   useEffect(() => {
@@ -65,7 +88,10 @@ export default function TemplateCard({
           description={template.description}
           stepTypes={template.workflow_step_types ?? []}
           category={template.category}
-          shareScope={template.share_scope}
+          organization={template.organization}
+          organizationName={template.organization_name}
+          project={template.project}
+          projectName={template.project_name}
           onApply={onApply}
         />
       </HoverCardPortal>
@@ -127,9 +153,7 @@ export default function TemplateCard({
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${category.bg} ${category.text}`}>
             {category.label}
           </span>
-          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${scope.bg} ${scope.text}`}>
-            {scope.label}
-          </span>
+          <ScopeBadges template={template} />
         </div>
       </div>
     </>

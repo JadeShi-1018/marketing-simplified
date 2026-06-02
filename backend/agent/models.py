@@ -631,6 +631,12 @@ class AgentWorkflowTemplate(TimeStampedModel):
 
     When created, the template clones the source workflow definition + steps to
     ensure isolation (changes to the template don't affect other workflows).
+
+    Visibility is determined by two independent optional FKs:
+      - organization: if set, all members of that org can see this template (org section)
+      - project:      if set, all members of that project can see this template (project section)
+      - both null:    only the creator can see it (private section)
+    A template may appear in both org and project sections simultaneously.
     """
 
     CATEGORY_CHOICES = [
@@ -639,12 +645,6 @@ class AgentWorkflowTemplate(TimeStampedModel):
         ('analysis', 'Analysis'),
         ('reporting', 'Reporting'),
         ('other', 'Other'),
-    ]
-
-    SHARE_SCOPE_CHOICES = [
-        ('private', 'Private'),
-        ('organization', 'Organization'),
-        # ('public', 'Public'),  # Reserved for future use
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -665,44 +665,40 @@ class AgentWorkflowTemplate(TimeStampedModel):
         help_text='Cloned workflow owned by this template',
     )
 
-    # Sharing scope (replaces organization + is_public pattern)
-    share_scope = models.CharField(
-        max_length=20,
-        choices=SHARE_SCOPE_CHOICES,
-        default='private',
-        help_text='Visibility: private (creator only), organization (same org), public (all users)',
-    )
-
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='created_workflow_templates',
     )
 
+    # Sharing: organization level — visible to all members of this org
     organization = models.ForeignKey(
         'core.Organization',
         on_delete=models.CASCADE,
         null=True,
         blank=True,
         related_name='workflow_templates',
-        help_text='Required when share_scope=organization',
+        help_text='If set, all members of this organization can see the template',
+    )
+
+    # Sharing: project level — visible to all members of this project
+    project = models.ForeignKey(
+        'core.Project',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='workflow_templates',
+        help_text='If set, all members of this project can see the template',
     )
 
     class Meta:
         db_table = 'agent_workflow_template'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['category', 'share_scope']),
+            models.Index(fields=['category']),
             models.Index(fields=['organization', 'is_deleted']),
+            models.Index(fields=['project', 'is_deleted']),
             models.Index(fields=['created_by', 'is_deleted']),
-        ]
-        constraints = [
-            models.CheckConstraint(
-                check=(
-                    ~models.Q(share_scope='organization', organization__isnull=True)
-                ),
-                name='agent_template_org_scope_needs_org',
-            ),
         ]
 
     def __str__(self):

@@ -1,9 +1,16 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Plus, Loader2, Search, Filter, Workflow } from "lucide-react"
+import { Building2, FolderKanban, Lock, Loader2, Plus, Search, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import toast from "react-hot-toast"
+import { AgentAPI } from "@/lib/api/agentApi"
+import { useAuthStore } from "@/lib/authStore"
+import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
+import { TemplateCard } from "./TemplateCard"
+import { CreateTemplateModal } from "./CreateTemplateModal"
+import ConfirmDialog from "@/components/common/ConfirmDialog"
 import {
   Select,
   SelectContent,
@@ -11,23 +18,37 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import toast from "react-hot-toast"
-import { AgentAPI } from "@/lib/api/agentApi"
-import type { AgentWorkflowTemplate, TemplateCategory, TemplateShareScope } from "@/types/agent"
-import { TemplateCard } from "./TemplateCard"
-import { CreateTemplateModal } from "./CreateTemplateModal"
-import ConfirmDialog from "@/components/common/ConfirmDialog"
+import { Filter } from "lucide-react"
 
 interface TemplatesListProps {
   userId?: string
 }
 
+function SectionHeading({
+  icon: Icon,
+  label,
+  count,
+}: {
+  icon: React.ElementType
+  label: string
+  count: number
+}) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <Icon className="h-4 w-4 text-muted-foreground" />
+      <h3 className="text-sm font-medium text-muted-foreground">{label}</h3>
+      <span className="text-xs text-muted-foreground">({count})</span>
+    </div>
+  )
+}
+
 export function TemplatesList({ userId }: TemplatesListProps) {
+  const user = useAuthStore((s) => s.user)
+
   const [templates, setTemplates] = useState<AgentWorkflowTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [categoryFilter, setCategoryFilter] = useState<TemplateCategory | "all">("all")
-  const [scopeFilter, setScopeFilter] = useState<TemplateShareScope | "all">("all")
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<AgentWorkflowTemplate | null>(null)
   const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null)
@@ -37,7 +58,7 @@ export function TemplatesList({ userId }: TemplatesListProps) {
     try {
       const data = await AgentAPI.listTemplates()
       setTemplates(data)
-    } catch (error) {
+    } catch {
       toast.error("Failed to load templates")
     } finally {
       setLoading(false)
@@ -50,7 +71,6 @@ export function TemplatesList({ userId }: TemplatesListProps) {
 
   const handleDelete = async () => {
     if (!deletingTemplateId) return
-
     try {
       await AgentAPI.deleteTemplate(deletingTemplateId)
       toast.success("Template deleted successfully")
@@ -73,18 +93,21 @@ export function TemplatesList({ userId }: TemplatesListProps) {
     setShowCreateModal(true)
   }
 
-  // Filter templates
-  const filteredTemplates = templates.filter(t => {
-    const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) ||
+  const filtered = templates.filter((t) => {
+    const matchesSearch =
+      t.name.toLowerCase().includes(search.toLowerCase()) ||
       t.description?.toLowerCase().includes(search.toLowerCase())
     const matchesCategory = categoryFilter === "all" || t.category === categoryFilter
-    const matchesScope = scopeFilter === "all" || t.share_scope === scopeFilter
-    return matchesSearch && matchesCategory && matchesScope
+    return matchesSearch && matchesCategory
   })
 
-  // Group by scope
-  const myTemplates = filteredTemplates.filter(t => t.share_scope === "private")
-  const orgTemplates = filteredTemplates.filter(t => t.share_scope === "organization")
+  // Three sections: org → project → private
+  const orgTemplates = filtered.filter((t) => !!t.organization)
+  const projectTemplates = filtered.filter((t) => !t.organization && !!t.project)
+  const privateTemplates = filtered.filter((t) => !t.organization && !t.project)
+
+  const isOwner = (t: AgentWorkflowTemplate) =>
+    t.created_by === String(user?.id) || userId === t.created_by
 
   if (loading) {
     return (
@@ -130,26 +153,13 @@ export function TemplatesList({ userId }: TemplatesListProps) {
             <SelectItem value="other">Other</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={scopeFilter} onValueChange={(v) => setScopeFilter(v as TemplateShareScope | "all")}>
-          <SelectTrigger className="w-[160px]">
-            <Filter className="h-4 w-4 mr-2" />
-            <SelectValue placeholder="Scope" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Scopes</SelectItem>
-            <SelectItem value="private">Private</SelectItem>
-            <SelectItem value="organization">Organization</SelectItem>
-          </SelectContent>
-        </Select>
       </div>
 
-      {/* Templates List */}
+      {/* Empty state */}
       {templates.length === 0 ? (
         <div className="border border-dashed border-border rounded-lg p-12 text-center">
           <Workflow className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
-          <h3 className="text-base font-medium text-card-foreground mb-1">
-            No templates yet
-          </h3>
+          <h3 className="text-base font-medium text-card-foreground mb-1">No templates yet</h3>
           <p className="text-sm text-muted-foreground mb-4">
             Create reusable workflow templates to standardize AI Agent behavior across projects
           </p>
@@ -158,42 +168,60 @@ export function TemplatesList({ userId }: TemplatesListProps) {
             Create Your First Template
           </Button>
         </div>
-      ) : filteredTemplates.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="text-center py-8 text-sm text-muted-foreground">
           No templates match your filters
         </div>
       ) : (
         <div className="space-y-6">
-          {/* My Templates */}
-          {myTemplates.length > 0 && (
+          {/* Organization templates */}
+          {orgTemplates.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">My Templates</h3>
+              <SectionHeading icon={Building2} label="Organization" count={orgTemplates.length} />
               <div className="space-y-3">
-                {myTemplates.map(template => (
+                {orgTemplates.map((t) => (
                   <TemplateCard
-                    key={template.id}
-                    template={template}
+                    key={t.id}
+                    template={t}
                     onEdit={handleEdit}
                     onDelete={setDeletingTemplateId}
-                    canEdit={true}
+                    canEdit={isOwner(t)}
                   />
                 ))}
               </div>
             </div>
           )}
 
-          {/* Organization Templates */}
-          {orgTemplates.length > 0 && (
+          {/* Project templates */}
+          {projectTemplates.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium text-muted-foreground mb-3">Organization Templates</h3>
+              <SectionHeading icon={FolderKanban} label="Project" count={projectTemplates.length} />
               <div className="space-y-3">
-                {orgTemplates.map(template => (
+                {projectTemplates.map((t) => (
                   <TemplateCard
-                    key={template.id}
-                    template={template}
+                    key={t.id}
+                    template={t}
                     onEdit={handleEdit}
                     onDelete={setDeletingTemplateId}
-                    canEdit={userId === template.created_by}
+                    canEdit={isOwner(t)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Private templates */}
+          {privateTemplates.length > 0 && (
+            <div>
+              <SectionHeading icon={Lock} label="Private" count={privateTemplates.length} />
+              <div className="space-y-3">
+                {privateTemplates.map((t) => (
+                  <TemplateCard
+                    key={t.id}
+                    template={t}
+                    onEdit={handleEdit}
+                    onDelete={setDeletingTemplateId}
+                    canEdit={true}
                   />
                 ))}
               </div>

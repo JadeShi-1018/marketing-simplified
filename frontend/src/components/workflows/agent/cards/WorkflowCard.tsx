@@ -1,13 +1,14 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { Copy, Lock, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
+import { Bookmark, Copy, Lock, MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { useState, useRef, useEffect } from "react"
 import type { AgentWorkflowDefinition } from "@/types/agent"
 import StepIconStack from "./StepIconStack"
 import { useHoverCard } from "./useHoverCard"
 import HoverCardPortal from "./HoverCardPortal"
 import { WorkflowHoverContent } from "./WorkflowHoverPreview"
+import { CreateTemplateModal } from "@/components/agent/templates/CreateTemplateModal"
 
 const STATUS_CONFIG: Record<
   AgentWorkflowDefinition["status"],
@@ -39,6 +40,7 @@ export default function WorkflowCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const [localStatus, setLocalStatus] = useState(workflow.status)
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
   const status = STATUS_CONFIG[localStatus]
   const { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers } = useHoverCard()
 
@@ -70,6 +72,7 @@ export default function WorkflowCard({
           workflowId={workflow.id}
           currentStatus={localStatus}
           onStatusChange={handleStatusChange}
+          onSaveAsTemplate={() => setShowTemplateModal(true)}
         />
       </HoverCardPortal>
 
@@ -94,7 +97,7 @@ export default function WorkflowCard({
             </button>
 
             {menuOpen && (
-              <div className="absolute right-0 top-8 z-20 min-w-[150px] rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
+              <div className="absolute right-0 top-8 z-20 min-w-[170px] rounded-xl border border-gray-100 bg-white py-1 shadow-lg">
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setMenuOpen(false); openEditor() }}
@@ -111,6 +114,14 @@ export default function WorkflowCard({
                 >
                   <Copy className="h-3.5 w-3.5" />
                   Duplicate
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setShowTemplateModal(true) }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-indigo-600 hover:bg-indigo-50"
+                >
+                  <Bookmark className="h-3.5 w-3.5" />
+                  Save as Template
                 </button>
                 {!workflow.is_system && (
                   <button
@@ -157,6 +168,17 @@ export default function WorkflowCard({
           <span className={`text-xs font-medium ${status.text}`}>{status.label}</span>
         </div>
       </div>
+
+      {/* Save as Template modal — rendered outside the hover card portal */}
+      <CreateTemplateModal
+        open={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onSuccess={() => setShowTemplateModal(false)}
+        defaultSourceWorkflowId={workflow.id}
+        defaultName={workflow.name}
+        defaultDescription={workflow.description}
+        lockSourceWorkflow
+      />
     </>
   )
 }

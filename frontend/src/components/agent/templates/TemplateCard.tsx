@@ -29,10 +29,30 @@ const CATEGORY_COLORS: Record<string, string> = {
   other: "bg-gray-500/10 text-gray-700 dark:text-gray-300",
 }
 
-const SCOPE_LABELS: Record<string, string> = {
-  private: "Private",
-  organization: "Organization",
-  public: "Public",
+function ScopeBadges({ template }: { template: AgentWorkflowTemplate }) {
+  const badges: React.ReactNode[] = []
+  if (template.organization) {
+    badges.push(
+      <Badge key="org" variant="outline" className="shrink-0 text-[10px] bg-teal-50 text-teal-700 border-teal-200">
+        Org: {template.organization_name ?? "Organization"}
+      </Badge>
+    )
+  }
+  if (template.project) {
+    badges.push(
+      <Badge key="proj" variant="outline" className="shrink-0 text-[10px] bg-violet-50 text-violet-700 border-violet-200">
+        Project: {template.project_name ?? "Project"}
+      </Badge>
+    )
+  }
+  if (badges.length === 0) {
+    badges.push(
+      <Badge key="private" variant="outline" className="shrink-0 text-[10px]">
+        Private
+      </Badge>
+    )
+  }
+  return <>{badges}</>
 }
 
 export function TemplateCard({
@@ -56,9 +76,7 @@ export function TemplateCard({
             <Badge variant="secondary" className={cn("shrink-0", categoryColor)}>
               {template.category}
             </Badge>
-            <Badge variant="outline" className="shrink-0 text-[10px]">
-              {SCOPE_LABELS[template.share_scope]}
-            </Badge>
+            <ScopeBadges template={template} />
           </div>
 
           {template.description && (

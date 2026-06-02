@@ -938,9 +938,10 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing workflow templates.
 
-    - LIST: Filter by category, share_scope, search, and optionally project_id
+    - LIST: Filter by category, search, and optionally project_id (for is_applied annotation).
+            Visibility: creator (private) + org members + project members.
     - CREATE: Clone source workflow and create template
-    - UPDATE: Only creator can update (except system templates)
+    - UPDATE: Only creator can update
     - DELETE: Check for active bindings, return 409 if in use
     """
     permission_classes = [IsAuthenticated]
@@ -948,15 +949,19 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
+        from core.models import ProjectMember
         user = self.request.user
         qs = AgentWorkflowTemplate.objects.filter(is_deleted=False)
 
-        # Visibility filter: private (own) + organization (same org) + public (all)
-        visibility_q = Q(share_scope='private', created_by=user)
+        # Visibility: private (creator) OR org-shared OR project-shared
+        visibility_q = Q(organization__isnull=True, project__isnull=True, created_by=user)
         if hasattr(user, 'organization') and user.organization:
-            visibility_q |= Q(share_scope='organization', organization=user.organization)
-        # Add public scope when supported
-        # visibility_q |= Q(share_scope='public')
+            visibility_q |= Q(organization=user.organization)
+        user_project_ids = ProjectMember.objects.filter(
+            user=user, is_active=True
+        ).values_list('project_id', flat=True)
+        if user_project_ids:
+            visibility_q |= Q(project__in=user_project_ids)
 
         qs = qs.filter(visibility_q)
 
@@ -965,30 +970,26 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
         if category:
             qs = qs.filter(category=category)
 
-        # Share scope filter
-        share_scope = self.request.query_params.get('share_scope')
-        if share_scope:
-            qs = qs.filter(share_scope=share_scope)
-
         # Search by name
         search = self.request.query_params.get('search', '').strip()
         if search:
             qs = qs.filter(name__icontains=search)
 
-        # Check if applied to specific project (for UI "already applied" indicator)
-        project_id = self.request.query_params.get('project_id')
-        if project_id and self.action == 'list':
-            # Annotate with is_applied_to_project
+        # Annotate is_applied_to_project when project_id is provided
+        apply_project_id = self.request.query_params.get('project_id')
+        if apply_project_id and self.action == 'list':
             from django.db.models import Exists
             applied_subquery = AgentProjectWorkflowBinding.objects.filter(
                 template_id=OuterRef('pk'),
-                project_id=project_id,
+                project_id=apply_project_id,
                 is_active=True,
                 is_deleted=False,
             )
             qs = qs.annotate(is_applied_to_project=Exists(applied_subquery))
 
-        return qs.select_related('workflow_definition', 'created_by', 'organization').order_by('-created_at')
+        return qs.select_related(
+            'workflow_definition', 'created_by', 'organization', 'project'
+        ).order_by('-created_at')
 
     def perform_create(self, serializer):
         """Clone source workflow and create template."""

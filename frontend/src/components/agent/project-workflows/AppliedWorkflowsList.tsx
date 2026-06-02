@@ -5,7 +5,7 @@ import { Plus, Loader2, Workflow } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import toast from "react-hot-toast"
 import { AgentAPI } from "@/lib/api/agentApi"
-import type { AgentProjectWorkflowBinding, AgentWorkflowTemplate } from "@/types/agent"
+import type { AgentProjectWorkflowBinding, AgentWorkflowTemplate, TriggerMode } from "@/types/agent"
 import { WorkflowBindingCard } from "./WorkflowBindingCard"
 import { ApplyTemplateModal } from "./ApplyTemplateModal"
 import { EditTriggerModal } from "./EditTriggerModal"
@@ -41,7 +41,7 @@ export function AppliedWorkflowsList({ projectId }: AppliedWorkflowsListProps) {
   }, [projectId])
 
   const handleApplyTemplate = async (template: AgentWorkflowTemplate, triggerData: {
-    trigger_mode: string
+    trigger_mode: TriggerMode
     trigger_keywords?: string[]
     priority: number
     is_default: boolean
@@ -61,7 +61,7 @@ export function AppliedWorkflowsList({ projectId }: AppliedWorkflowsListProps) {
   }
 
   const handleEditTrigger = async (bindingId: string, data: {
-    trigger_mode?: string
+    trigger_mode?: TriggerMode
     trigger_keywords?: string[]
     priority?: number
     is_default?: boolean

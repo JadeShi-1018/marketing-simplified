@@ -82,8 +82,9 @@ export function ApplyTemplateModal({
     t.description?.toLowerCase().includes(search.toLowerCase())
   )
 
-  const myTemplates = filteredTemplates.filter(t => t.share_scope === "private")
-  const orgTemplates = filteredTemplates.filter(t => t.share_scope === "organization")
+  const orgTemplates = filteredTemplates.filter(t => !!t.organization)
+  const projectTemplates = filteredTemplates.filter(t => !t.organization && !!t.project)
+  const privateTemplates = filteredTemplates.filter(t => !t.organization && !t.project)
 
   const handleApply = () => {
     if (!selectedTemplate) return
@@ -130,130 +131,76 @@ export function ApplyTemplateModal({
             </div>
           ) : (
             <div className="space-y-4">
-              {/* My Templates */}
-              {myTemplates.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-muted-foreground mb-2">My Templates</h3>
-                  <div className="space-y-2">
-                    {myTemplates.map(template => {
-                      const isApplied = existingTemplateIds.has(template.id)
-                      const isSelected = selectedTemplate?.id === template.id
-                      const categoryColor = CATEGORY_COLORS[template.category] || CATEGORY_COLORS.other
-
-                      return (
-                        <button
-                          key={template.id}
-                          onClick={() => !isApplied && setSelectedTemplate(template)}
-                          disabled={isApplied}
-                          className={cn(
-                            "w-full border rounded-lg p-3 text-left transition-colors",
-                            isApplied && "opacity-50 cursor-not-allowed",
-                            isSelected && "border-primary bg-primary/5",
-                            !isApplied && !isSelected && "hover:bg-muted/30"
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-sm font-medium truncate">{template.name}</span>
-                                {isApplied && (
-                                  <Badge variant="secondary" className="shrink-0 text-[10px]">
-                                    <Check className="h-3 w-3 mr-1" />
-                                    Applied
-                                  </Badge>
-                                )}
-                              </div>
-                              {template.description && (
-                                <p className="text-xs text-muted-foreground line-clamp-1">
-                                  {template.description}
-                                </p>
-                              )}
-                              <div className="flex items-center gap-2 mt-1">
-                                <Badge variant="secondary" className={cn("text-[10px]", categoryColor)}>
-                                  {template.category}
-                                </Badge>
-                                <span className="text-[10px] text-muted-foreground">
-                                  {template.workflow_step_count} steps
-                                </span>
-                              </div>
-                            </div>
-                            {isSelected && (
-                              <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center shrink-0">
-                                <Check className="h-3 w-3 text-primary-foreground" />
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Organization Templates */}
-              {orgTemplates.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-medium text-muted-foreground mb-2">Organization Templates</h3>
-                  <div className="space-y-2">
-                    {orgTemplates.map(template => {
-                      const isApplied = existingTemplateIds.has(template.id)
-                      const isSelected = selectedTemplate?.id === template.id
-                      const categoryColor = CATEGORY_COLORS[template.category] || CATEGORY_COLORS.other
-
-                      return (
-                        <button
-                          key={template.id}
-                          onClick={() => !isApplied && setSelectedTemplate(template)}
-                          disabled={isApplied}
-                          className={cn(
-                            "w-full border rounded-lg p-3 text-left transition-colors",
-                            isApplied && "opacity-50 cursor-not-allowed",
-                            isSelected && "border-primary bg-primary/5",
-                            !isApplied && !isSelected && "hover:bg-muted/30"
-                          )}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-sm font-medium truncate">{template.name}</span>
-                                {isApplied && (
-                                  <Badge variant="secondary" className="shrink-0 text-[10px]">
-                                    <Check className="h-3 w-3 mr-1" />
-                                    Applied
-                                  </Badge>
-                                )}
-                              </div>
-                              {template.description && (
-                                <p className="text-xs text-muted-foreground line-clamp-1">
-                                  {template.description}
-                                </p>
-                              )}
-                              <div className="flex items-center gap-2 mt-1">
-                                <Badge variant="secondary" className={cn("text-[10px]", categoryColor)}>
-                                  {template.category}
-                                </Badge>
-                                <span className="text-[10px] text-muted-foreground">
-                                  {template.workflow_step_count} steps
-                                </span>
-                              </div>
-                            </div>
-                            {isSelected && (
-                              <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center shrink-0">
-                                <Check className="h-3 w-3 text-primary-foreground" />
-                              </div>
-                            )}
-                          </div>
-                        </button>
-                      )
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {filteredTemplates.length === 0 && !loading && (
+              {filteredTemplates.length === 0 ? (
                 <div className="text-center py-8 text-sm text-muted-foreground">
                   No templates found
                 </div>
+              ) : (
+                [
+                  { label: "Organization", items: orgTemplates },
+                  { label: "Project", items: projectTemplates },
+                  { label: "Private", items: privateTemplates },
+                ].map(({ label, items }) =>
+                  items.length > 0 ? (
+                    <div key={label}>
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                        {label}
+                      </h3>
+                      <div className="space-y-2">
+                        {items.map(template => {
+                          const isApplied = existingTemplateIds.has(template.id)
+                          const isSelected = selectedTemplate?.id === template.id
+                          const categoryColor = CATEGORY_COLORS[template.category] || CATEGORY_COLORS.other
+                          return (
+                            <button
+                              key={template.id}
+                              onClick={() => !isApplied && setSelectedTemplate(template)}
+                              disabled={isApplied}
+                              className={cn(
+                                "w-full border rounded-lg p-3 text-left transition-colors",
+                                isApplied && "opacity-50 cursor-not-allowed",
+                                isSelected && "border-primary bg-primary/5",
+                                !isApplied && !isSelected && "hover:bg-muted/30"
+                              )}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="text-sm font-medium truncate">{template.name}</span>
+                                    {isApplied && (
+                                      <Badge variant="secondary" className="shrink-0 text-[10px]">
+                                        <Check className="h-3 w-3 mr-1" />
+                                        Applied
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  {template.description && (
+                                    <p className="text-xs text-muted-foreground line-clamp-1">
+                                      {template.description}
+                                    </p>
+                                  )}
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <Badge variant="secondary" className={cn("text-[10px]", categoryColor)}>
+                                      {template.category}
+                                    </Badge>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {template.workflow_step_count} steps
+                                    </span>
+                                  </div>
+                                </div>
+                                {isSelected && (
+                                  <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center shrink-0">
+                                    <Check className="h-3 w-3 text-primary-foreground" />
+                                  </div>
+                                )}
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : null
+                )
               )}
             </div>
           )}

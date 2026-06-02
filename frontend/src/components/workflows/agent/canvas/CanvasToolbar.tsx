@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Check, ChevronDown, Loader2, Redo2, Save, Undo2 } from "lucide-react"
+import { Bookmark, Check, ChevronDown, Loader2, Redo2, Save, Undo2 } from "lucide-react"
 
 type WorkflowStatus = "active" | "draft" | "archived"
 
@@ -33,6 +33,7 @@ interface CanvasToolbarProps {
   onRedo: () => void
   onSave: () => void
   onStatusChange: (status: WorkflowStatus) => void
+  onSaveAsTemplate?: () => void
 }
 
 export default function CanvasToolbar({
@@ -46,6 +47,7 @@ export default function CanvasToolbar({
   onRedo,
   onSave,
   onStatusChange,
+  onSaveAsTemplate,
 }: CanvasToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -111,6 +113,19 @@ export default function CanvasToolbar({
           )}
           {isSaving ? "Saving…" : "Save"}
         </button>
+
+        {/* Save as Template */}
+        {onSaveAsTemplate && (
+          <button
+            type="button"
+            onClick={onSaveAsTemplate}
+            className="flex items-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 transition hover:bg-indigo-100"
+            title="Save current workflow as a reusable template"
+          >
+            <Bookmark className="h-4 w-4" />
+            Template
+          </button>
+        )}
 
         <div className="mx-2 h-5 w-px bg-slate-200" />
 

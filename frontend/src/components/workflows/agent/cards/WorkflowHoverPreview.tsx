@@ -1,9 +1,10 @@
 "use client"
 
 import { useState } from "react"
-import { PlusCircle } from "lucide-react"
+import { Bookmark, PlusCircle } from "lucide-react"
 import { getStepMeta } from "../canvas/canvasStepMeta"
-import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory, TemplateShareScope } from "@/types/agent"
+import { Building2, FolderKanban, Lock } from "lucide-react"
+import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory } from "@/types/agent"
 
 const MAX_FLOW_NODES = 6
 
@@ -104,6 +105,7 @@ interface WorkflowHoverContentProps {
   workflowId: string
   currentStatus: AgentWorkflowDefinition["status"]
   onStatusChange: (id: string, newStatus: string) => void
+  onSaveAsTemplate?: () => void
 }
 
 export function WorkflowHoverContent({
@@ -113,6 +115,7 @@ export function WorkflowHoverContent({
   workflowId,
   currentStatus,
   onStatusChange,
+  onSaveAsTemplate,
 }: WorkflowHoverContentProps) {
   const [localStatus, setLocalStatus] = useState(currentStatus)
   const [toggling, setToggling] = useState(false)
@@ -144,17 +147,33 @@ export function WorkflowHoverContent({
         ) : (
           <p className="text-xs italic text-slate-400">No description</p>
         )}
-        <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-2">
-          <div className="flex items-center gap-1.5">
-            <span className={`h-2 w-2 rounded-full ${status.dot}`} />
+        <div className="mt-auto flex items-center gap-2 border-t border-slate-100 pt-2">
+          {/* Status + toggle — tightly grouped */}
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${status.dot}`} />
             <span className={`text-xs font-medium ${status.text}`}>{status.label}</span>
+            {localStatus !== "archived" && (
+              <ToggleSwitch
+                checked={localStatus === "active"}
+                disabled={toggling}
+                onChange={handleToggle}
+              />
+            )}
           </div>
-          {localStatus !== "archived" && (
-            <ToggleSwitch
-              checked={localStatus === "active"}
-              disabled={toggling}
-              onChange={handleToggle}
-            />
+
+          {/* Divider + Save as Template */}
+          {onSaveAsTemplate && (
+            <>
+              <div className="mx-1 h-4 w-px shrink-0 bg-slate-200" />
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onSaveAsTemplate() }}
+                className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+              >
+                <Bookmark className="h-3 w-3" />
+                Template
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -175,21 +194,15 @@ const CATEGORY_STYLE: Record<TemplateCategory, string> = {
   reporting: "bg-orange-50 text-orange-700",
   other: "bg-gray-100 text-gray-600",
 }
-const SCOPE_LABEL: Record<TemplateShareScope, string> = {
-  private: "Private", organization: "Org", public: "Public",
-}
-const SCOPE_STYLE: Record<TemplateShareScope, string> = {
-  private: "bg-gray-100 text-gray-600",
-  organization: "bg-teal-50 text-teal-700",
-  public: "bg-indigo-50 text-indigo-700",
-}
-
 interface TemplateHoverContentProps {
   name: string
   description?: string
   stepTypes: WorkflowStepType[]
   category: TemplateCategory
-  shareScope: TemplateShareScope
+  organization?: string
+  organizationName?: string
+  project?: string
+  projectName?: string
   onApply?: () => void
 }
 
@@ -198,9 +211,38 @@ export function TemplateHoverContent({
   description,
   stepTypes,
   category,
-  shareScope,
+  organization,
+  organizationName,
+  project,
+  projectName,
   onApply,
 }: TemplateHoverContentProps) {
+  const scopeBadges: React.ReactNode[] = []
+  if (organization) {
+    scopeBadges.push(
+      <span key="org" className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700">
+        <Building2 className="h-2.5 w-2.5" />
+        {organizationName ?? "Org"}
+      </span>
+    )
+  }
+  if (project) {
+    scopeBadges.push(
+      <span key="proj" className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+        <FolderKanban className="h-2.5 w-2.5" />
+        {projectName ?? "Project"}
+      </span>
+    )
+  }
+  if (scopeBadges.length === 0) {
+    scopeBadges.push(
+      <span key="private" className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600">
+        <Lock className="h-2.5 w-2.5" />
+        Private
+      </span>
+    )
+  }
+
   return (
     <>
       <FlowDiagram stepTypes={stepTypes} />
@@ -216,9 +258,7 @@ export function TemplateHoverContent({
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${CATEGORY_STYLE[category] ?? "bg-gray-100 text-gray-600"}`}>
               {CATEGORY_LABEL[category] ?? category}
             </span>
-            <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SCOPE_STYLE[shareScope] ?? "bg-gray-100 text-gray-600"}`}>
-              {SCOPE_LABEL[shareScope] ?? shareScope}
-            </span>
+            {scopeBadges}
           </div>
           {onApply && (
             <button
