@@ -1650,3 +1650,53 @@ class OrchestratorUserContextThreadingTests(TestCase):
         from agent.models import AgentWorkflowRun
         run = AgentWorkflowRun.objects.filter(session=self.session).latest('created_at')
         self.assertEqual(run.user_context, '')
+
+
+class GeminiAnalysisPromptInjectionTests(TestCase):
+    @patch('agent.gemini_client.call_gemini_json')
+    def test_no_context_prompt_unchanged(self, mock_gemini):
+        from agent.services import _call_gemini_analysis
+        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        _call_gemini_analysis(
+            {'name': 'test', 'sheets': []},
+            user_id='1',
+            user_context=None,
+        )
+
+        call_kwargs = mock_gemini.call_args[1]
+        system_prompt = call_kwargs['system_prompt']
+        self.assertNotIn('User Context', system_prompt)
+
+    @patch('agent.gemini_client.call_gemini_json')
+    def test_context_appended_to_system_prompt(self, mock_gemini):
+        from agent.services import _call_gemini_analysis
+        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        _call_gemini_analysis(
+            {'name': 'test', 'sheets': []},
+            user_id='1',
+            user_context='Focus on ROAS for EU region',
+        )
+
+        call_kwargs = mock_gemini.call_args[1]
+        system_prompt = call_kwargs['system_prompt']
+        self.assertIn('User Context', system_prompt)
+        self.assertIn('Focus on ROAS for EU region', system_prompt)
+        self.assertIn('defer to their stated goals', system_prompt)
+        self.assertIn('Still surface critical anomalies', system_prompt)
+
+    @patch('agent.gemini_client.call_gemini_json')
+    def test_empty_context_prompt_unchanged(self, mock_gemini):
+        from agent.services import _call_gemini_analysis
+        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        _call_gemini_analysis(
+            {'name': 'test', 'sheets': []},
+            user_id='1',
+            user_context='',
+        )
+
+        call_kwargs = mock_gemini.call_args[1]
+        system_prompt = call_kwargs['system_prompt']
+        self.assertNotIn('User Context', system_prompt)
