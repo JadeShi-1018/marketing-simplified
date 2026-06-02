@@ -2,7 +2,8 @@
 
 import { useCallback, useState } from 'react';
 import toast from 'react-hot-toast';
-import { forwardMessagesBatch } from '@/lib/api/chatApi';
+import { forwardMessagesBatch, getChat } from '@/lib/api/chatApi';
+import { useChatStore } from '@/lib/chatStore';
 import type { ForwardBatchRequest, ForwardBatchResponse } from '@/types/chat';
 
 export function useForwardMessages() {
@@ -26,6 +27,21 @@ export function useForwardMessages() {
           );
         } else {
           toast.error('Forward failed. No messages were sent.');
+        }
+
+        if (response.created_messages?.length) {
+          const { addMessage } = useChatStore.getState();
+          for (const msg of response.created_messages) {
+            addMessage(msg.chat_id, msg);
+          }
+        } else if (resolved.target_chat_ids.length) {
+          const { updateChat } = useChatStore.getState();
+          await Promise.allSettled(
+            resolved.target_chat_ids.map(async (chatId) => {
+              const updated = await getChat(chatId);
+              updateChat(chatId, { last_message: updated.last_message });
+            })
+          );
         }
 
         return response;

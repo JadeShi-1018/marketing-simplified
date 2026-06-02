@@ -232,6 +232,7 @@ export interface ForwardBatchResponse {
     skipped_message_ids: number[];
   };
   failures: ForwardFailureItem[];
+  created_messages?: Message[];
 }
 
 export interface GetChatsParams {

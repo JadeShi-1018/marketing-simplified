@@ -993,6 +993,7 @@ class MessageService:
         failures: List[Dict[str, Any]] = []
         attempted_sends = 0
         succeeded_sends = 0
+        created_messages: List[Dict[str, Any]] = []
 
         # Expand target resolution failures into message-level failures for clearer UI reporting.
         if forwardable_messages:
@@ -1037,8 +1038,9 @@ class MessageService:
                             uploader=user
                         )
 
-                    from .tasks import notify_new_message
+                    from .tasks import notify_new_message, build_realtime_message_payload
                     notify_new_message.delay(new_message.id)
+                    created_messages.append(build_realtime_message_payload(new_message))
                     succeeded_sends += 1
                 except MessageService.SourceAttachmentMissingError:
                     logger.warning(
@@ -1102,6 +1104,7 @@ class MessageService:
                 'skipped_message_ids': skipped_message_ids,
             },
             'failures': failures,
+            'created_messages': created_messages,
         }
 
         logger.info(
