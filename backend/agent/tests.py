@@ -1492,3 +1492,71 @@ class ChatInputSerializerUserContextTests(TestCase):
         from .serializers import ChatInputSerializer
         s = ChatInputSerializer(data={'message': 'hello', 'user_context': 'x' * 500})
         self.assertTrue(s.is_valid(), s.errors)
+
+
+class ChatViewUserContextNormalizationTests(APITestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Ctx Org', slug='ctx-org')
+        self.user = CustomUser.objects.create_user(
+            email='ctx@test.com', username='ctxuser', password='pass'
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Ctx Project', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(
+            user=self.user, project=self.project,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _post_chat(self, user_context_value, **extra):
+        payload = {'message': 'hi', **extra}
+        if user_context_value is not None:
+            payload['user_context'] = user_context_value
+        return payload
+
+    @patch('agent.views.AgentOrchestrator')
+    def test_empty_string_normalised_to_none(self, MockOrch):
+        mock_instance = MagicMock()
+        mock_instance.handle_message.return_value = iter([{'type': 'done'}])
+        MockOrch.return_value = mock_instance
+
+        response = self.client.post(
+            f'/api/agent/sessions/{self.session.id}/chat/',
+            self._post_chat(''),
+            format='json',
+        )
+        b''.join(response.streaming_content)
+        _, kwargs = mock_instance.handle_message.call_args
+        self.assertIsNone(kwargs.get('user_context'))
+
+    @patch('agent.views.AgentOrchestrator')
+    def test_none_stays_none(self, MockOrch):
+        mock_instance = MagicMock()
+        mock_instance.handle_message.return_value = iter([{'type': 'done'}])
+        MockOrch.return_value = mock_instance
+
+        response = self.client.post(
+            f'/api/agent/sessions/{self.session.id}/chat/',
+            self._post_chat(None),
+            format='json',
+        )
+        b''.join(response.streaming_content)
+        _, kwargs = mock_instance.handle_message.call_args
+        self.assertIsNone(kwargs.get('user_context'))
+
+    @patch('agent.views.AgentOrchestrator')
+    def test_valid_context_passed_through(self, MockOrch):
+        mock_instance = MagicMock()
+        mock_instance.handle_message.return_value = iter([{'type': 'done'}])
+        MockOrch.return_value = mock_instance
+
+        response = self.client.post(
+            f'/api/agent/sessions/{self.session.id}/chat/',
+            self._post_chat('Focus on ROAS'),
+            format='json',
+        )
+        b''.join(response.streaming_content)
+        _, kwargs = mock_instance.handle_message.call_args
+        self.assertEqual(kwargs.get('user_context'), 'Focus on ROAS')
