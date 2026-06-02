@@ -7,6 +7,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog"
 import type { AgentWorkflowDefinition } from "@/types/agent"
 import WorkflowCard from "../cards/WorkflowCard"
 import { useAgentWorkflows } from "../hooks/useAgentWorkflows"
+import { brandBtnHeader } from "../workflowBrandClasses"
 
 interface WorkflowsTabProps {
   onCreateClick: () => void
@@ -162,7 +163,7 @@ export default function WorkflowsTab({ onCreateClick, refreshKey }: WorkflowsTab
               type="button"
               disabled={needsProject}
               onClick={onCreateClick}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className={brandBtnHeader}
             >
               <Plus className="h-4 w-4" />
               Create workflow

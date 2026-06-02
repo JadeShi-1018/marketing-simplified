@@ -27,11 +27,17 @@ export default function HoverCardPortal({
   useEffect(() => { setMounted(true) }, [])
   if (!mounted) return null
 
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault()
+    window.scrollBy({ top: e.deltaY, left: e.deltaX, behavior: "auto" })
+  }
+
   return createPortal(
     <div
       role="tooltip"
       onMouseEnter={hoverCardHandlers.onMouseEnter}
       onMouseLeave={hoverCardHandlers.onMouseLeave}
+      onWheel={handleWheel}
       style={{
         position: "fixed",
         top: style.top,

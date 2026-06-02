@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { Bookmark, PlusCircle, Trash2 } from "lucide-react"
 import { getStepMeta } from "../canvas/canvasStepMeta"
+import { brandBtnSm } from "../workflowBrandClasses"
 import { Building2, FolderKanban, Lock } from "lucide-react"
 import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory, TemplateProjectInfo } from "@/types/agent"
 
@@ -170,7 +171,7 @@ export function WorkflowHoverContent({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onSaveAsTemplate() }}
-                className="flex shrink-0 items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+                className={brandBtnSm}
               >
                 <Bookmark className="h-3 w-3" />
                 Template

@@ -611,7 +611,10 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
         project = _get_user_project(self.request)
         qs = AgentWorkflowDefinition.objects.filter(is_deleted=False)
         if project:
-            qs = qs.filter(Q(project=project) | Q(is_system=True))
+            qs = qs.filter(
+                Q(is_system=True) |
+                Q(project=project, is_system=False, created_by=self.request.user)
+            )
         else:
             qs = qs.filter(is_system=True)
         return qs.order_by('-is_system', '-is_default', '-created_at')
