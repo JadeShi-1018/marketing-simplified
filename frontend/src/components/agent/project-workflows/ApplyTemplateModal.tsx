@@ -83,8 +83,8 @@ export function ApplyTemplateModal({
   )
 
   const orgTemplates = filteredTemplates.filter(t => !!t.organization)
-  const projectTemplates = filteredTemplates.filter(t => !t.organization && !!t.project)
-  const privateTemplates = filteredTemplates.filter(t => !t.organization && !t.project)
+  const projectTemplates = filteredTemplates.filter(t => !t.organization && (t.project_list?.length ?? 0) > 0)
+  const privateTemplates = filteredTemplates.filter(t => !t.organization && !(t.project_list?.length))
 
   const handleApply = () => {
     if (!selectedTemplate) return

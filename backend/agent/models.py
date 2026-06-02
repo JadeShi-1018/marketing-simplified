@@ -632,10 +632,10 @@ class AgentWorkflowTemplate(TimeStampedModel):
     When created, the template clones the source workflow definition + steps to
     ensure isolation (changes to the template don't affect other workflows).
 
-    Visibility is determined by two independent optional FKs:
+    Visibility is determined by:
       - organization: if set, all members of that org can see this template (org section)
-      - project:      if set, all members of that project can see this template (project section)
-      - both null:    only the creator can see it (private section)
+      - projects:     M2M — visible to members of any listed project (project section)
+      - both empty:   only the creator can see it (private section)
     A template may appear in both org and project sections simultaneously.
     """
 
@@ -681,14 +681,12 @@ class AgentWorkflowTemplate(TimeStampedModel):
         help_text='If set, all members of this organization can see the template',
     )
 
-    # Sharing: project level — visible to all members of this project
-    project = models.ForeignKey(
+    # Sharing: project level — M2M, visible to members of any listed project
+    projects = models.ManyToManyField(
         'core.Project',
-        on_delete=models.CASCADE,
-        null=True,
         blank=True,
         related_name='workflow_templates',
-        help_text='If set, all members of this project can see the template',
+        help_text='Members of any listed project can see this template',
     )
 
     class Meta:
@@ -697,7 +695,6 @@ class AgentWorkflowTemplate(TimeStampedModel):
         indexes = [
             models.Index(fields=['category']),
             models.Index(fields=['organization', 'is_deleted']),
-            models.Index(fields=['project', 'is_deleted']),
             models.Index(fields=['created_by', 'is_deleted']),
         ]
 

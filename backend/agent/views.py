@@ -953,15 +953,15 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
         user = self.request.user
         qs = AgentWorkflowTemplate.objects.filter(is_deleted=False)
 
-        # Visibility: private (creator) OR org-shared OR project-shared
-        visibility_q = Q(organization__isnull=True, project__isnull=True, created_by=user)
-        if hasattr(user, 'organization') and user.organization:
-            visibility_q |= Q(organization=user.organization)
+        # Visibility: private (creator) OR org-shared OR project-shared (M2M)
         user_project_ids = ProjectMember.objects.filter(
             user=user, is_active=True
         ).values_list('project_id', flat=True)
+        visibility_q = Q(organization__isnull=True, projects__isnull=True, created_by=user)
+        if hasattr(user, 'organization') and user.organization:
+            visibility_q |= Q(organization=user.organization)
         if user_project_ids:
-            visibility_q |= Q(project__in=user_project_ids)
+            visibility_q |= Q(projects__in=user_project_ids)
 
         qs = qs.filter(visibility_q)
 
@@ -987,9 +987,9 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
             )
             qs = qs.annotate(is_applied_to_project=Exists(applied_subquery))
 
-        return qs.select_related(
-            'workflow_definition', 'created_by', 'organization', 'project'
-        ).order_by('-created_at')
+        return qs.prefetch_related('projects').select_related(
+            'workflow_definition', 'created_by', 'organization'
+        ).distinct().order_by('-created_at')
 
     def perform_create(self, serializer):
         """Clone source workflow and create template."""

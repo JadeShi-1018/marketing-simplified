@@ -96,5 +96,10 @@ export function useHoverCard() {
     },
   }
 
-  return { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers }
+  const hide = useCallback(() => {
+    clearTimer()
+    setIsVisible(false)
+  }, [])
+
+  return { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers, hide }
 }

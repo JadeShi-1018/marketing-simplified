@@ -301,6 +301,11 @@ export interface AgentWorkflowRun {
 export type TemplateCategory = 'review' | 'optimization' | 'analysis' | 'reporting' | 'other';
 export type TriggerMode = 'file_upload' | 'analyze_action' | 'message_keyword';
 
+export interface TemplateProjectInfo {
+  id: number;
+  name: string;
+}
+
 export interface AgentWorkflowTemplate {
   id: string;
   name: string;
@@ -315,9 +320,8 @@ export interface AgentWorkflowTemplate {
   /** Set when shared at org level; all org members can see this template. */
   organization?: string;
   organization_name?: string;
-  /** Set when shared at project level; all project members can see this template. */
-  project?: string;
-  project_name?: string;
+  /** List of projects this template is shared with (M2M). */
+  project_list?: TemplateProjectInfo[];
   applied_project_count?: number;
   created_at: string;
   updated_at?: string;
@@ -330,8 +334,8 @@ export interface CreateTemplateRequest {
   category: TemplateCategory;
   /** UUID of organization to share with (optional). */
   organization_id?: string | null;
-  /** UUID of project to share with (optional). */
-  project_id?: string | null;
+  /** List of project IDs (integers) to share with. Empty array clears all. */
+  project_ids?: number[];
 }
 
 export interface UpdateTemplateRequest {
@@ -340,8 +344,8 @@ export interface UpdateTemplateRequest {
   category?: TemplateCategory;
   /** Pass null to remove org sharing, UUID to set. */
   organization_id?: string | null;
-  /** Pass null to remove project sharing, UUID to set. */
-  project_id?: string | null;
+  /** Pass new list to replace. Empty array clears all. */
+  project_ids?: number[];
 }
 
 export interface AgentProjectWorkflowBinding {

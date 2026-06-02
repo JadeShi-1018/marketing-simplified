@@ -1,21 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { Loader2 } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { Building2, Check, FolderKanban, Loader2, X } from "lucide-react"
 import toast from "react-hot-toast"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Checkbox } from "@/components/ui/checkbox"
+import { cn } from "@/lib/utils"
 import {
   Select,
   SelectContent,
@@ -37,13 +25,19 @@ interface CreateTemplateModalProps {
   onClose: () => void
   onSuccess: () => void
   template?: AgentWorkflowTemplate | null
-  /** Pre-fill source workflow (e.g. from workflow editor). */
   defaultSourceWorkflowId?: string
   defaultName?: string
   defaultDescription?: string
-  /** Hide source workflow picker when source is fixed. */
   lockSourceWorkflow?: boolean
 }
+
+const CATEGORIES: { value: TemplateCategory; label: string }[] = [
+  { value: "review", label: "Review" },
+  { value: "optimization", label: "Optimization" },
+  { value: "analysis", label: "Analysis" },
+  { value: "reporting", label: "Reporting" },
+  { value: "other", label: "Other" },
+]
 
 export function CreateTemplateModal({
   open,
@@ -57,6 +51,7 @@ export function CreateTemplateModal({
 }: CreateTemplateModalProps) {
   const user = useAuthStore((s) => s.user)
   const userOrg = user?.organization ?? null
+  const nameRef = useRef<HTMLInputElement>(null)
 
   const [workflows, setWorkflows] = useState<AgentWorkflowDefinition[]>([])
   const [loadingWorkflows, setLoadingWorkflows] = useState(false)
@@ -68,67 +63,63 @@ export function CreateTemplateModal({
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [category, setCategory] = useState<TemplateCategory>("other")
-
-  // Sharing
   const [shareOrg, setShareOrg] = useState(false)
   const [shareProject, setShareProject] = useState(false)
-  const [selectedProjectId, setSelectedProjectId] = useState<string>("")
+  // Multi-select: set of project IDs (numbers)
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set())
 
   const isEditMode = !!template
 
-  const fetchWorkflows = async () => {
-    setLoadingWorkflows(true)
-    try {
-      const data = await AgentAPI.listWorkflows()
-      setWorkflows(data.filter((w) => w.status === "active"))
-    } catch {
-      // silent
-    } finally {
-      setLoadingWorkflows(false)
-    }
-  }
-
-  const fetchProjects = async () => {
-    setLoadingProjects(true)
-    try {
-      const data = await ProjectAPI.getProjects()
-      setProjects(data.map((p) => ({ id: p.id, name: p.name })))
-    } catch {
-      // silent
-    } finally {
-      setLoadingProjects(false)
-    }
-  }
-
   useEffect(() => {
     if (!open) return
+
     if (isEditMode && template) {
       setName(template.name)
       setDescription(template.description || "")
       setCategory(template.category)
       setShareOrg(!!template.organization)
-      setShareProject(!!template.project)
-      setSelectedProjectId(template.project || "")
+      const existing = template.project_list ?? []
+      setShareProject(existing.length > 0)
+      setSelectedProjectIds(new Set(existing.map((p) => p.id)))
     } else {
       setName(defaultName || "")
       setDescription(defaultDescription || "")
       setCategory("other")
       setShareOrg(false)
       setShareProject(false)
-      setSelectedProjectId("")
+      setSelectedProjectIds(new Set())
       setSourceWorkflowId(defaultSourceWorkflowId || "")
       if (!lockSourceWorkflow) {
-        fetchWorkflows()
+        setLoadingWorkflows(true)
+        AgentAPI.listWorkflows()
+          .then((data) => setWorkflows(data.filter((w) => w.status === "active")))
+          .catch(() => {})
+          .finally(() => setLoadingWorkflows(false))
       }
     }
-    fetchProjects()
+
+    setLoadingProjects(true)
+    ProjectAPI.getProjects()
+      .then((data) => setProjects(data.map((p) => ({ id: p.id, name: p.name }))))
+      .catch(() => {})
+      .finally(() => setLoadingProjects(false))
+
+    setTimeout(() => nameRef.current?.focus(), 80)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleProject = (id: number) => {
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
 
   const handleSubmit = async () => {
     setSubmitting(true)
     try {
       const orgId = shareOrg && userOrg ? String(userOrg.id) : null
-      const projId = shareProject && selectedProjectId ? selectedProjectId : null
+      const projectIds = shareProject ? Array.from(selectedProjectIds) : []
 
       if (isEditMode && template) {
         await AgentAPI.updateTemplate(template.id, {
@@ -136,7 +127,7 @@ export function CreateTemplateModal({
           description: description || undefined,
           category,
           organization_id: orgId,
-          project_id: projId,
+          project_ids: projectIds,
         })
       } else {
         await AgentAPI.createTemplate({
@@ -145,7 +136,7 @@ export function CreateTemplateModal({
           description: description || undefined,
           category,
           organization_id: orgId,
-          project_id: projId,
+          project_ids: projectIds,
         })
       }
       onSuccess()
@@ -157,196 +148,252 @@ export function CreateTemplateModal({
     }
   }
 
-  const canSubmit = isEditMode
-    ? name.trim().length > 0
-    : name.trim().length > 0 && sourceWorkflowId.length > 0
+  const canSubmit =
+    name.trim().length > 0 &&
+    (isEditMode || sourceWorkflowId.length > 0) &&
+    (!shareProject || selectedProjectIds.size > 0)
+
+  if (!open) return null
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{isEditMode ? "Edit Template" : "Create Workflow Template"}</DialogTitle>
-          <DialogDescription>
-            {isEditMode
-              ? "Update the template information"
-              : "Create a reusable template from an existing workflow"}
-          </DialogDescription>
-        </DialogHeader>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" />
 
-        <div className="space-y-4 py-4">
-          {/* Source workflow (create mode only) */}
+      <div className="relative z-10 w-full max-w-[520px] rounded-2xl bg-white shadow-2xl overflow-hidden">
+
+        {/* Close */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        {/* Header label */}
+        <div className="px-6 pt-6 pb-0">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+            {isEditMode ? "Edit Template" : "Create Workflow Template"}
+          </p>
           {!isEditMode && (
+            <p className="mt-0.5 text-[11px] text-gray-400">
+              {lockSourceWorkflow && defaultName
+                ? <>From: <span className="font-medium text-gray-500">{defaultName}</span></>
+                : "Create a reusable template from an existing workflow"}
+            </p>
+          )}
+        </div>
+
+        {/* Body */}
+        <div className="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-5">
+
+          {/* Source workflow picker (create, not locked) */}
+          {!isEditMode && !lockSourceWorkflow && (
             <div>
-              <Label htmlFor="workflow" className="text-sm font-medium">
-                Source Workflow <span className="text-destructive">*</span>
-              </Label>
-              {lockSourceWorkflow && sourceWorkflowId ? (
-                <p className="mt-1 rounded-md border border-input bg-muted/20 px-3 py-2 text-sm text-foreground">
-                  Current workflow (will be cloned)
-                </p>
-              ) : loadingWorkflows ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              {loadingWorkflows ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 py-1">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading workflows…
                 </div>
               ) : (
                 <Select value={sourceWorkflowId} onValueChange={setSourceWorkflowId}>
-                  <SelectTrigger className="mt-1">
-                    <SelectValue placeholder="Select a workflow to use as template" />
+                  <SelectTrigger className="h-8 rounded-lg border-dashed text-xs">
+                    <SelectValue placeholder="Select source workflow…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {workflows.length === 0 ? (
-                      <div className="p-2 text-sm text-muted-foreground text-center">
-                        No active workflows available
-                      </div>
-                    ) : (
-                      workflows.map((wf) => (
+                    {workflows.length === 0
+                      ? <div className="p-2 text-center text-xs text-gray-400">No active workflows</div>
+                      : workflows.map((wf) => (
                         <SelectItem key={wf.id} value={wf.id}>
-                          <div className="flex flex-col items-start">
-                            <span className="font-medium">
-                              {wf.name}
-                              {wf.is_system ? " (System)" : ""}
-                            </span>
-                            {wf.description && (
-                              <span className="text-xs text-muted-foreground">{wf.description}</span>
-                            )}
-                          </div>
+                          {wf.name}{wf.is_system ? " (System)" : ""}
                         </SelectItem>
                       ))
-                    )}
+                    }
                   </SelectContent>
                 </Select>
               )}
-              <p className="text-xs text-muted-foreground mt-1">
-                The workflow will be cloned to create an independent template
-              </p>
             </div>
           )}
 
-          {/* Name */}
-          <div>
-            <Label htmlFor="name" className="text-sm font-medium">
-              Template Name <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="name"
-              placeholder="e.g., Weekly Performance Review"
+          {/* Notion-style title + description */}
+          <div className="-mx-1">
+            <input
+              ref={nameRef}
+              type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="mt-1"
+              placeholder="Untitled Template"
+              className="w-full bg-transparent px-1 text-[26px] font-bold leading-tight text-gray-900 placeholder:text-gray-300 outline-none border-none"
             />
-          </div>
-
-          {/* Description */}
-          <div>
-            <Label htmlFor="description" className="text-sm font-medium">
-              Description
-            </Label>
-            <Textarea
-              id="description"
-              placeholder="Describe what this template does..."
+            <input
+              type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="mt-1 resize-none"
-              rows={3}
+              placeholder="Add a description for this reusable template..."
+              className="mt-1 w-full bg-transparent px-1 text-sm text-gray-400 placeholder:text-gray-300 outline-none border-none"
             />
           </div>
 
-          {/* Category */}
+          {/* Category chips */}
           <div>
-            <Label className="text-sm font-medium">
-              Category <span className="text-destructive">*</span>
-            </Label>
-            <Select value={category} onValueChange={(v) => setCategory(v as TemplateCategory)}>
-              <SelectTrigger className="mt-1">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="review">Review</SelectItem>
-                <SelectItem value="optimization">Optimization</SelectItem>
-                <SelectItem value="analysis">Analysis</SelectItem>
-                <SelectItem value="reporting">Reporting</SelectItem>
-                <SelectItem value="other">Other</SelectItem>
-              </SelectContent>
-            </Select>
+            <p className="mb-2 text-xs font-semibold text-gray-500">Category</p>
+            <div className="flex flex-wrap gap-2">
+              {CATEGORIES.map((cat) => (
+                <button
+                  key={cat.value}
+                  type="button"
+                  onClick={() => setCategory(cat.value)}
+                  className={cn(
+                    "rounded-full border px-4 py-1.5 text-sm font-medium transition-all",
+                    category === cat.value
+                      ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                      : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-800"
+                  )}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Sharing */}
-          <div className="space-y-3">
-            <Label className="text-sm font-medium">Sharing</Label>
-            <p className="text-xs text-muted-foreground -mt-1">
-              Choose who else can see this template. Leave both unchecked to keep it private.
+          {/* Sharing cards */}
+          <div>
+            <p className="mb-1 text-xs font-semibold text-gray-500">Sharing</p>
+            <p className="mb-3 text-[11px] text-gray-400">
+              Choose who else can see this template. Leave both unselected to keep it private.
             </p>
+            <div className="grid grid-cols-2 gap-3">
+              {/* Organization card */}
+              <button
+                type="button"
+                disabled={!userOrg}
+                onClick={() => setShareOrg((v) => !v)}
+                className={cn(
+                  "relative flex flex-col items-start gap-2 rounded-2xl border-2 p-4 text-left transition-all",
+                  !userOrg && "cursor-not-allowed opacity-40",
+                  shareOrg ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
+                )}
+              >
+                {shareOrg && (
+                  <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500">
+                    <Check className="h-3 w-3 text-white" />
+                  </span>
+                )}
+                <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl", shareOrg ? "bg-indigo-100" : "bg-gray-100")}>
+                  <Building2 className={cn("h-5 w-5", shareOrg ? "text-indigo-600" : "text-gray-500")} />
+                </div>
+                <div>
+                  <p className={cn("text-sm font-semibold", shareOrg ? "text-indigo-800" : "text-gray-800")}>
+                    Share with Organization
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-gray-400">
+                    {userOrg
+                      ? <>Visible to everyone in <span className="font-medium text-gray-500">{userOrg.name}</span></>
+                      : "No organization found"}
+                  </p>
+                </div>
+              </button>
 
-            {/* Organization */}
-            {userOrg ? (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="share-org"
-                  checked={shareOrg}
-                  onCheckedChange={(v) => setShareOrg(!!v)}
-                />
-                <Label htmlFor="share-org" className="text-sm font-normal cursor-pointer">
-                  Share with organization&nbsp;
-                  <span className="font-medium text-foreground">{userOrg.name}</span>
-                </Label>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic">
-                You are not part of an organization — org sharing is unavailable.
-              </p>
-            )}
-
-            {/* Project */}
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="share-project"
-                checked={shareProject}
-                onCheckedChange={(v) => {
-                  setShareProject(!!v)
-                  if (!v) setSelectedProjectId("")
+              {/* Project card */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !shareProject
+                  setShareProject(next)
+                  if (!next) setSelectedProjectIds(new Set())
                 }}
-                className="mt-0.5"
-              />
-              <div className="flex-1 space-y-1.5">
-                <Label htmlFor="share-project" className="text-sm font-normal cursor-pointer">
-                  Share with a specific project
-                </Label>
-                {shareProject && (
-                  loadingProjects ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  ) : (
-                    <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select project…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {projects.map((p) => (
-                          <SelectItem key={p.id} value={String(p.id)}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  )
+                className={cn(
+                  "relative flex flex-col items-start gap-2 rounded-2xl border-2 p-4 text-left transition-all",
+                  shareProject ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
+                )}
+              >
+                {shareProject && selectedProjectIds.size > 0 && (
+                  <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500">
+                    <span className="text-[10px] font-bold text-white">{selectedProjectIds.size}</span>
+                  </span>
+                )}
+                <div className={cn("flex h-9 w-9 items-center justify-center rounded-xl", shareProject ? "bg-indigo-100" : "bg-gray-100")}>
+                  <FolderKanban className={cn("h-5 w-5", shareProject ? "text-indigo-600" : "text-gray-500")} />
+                </div>
+                <div>
+                  <p className={cn("text-sm font-semibold", shareProject ? "text-indigo-800" : "text-gray-800")}>
+                    Specific Projects
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-gray-400">
+                    Restrict access to selected projects
+                  </p>
+                </div>
+              </button>
+            </div>
+
+            {/* Project multi-select checklist */}
+            {shareProject && (
+              <div className="mt-2 animate-in fade-in slide-in-from-top-1 duration-150 rounded-xl border border-gray-200 bg-gray-50 overflow-hidden">
+                {loadingProjects ? (
+                  <div className="flex items-center gap-2 px-3 py-3 text-xs text-gray-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />Loading projects…
+                  </div>
+                ) : projects.length === 0 ? (
+                  <p className="px-3 py-3 text-xs text-gray-400 text-center">No projects available</p>
+                ) : (
+                  <div className="max-h-44 overflow-y-auto divide-y divide-gray-100">
+                    {projects.map((p) => {
+                      const checked = selectedProjectIds.has(p.id)
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => toggleProject(p.id)}
+                          className={cn(
+                            "flex w-full items-center gap-3 px-3 py-2.5 text-left text-sm transition-colors",
+                            checked ? "bg-indigo-50 text-indigo-800" : "text-gray-700 hover:bg-white"
+                          )}
+                        >
+                          <span className={cn(
+                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                            checked ? "border-indigo-500 bg-indigo-500" : "border-gray-300 bg-white"
+                          )}>
+                            {checked && <Check className="h-2.5 w-2.5 text-white" />}
+                          </span>
+                          <span className="truncate font-medium">{p.name}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {selectedProjectIds.size > 0 && (
+                  <div className="border-t border-gray-200 px-3 py-2 text-[11px] text-indigo-600 font-medium">
+                    {selectedProjectIds.size} project{selectedProjectIds.size !== 1 ? "s" : ""} selected
+                  </div>
                 )}
               </div>
-            </div>
+            )}
           </div>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={!canSubmit || submitting || (shareProject && !selectedProjectId)}
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-50"
           >
-            {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit || submitting}
+            className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEditMode ? "Save Changes" : "Create Template"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

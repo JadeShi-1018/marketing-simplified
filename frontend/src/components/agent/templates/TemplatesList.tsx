@@ -103,8 +103,8 @@ export function TemplatesList({ userId }: TemplatesListProps) {
 
   // Three sections: org → project → private
   const orgTemplates = filtered.filter((t) => !!t.organization)
-  const projectTemplates = filtered.filter((t) => !t.organization && !!t.project)
-  const privateTemplates = filtered.filter((t) => !t.organization && !t.project)
+  const projectTemplates = filtered.filter((t) => !t.organization && (t.project_list?.length ?? 0) > 0)
+  const privateTemplates = filtered.filter((t) => !t.organization && !(t.project_list?.length))
 
   const isOwner = (t: AgentWorkflowTemplate) =>
     t.created_by === String(user?.id) || userId === t.created_by

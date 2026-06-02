@@ -30,11 +30,19 @@ function ScopeBadges({ template }: { template: AgentWorkflowTemplate }) {
       </span>
     )
   }
-  if (template.project) {
+  const projects = template.project_list ?? []
+  if (projects.length === 1) {
     badges.push(
       <span key="proj" className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
         <FolderKanban className="h-2.5 w-2.5" />
-        {template.project_name ?? "Project"}
+        {projects[0].name}
+      </span>
+    )
+  } else if (projects.length > 1) {
+    badges.push(
+      <span key="proj" className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+        <FolderKanban className="h-2.5 w-2.5" />
+        {projects.length} Projects
       </span>
     )
   }
@@ -90,8 +98,7 @@ export default function TemplateCard({
           category={template.category}
           organization={template.organization}
           organizationName={template.organization_name}
-          project={template.project}
-          projectName={template.project_name}
+          projectList={template.project_list}
           onApply={onApply}
         />
       </HoverCardPortal>

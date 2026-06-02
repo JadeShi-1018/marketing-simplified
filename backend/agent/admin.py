@@ -92,7 +92,7 @@ class ImportedDataRecordAdmin(admin.ModelAdmin):
 
 @admin.register(AgentWorkflowTemplate)
 class AgentWorkflowTemplateAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'category', 'organization', 'project', 'created_by', 'created_at')
+    list_display = ('id', 'name', 'category', 'organization', 'created_by', 'created_at')
     list_filter = ('category',)
     search_fields = ('name',)
     readonly_fields = ('id', 'created_at', 'updated_at')

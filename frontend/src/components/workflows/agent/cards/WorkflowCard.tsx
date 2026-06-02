@@ -42,7 +42,7 @@ export default function WorkflowCard({
   const [localStatus, setLocalStatus] = useState(workflow.status)
   const [showTemplateModal, setShowTemplateModal] = useState(false)
   const status = STATUS_CONFIG[localStatus]
-  const { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers } = useHoverCard()
+  const { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers, hide } = useHoverCard()
 
   useEffect(() => {
     if (!menuOpen) return
@@ -72,7 +72,8 @@ export default function WorkflowCard({
           workflowId={workflow.id}
           currentStatus={localStatus}
           onStatusChange={handleStatusChange}
-          onSaveAsTemplate={() => setShowTemplateModal(true)}
+          onSaveAsTemplate={() => { hide(); setShowTemplateModal(true) }}
+          onDelete={!workflow.is_system && onDelete ? () => { hide(); onDelete() } : undefined}
         />
       </HoverCardPortal>
 

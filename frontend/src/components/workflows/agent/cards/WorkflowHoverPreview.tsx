@@ -1,10 +1,10 @@
 "use client"
 
 import { useState } from "react"
-import { Bookmark, PlusCircle } from "lucide-react"
+import { Bookmark, PlusCircle, Trash2 } from "lucide-react"
 import { getStepMeta } from "../canvas/canvasStepMeta"
 import { Building2, FolderKanban, Lock } from "lucide-react"
-import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory } from "@/types/agent"
+import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory, TemplateProjectInfo } from "@/types/agent"
 
 const MAX_FLOW_NODES = 6
 
@@ -106,6 +106,7 @@ interface WorkflowHoverContentProps {
   currentStatus: AgentWorkflowDefinition["status"]
   onStatusChange: (id: string, newStatus: string) => void
   onSaveAsTemplate?: () => void
+  onDelete?: () => void
 }
 
 export function WorkflowHoverContent({
@@ -116,6 +117,7 @@ export function WorkflowHoverContent({
   currentStatus,
   onStatusChange,
   onSaveAsTemplate,
+  onDelete,
 }: WorkflowHoverContentProps) {
   const [localStatus, setLocalStatus] = useState(currentStatus)
   const [toggling, setToggling] = useState(false)
@@ -168,10 +170,25 @@ export function WorkflowHoverContent({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onSaveAsTemplate() }}
-                className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+                className="flex shrink-0 items-center gap-1 rounded-lg bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
               >
                 <Bookmark className="h-3 w-3" />
                 Template
+              </button>
+            </>
+          )}
+
+          {/* Divider + Delete */}
+          {onDelete && (
+            <>
+              <div className="mx-1 h-4 w-px shrink-0 bg-slate-200" />
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDelete() }}
+                className="flex shrink-0 items-center gap-1 rounded-lg bg-red-50 px-2.5 py-1 text-xs font-medium text-red-600 transition hover:bg-red-100"
+              >
+                <Trash2 className="h-3 w-3" />
+                Delete
               </button>
             </>
           )}
@@ -201,8 +218,7 @@ interface TemplateHoverContentProps {
   category: TemplateCategory
   organization?: string
   organizationName?: string
-  project?: string
-  projectName?: string
+  projectList?: TemplateProjectInfo[]
   onApply?: () => void
 }
 
@@ -213,8 +229,7 @@ export function TemplateHoverContent({
   category,
   organization,
   organizationName,
-  project,
-  projectName,
+  projectList,
   onApply,
 }: TemplateHoverContentProps) {
   const scopeBadges: React.ReactNode[] = []
@@ -226,11 +241,19 @@ export function TemplateHoverContent({
       </span>
     )
   }
-  if (project) {
+  const projects = projectList ?? []
+  if (projects.length === 1) {
     scopeBadges.push(
       <span key="proj" className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
         <FolderKanban className="h-2.5 w-2.5" />
-        {projectName ?? "Project"}
+        {projects[0].name}
+      </span>
+    )
+  } else if (projects.length > 1) {
+    scopeBadges.push(
+      <span key="proj" className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700">
+        <FolderKanban className="h-2.5 w-2.5" />
+        {projects.length} Projects
       </span>
     )
   }

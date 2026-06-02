@@ -225,21 +225,27 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
     """
     Serializer for AgentWorkflowTemplate.
 
-    Visibility is determined by two independent optional FKs:
-      - organization: template is visible to all members of that org
-      - project:      template is visible to all members of that project
-      - both null:    private (creator only)
+    Visibility:
+      - organization: visible to all members of that org
+      - projects (M2M): visible to members of any listed project
+      - both empty: private (creator only)
     """
     workflow_name = serializers.CharField(source='workflow_definition.name', read_only=True)
     workflow_step_count = serializers.SerializerMethodField()
     workflow_step_types = serializers.SerializerMethodField()
     applied_project_count = serializers.SerializerMethodField()
     organization_name = serializers.CharField(source='organization.name', read_only=True)
-    project_name = serializers.CharField(source='project.name', read_only=True)
+    # Read-only project info (list of {id, name})
+    project_list = serializers.SerializerMethodField()
     source_workflow_id = serializers.UUIDField(write_only=True, required=False)
-    # Write-only IDs accepted on create/update; read back through nested names above
     organization_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
-    project_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    # Write: list of project IDs (integers or UUIDs); null/[] clears all
+    project_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = AgentWorkflowTemplate
@@ -248,25 +254,23 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
             'workflow_definition', 'workflow_name', 'workflow_step_count',
             'workflow_step_types', 'created_by',
             'organization', 'organization_name',
-            'project', 'project_name',
+            'project_list',
             'applied_project_count',
-            'source_workflow_id', 'organization_id', 'project_id',
+            'source_workflow_id', 'organization_id', 'project_ids',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'workflow_definition', 'created_by',
-            'organization', 'project',
+            'organization',
             'created_at', 'updated_at',
         ]
 
     def get_workflow_step_count(self, obj):
-        """Return the number of active steps in the template's workflow."""
         if obj.workflow_definition:
             return obj.workflow_definition.steps.filter(is_deleted=False).count()
         return 0
 
     def get_workflow_step_types(self, obj):
-        """Return ordered list of step_type strings for the template's workflow."""
         if obj.workflow_definition:
             return list(
                 obj.workflow_definition.steps.filter(is_deleted=False)
@@ -276,11 +280,14 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         return []
 
     def get_applied_project_count(self, obj):
-        """Return the number of projects using this template."""
         return obj.project_bindings.filter(is_active=True, is_deleted=False).count()
 
+    def get_project_list(self, obj):
+        """Return [{id, name}] for all shared projects."""
+        return list(obj.projects.values('id', 'name'))
+
     def validate(self, attrs):
-        """Validate organization_id and project_id, resolve to FK instances."""
+        """Validate organization_id and project_ids, resolve instances."""
         from core.models import Organization, Project
         from core.models import ProjectMember
 
@@ -288,7 +295,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         user = request.user if request else None
 
         # --- organization_id ---
-        org_id = attrs.pop('organization_id', ...)  # sentinel to detect absence
+        org_id = attrs.pop('organization_id', ...)
         if org_id is not ...:
             if org_id is None:
                 attrs['organization'] = None
@@ -305,39 +312,55 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
                     })
                 attrs['organization'] = org
 
-        # --- project_id ---
-        proj_id = attrs.pop('project_id', ...)
-        if proj_id is not ...:
-            if proj_id is None:
-                attrs['project'] = None
+        # --- project_ids (M2M list) ---
+        raw_ids = attrs.pop('project_ids', ...)
+        if raw_ids is not ...:
+            if not raw_ids:
+                attrs['_project_objs'] = []
             else:
                 if not user:
-                    raise serializers.ValidationError({'project_id': 'User context required.'})
-                try:
-                    proj = Project.objects.get(id=proj_id, is_deleted=False)
-                except Project.DoesNotExist:
-                    raise serializers.ValidationError({'project_id': 'Project not found.'})
-                if not ProjectMember.objects.filter(project=proj, user=user, is_active=True).exists():
+                    raise serializers.ValidationError({'project_ids': 'User context required.'})
+                projects = list(Project.objects.filter(id__in=raw_ids, is_deleted=False))
+                found_ids = {p.id for p in projects}
+                missing = [str(i) for i in raw_ids if i not in found_ids]
+                if missing:
                     raise serializers.ValidationError({
-                        'project_id': 'You are not a member of this project.'
+                        'project_ids': f'Projects not found: {", ".join(missing)}'
                     })
-                attrs['project'] = proj
+                # Verify membership for each project
+                member_project_ids = set(
+                    ProjectMember.objects.filter(
+                        user=user, project__in=projects, is_active=True
+                    ).values_list('project_id', flat=True)
+                )
+                forbidden = [p.name for p in projects if p.id not in member_project_ids]
+                if forbidden:
+                    raise serializers.ValidationError({
+                        'project_ids': f'Not a member of: {", ".join(forbidden)}'
+                    })
+                attrs['_project_objs'] = projects
 
         return attrs
 
     def validate_source_workflow_id(self, value):
-        """Validate that source workflow exists and is accessible."""
         from .models import AgentWorkflowDefinition
-
-        workflow = AgentWorkflowDefinition.objects.filter(
-            id=value,
-            is_deleted=False
-        ).first()
-
-        if not workflow:
+        if not AgentWorkflowDefinition.objects.filter(id=value, is_deleted=False).exists():
             raise serializers.ValidationError('Source workflow not found.')
-
         return value
+
+    def create(self, validated_data):
+        project_objs = validated_data.pop('_project_objs', None)
+        instance = super().create(validated_data)
+        if project_objs is not None:
+            instance.projects.set(project_objs)
+        return instance
+
+    def update(self, instance, validated_data):
+        project_objs = validated_data.pop('_project_objs', None)
+        instance = super().update(instance, validated_data)
+        if project_objs is not None:
+            instance.projects.set(project_objs)
+        return instance
 
 
 class AgentProjectWorkflowBindingSerializer(serializers.ModelSerializer):
@@ -381,12 +404,11 @@ class AgentProjectWorkflowBindingSerializer(serializers.ModelSerializer):
                 and hasattr(user, 'organization')
                 and user.organization_id == template.organization_id
             )
-            is_project_member = (
-                template.project_id is not None
-                and ProjectMember.objects.filter(
-                    project_id=template.project_id, user=user, is_active=True
-                ).exists()
-            )
+            is_project_member = ProjectMember.objects.filter(
+                project__in=template.projects.all(),
+                user=user,
+                is_active=True,
+            ).exists()
             if not (is_creator or is_org_member or is_project_member):
                 raise serializers.ValidationError({
                     'template': 'You do not have access to this template.'

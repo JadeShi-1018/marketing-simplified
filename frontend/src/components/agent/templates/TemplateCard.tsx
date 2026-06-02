@@ -38,10 +38,17 @@ function ScopeBadges({ template }: { template: AgentWorkflowTemplate }) {
       </Badge>
     )
   }
-  if (template.project) {
+  const projects = template.project_list ?? []
+  if (projects.length === 1) {
     badges.push(
       <Badge key="proj" variant="outline" className="shrink-0 text-[10px] bg-violet-50 text-violet-700 border-violet-200">
-        Project: {template.project_name ?? "Project"}
+        Project: {projects[0].name}
+      </Badge>
+    )
+  } else if (projects.length > 1) {
+    badges.push(
+      <Badge key="proj" variant="outline" className="shrink-0 text-[10px] bg-violet-50 text-violet-700 border-violet-200">
+        {projects.length} Projects
       </Badge>
     )
   }
