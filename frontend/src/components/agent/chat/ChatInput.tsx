@@ -132,43 +132,6 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
         <p className="mb-3 text-xs text-muted-foreground">{helperText}</p>
       )}
 
-      <div className="mb-2">
-        <button
-          type="button"
-          aria-label={contextExpanded ? "Hide analysis context" : "Add analysis context"}
-          onClick={() => setContextExpanded((v) => !v)}
-          disabled={disabled}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
-        >
-          {contextExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {contextExpanded ? "Analysis context" : "+ Add analysis context"}
-        </button>
-      </div>
-
-      {contextExpanded && (
-        <div className="mb-2">
-          <textarea
-            ref={contextRef}
-            value={contextText}
-            onChange={handleContextChange}
-            placeholder="Add context, e.g. Focus on ROAS efficiency for EU region..."
-            disabled={disabled}
-            rows={2}
-            style={{ overflowY: "auto" }}
-            className={cn(
-              "w-full resize-none rounded-lg border border-border bg-muted/50 px-2.5 py-2 text-xs",
-              "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
-              "disabled:cursor-not-allowed disabled:opacity-50"
-            )}
-          />
-          {contextText.length > 0 && (
-            <p className={cn("mt-0.5 text-right text-xs", counterColor)}>
-              {contextText.length} / {CONTEXT_MAX}
-            </p>
-          )}
-        </div>
-      )}
-
       {selectedFile && (
         <div className="mb-3 flex items-center gap-2">
           <div className="flex items-center gap-2 rounded-lg bg-muted border border-border px-3 py-1.5">
@@ -237,6 +200,43 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
           <span className="sr-only">Send</span>
         </Button>
       </div>
+
+      <div className="mt-2">
+        <button
+          type="button"
+          aria-label={contextExpanded ? "Hide analysis context" : "Add analysis context"}
+          onClick={() => setContextExpanded((v) => !v)}
+          disabled={disabled}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+        >
+          {contextExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {contextExpanded ? "Analysis context" : "+ Add analysis context"}
+        </button>
+      </div>
+
+      {contextExpanded && (
+        <div className="mt-1">
+          <textarea
+            ref={contextRef}
+            value={contextText}
+            onChange={handleContextChange}
+            placeholder="Add context, e.g. Focus on ROAS efficiency for EU region..."
+            disabled={disabled}
+            rows={2}
+            style={{ overflowY: "auto" }}
+            className={cn(
+              "w-full resize-none rounded-lg border border-border bg-muted/50 px-2.5 py-2 text-xs",
+              "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
+              "disabled:cursor-not-allowed disabled:opacity-50"
+            )}
+          />
+          {contextText.length > 0 && (
+            <p className={cn("mt-0.5 text-right text-xs", counterColor)}>
+              {contextText.length} / {CONTEXT_MAX}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
