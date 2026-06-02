@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation"
 import {
   Copy,
-  GitBranch,
   Lock,
   MoreHorizontal,
   Pencil,
@@ -11,6 +10,8 @@ import {
 } from "lucide-react"
 import { useState, useRef, useEffect } from "react"
 import type { AgentWorkflowDefinition } from "@/types/agent"
+import StepIconStack from "./StepIconStack"
+import { AgentAPI } from "@/lib/api/agentApi"
 
 const STATUS_CONFIG: Record<
   AgentWorkflowDefinition["status"],
@@ -53,32 +54,12 @@ function formatTimeAgo(iso?: string): string {
   }
 }
 
-const STEP_ICONS: Record<string, string> = {
-  analyze_data: "📊",
-  call_llm: "🤖",
-  create_tasks: "✅",
-  detect_columns: "🔍",
-  normalize_data: "🗂️",
-  generate_criteria: "📋",
-  await_confirmation: "⏸️",
-  create_miro_board: "🎨",
-  generate_miro_snapshot: "📸",
-  custom_api: "🔌",
-  default: "⬡",
-}
-
-function WorkflowIcon({ stepCount }: { stepCount?: number }) {
-  return (
-    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-      <GitBranch className="h-5 w-5" />
-    </div>
-  )
-}
 
 interface WorkflowCardProps {
   workflow: AgentWorkflowDefinition
   onDuplicate?: () => void
   onDelete?: () => void
+  onStatusChange?: (id: string, newStatus: string) => void
   duplicating?: boolean
   needsProject?: boolean
 }
@@ -87,13 +68,16 @@ export default function WorkflowCard({
   workflow,
   onDuplicate,
   onDelete,
+  onStatusChange,
   duplicating,
   needsProject,
 }: WorkflowCardProps) {
   const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
-  const status = STATUS_CONFIG[workflow.status]
+  const [localStatus, setLocalStatus] = useState(workflow.status)
+  const [toggling, setToggling] = useState(false)
+  const status = STATUS_CONFIG[localStatus]
 
   useEffect(() => {
     if (!menuOpen) return
@@ -108,11 +92,26 @@ export default function WorkflowCard({
 
   const openEditor = () => router.push(`/workflows/${workflow.id}`)
 
+  const handleToggleStatus = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const newStatus = localStatus === "active" ? "draft" : "active"
+    setToggling(true)
+    try {
+      await AgentAPI.updateWorkflow(workflow.id, { status: newStatus })
+      setLocalStatus(newStatus as AgentWorkflowDefinition["status"])
+      onStatusChange?.(workflow.id, newStatus)
+    } catch {
+      // revert optimistic update silently; toast handled by API layer
+    } finally {
+      setToggling(false)
+    }
+  }
+
   return (
     <div className="group flex flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-150 hover:border-indigo-200 hover:shadow-md">
       {/* Top row */}
       <div className="flex items-start justify-between gap-3">
-        <WorkflowIcon stepCount={workflow.step_count} />
+        <StepIconStack stepTypes={workflow.step_types ?? []} size={36} />
 
         <div className="relative ml-auto" ref={menuRef}>
           <button
@@ -204,11 +203,32 @@ export default function WorkflowCard({
 
       {/* Footer */}
       <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-3">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${status.dot}`} />
           <span className={`text-xs font-medium ${status.text}`}>
             {status.label}
           </span>
+
+          {/* Toggle: only shown when not archived */}
+          {localStatus !== "archived" && (
+            <button
+              type="button"
+              disabled={toggling}
+              onClick={handleToggleStatus}
+              aria-label={localStatus === "active" ? "Set to Draft" : "Activate"}
+              title={localStatus === "active" ? "Set to Draft" : "Activate"}
+              className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60 ${
+                localStatus === "active" ? "bg-emerald-500" : "bg-gray-300"
+              }`}
+              style={{ height: "18px", width: "32px" }}
+            >
+              <span
+                className={`inline-block h-3 w-3 rounded-full bg-white shadow transition-transform duration-200 ${
+                  localStatus === "active" ? "translate-x-3.5" : "translate-x-0.5"
+                }`}
+              />
+            </button>
+          )}
         </div>
         <span className="text-xs text-gray-400">
           {workflow.step_count ?? 0} step{(workflow.step_count ?? 0) !== 1 ? "s" : ""}

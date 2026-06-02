@@ -40,9 +40,12 @@ const ADD_NODE_ID = "__add__"
 interface CanvasInnerProps {
   workflowId: string
   workflow: AgentWorkflowDefinition
+  currentStatus: AgentWorkflowDefinition["status"]
+  onStatusChange: (status: AgentWorkflowDefinition["status"]) => void
+  isUpdatingStatus: boolean
 }
 
-function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
+function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUpdatingStatus }: CanvasInnerProps) {
   const router = useRouter()
   const { fitView } = useReactFlow()
   const { projectParams } = useAgentWorkflowProjectParams()
@@ -212,14 +215,14 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
         <div className="pointer-events-auto">
           <span
             className={`rounded-full px-3 py-1 text-xs font-semibold ${
-              workflow.status === "active"
+              currentStatus === "active"
                 ? "bg-emerald-100 text-emerald-700"
-                : workflow.status === "archived"
+                : currentStatus === "archived"
                 ? "bg-gray-100 text-gray-500"
                 : "bg-amber-100 text-amber-700"
             }`}
           >
-            {workflow.status}
+            {currentStatus}
           </span>
         </div>
       </div>
@@ -257,9 +260,12 @@ function CanvasInner({ workflowId, workflow }: CanvasInnerProps) {
         canRedo={canRedo}
         isDirty={isDirty}
         isSaving={isSaving}
+        currentStatus={currentStatus}
+        isUpdatingStatus={isUpdatingStatus}
         onUndo={() => dispatch({ type: "UNDO" })}
         onRedo={() => dispatch({ type: "REDO" })}
         onSave={handleSave}
+        onStatusChange={onStatusChange}
       />
     </div>
   )
@@ -274,13 +280,34 @@ export default function AgentWorkflowCanvas({ workflowId }: AgentWorkflowCanvasP
   const { projectParams } = useAgentWorkflowProjectParams()
   const [workflow, setWorkflow] = useState<AgentWorkflowDefinition | null>(null)
   const [loading, setLoading] = useState(true)
+  const [currentStatus, setCurrentStatus] = useState<AgentWorkflowDefinition["status"]>("draft")
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
 
   useEffect(() => {
     AgentAPI.getWorkflow(workflowId, projectParams)
-      .then(setWorkflow)
+      .then((wf) => {
+        setWorkflow(wf)
+        setCurrentStatus(wf.status)
+      })
       .catch(() => toast.error("Failed to load workflow"))
       .finally(() => setLoading(false))
   }, [workflowId, projectParams])
+
+  const handleStatusChange = useCallback(
+    async (status: AgentWorkflowDefinition["status"]) => {
+      setIsUpdatingStatus(true)
+      try {
+        await AgentAPI.updateWorkflow(workflowId, { status }, projectParams)
+        setCurrentStatus(status)
+        toast.success(`Workflow set to ${status}`)
+      } catch {
+        toast.error("Failed to update status")
+      } finally {
+        setIsUpdatingStatus(false)
+      }
+    },
+    [workflowId, projectParams]
+  )
 
   if (loading) {
     return (
@@ -300,7 +327,13 @@ export default function AgentWorkflowCanvas({ workflowId }: AgentWorkflowCanvasP
 
   return (
     <ReactFlowProvider>
-      <CanvasInner workflowId={workflowId} workflow={workflow} />
+      <CanvasInner
+        workflowId={workflowId}
+        workflow={workflow}
+        currentStatus={currentStatus}
+        onStatusChange={handleStatusChange}
+        isUpdatingStatus={isUpdatingStatus}
+      />
     </ReactFlowProvider>
   )
 }

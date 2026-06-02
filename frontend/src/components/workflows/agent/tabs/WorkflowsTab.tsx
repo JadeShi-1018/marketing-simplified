@@ -95,6 +95,16 @@ export default function WorkflowsTab({ onCreateClick, refreshKey }: WorkflowsTab
     }
   }
 
+  const handleStatusChange = (id: string, newStatus: string) => {
+    setWorkflows((prev) =>
+      prev.map((w) =>
+        w.id === id
+          ? { ...w, status: newStatus as AgentWorkflowDefinition["status"] }
+          : w
+      )
+    )
+  }
+
   return (
     <div>
       {/* Sub-header */}
@@ -175,6 +185,7 @@ export default function WorkflowsTab({ onCreateClick, refreshKey }: WorkflowsTab
                     needsProject={needsProject}
                     duplicating={duplicatingId === wf.id}
                     onDuplicate={() => handleDuplicate(wf)}
+                    onStatusChange={handleStatusChange}
                   />
                 ))}
               </div>
@@ -196,6 +207,7 @@ export default function WorkflowsTab({ onCreateClick, refreshKey }: WorkflowsTab
                     duplicating={duplicatingId === wf.id}
                     onDuplicate={() => handleDuplicate(wf)}
                     onDelete={() => setDeletingWorkflow(wf)}
+                    onStatusChange={handleStatusChange}
                   />
                 ))}
               </div>

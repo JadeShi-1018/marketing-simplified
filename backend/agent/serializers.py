@@ -169,17 +169,25 @@ class AgentWorkflowStepSerializer(serializers.ModelSerializer):
 
 class AgentWorkflowDefinitionListSerializer(serializers.ModelSerializer):
     step_count = serializers.SerializerMethodField()
+    step_types = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentWorkflowDefinition
         fields = [
             'id', 'name', 'description', 'is_default', 'is_system',
-            'status', 'step_count', 'created_at',
+            'status', 'step_count', 'step_types', 'created_at',
         ]
         read_only_fields = ['id', 'is_system', 'created_at']
 
     def get_step_count(self, obj):
         return obj.steps.filter(is_deleted=False).count()
+
+    def get_step_types(self, obj):
+        return list(
+            obj.steps.filter(is_deleted=False)
+            .order_by('order')
+            .values_list('step_type', flat=True)
+        )
 
 
 class AgentWorkflowDefinitionDetailSerializer(serializers.ModelSerializer):

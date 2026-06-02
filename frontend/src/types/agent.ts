@@ -255,6 +255,8 @@ export interface AgentWorkflowDefinition {
   is_system: boolean;
   status: 'active' | 'draft' | 'archived';
   step_count?: number;
+  /** Ordered list of step_type strings for each active step (list endpoint only). */
+  step_types?: WorkflowStepType[];
   steps?: AgentWorkflowStep[];
   created_at: string;
   updated_at?: string;
