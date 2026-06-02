@@ -1700,3 +1700,69 @@ class GeminiAnalysisPromptInjectionTests(TestCase):
         call_kwargs = mock_gemini.call_args[1]
         system_prompt = call_kwargs['system_prompt']
         self.assertNotIn('User Context', system_prompt)
+
+
+class AnalyzeDataExecutorUserContextTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Exec Org', slug='exec-org')
+        self.user = CustomUser.objects.create_user(
+            email='exec@test.com', username='execuser', password='pass',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Exec Project', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(
+            user=self.user, project=self.project,
+        )
+
+    @patch('agent.services._run_analysis')
+    def test_executor_passes_user_context_to_run_analysis(self, mock_analysis):
+        from agent.executors import AnalyzeDataExecutor
+
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        wf = AgentWorkflowDefinition.objects.create(name='WF', status='active')
+        step = AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+        run = AgentWorkflowRun.objects.create(
+            session=self.session, workflow_definition=wf,
+            user_context='Prioritize high-spend campaigns',
+        )
+
+        class FakeOrch:
+            user = self.user
+
+        executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
+        spreadsheet_data = {'name': 'test', 'sheets': [{'columns': [], 'rows': []}]}
+        executor.execute({'spreadsheet_data': spreadsheet_data})
+
+        mock_analysis.assert_called_once()
+        _, kwargs = mock_analysis.call_args
+        self.assertEqual(kwargs.get('user_context'), 'Prioritize high-spend campaigns')
+
+    @patch('agent.services._run_analysis')
+    def test_executor_passes_none_when_context_empty(self, mock_analysis):
+        from agent.executors import AnalyzeDataExecutor
+
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        wf = AgentWorkflowDefinition.objects.create(name='WF3', status='active')
+        step = AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+        run = AgentWorkflowRun.objects.create(
+            session=self.session, workflow_definition=wf,
+            user_context='',
+        )
+
+        class FakeOrch:
+            user = self.user
+
+        executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
+        executor.execute({'spreadsheet_data': {'name': 'test', 'sheets': []}})
+
+        _, kwargs = mock_analysis.call_args
+        self.assertIsNone(kwargs.get('user_context'))
