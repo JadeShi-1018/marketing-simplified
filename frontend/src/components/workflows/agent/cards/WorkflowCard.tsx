@@ -12,6 +12,9 @@ import { useState, useRef, useEffect } from "react"
 import type { AgentWorkflowDefinition } from "@/types/agent"
 import StepIconStack from "./StepIconStack"
 import { AgentAPI } from "@/lib/api/agentApi"
+import { useHoverCard } from "./useHoverCard"
+import HoverCardPortal from "./HoverCardPortal"
+import WorkflowHoverPreview from "./WorkflowHoverPreview"
 
 const STATUS_CONFIG: Record<
   AgentWorkflowDefinition["status"],
@@ -78,6 +81,7 @@ export default function WorkflowCard({
   const [localStatus, setLocalStatus] = useState(workflow.status)
   const [toggling, setToggling] = useState(false)
   const status = STATUS_CONFIG[localStatus]
+  const { cardRef, isVisible, style, onMouseEnter, onMouseLeave } = useHoverCard()
 
   useEffect(() => {
     if (!menuOpen) return
@@ -108,7 +112,19 @@ export default function WorkflowCard({
   }
 
   return (
-    <div className="group flex flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-150 hover:border-indigo-200 hover:shadow-md">
+    <>
+    <HoverCardPortal isVisible={isVisible} style={style}>
+      <WorkflowHoverPreview
+        name={workflow.name}
+        description={workflow.description}
+        stepTypes={workflow.step_types ?? []}
+      />
+    </HoverCardPortal>
+    <div
+      ref={cardRef}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      className="group flex flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-150 hover:border-indigo-200 hover:shadow-md">
       {/* Top row */}
       <div className="flex items-start justify-between gap-3">
         <StepIconStack stepTypes={workflow.step_types ?? []} size={36} />
@@ -238,5 +254,6 @@ export default function WorkflowCard({
         </span>
       </div>
     </div>
+    </>
   )
 }

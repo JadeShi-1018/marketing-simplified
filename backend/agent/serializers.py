@@ -227,6 +227,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
     """
     workflow_name = serializers.CharField(source='workflow_definition.name', read_only=True)
     workflow_step_count = serializers.SerializerMethodField()
+    workflow_step_types = serializers.SerializerMethodField()
     applied_project_count = serializers.SerializerMethodField()
     source_workflow_id = serializers.UUIDField(write_only=True, required=False)
 
@@ -235,7 +236,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'category', 'share_scope',
             'workflow_definition', 'workflow_name', 'workflow_step_count',
-            'created_by', 'organization', 'applied_project_count',
+            'workflow_step_types', 'created_by', 'organization', 'applied_project_count',
             'source_workflow_id', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'workflow_definition', 'created_by', 'organization', 'created_at', 'updated_at']
@@ -245,6 +246,16 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         if obj.workflow_definition:
             return obj.workflow_definition.steps.filter(is_deleted=False).count()
         return 0
+
+    def get_workflow_step_types(self, obj):
+        """Return ordered list of step_type strings for the template's workflow."""
+        if obj.workflow_definition:
+            return list(
+                obj.workflow_definition.steps.filter(is_deleted=False)
+                .order_by('order')
+                .values_list('step_type', flat=True)
+            )
+        return []
 
     def get_applied_project_count(self, obj):
         """Return the number of projects using this template."""

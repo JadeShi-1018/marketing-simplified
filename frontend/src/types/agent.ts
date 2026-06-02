@@ -311,6 +311,8 @@ export interface AgentWorkflowTemplate {
   workflow_definition?: string;
   workflow_name?: string;
   workflow_step_count?: number;
+  /** Ordered list of step_type strings for each active step in the template's workflow. */
+  workflow_step_types?: WorkflowStepType[];
   created_by: string;
   organization?: string;
   applied_project_count?: number;

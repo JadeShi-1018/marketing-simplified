@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  Layers,
   MoreHorizontal,
   Pencil,
   PlusCircle,
@@ -9,6 +8,10 @@ import {
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
+import StepIconStack from "./StepIconStack"
+import { useHoverCard } from "./useHoverCard"
+import HoverCardPortal from "./HoverCardPortal"
+import WorkflowHoverPreview from "./WorkflowHoverPreview"
 
 const CATEGORY_CONFIG: Record<
   TemplateCategory,
@@ -58,6 +61,7 @@ export default function TemplateCard({
   const menuRef = useRef<HTMLDivElement>(null)
   const category = CATEGORY_CONFIG[template.category] ?? CATEGORY_CONFIG.other
   const scope = SCOPE_CONFIG[template.share_scope] ?? SCOPE_CONFIG.private
+  const { cardRef, isVisible, style, onMouseEnter, onMouseLeave } = useHoverCard()
 
   useEffect(() => {
     if (!menuOpen) return
@@ -71,12 +75,22 @@ export default function TemplateCard({
   }, [menuOpen])
 
   return (
-    <div className="group flex flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-150 hover:border-violet-200 hover:shadow-md">
+    <>
+    <HoverCardPortal isVisible={isVisible} style={style}>
+      <WorkflowHoverPreview
+        name={template.name}
+        description={template.description}
+        stepTypes={template.workflow_step_types ?? []}
+      />
+    </HoverCardPortal>
+    <div
+      ref={cardRef}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+      className="group flex flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-150 hover:border-violet-200 hover:shadow-md">
       {/* Top row */}
       <div className="flex items-start justify-between gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
-          <Layers className="h-5 w-5" />
-        </div>
+        <StepIconStack stepTypes={template.workflow_step_types ?? []} size={36} />
 
         <div className="relative ml-auto" ref={menuRef}>
           <button
@@ -174,5 +188,6 @@ export default function TemplateCard({
         </button>
       </div>
     </div>
+    </>
   )
 }
