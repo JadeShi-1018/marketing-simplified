@@ -7,10 +7,12 @@ from channels.layers import channel_layers
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from core.models import Project, Organization, Team, TeamMember, ProjectMember
 from chat.models import Chat, ChatParticipant, Message, MessageAttachment, MessageStatus, ChatType
 from chat.consumers import ChatConsumer
+from chat.services import OnlineStatusService
 from chat.routing import websocket_urlpatterns
 from asset.middleware import JWTAuthMiddleware
 from rest_framework_simplejwt.tokens import AccessToken
@@ -42,8 +44,11 @@ def reset_channel_layer_cache(settings):
     # For this pytest module, force an in-memory channel layer to avoid
     # Redis/asyncio lock cross-event-loop issues.
     settings.CHANNEL_LAYERS = TEST_CHANNEL_LAYERS
+    old_grace_seconds = OnlineStatusService.OFFLINE_GRACE_SECONDS
+    OnlineStatusService.OFFLINE_GRACE_SECONDS = 0
     _reset_channel_layers()
     yield
+    OnlineStatusService.OFFLINE_GRACE_SECONDS = old_grace_seconds
     _reset_channel_layers()
 
 
@@ -70,6 +75,8 @@ class TestChatConsumer:
         # Connect
         connected, _ = await communicator.connect()
         assert connected
+        snapshot = await communicator.receive_json_from(timeout=5)
+        assert snapshot['type'] == 'presence_snapshot'
         
         # Disconnect
         await communicator.disconnect()
@@ -116,6 +123,8 @@ class TestChatConsumer:
         
         connected, _ = await communicator1.connect()
         assert connected
+        snapshot = await communicator1.receive_json_from(timeout=5)
+        assert snapshot['type'] == 'presence_snapshot'
         
         # Send message
         await communicator1.send_json_to({
@@ -167,7 +176,11 @@ class TestChatConsumer:
         )
         
         await communicator1.connect()
+        snapshot1 = await communicator1.receive_json_from(timeout=5)
+        assert snapshot1['type'] == 'presence_snapshot'
         await communicator2.connect()
+        snapshot2 = await communicator2.receive_json_from(timeout=5)
+        assert snapshot2['type'] == 'presence_snapshot'
         
         # User1 starts typing
         await communicator1.send_json_to({
@@ -209,6 +222,10 @@ class TestChatConsumer:
         )
         
         await communicator.connect()
+
+        # Initial presence snapshot is sent on connect.
+        snapshot = await communicator.receive_json_from(timeout=5)
+        assert snapshot['type'] == 'presence_snapshot'
         
         # Send heartbeat
         await communicator.send_json_to({
@@ -221,6 +238,115 @@ class TestChatConsumer:
         assert 'timestamp' in response
         
         await communicator.disconnect()
+
+    async def test_multiple_websocket_connections_keep_user_online_until_last_disconnect(self, db):
+        """Closing one tab should not mark the user offline while another tab is connected."""
+        user = await self._create_user('multiuser', 'multi@example.com')
+        token = str(AccessToken.for_user(user))
+        await self._clear_presence_cache()
+
+        application = JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+        communicator1 = WebsocketCommunicator(
+            application,
+            f'/ws/chat/{user.id}/?token={token}'
+        )
+        communicator2 = WebsocketCommunicator(
+            application,
+            f'/ws/chat/{user.id}/?token={token}'
+        )
+
+        connected1, _ = await communicator1.connect()
+        connected2, _ = await communicator2.connect()
+        assert connected1
+        assert connected2
+        assert await self._is_online(user.id)
+
+        await communicator1.disconnect()
+        assert await self._is_online(user.id)
+
+        await communicator2.disconnect()
+        assert not await self._is_online(user.id)
+
+    async def test_presence_update_broadcasts_to_shared_chat_participants(self, db):
+        """Shared chat participants should receive live online/offline updates."""
+        user1 = await self._create_user('presence1', 'presence1@example.com')
+        user2 = await self._create_user('presence2', 'presence2@example.com')
+        org = await self._create_organization('Presence Org')
+        project = await self._create_project(org, 'Presence Project')
+        chat = await self._create_chat(project, ChatType.PRIVATE)
+        await self._add_chat_participant(chat, user1)
+        await self._add_chat_participant(chat, user2)
+        await self._clear_presence_cache()
+
+        application = JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+        communicator2 = WebsocketCommunicator(
+            application,
+            f'/ws/chat/{user2.id}/?token={str(AccessToken.for_user(user2))}'
+        )
+        communicator1 = WebsocketCommunicator(
+            application,
+            f'/ws/chat/{user1.id}/?token={str(AccessToken.for_user(user1))}'
+        )
+
+        connected2, _ = await communicator2.connect()
+        assert connected2
+        snapshot = await communicator2.receive_json_from(timeout=5)
+        assert snapshot['type'] == 'presence_snapshot'
+
+        connected1, _ = await communicator1.connect()
+        assert connected1
+
+        online_event = await communicator2.receive_json_from(timeout=5)
+        assert online_event['type'] == 'presence_update'
+        assert online_event['user_id'] == user1.id
+        assert online_event['is_online'] is True
+
+        await communicator1.disconnect()
+
+        offline_event = await communicator2.receive_json_from(timeout=5)
+        assert offline_event['type'] == 'presence_update'
+        assert offline_event['user_id'] == user1.id
+        assert offline_event['is_online'] is False
+
+        await communicator2.disconnect()
+
+    async def test_presence_snapshot_includes_already_online_shared_users(self, db):
+        """A newly connected user should immediately learn existing shared-user presence."""
+        user1 = await self._create_user('snapshot1', 'snapshot1@example.com')
+        user2 = await self._create_user('snapshot2', 'snapshot2@example.com')
+        org = await self._create_organization('Snapshot Org')
+        project = await self._create_project(org, 'Snapshot Project')
+        chat = await self._create_chat(project, ChatType.PRIVATE)
+        await self._add_chat_participant(chat, user1)
+        await self._add_chat_participant(chat, user2)
+        await self._clear_presence_cache()
+
+        application = JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+        communicator1 = WebsocketCommunicator(
+            application,
+            f'/ws/chat/{user1.id}/?token={str(AccessToken.for_user(user1))}'
+        )
+        communicator2 = WebsocketCommunicator(
+            application,
+            f'/ws/chat/{user2.id}/?token={str(AccessToken.for_user(user2))}'
+        )
+
+        connected1, _ = await communicator1.connect()
+        assert connected1
+        snapshot1 = await communicator1.receive_json_from(timeout=5)
+        assert snapshot1['type'] == 'presence_snapshot'
+
+        connected2, _ = await communicator2.connect()
+        assert connected2
+        snapshot2 = await communicator2.receive_json_from(timeout=5)
+        assert snapshot2['type'] == 'presence_snapshot'
+        assert any(
+            user['user_id'] == user1.id and user['is_online'] is True
+            for user in snapshot2['users']
+        )
+
+        await communicator1.disconnect()
+        await communicator2.disconnect()
     
     # Helper methods (database operations must use sync_to_async)
     
@@ -237,6 +363,22 @@ class TestChatConsumer:
             )
         
         return await create()
+
+    @staticmethod
+    async def _clear_presence_cache():
+        from channels.db import database_sync_to_async
+
+        @database_sync_to_async
+        def clear():
+            cache.clear()
+
+        await clear()
+
+    @staticmethod
+    async def _is_online(user_id):
+        from channels.db import database_sync_to_async
+
+        return await database_sync_to_async(OnlineStatusService.is_online)(user_id)
     
     @staticmethod
     async def _create_organization(name):

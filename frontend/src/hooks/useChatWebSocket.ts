@@ -10,6 +10,8 @@ export type ChatWsEventType =
   | 'typing_indicator'
   | 'message_status_update'
   | 'reaction_update'
+  | 'presence_update'
+  | 'presence_snapshot'
   | 'in_app_notification'
   | 'user_session_revoked'
   | 'error'
@@ -22,6 +24,7 @@ export interface ChatWsEvent<T = any> {
   // Specific fields for different event types
   chat_id?: number;
   user_id?: number;
+  is_online?: boolean;
   is_typing?: boolean;
   message?: any;
   message_id?: number;
@@ -29,6 +32,8 @@ export interface ChatWsEvent<T = any> {
   reaction?: any;
   notification?: any;
   timestamp?: string;
+  version?: number | null;
+  users?: Array<{ user_id: number; is_online: boolean; version?: number | null }>;
 }
 
 export interface UseChatWebSocketHandlers {
@@ -36,6 +41,8 @@ export interface UseChatWebSocketHandlers {
   onTypingIndicator?: (e: ChatWsEvent) => void;
   onMessageStatusUpdate?: (e: ChatWsEvent) => void;
   onReactionUpdate?: (e: ChatWsEvent) => void;
+  onPresenceUpdate?: (e: ChatWsEvent) => void;
+  onPresenceSnapshot?: (e: ChatWsEvent) => void;
   onInAppNotification?: (e: ChatWsEvent) => void;
   onError?: (e: ChatWsEvent) => void;
   onUnknownEvent?: (e: ChatWsEvent) => void;
@@ -102,6 +109,12 @@ export function useChatWebSocket(
               break;
             case 'reaction_update':
               handlersRef.current.onReactionUpdate?.(data);
+              break;
+            case 'presence_update':
+              handlersRef.current.onPresenceUpdate?.(data);
+              break;
+            case 'presence_snapshot':
+              handlersRef.current.onPresenceSnapshot?.(data);
               break;
             case 'in_app_notification':
               handlersRef.current.onInAppNotification?.(data);

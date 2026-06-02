@@ -27,6 +27,47 @@ const normalizeChatProject = (chat: Chat, fallbackProjectId?: number): Chat => {
   };
 };
 
+// The single place that turns an observed user into a presence entry. Anything
+// that ingests a user object (message sender, reply sender, chat creator/
+// participant, reaction actor) funnels through here so presenceByUserId stays in
+// sync. Users whose payload carries no is_online (e.g. ReactionUser today) are a
+// no-op, but the path is ready if their payload ever grows the field.
+const collectUserPresence = (
+  user: { id?: number | string; is_online?: boolean } | null | undefined,
+  target: Record<number, boolean>,
+) => {
+  if (!user || typeof user.is_online !== 'boolean') return;
+  const userId = Number(user.id);
+  if (Number.isFinite(userId) && !(userId in target)) target[userId] = user.is_online;
+};
+
+const collectMessagePresence = (message: Message | null | undefined, target: Record<number, boolean>) => {
+  if (!message) return;
+  collectUserPresence(message.sender, target);
+  collectUserPresence(message.reply_to?.sender, target);
+};
+
+// Returns a new presence map seeded from the given messages. Every mutator that
+// ingests Message objects should funnel through this so newly observed senders are
+// always reflected in presenceByUserId — skipping it leaves their dots stale until
+// the next presence_update WebSocket event.
+const presenceFromMessages = (
+  current: Record<number, boolean>,
+  messages: (Message | null | undefined)[],
+): Record<number, boolean> => {
+  const next = { ...current };
+  messages.forEach(message => collectMessagePresence(message, next));
+  return next;
+};
+
+const collectChatPresence = (chat: Chat, target: Record<number, boolean>) => {
+  collectUserPresence(chat.created_by, target);
+  for (const participant of chat.participants ?? []) {
+    collectUserPresence(participant.user, target);
+  }
+  collectMessagePresence(chat.last_message, target);
+};
+
 export const useChatStore = create<ChatState>()(
   persist(
     (set, get) => ({
@@ -38,6 +79,8 @@ export const useChatStore = create<ChatState>()(
       unreadCounts: {},
       capturedUnreadCounts: {}, // Snapshot of unread_count at the moment each chat is opened
       typingUsersByChat: {},    // chatId -> userIds currently typing (ephemeral, not persisted)
+      presenceByUserId: {},     // userId -> current online/offline state
+      presenceVersionByUserId: {}, // userId -> latest applied presence version
       mentionedChatIds: {},     // chatId -> true when current user has unread @-mention
 
       // Thread panel
@@ -61,6 +104,8 @@ export const useChatStore = create<ChatState>()(
           const normalizedChats = chats.map(chat => normalizeChatProject(chat, projectId));
           const currentUnreadCounts = state.unreadCounts;
           const currentChatId = state.currentChatId;
+          const nextPresenceByUserId = { ...state.presenceByUserId };
+          normalizedChats.forEach(chat => collectChatPresence(chat, nextPresenceByUserId));
 
           // Build new unread counts, but preserve local values in certain cases:
           // 1. If user is currently viewing a chat (currentChatId), keep its unread as 0
@@ -117,6 +162,7 @@ export const useChatStore = create<ChatState>()(
             },
             unreadCounts: newUnreadCounts,
             capturedUnreadCounts: newCapturedUnreadCounts,
+            presenceByUserId: nextPresenceByUserId,
           };
         });
       },
@@ -136,6 +182,8 @@ export const useChatStore = create<ChatState>()(
           const normalizedChat = normalizeChatProject(chat, projectId);
           const existingChats = state.chatsByProject[projectId] || [];
           const dedupedChats = existingChats.filter(existing => existing.id !== normalizedChat.id);
+          const nextPresenceByUserId = { ...state.presenceByUserId };
+          collectChatPresence(normalizedChat, nextPresenceByUserId);
 
           return {
             chatsByProject: {
@@ -146,6 +194,7 @@ export const useChatStore = create<ChatState>()(
               ...state.unreadCounts,
               [normalizedChat.id]: normalizedChat.unread_count || 0,
             },
+            presenceByUserId: nextPresenceByUserId,
           };
         });
       },
@@ -250,12 +299,15 @@ export const useChatStore = create<ChatState>()(
       // ==================== Message Actions ====================
       
       setMessages: (chatId: number, messages: Message[]) => {
-        set(state => ({
-          messages: {
-            ...state.messages,
-            [chatId]: messages,
-          },
-        }));
+        set(state => {
+          return {
+            messages: {
+              ...state.messages,
+              [chatId]: messages,
+            },
+            presenceByUserId: presenceFromMessages(state.presenceByUserId, messages),
+          };
+        });
       },
 
       addMessage: (chatId: number, message: Message, currentUserId?: number) => {
@@ -264,7 +316,8 @@ export const useChatStore = create<ChatState>()(
         
         set(state => {
           const existingMessages = state.messages[numericChatId] || [];
-          
+          const nextPresenceByUserId = presenceFromMessages(state.presenceByUserId, [message]);
+
           // Check if message already exists (avoid duplicates)
           const messageExists = existingMessages.some(m => m.id === message.id);
           if (messageExists) {
@@ -323,6 +376,7 @@ export const useChatStore = create<ChatState>()(
             },
             chatsByProject: newChatsByProject,
             unreadCounts: newUnreadCounts,
+            presenceByUserId: nextPresenceByUserId,
             ...(mentionedCurrentUser
               ? { mentionedChatIds: { ...state.mentionedChatIds, [numericChatId]: true } }
               : {}),
@@ -344,6 +398,7 @@ export const useChatStore = create<ChatState>()(
               ...state.messages,
               [chatId]: [...newMessages, ...existingMessages],
             },
+            presenceByUserId: presenceFromMessages(state.presenceByUserId, newMessages),
           };
         });
       },
@@ -449,7 +504,74 @@ export const useChatStore = create<ChatState>()(
             }
           });
 
-          return { messages: newMessages, threadReplies: newThreadReplies };
+          // Seed presence from the reactor — no-op while ReactionUser carries no
+          // is_online, but keeps the "observe a user → seed presence" invariant honest.
+          const nextPresenceByUserId = { ...state.presenceByUserId };
+          collectUserPresence(user, nextPresenceByUserId);
+
+          return {
+            messages: newMessages,
+            threadReplies: newThreadReplies,
+            presenceByUserId: nextPresenceByUserId,
+          };
+        });
+      },
+
+      updateUserPresence: (userId: number, isOnline: boolean, version: number | null = null) => {
+        const numericUserId = Number(userId);
+        if (!Number.isFinite(numericUserId)) return;
+        const numericVersion = typeof version === 'number' && Number.isFinite(version) ? version : null;
+
+        set(state => {
+          const currentVersion = state.presenceVersionByUserId[numericUserId] ?? -1;
+          if (numericVersion !== null && numericVersion < currentVersion) return state;
+          if (
+            state.presenceByUserId[numericUserId] === isOnline &&
+            (numericVersion === null || numericVersion === currentVersion)
+          ) {
+            return state;
+          }
+          return {
+            presenceByUserId: {
+              ...state.presenceByUserId,
+              [numericUserId]: isOnline,
+            },
+            presenceVersionByUserId: numericVersion !== null
+              ? {
+                  ...state.presenceVersionByUserId,
+                  [numericUserId]: numericVersion,
+                }
+              : state.presenceVersionByUserId,
+          };
+        });
+      },
+
+      setPresenceSnapshot: (users) => {
+        set((state) => {
+          const nextPresenceByUserId: Record<number, boolean> = {};
+          const nextPresenceVersionByUserId: Record<number, number> = {};
+          for (const user of users) {
+            const userId = Number(user.user_id);
+            if (Number.isFinite(userId) && typeof user.is_online === 'boolean') {
+              const snapshotVersion = typeof user.version === 'number' && Number.isFinite(user.version)
+                ? user.version
+                : null;
+              const currentVersion = state.presenceVersionByUserId[userId] ?? -1;
+              if (snapshotVersion !== null && snapshotVersion < currentVersion) {
+                if (typeof state.presenceByUserId[userId] === 'boolean') {
+                  nextPresenceByUserId[userId] = state.presenceByUserId[userId];
+                  nextPresenceVersionByUserId[userId] = currentVersion;
+                }
+                continue;
+              }
+              nextPresenceByUserId[userId] = user.is_online;
+              if (snapshotVersion !== null) nextPresenceVersionByUserId[userId] = snapshotVersion;
+            }
+          }
+          return {
+            presenceByUserId: nextPresenceByUserId,
+            presenceVersionByUserId: nextPresenceVersionByUserId,
+          };
         });
       },
 
@@ -676,6 +798,8 @@ export const useChatStore = create<ChatState>()(
           capturedUnreadCounts: {},
           globalUnreadCount: 0,
           typingUsersByChat: {},
+          presenceByUserId: {},
+          presenceVersionByUserId: {},
           mentionedChatIds: {},
           activeThreadMessageId: null,
           threadReplies: {},
@@ -716,6 +840,7 @@ export const useChatStore = create<ChatState>()(
       setThreadReplies: (rootId, replies) =>
         set((state) => ({
           threadReplies: { ...state.threadReplies, [rootId]: replies },
+          presenceByUserId: presenceFromMessages(state.presenceByUserId, replies),
         })),
 
       addThreadReply: (rootId, reply) =>
@@ -725,6 +850,7 @@ export const useChatStore = create<ChatState>()(
           if (existing.some((r) => r.id === reply.id)) return state;
           return {
             threadReplies: { ...state.threadReplies, [rootId]: [...existing, reply] },
+            presenceByUserId: presenceFromMessages(state.presenceByUserId, [reply]),
           };
         }),
 

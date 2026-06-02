@@ -108,6 +108,15 @@ export default function DrawerChatView({
 
   // WebSocket connection for real-time events
   const { connected, sendTypingStart, sendTypingStop } = useChatWebSocket(userId, {
+    onPresenceUpdate: useCallback((event: ChatWsEvent) => {
+      const presenceUserId = Number(event.user_id);
+      if (!Number.isFinite(presenceUserId) || typeof event.is_online !== 'boolean') return;
+      useChatStore.getState().updateUserPresence(presenceUserId, event.is_online, event.version);
+    }, []),
+    onPresenceSnapshot: useCallback((event: ChatWsEvent) => {
+      if (!Array.isArray(event.users)) return;
+      useChatStore.getState().setPresenceSnapshot(event.users);
+    }, []),
     onTypingIndicator: useCallback((event: ChatWsEvent) => {
       // Only handle typing events for this chat
       if (event.chat_id !== chatId) return;

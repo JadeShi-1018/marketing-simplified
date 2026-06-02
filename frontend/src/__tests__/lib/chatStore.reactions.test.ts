@@ -23,6 +23,8 @@ describe('chatStore reaction updates', () => {
       unreadCounts: {},
       capturedUnreadCounts: {},
       typingUsersByChat: {},
+      presenceByUserId: {},
+      presenceVersionByUserId: {},
       mentionedChatIds: {},
       currentChatId: null,
     });
@@ -99,6 +101,8 @@ describe('chatStore reaction updates', () => {
 
   it('tracks unread mention state when a new message mentions the current user', () => {
     useChatStore.setState({
+      presenceByUserId: {},
+      presenceVersionByUserId: {},
       chatsByProject: {
         9: [
           {
@@ -136,6 +140,8 @@ describe('chatStore reaction updates', () => {
 
   it('clears mention badges when opening a chat', () => {
     useChatStore.setState({
+      presenceByUserId: {},
+      presenceVersionByUserId: {},
       chatsByProject: {
         9: [
           {

@@ -281,6 +281,8 @@ export type WebSocketMessageType =
   | 'chat_created'
   | 'in_app_notification'
   | 'reaction_update'
+  | 'presence_update'
+  | 'presence_snapshot'
   | 'user_session_revoked'
   | 'pong'
   | 'error';
@@ -317,6 +319,9 @@ export interface WebSocketMessage {
   status?: MessageStatusType;
   message_id?: number;
   user_id?: number;
+  is_online?: boolean;
+  version?: number | null;
+  users?: Array<{ user_id: number; is_online: boolean; version?: number | null }>;
   is_typing?: boolean;
   error?: string;
   notification?: WebSocketInAppNotificationPayload;
@@ -335,6 +340,8 @@ export interface ChatState {
   capturedUnreadCounts: Record<number, number>; // Snapshot taken at the moment a chat is opened — used for the "New messages" divider
   globalUnreadCount: number; // Total unread across ALL projects
   typingUsersByChat: Record<number, number[]>; // chatId -> userIds currently typing
+  presenceByUserId: Record<number, boolean>; // Current online/offline state keyed by user id
+  presenceVersionByUserId: Record<number, number>; // Last applied presence event version keyed by user id
   
   // UI State
   isWidgetOpen: boolean;
@@ -362,6 +369,8 @@ export interface ChatState {
   updateMessage: (messageId: number, updates: Partial<Message>) => void;
   removeMessage: (messageId: number) => void;
   applyReactionUpdate: (messageId: number, emoji: string, action: 'added' | 'removed', user: ReactionUser, currentUserId: number | null) => void;
+  updateUserPresence: (userId: number, isOnline: boolean, version?: number | null) => void;
+  setPresenceSnapshot: (users: Array<{ user_id: number; is_online: boolean; version?: number | null }>) => void;
   
   updateUnreadCount: (chatId: number, count: number) => void;
   decrementUnreadCount: (chatId: number) => void;

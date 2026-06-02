@@ -163,11 +163,24 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     useChatStore.getState().applyReactionUpdate(r.message_id, r.emoji, r.action, r.user, currentUserId);
   }, [currentUserId]);
 
+  const handleSocketPresenceUpdate = useCallback((event: ChatWsEvent) => {
+    const userId = Number(event.user_id);
+    if (!Number.isFinite(userId) || typeof event.is_online !== 'boolean') return;
+    useChatStore.getState().updateUserPresence(userId, event.is_online, event.version);
+  }, []);
+
+  const handleSocketPresenceSnapshot = useCallback((event: ChatWsEvent) => {
+    if (!Array.isArray(event.users)) return;
+    useChatStore.getState().setPresenceSnapshot(event.users);
+  }, []);
+
   const { sendTypingStart, sendTypingStop } = useChatWebSocket(currentUserId, {
     onChatMessage: handleSocketChatMessage,
     onTypingIndicator: handleSocketTypingIndicator,
     onMessageStatusUpdate: handleSocketMessageStatusUpdate,
     onReactionUpdate: handleSocketReactionUpdate,
+    onPresenceUpdate: handleSocketPresenceUpdate,
+    onPresenceSnapshot: handleSocketPresenceSnapshot,
   });
 
   const {

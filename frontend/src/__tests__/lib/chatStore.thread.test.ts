@@ -32,6 +32,8 @@ function resetStore() {
     unreadCounts: {},
     capturedUnreadCounts: {},
     typingUsersByChat: {},
+    presenceByUserId: {},
+    presenceVersionByUserId: {},
     mentionedChatIds: {},
     currentChatId: null,
   });

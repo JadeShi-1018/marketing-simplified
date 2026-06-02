@@ -1,13 +1,15 @@
 import logging
+import asyncio
 from typing import Any, Dict, Optional
 from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import transaction
+from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage
-from .services import OnlineStatusService
+from .services import ChatService, OnlineStatusService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -153,6 +155,46 @@ def deliver_message_task(self, message_id: int):
         logger.error(f"Message {message_id} not found")
     except Exception as e:
         logger.error(f"Error delivering message {message_id}: {e}")
+        raise self.retry(exc=e)
+
+
+async def _broadcast_presence_to_recipients(channel_layer, recipient_ids, event):
+    await asyncio.gather(*(
+        channel_layer.group_send(f'chat_user_{recipient_id}', event)
+        for recipient_id in recipient_ids
+    ))
+
+
+def finalize_presence_offline_now(user_id: int, offline_token: str) -> bool:
+    """Finalize delayed offline presence once and broadcast if state changed."""
+    version = OnlineStatusService.finalize_offline_if_still_disconnected(user_id, offline_token)
+    if version is None:
+        return False
+
+    recipient_ids = ChatService.get_presence_recipient_ids(user_id)
+    recipient_ids = OnlineStatusService.get_online_users(recipient_ids)
+    if not recipient_ids:
+        return False
+
+    channel_layer = get_channel_layer()
+    event = {
+        'type': 'presence_update',
+        'user_id': user_id,
+        'is_online': False,
+        'version': version,
+        'timestamp': timezone.now().isoformat(),
+    }
+    async_to_sync(_broadcast_presence_to_recipients)(channel_layer, recipient_ids, event)
+    return True
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=5)
+def finalize_presence_offline(self, user_id: int, offline_token: str):
+    """Finalize delayed offline presence and notify online shared-chat users."""
+    try:
+        finalize_presence_offline_now(user_id, offline_token)
+    except Exception as e:
+        logger.error(f"Error finalizing offline presence for user {user_id}: {e}")
         raise self.retry(exc=e)
 
 

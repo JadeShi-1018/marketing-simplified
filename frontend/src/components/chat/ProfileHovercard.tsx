@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { MessageCircle } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { User } from '@/types/chat';
+import { useChatStore } from '@/lib/chatStore';
 
 // ── Avatar ────────────────────────────────────────────────────────────────────
 
@@ -46,7 +47,8 @@ interface HovercardProps {
 }
 
 function HovercardContent({ user, role, triggerRect, onClose, onStartDM }: HovercardProps) {
-  const isOnline = user.is_online ?? false;
+  const livePresence = useChatStore(state => state.presenceByUserId[user.id]);
+  const isOnline = livePresence ?? user.is_online ?? false;
 
   // Position below-right of trigger
   const style: React.CSSProperties = {
