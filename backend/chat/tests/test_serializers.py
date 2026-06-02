@@ -7,7 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 from core.models import Project, Organization
-from chat.models import Chat, ChatParticipant, Message, MessageAttachment, MessageMention, ScheduledMessage, ChatType
+from chat.models import Chat, ChatParticipant, Message, MessageAttachment, MessageMention, MessageReaction, ScheduledMessage, ChatType
 from chat.serializers import (
     MessageAttachmentSerializer,
     AttachmentUploadSerializer,
@@ -303,6 +303,64 @@ class MessageWithAttachmentsSerializerTest(TestCase):
         attachment_data = data['attachments'][0]
         self.assertIn('file_url', attachment_data)
         self.assertIn('original_filename', attachment_data)
+
+    def test_deleted_message_redaction_is_centralized(self):
+        """Deleted message output should redact user-controlled fields in one pass."""
+        reply_source = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='reply source',
+        )
+        forward_source = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='forward source',
+        )
+        deleted_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='secret body',
+            rich_body={'type': 'doc', 'content': [{'type': 'paragraph'}]},
+            is_deleted=True,
+            deleted_at=timezone.now(),
+            has_attachments=True,
+            forwarded_from_message=forward_source,
+            forwarded_from_sender_display=self.user.username,
+            forwarded_from_created_at=forward_source.created_at,
+            reply_to=reply_source,
+        )
+        MessageAttachment.objects.create(
+            message=deleted_message,
+            uploader=self.user,
+            file=SimpleUploadedFile('secret.txt', b'secret'),
+            file_type='document',
+            file_size=6,
+            original_filename='secret.txt',
+            mime_type='text/plain',
+        )
+        MessageMention.objects.create(message=deleted_message, mentioned_user=self.user)
+        MessageReaction.objects.create(message=deleted_message, user=self.user, emoji='ok')
+
+        request = self.factory.get('/')
+        request.user = self.user
+        data = MessageWithAttachmentsSerializer(
+            deleted_message,
+            context={'request': request},
+        ).data
+
+        self.assertTrue(data['is_deleted'])
+        self.assertEqual(data['content'], '')
+        self.assertIsNone(data['rich_body'])
+        self.assertFalse(data['has_attachments'])
+        self.assertEqual(data['attachment_count'], 0)
+        self.assertFalse(data['is_forwarded'])
+        self.assertIsNone(data['forwarded_from'])
+        self.assertIsNone(data['reply_to'])
+        self.assertEqual(data['reactions'], [])
+        self.assertFalse(data['can_revoke'])
+        self.assertEqual(data['mentioned_user_ids'], [])
+        self.assertEqual(data['missing_forwarded_attachments'], [])
+        self.assertEqual(data['attachments'], [])
 
     def test_orphan_forwarded_message_hides_attachments(self):
         """Legacy forwarded file copies should not render after their source is gone."""
