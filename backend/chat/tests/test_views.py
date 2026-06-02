@@ -444,8 +444,7 @@ class MessageAPITest(TestCase):
         msg_status = MessageStatus.objects.filter(message=message, user=self.user2)
         self.assertEqual(msg_status.count(), 1)
 
-    @patch('chat.tasks.notify_new_message.delay')
-    def test_send_message_is_scoped_throttled(self, mock_notify):
+    def test_send_message_is_scoped_throttled(self):
         """Message writes should be rate-limited without throttling reads."""
         cache.clear()
         url = reverse('message-list')
@@ -461,11 +460,11 @@ class MessageAPITest(TestCase):
         self.assertEqual(first.status_code, status.HTTP_201_CREATED)
         self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
         self.assertEqual(read.status_code, status.HTTP_200_OK)
-        mock_notify.assert_called_once()
 
-    @patch('chat.tasks.notify_new_message.delay')
-    def test_send_rich_message_with_mention_creates_chat_mention_notification(self, mock_notify):
-        """Sending a rich @mention stores mention data and routes a mention notification."""
+    @patch('chat.views.notify_new_message.delay')
+    @patch('chat.views.notify_message_recipients.delay')
+    def test_send_rich_message_with_mention_queues_notification_fanout(self, mock_notify_recipients, mock_notify_ws):
+        """Sending a rich @mention stores mention data and queues async notification fanout."""
         url = reverse('message-list')
         rich_body = {
             'type': 'doc',
@@ -489,7 +488,8 @@ class MessageAPITest(TestCase):
             'mention_ids': [self.user2.id],
         }
 
-        response = self.client.post(url, data, format='json')
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data['rich_body'], rich_body)
@@ -498,6 +498,22 @@ class MessageAPITest(TestCase):
 
         message = Message.objects.get(id=response.data['id'])
         self.assertEqual(message.mentions.get().mentioned_user_id, self.user2.id)
+        mock_notify_recipients.assert_called_once_with(message.id)
+        mock_notify_ws.assert_called_once_with(message.id)
+
+    def test_notify_message_recipients_creates_chat_mention_notification(self):
+        """The async fanout task creates persisted mention notifications."""
+        from chat.tasks import notify_message_recipients
+
+        message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Hi @user2',
+        )
+        message.mentions.create(mentioned_user=self.user2)
+
+        notify_message_recipients.run(message.id)
+
         mention_notification = Notification.objects.get(
             recipient=self.user2,
             event_type=NotificationEventType.CHAT_MENTION,
@@ -505,7 +521,29 @@ class MessageAPITest(TestCase):
         self.assertEqual(mention_notification.metadata['chat_id'], self.chat.id)
         self.assertEqual(mention_notification.metadata['message_id'], message.id)
         self.assertIn(f'messageId={message.id}', mention_notification.action_url)
-        mock_notify.assert_called_once_with(message.id)
+
+    def test_notify_message_recipients_ignores_mentions_outside_chat(self):
+        """Mention fanout must not notify users who are not active chat participants."""
+        from chat.tasks import notify_message_recipients
+
+        outsider = User.objects.create_user(
+            email='outsider@example.com',
+            username='outsider',
+            password='testpass123',
+        )
+        message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Hi @outsider',
+        )
+        message.mentions.create(mentioned_user=outsider)
+
+        notify_message_recipients.run(message.id)
+
+        self.assertFalse(Notification.objects.filter(
+            recipient=outsider,
+            event_type=NotificationEventType.CHAT_MENTION,
+        ).exists())
     
     def test_send_empty_message_fails(self):
         """Test sending an empty message fails"""
@@ -572,6 +610,41 @@ class MessageAPITest(TestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 2)
+
+    def test_search_messages_supports_keyset_cursor(self):
+        """Search pagination should use next_cursor without duplicating rows."""
+        older = Message.objects.create(chat=self.chat, sender=self.user1, content='older')
+        middle = Message.objects.create(chat=self.chat, sender=self.user1, content='middle')
+        newer = Message.objects.create(chat=self.chat, sender=self.user1, content='newer')
+
+        url = reverse('message-search')
+        first = self.client.get(url, {'from_user': self.user1.username, 'limit': 2})
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual([row['id'] for row in first.data['results']], [newer.id, middle.id])
+        self.assertIsNotNone(first.data['next_cursor'])
+
+        second = self.client.get(url, {
+            'from_user': self.user1.username,
+            'limit': 2,
+            'cursor': first.data['next_cursor'],
+        })
+
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual([row['id'] for row in second.data['results']], [older.id])
+        self.assertIsNone(second.data['next_cursor'])
+
+    def test_search_messages_rejects_invalid_cursor(self):
+        """Bad cursors should fail clearly instead of falling back to offset."""
+        url = reverse('message-search')
+        response = self.client.get(url, {
+            'from_user': self.user1.username,
+            'limit': 2,
+            'cursor': 'not-a-cursor',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['error'], 'Invalid cursor')
     
     def test_retrieve_message(self):
         """Test retrieving a specific message"""

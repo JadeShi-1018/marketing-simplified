@@ -34,17 +34,20 @@ export function useMessageSearch() {
   const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [offset, setOffset] = useState(0);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadedCount, setLoadedCount] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const doSearch = useCallback(async (q: string, f: SearchFilters, off: number) => {
+  const doSearch = useCallback(async (q: string, f: SearchFilters, cursor: string | null, fallbackOffset: number) => {
     const hasFilters = !!(f.fromUser || f.inChat || f.has || f.dateAfter || f.dateBefore || f.threadsOnly || f.mentionsMe);
 
     if (q.trim().length < 2 && !hasFilters) {
       setResults([]);
       setTotal(0);
+      setNextCursor(null);
+      setLoadedCount(0);
       setIsLoading(false);
       return;
     }
@@ -56,8 +59,9 @@ export function useMessageSearch() {
     const params: SearchMessagesParams = {
       q: q.trim(),
       limit: PAGE_SIZE,
-      offset: off,
     };
+    if (cursor) params.cursor = cursor;
+    else if (fallbackOffset > 0) params.offset = fallbackOffset;
     if (f.fromUser) params.from_user = f.fromUser;
     if (f.inChat) params.in_chat = f.inChat;
     if (f.has) params.has = f.has;
@@ -71,12 +75,14 @@ export function useMessageSearch() {
 
     try {
       const data = await searchMessages(params);
-      if (off === 0) {
+      if (!cursor && fallbackOffset === 0) {
         setResults(data.results);
       } else {
         setResults((prev) => [...prev, ...data.results]);
       }
       setTotal(data.total);
+      setNextCursor(data.next_cursor ?? null);
+      setLoadedCount(fallbackOffset + data.results.length);
     } catch (err: any) {
       if (err?.name === 'CanceledError' || err?.name === 'AbortError') return;
       setError('Search failed. Please try again.');
@@ -89,8 +95,9 @@ export function useMessageSearch() {
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      setOffset(0);
-      doSearch(query, filters, 0);
+      setNextCursor(null);
+      setLoadedCount(0);
+      doSearch(query, filters, null, 0);
     }, DEBOUNCE_MS);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -103,17 +110,16 @@ export function useMessageSearch() {
 
   const loadMore = useCallback(() => {
     if (isLoading || results.length >= total) return;
-    const nextOffset = offset + PAGE_SIZE;
-    setOffset(nextOffset);
-    doSearch(query, filters, nextOffset);
-  }, [isLoading, results.length, total, offset, query, filters, doSearch]);
+    doSearch(query, filters, nextCursor, nextCursor ? results.length : loadedCount);
+  }, [isLoading, results.length, total, query, filters, nextCursor, loadedCount, doSearch]);
 
   const reset = useCallback(() => {
     setQueryRaw('');
     setFilters(DEFAULT_FILTERS);
     setResults([]);
     setTotal(0);
-    setOffset(0);
+    setNextCursor(null);
+    setLoadedCount(0);
     setError(null);
   }, []);
 

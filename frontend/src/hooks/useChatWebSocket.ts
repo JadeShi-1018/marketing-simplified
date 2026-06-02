@@ -11,6 +11,7 @@ export type ChatWsEventType =
   | 'message_status_update'
   | 'reaction_update'
   | 'in_app_notification'
+  | 'user_session_revoked'
   | 'error'
   | 'pong'
   | string;
@@ -104,6 +105,17 @@ export function useChatWebSocket(
               break;
             case 'in_app_notification':
               handlersRef.current.onInAppNotification?.(data);
+              break;
+            case 'user_session_revoked':
+              stopped = true;
+              useAuthStore.getState().clearAuth();
+              setConnected(false);
+              try {
+                ws.close(4001, data.type);
+              } catch {}
+              if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+                window.location.href = '/login';
+              }
               break;
             case 'error':
               handlersRef.current.onError?.(data);

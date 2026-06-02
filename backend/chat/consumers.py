@@ -337,6 +337,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'reaction': event['reaction'],
         }))
 
+    async def user_session_revoked(self, event):
+        """Close this socket when the authenticated session is explicitly revoked."""
+        await self.send(text_data=json.dumps({
+            'type': 'user_session_revoked',
+            'reason': event.get('reason', 'session_revoked'),
+        }))
+        await self.close(code=4001)
+
     async def send_error(self, message):
         """Send error message to client"""
         await self.send(text_data=json.dumps({

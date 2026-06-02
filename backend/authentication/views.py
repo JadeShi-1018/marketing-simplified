@@ -940,6 +940,37 @@ class ResetPasswordView(APIView):
         return Response({"message":"Password reset successfully"}, status=status.HTTP_200_OK)
 
 
+class LogoutView(APIView):
+    """POST /auth/logout/ — best-effort token blacklist plus websocket session close."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh_token')
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception:
+                logger.exception("Failed to blacklist refresh token during logout for user %s", request.user.id)
+
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'chat_user_{request.user.id}',
+                {
+                    'type': 'user_session_revoked',
+                    'reason': 'logout',
+                },
+            )
+        except Exception:
+            logger.exception("Failed to emit logout websocket revoke for user %s", request.user.id)
+
+        return Response({'message': 'Logged out successfully.'}, status=status.HTTP_200_OK)
+
+
 class DeleteAccountView(APIView):
     """
     DELETE /auth/me/delete/
@@ -1014,5 +1045,20 @@ class DeleteAccountView(APIView):
             user.is_deleted = True
             user.set_unusable_password()
             user.save()
+
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'chat_user_{user.id}',
+                {
+                    'type': 'user_session_revoked',
+                    'reason': 'account_deleted',
+                },
+            )
+        except Exception:
+            logger.exception("Failed to emit account-delete websocket revoke for user %s", user.id)
 
         return Response({'message': 'Account deleted successfully.'}, status=status.HTTP_200_OK)

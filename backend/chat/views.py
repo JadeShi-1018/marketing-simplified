@@ -1,4 +1,6 @@
 import logging
+import base64
+import json
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -9,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.throttling import ScopedRateThrottle
+from django.db import transaction
 from django.db.models import Q, Prefetch
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
@@ -42,10 +45,37 @@ from .serializers import (
     ScheduledMessageCreateSerializer,
 )
 from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
-from .tasks import notify_new_message, send_scheduled_message
+from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
 from core.models import ProjectMember
 
 logger = logging.getLogger(__name__)
+
+
+def _encode_search_cursor(message, include_rank=False):
+    payload = {
+        'created_at': message.created_at.isoformat(),
+        'id': message.id,
+    }
+    if include_rank:
+        payload['rank'] = float(getattr(message, 'rank', 0) or 0)
+    raw = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+
+
+def _decode_search_cursor(cursor):
+    try:
+        padded = cursor + ('=' * (-len(cursor) % 4))
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
+        created_at = datetime.fromisoformat(str(payload['created_at']).replace('Z', '+00:00'))
+        message_id = int(payload['id'])
+        rank = payload.get('rank')
+        return {
+            'created_at': created_at,
+            'id': message_id,
+            'rank': float(rank) if rank is not None else None,
+        }
+    except Exception:
+        return None
 
 
 class StarredChatViewSet(
@@ -903,138 +933,8 @@ class MessageViewSet(viewsets.ModelViewSet):
                 for recipient in recipients
             ])
 
-            # Create in-app notifications for all recipients (sync).
-            # Respect per-participant mute / notification_level settings:
-            #   is_muted=True           → suppress all notifications
-            #   notification_level='mentions' → suppress general message notifications
-            #                                   (mention notifications still fire below)
-            try:
-                from notifications.services import create_or_update_chat_notification
-
-                for recipient in recipients:
-                    if recipient.is_currently_muted():
-                        continue
-                    if recipient.notification_level == 'mentions':
-                        continue  # only mention pings for this user, handled below
-                    create_or_update_chat_notification(
-                        recipient_id=recipient.user_id,
-                        actor_id=request.user.id,
-                        chat_id=message.chat.id,
-                        message_id=message.id,
-                        project_id=message.chat.project_id,
-                        message_preview=message.content or "",
-                        actor_name=request.user.username or request.user.email or "",
-                    )
-            except Exception as e:
-                logger.exception(f"Failed to create in-app notifications for message {message.id}: {e}")
-
-            # Fire mention notifications for users @mentioned in this message.
-            # Suppress only when is_muted=True — @mentions always come through
-            # at notification_level='mentions', that is the whole point of that setting.
-            try:
-                from notifications.services import create_notification
-                from notifications.models import NotificationCategory, NotificationEventType
-
-                # Build a quick lookup of mute status for all participants
-                participant_mute = {r.user_id: r.is_currently_muted() for r in recipients}
-
-                for mention in message.mentions.select_related('mentioned_user').all():
-                    if mention.mentioned_user_id == request.user.id:
-                        continue  # never self-notify
-                    # Skip only if the mentioned user has muted this channel entirely
-                    if participant_mute.get(mention.mentioned_user_id, False):
-                        continue
-                    create_notification(
-                        recipient_id=mention.mentioned_user_id,
-                        actor_id=request.user.id,
-                        category=NotificationCategory.COLLABORATION,
-                        event_type=NotificationEventType.CHAT_MENTION,
-                        title=f"{request.user.username or request.user.email} mentioned you",
-                        body=message.content[:200] or "",
-                        related_object_type="chat",
-                        related_object_id=message.chat_id,
-                        action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&messageId={message.id}",
-                        metadata={
-                            "chat_id": message.chat_id,
-                            "message_id": message.id,
-                            "project_id": message.chat.project_id,
-                            "message_preview": message.content[:200] or "",
-                        },
-                    )
-            except Exception as e:
-                logger.exception(f"Failed to create mention notifications for message {message.id}: {e}")
-
-            # Trigger async notification task (for WebSocket delivery)
-            notify_new_message.delay(message.id)
-
-            # Fire thread-reply notifications when this is a thread reply
-            if message.parent_message_id:
-                try:
-                    from notifications.services import create_notification
-                    from notifications.models import NotificationCategory, NotificationEventType
-                    root = message.parent_message
-
-                    # Fetch mute status for this chat so we can skip muted participants
-                    muted_user_ids = {
-                        participant.user_id
-                        for participant in ChatParticipant.objects.filter(
-                            chat=message.chat,
-                            is_active=True,
-                            is_muted=True,
-                        )
-                        if participant.is_currently_muted()
-                    }
-
-                    # Notify everyone who has previously replied in the thread
-                    # (including the root author) except the sender of this reply.
-                    notified_ids = set()
-                    notified_ids.add(request.user.id)
-
-                    # Root message author
-                    if root.sender_id != request.user.id and root.sender_id not in muted_user_ids:
-                        notified_ids.add(root.sender_id)
-                        create_notification(
-                            recipient_id=root.sender_id,
-                            actor_id=request.user.id,
-                            category=NotificationCategory.COLLABORATION,
-                            event_type=NotificationEventType.CHAT_THREAD_REPLY,
-                            title=f"{request.user.username or request.user.email} replied in a thread",
-                            body=message.content[:200] or "",
-                            related_object_type="chat",
-                            related_object_id=message.chat_id,
-                            action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
-                            metadata={
-                                "chat_id": message.chat_id,
-                                "root_message_id": root.id,
-                                "message_id": message.id,
-                                "project_id": message.chat.project_id,
-                            },
-                        )
-
-                    # Other thread participants
-                    for prev_reply in root.thread_replies.exclude(sender_id__in=notified_ids).select_related('sender').distinct('sender'):
-                        notified_ids.add(prev_reply.sender_id)
-                        if prev_reply.sender_id in muted_user_ids:
-                            continue
-                        create_notification(
-                            recipient_id=prev_reply.sender_id,
-                            actor_id=request.user.id,
-                            category=NotificationCategory.COLLABORATION,
-                            event_type=NotificationEventType.CHAT_THREAD_REPLY,
-                            title=f"{request.user.username or request.user.email} replied in a thread",
-                            body=message.content[:200] or "",
-                            related_object_type="chat",
-                            related_object_id=message.chat_id,
-                            action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
-                            metadata={
-                                "chat_id": message.chat_id,
-                                "root_message_id": root.id,
-                                "message_id": message.id,
-                                "project_id": message.chat.project_id,
-                            },
-                        )
-                except Exception as exc:
-                    logger.exception("Failed to create thread-reply notifications for message %s: %s", message.id, exc)
+            transaction.on_commit(lambda: notify_message_recipients.delay(message.id))
+            transaction.on_commit(lambda: notify_new_message.delay(message.id))
 
             # Refresh message with all relationships for response
             message = Message.objects.select_related(
@@ -2202,6 +2102,7 @@ def search_messages(request):
       date_before  str   optional — ISO date YYYY-MM-DD
       limit        int   default 20, max 50
       offset       int   default 0
+      cursor       str   optional — keyset cursor from previous response
     """
     from django.contrib.postgres.search import SearchQuery, SearchRank, SearchHeadline
     from .serializers import MessageSearchResultSerializer
@@ -2221,6 +2122,10 @@ def search_messages(request):
 
     limit = min(int(request.query_params.get('limit', 20)), 50)
     offset = max(int(request.query_params.get('offset', 0)), 0)
+    cursor = request.query_params.get('cursor', '').strip()
+    decoded_cursor = _decode_search_cursor(cursor) if cursor else None
+    if cursor and decoded_cursor is None:
+        return Response({'error': 'Invalid cursor'}, status=status.HTTP_400_BAD_REQUEST)
 
     # Parse threads_only early — it changes the base queryset shape
     threads_only = request.query_params.get('threads_only', '').lower() in ('true', '1')
@@ -2242,6 +2147,7 @@ def search_messages(request):
     ).distinct()
 
     # Full-text search with icontains fallback — only when query is provided
+    uses_rank_cursor = False
     if len(q) >= 2:
         try:
             sq = SearchQuery(q, search_type='websearch', config='english')
@@ -2256,8 +2162,9 @@ def search_messages(request):
                         options='MaxFragments=1,MaxWords=15,MinWords=5,StartSel=<mark>,StopSel=</mark>',
                     ),
                 )
-                .order_by('-rank', '-created_at')
+                .order_by('-rank', '-created_at', '-id')
             )
+            uses_rank_cursor = True
         except Exception as exc:
             # Fallback: icontains (e.g. search_vector not yet populated)
             logger.warning(
@@ -2268,10 +2175,10 @@ def search_messages(request):
                     "exception_type": exc.__class__.__name__,
                 },
             )
-            qs = qs.filter(content__icontains=q).order_by('-created_at')
+            qs = qs.filter(content__icontains=q).order_by('-created_at', '-id')
     else:
         # Filter-only search — no text constraint, order by recency
-        qs = qs.order_by('-created_at')
+        qs = qs.order_by('-created_at', '-id')
 
     # Optional filters
     from_user = request.query_params.get('from_user', '').strip()
@@ -2318,7 +2225,28 @@ def search_messages(request):
     )
 
     total = qs.count()
-    page = qs[offset: offset + limit]
+    if decoded_cursor:
+        created_at = decoded_cursor['created_at']
+        message_id = decoded_cursor['id']
+        if uses_rank_cursor:
+            rank = decoded_cursor.get('rank') or 0
+            qs = qs.filter(
+                Q(rank__lt=rank) |
+                Q(rank=rank, created_at__lt=created_at) |
+                Q(rank=rank, created_at=created_at, id__lt=message_id)
+            )
+        else:
+            qs = qs.filter(
+                Q(created_at__lt=created_at) |
+                Q(created_at=created_at, id__lt=message_id)
+            )
+        page_rows = list(qs[:limit + 1])
+    else:
+        page_rows = list(qs[offset: offset + limit + 1])
+
+    has_next = len(page_rows) > limit
+    page = page_rows[:limit]
+    next_cursor = _encode_search_cursor(page[-1], include_rank=uses_rank_cursor) if has_next and page else None
 
     serializer = MessageSearchResultSerializer(page, many=True, context={'request': request})
-    return Response({'results': serializer.data, 'total': total, 'q': q})
+    return Response({'results': serializer.data, 'total': total, 'q': q, 'next_cursor': next_cursor})

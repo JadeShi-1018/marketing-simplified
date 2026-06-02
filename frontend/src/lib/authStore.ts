@@ -166,7 +166,7 @@ export const useAuthStore = create<AuthState>()(
       logout: async () => {
         try {
           // Try to call logout API (optional)
-          await authAPI.logout();
+          await authAPI.logout(get().refreshToken);
         } catch (error) {
           // Ignore logout API errors
           console.warn('Logout API call failed:', error);

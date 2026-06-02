@@ -340,6 +340,163 @@ def notify_new_message(message_id: int):
         logger.error(f"Error notifying new message {message_id}: {e}")
 
 
+def _notification_exists_for_message(*, recipient_id: int, event_type: str, message_id: int) -> bool:
+    """Best-effort idempotency guard for retryable per-message notification tasks."""
+    from notifications.models import Notification
+
+    return Notification.objects.filter(
+        recipient_id=recipient_id,
+        event_type=event_type,
+        metadata__message_id=message_id,
+    ).exists()
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def notify_message_recipients(self, message_id: int):
+    """
+    Create persisted in-app notifications for a newly-created chat message.
+
+    WebSocket fanout stays in ``notify_new_message``; this task owns Activity /
+    notification rows so the message create request does not loop over all
+    recipients synchronously.
+    """
+    try:
+        from notifications.services import create_notification, create_or_update_chat_notification
+        from notifications.models import NotificationCategory, NotificationEventType
+
+        message = (
+            Message.objects
+            .select_related('chat', 'chat__project', 'sender', 'parent_message', 'parent_message__sender')
+            .prefetch_related('mentions__mentioned_user')
+            .get(id=message_id)
+        )
+        if message.is_deleted or message.is_revoked:
+            return
+
+        recipients = list(
+            ChatParticipant.objects.filter(chat=message.chat, is_active=True)
+            .exclude(user=message.sender)
+            .select_related('user')
+        )
+        participant_by_user_id = {participant.user_id: participant for participant in recipients}
+        active_recipient_ids = set(participant_by_user_id)
+        actor_name = message.sender.username or message.sender.email or ""
+
+        for recipient in recipients:
+            if recipient.is_currently_muted():
+                continue
+            if recipient.notification_level == 'mentions':
+                continue
+            create_or_update_chat_notification(
+                recipient_id=recipient.user_id,
+                actor_id=message.sender_id,
+                chat_id=message.chat_id,
+                message_id=message.id,
+                project_id=message.chat.project_id,
+                message_preview=message.content or "",
+                actor_name=actor_name,
+            )
+
+        for mention in message.mentions.select_related('mentioned_user').all():
+            if mention.mentioned_user_id == message.sender_id:
+                continue
+            participant = participant_by_user_id.get(mention.mentioned_user_id)
+            if participant is None:
+                continue
+            if participant.is_currently_muted():
+                continue
+            if _notification_exists_for_message(
+                recipient_id=mention.mentioned_user_id,
+                event_type=NotificationEventType.CHAT_MENTION,
+                message_id=message.id,
+            ):
+                continue
+            create_notification(
+                recipient_id=mention.mentioned_user_id,
+                actor_id=message.sender_id,
+                category=NotificationCategory.COLLABORATION,
+                event_type=NotificationEventType.CHAT_MENTION,
+                title=f"{actor_name} mentioned you",
+                body=message.content[:200] or "",
+                related_object_type="chat",
+                related_object_id=message.chat_id,
+                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&messageId={message.id}",
+                metadata={
+                    "chat_id": message.chat_id,
+                    "message_id": message.id,
+                    "project_id": message.chat.project_id,
+                    "message_preview": message.content[:200] or "",
+                },
+            )
+
+        if not message.parent_message_id:
+            return
+
+        root = message.parent_message
+        if not root or root.chat_id != message.chat_id:
+            return
+
+        muted_user_ids = {
+            participant.user_id
+            for participant in ChatParticipant.objects.filter(
+                chat=message.chat,
+                is_active=True,
+                is_muted=True,
+            )
+            if participant.is_currently_muted()
+        }
+
+        notified_ids = {message.sender_id}
+        candidate_ids = []
+        if root.sender_id != message.sender_id:
+            candidate_ids.append(root.sender_id)
+
+        previous_sender_ids = (
+            root.thread_replies
+            .filter(chat=root.chat)
+            .exclude(sender_id__in=notified_ids)
+            .order_by('sender_id')
+            .values_list('sender_id', flat=True)
+            .distinct()
+        )
+        candidate_ids.extend(previous_sender_ids)
+
+        for recipient_id in candidate_ids:
+            if recipient_id not in active_recipient_ids:
+                continue
+            if recipient_id in notified_ids or recipient_id in muted_user_ids:
+                continue
+            notified_ids.add(recipient_id)
+            if _notification_exists_for_message(
+                recipient_id=recipient_id,
+                event_type=NotificationEventType.CHAT_THREAD_REPLY,
+                message_id=message.id,
+            ):
+                continue
+            create_notification(
+                recipient_id=recipient_id,
+                actor_id=message.sender_id,
+                category=NotificationCategory.COLLABORATION,
+                event_type=NotificationEventType.CHAT_THREAD_REPLY,
+                title=f"{actor_name} replied in a thread",
+                body=message.content[:200] or "",
+                related_object_type="chat",
+                related_object_id=message.chat_id,
+                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
+                metadata={
+                    "chat_id": message.chat_id,
+                    "root_message_id": root.id,
+                    "message_id": message.id,
+                    "project_id": message.chat.project_id,
+                },
+            )
+    except Message.DoesNotExist:
+        logger.error("notify_message_recipients: message %s not found", message_id)
+    except Exception as exc:
+        logger.exception("notify_message_recipients failed for message %s: %s", message_id, exc)
+        raise self.retry(exc=exc)
+
+
 @shared_task
 def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: str):
     """

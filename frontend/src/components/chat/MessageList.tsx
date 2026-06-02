@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { format, isSameDay } from 'date-fns';
 import { ChevronDown } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Message, MessageListProps } from '@/types/chat';
 import { Skeleton } from '@/components/ui/skeleton';
 import MessageItem from './MessageItem';
@@ -189,6 +190,23 @@ export default function MessageList({
     return items;
   }, [messageGroups, firstUnreadMessageId, isGroupChat, roleByUserId]);
 
+  const rowVirtualizer = useVirtualizer({
+    count: flatItems.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => {
+      const item = flatItems[index];
+      if (!item) return 80;
+      if (item.type === 'date-header') return 56;
+      if (item.type === 'unread-divider') return 38;
+      return item.showSender ? 116 : 64;
+    },
+    getItemKey: (index) => {
+      const item = flatItems[index];
+      return item ? flatItemKey(item, index) : `missing-${index}`;
+    },
+    overscan: 24,
+  });
+
   // ── Scroll helpers ───────────────────────────────────────────────────────────
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'instant') => {
     if (!scrollRef.current) return;
@@ -251,7 +269,15 @@ export default function MessageList({
     const anchorEl = container.querySelector<HTMLElement>(
       `[data-message-id="${anchor.messageId}"]`,
     );
-    if (!anchorEl) return;
+    if (!anchorEl) {
+      const anchorIndex = flatItems.findIndex(
+        (item) => item.type === 'message' && item.message.id === anchor.messageId,
+      );
+      if (anchorIndex >= 0) {
+        rowVirtualizer.scrollToIndex(anchorIndex, { align: 'start' });
+      }
+      return;
+    }
 
     const currentOffset =
       anchorEl.getBoundingClientRect().top - container.getBoundingClientRect().top;
@@ -260,7 +286,7 @@ export default function MessageList({
     if (Math.abs(delta) > 0.5) {
       container.scrollTop += delta;
     }
-  }, []);
+  }, [flatItems, rowVirtualizer]);
 
   const cancelPendingJumpSettle = useCallback(() => {
     if (jumpFrameRef.current !== null) {
@@ -317,6 +343,13 @@ export default function MessageList({
     cancelPendingJumpSettle();
     activeJumpRequestRef.current = target.requestId;
     const isActiveJump = () => activeJumpRequestRef.current === target.requestId;
+    const targetIndex = flatItems.findIndex(
+      (item) => item.type === 'message' && item.message.id === target.messageId,
+    );
+    if (targetIndex >= 0) {
+      stickyBottomRef.current = false;
+      rowVirtualizer.scrollToIndex(targetIndex, { align: 'center' });
+    }
 
     const startSettle = (targetEl: HTMLElement) => {
       let attempts = 0;
@@ -368,7 +401,7 @@ export default function MessageList({
     };
 
     findAndJump();
-  }, [cancelPendingJumpSettle, scrollJumpTargetToCenter]);
+  }, [cancelPendingJumpSettle, flatItems, rowVirtualizer, scrollJumpTargetToCenter]);
 
   const schedulePrependAnchorRestore = useCallback((framesRemaining = 6): void => {
     if (restoreFrameRef.current !== null) {
@@ -667,13 +700,23 @@ export default function MessageList({
                 onScroll={handleScroll}
                 className="task-tab-scrollbar h-full overflow-y-auto flex flex-col"
               >
-                <div ref={contentRef} className="pb-3">
-                  {flatItems.map((item, index) => {
+                <div
+                  ref={contentRef}
+                  className="relative pb-3"
+                  style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+                >
+                  {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const index = virtualRow.index;
+                    const item = flatItems[index];
+                    if (!item) return null;
                     return (
                       <div
-                        key={flatItemKey(item, index)}
+                        key={virtualRow.key}
+                        ref={rowVirtualizer.measureElement}
                         data-index={index}
                         data-message-id={item.type === 'message' ? item.message.id : undefined}
+                        className="absolute left-0 top-0 w-full"
+                        style={{ transform: `translateY(${virtualRow.start}px)` }}
                       >
                         {item.type === 'date-header' && (
                           <div className="flex justify-center py-4">

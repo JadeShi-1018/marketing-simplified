@@ -233,6 +233,13 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     def _get_prefetched_statuses(self, obj):
         return self._get_prefetched_related(obj, 'statuses')
 
+    def _is_redacted_message(self, obj):
+        """Deleted messages keep timeline metadata but redact user-controlled content."""
+        return bool(obj.is_deleted)
+
+    def _redacted_value(self, obj, value, redacted):
+        return redacted if self._is_redacted_message(obj) else value
+
     def _forward_source_is_unavailable(self, obj):
         """True when a forwarded message has lost the live source it copied from."""
         if not self.get_is_forwarded(obj):
@@ -255,8 +262,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         return 'document'
 
     def get_mentioned_user_ids(self, obj):
-        if obj.is_deleted:
-            return []
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, [])
         mentions = self._get_prefetched_related(obj, 'mentions')
         if mentions is not None:
             return [mention.mentioned_user_id for mention in mentions]
@@ -264,8 +271,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_missing_forwarded_attachments(self, obj):
         """Tombstones for forwarded attachments whose original message is gone."""
-        if obj.is_deleted:
-            return []
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, [])
         if not self._forward_source_is_unavailable(obj):
             return []
 
@@ -335,8 +342,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_has_attachments(self, obj):
         """Whether message contains attachments."""
-        if obj.is_deleted:
-            return False
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, False)
         if self._forward_source_is_unavailable(obj):
             return False
         attachments = self._get_prefetched_related(obj, 'attachments')
@@ -346,8 +353,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_attachment_count(self, obj):
         """Number of attachments linked to this message."""
-        if obj.is_deleted:
-            return 0
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, 0)
         if self._forward_source_is_unavailable(obj):
             return 0
         attachments = self._get_prefetched_related(obj, 'attachments')
@@ -357,8 +364,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_forwarded_from(self, obj):
         """Forwarded source metadata."""
-        if obj.is_deleted:
-            return None
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, None)
         if not self.get_is_forwarded(obj):
             return None
 
@@ -370,8 +377,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
 
     def get_reply_to(self, obj):
         """Quote reply source metadata."""
-        if obj.is_deleted:
-            return None
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, None)
         if not obj.reply_to_id:
             return None
 
@@ -413,8 +420,8 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         Get aggregated reactions for this message.
         Groups by emoji and includes count, users list, and whether current user reacted.
         """
-        if obj.is_deleted:
-            return []
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, [])
 
         request = self.context.get('request')
         current_user_id = request.user.id if request and request.user.is_authenticated else None
@@ -458,7 +465,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if not request or not request.user.is_authenticated:
             return False
 
-        if obj.is_deleted:
+        if self._is_redacted_message(obj):
             return False
 
         # Check if user is sender
@@ -1219,8 +1226,8 @@ class MessageWithAttachmentsSerializer(MessageSerializer):
         fields = MessageSerializer.Meta.fields + ['attachments']
 
     def get_attachments(self, obj):
-        if obj.is_deleted:
-            return []
+        if self._is_redacted_message(obj):
+            return self._redacted_value(obj, None, [])
         if self._forward_source_is_unavailable(obj):
             return []
         attachments = self._get_prefetched_related(obj, 'attachments')

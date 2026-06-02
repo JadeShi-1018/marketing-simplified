@@ -280,6 +280,7 @@ export type WebSocketMessageType =
   | 'chat_created'
   | 'in_app_notification'
   | 'reaction_update'
+  | 'user_session_revoked'
   | 'pong'
   | 'error';
 
@@ -625,10 +626,12 @@ export interface SearchMessagesParams {
   mentions_me?: string;
   limit?: number;
   offset?: number;
+  cursor?: string;
 }
 
 export interface SearchMessagesResponse {
   results: MessageSearchResult[];
   total: number;
   q: string;
+  next_cursor?: string | null;
 }
