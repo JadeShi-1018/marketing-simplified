@@ -816,7 +816,7 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
             )
 
 
-class FlowControlExecutor(BaseExecutor):
+class FlowControlExecutor(BaseStepExecutor):
     """No-op pass-through for UI-only flow control steps (if_else, merge, loop).
 
     These step types are rendered visually on the canvas but do not yet have

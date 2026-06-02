@@ -12,7 +12,7 @@ import ReactFlow, {
 } from "reactflow"
 import "reactflow/dist/style.css"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Loader2 } from "lucide-react"
+import { ArrowLeft, Loader2, X } from "lucide-react"
 import toast from "react-hot-toast"
 import { AgentAPI } from "@/lib/api/agentApi"
 import type { AgentWorkflowDefinition, WorkflowStepType } from "@/types/agent"
@@ -24,6 +24,63 @@ import AgentAddNode, { type AgentAddNodeData } from "./nodes/AgentAddNode"
 import StepPickerPanel from "./panels/StepPickerPanel"
 import StepConfigPanel from "./panels/StepConfigPanel"
 import CanvasToolbar from "./CanvasToolbar"
+
+// ── Unsaved-changes guard dialog ──────────────────────────────────────────────
+interface UnsavedChangesDialogProps {
+  isSaving: boolean
+  onClose: () => void
+  onLeave: () => void
+  onSave: () => void
+}
+
+function UnsavedChangesDialog({ isSaving, onClose, onLeave, onSave }: UnsavedChangesDialogProps) {
+  return (
+    // Backdrop
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+
+      {/* Card */}
+      <div className="relative z-10 w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+        {/* Close */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 flex h-7 w-7 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+          aria-label="Close"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
+        {/* Content */}
+        <h2 className="text-base font-semibold text-slate-800">Unsaved Changes</h2>
+        <p className="mt-2 text-sm leading-relaxed text-slate-500">
+          You have unsaved changes. Would you like to save before leaving?
+        </p>
+
+        {/* Actions */}
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={onLeave}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Leave
+          </button>
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={onSave}
+            className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // ── React Flow node type registry ──────────────────────────────────────────────
 const nodeTypes = {
@@ -51,6 +108,8 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
   const { projectParams } = useAgentWorkflowProjectParams()
 
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null)
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
+  const [isSavingAndLeaving, setIsSavingAndLeaving] = useState(false)
   // picker state: insertion index + viewport anchor coordinates
   const [pickerState, setPickerState] = useState<{
     insertAfter: number
@@ -162,6 +221,30 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
     [pickerState, steps.length, dispatch]
   )
 
+  // ── Back (with unsaved-changes guard) ──────────────────────────────────────
+  const handleBack = useCallback(() => {
+    if (isDirty) {
+      setShowUnsavedDialog(true)
+    } else {
+      router.push("/workflows")
+    }
+  }, [isDirty, router])
+
+  const handleLeave = useCallback(() => {
+    router.push("/workflows")
+  }, [router])
+
+  const handleSaveAndLeave = useCallback(async () => {
+    setIsSavingAndLeaving(true)
+    try {
+      await save(workflowId, projectParams)
+      router.push("/workflows")
+    } catch {
+      // save() already shows a toast error; keep dialog open so user can retry
+      setIsSavingAndLeaving(false)
+    }
+  }, [save, workflowId, projectParams, router])
+
   // ── Save ────────────────────────────────────────────────────────────────────
   const handleSave = useCallback(() => {
     save(workflowId, projectParams)
@@ -169,6 +252,16 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
 
   return (
     <div className="relative h-screen w-full bg-slate-100">
+      {/* Unsaved-changes dialog */}
+      {showUnsavedDialog && (
+        <UnsavedChangesDialog
+          isSaving={isSavingAndLeaving}
+          onClose={() => setShowUnsavedDialog(false)}
+          onLeave={handleLeave}
+          onSave={handleSaveAndLeave}
+        />
+      )}
+
       {/* React Flow canvas */}
       <ReactFlow
         nodes={rfNodes}
@@ -198,7 +291,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
         <div className="pointer-events-auto flex items-center gap-3">
           <button
             type="button"
-            onClick={() => router.push("/workflows")}
+            onClick={handleBack}
             className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
           >
             <ArrowLeft className="h-4 w-4" />
