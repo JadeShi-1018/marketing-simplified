@@ -1002,6 +1002,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
               slashCommands={slashCommands}
               disabled={isSending || isSelectMode || isForwarding}
               chatId={chat.id}
+              projectId={chatProjectId}
               onTypingStart={handleTypingStart}
               onTypingStop={handleTypingStop}
               replyingTo={replyingTo}

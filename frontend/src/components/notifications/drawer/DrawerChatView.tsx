@@ -450,6 +450,7 @@ export default function DrawerChatView({
           onSendRich={handleSendRich}
           disabled={isSending || isLoading || isSelectMode}
           chatId={chatId}
+          projectId={chat?.project_id ?? null}
           onTypingStart={handleTypingStart}
           onTypingStop={handleTypingStop}
           participants={chat?.participants ?? []}

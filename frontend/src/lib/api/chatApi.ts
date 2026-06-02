@@ -22,12 +22,39 @@ import type { TiptapJSONContent } from '@/types/comment';
 
 // ==================== Chat Endpoints ====================
 
+const PROJECT_DRAFT_KEY_PREFIX = (projectId: number) => `chat_draft_v2_${projectId}_`;
+
+function pruneProjectChatDrafts(projectId: number, chats: Chat[]) {
+  if (typeof window === 'undefined') return;
+
+  const prefix = PROJECT_DRAFT_KEY_PREFIX(projectId);
+  const activeChatIds = new Set(chats.map((chat) => chat.id));
+
+  try {
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index);
+      if (!key?.startsWith(prefix)) continue;
+
+      const chatId = Number(key.slice(prefix.length));
+      if (!activeChatIds.has(chatId)) {
+        window.localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // localStorage can be unavailable in private browsing or restricted contexts.
+  }
+}
+
 /**
  * Get all chats for the current user, optionally filtered by project
  */
 export const getChats = async (params?: GetChatsParams): Promise<PaginatedResponse<Chat>> => {
   const response = await api.get('/api/chat/chats/', { params });
-  return response.data;
+  const data = response.data as PaginatedResponse<Chat>;
+  if (params?.project_id && !params.type && !params.offset && data.next === null) {
+    pruneProjectChatDrafts(params.project_id, data.results);
+  }
+  return data;
 };
 
 /**

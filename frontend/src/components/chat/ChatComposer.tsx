@@ -132,6 +132,8 @@ export interface ChatComposerProps {
   variant?: 'default' | 'drawer';
   /** Numeric chat id — used for localStorage draft key and typing events. */
   chatId?: number | null;
+  /** Project id scopes localStorage drafts so cleanup cannot delete another project's drafts. */
+  projectId?: number | null;
   onTypingStart?: () => void;
   onTypingStop?: () => void;
   replyingTo?: Message | null;
@@ -175,7 +177,11 @@ const EmojiPicker = dynamic(() => import('emoji-picker-react'), {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const DRAFT_KEY = (chatId: number) => `chat_draft_v1_${chatId}`;
+const LEGACY_DRAFT_KEY = (chatId: number) => `chat_draft_v1_${chatId}`;
+const PROJECT_DRAFT_KEY = (projectId: number, chatId: number) => `chat_draft_v2_${projectId}_${chatId}`;
+const DRAFT_KEY = (chatId: number, projectId?: number | null) => (
+  projectId ? PROJECT_DRAFT_KEY(projectId, chatId) : LEGACY_DRAFT_KEY(chatId)
+);
 type RecordingMode = 'audio' | 'video';
 type MediaDevicesWithDisplayMedia = MediaDevices & {
   getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
@@ -782,6 +788,7 @@ export default function ChatComposer({
   disabled = false,
   variant = 'default',
   chatId,
+  projectId,
   onTypingStart,
   onTypingStop,
   replyingTo,
@@ -938,7 +945,7 @@ export default function ChatComposer({
       // Persist draft to localStorage while the user types
       if (chatId) {
         try {
-          localStorage.setItem(DRAFT_KEY(chatId), JSON.stringify(ed.getJSON()));
+          localStorage.setItem(DRAFT_KEY(chatId, projectId), JSON.stringify(ed.getJSON()));
         } catch {
           // localStorage quota exceeded — silently ignore
         }
@@ -977,7 +984,16 @@ export default function ChatComposer({
   useEffect(() => {
     if (!editor || !chatId) return;
     try {
-      const saved = localStorage.getItem(DRAFT_KEY(chatId));
+      const draftKey = DRAFT_KEY(chatId, projectId);
+      let saved = localStorage.getItem(draftKey);
+      if (!saved && projectId) {
+        const legacyKey = LEGACY_DRAFT_KEY(chatId);
+        saved = localStorage.getItem(legacyKey);
+        if (saved) {
+          localStorage.setItem(draftKey, saved);
+          localStorage.removeItem(legacyKey);
+        }
+      }
       if (saved) {
         const doc = JSON.parse(saved) as TiptapJSONContent;
         editor.commands.setContent(doc, { emitUpdate: false });
@@ -988,11 +1004,14 @@ export default function ChatComposer({
       }
     } catch {
       // Corrupt draft — clear it
-      if (chatId) localStorage.removeItem(DRAFT_KEY(chatId));
+      if (chatId) {
+        localStorage.removeItem(DRAFT_KEY(chatId, projectId));
+        localStorage.removeItem(LEGACY_DRAFT_KEY(chatId));
+      }
     }
-  // We intentionally run this only when chatId changes (not on every editor reference change).
+  // We intentionally run this only when chat/project changes (not on every editor reference change).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatId]);
+  }, [chatId, projectId]);
 
   // ---- Disable / enable editor ----
   useEffect(() => {
@@ -1100,7 +1119,10 @@ export default function ChatComposer({
 
     // Clear draft
     if (chatId) {
-      try { localStorage.removeItem(DRAFT_KEY(chatId)); } catch { /* ignore */ }
+      try {
+        localStorage.removeItem(DRAFT_KEY(chatId, projectId));
+        localStorage.removeItem(LEGACY_DRAFT_KEY(chatId));
+      } catch { /* ignore */ }
     }
 
     const mention_ids = extractMentionIds(rich_body);
@@ -1119,6 +1141,7 @@ export default function ChatComposer({
     disabled,
     pendingAttachments,
     chatId,
+    projectId,
     replyingTo,
     stopTyping,
     onSendRich,
@@ -1155,7 +1178,10 @@ export default function ChatComposer({
     const resetT = new Date(Date.now() + 15 * 60 * 1000);
     setCustomScheduleTime(`${String(resetT.getHours()).padStart(2, '0')}:${String(resetT.getMinutes()).padStart(2, '0')}`);
     if (chatId) {
-      try { localStorage.removeItem(DRAFT_KEY(chatId)); } catch { /* ignore */ }
+      try {
+        localStorage.removeItem(DRAFT_KEY(chatId, projectId));
+        localStorage.removeItem(LEGACY_DRAFT_KEY(chatId));
+      } catch { /* ignore */ }
     }
 
     const mention_ids = extractMentionIds(rich_body);
@@ -1172,6 +1198,7 @@ export default function ChatComposer({
     disabled,
     pendingAttachments,
     chatId,
+    projectId,
     replyingTo,
     stopTyping,
     onScheduleSend,

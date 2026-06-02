@@ -4,8 +4,10 @@ from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.throttling import ScopedRateThrottle
 from core.models import Project, Organization, Team, TeamMember, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType, ChannelVisibility
 from chat.services import MessageService
@@ -441,6 +443,25 @@ class MessageAPITest(TestCase):
         # Verify message status was created for recipient
         msg_status = MessageStatus.objects.filter(message=message, user=self.user2)
         self.assertEqual(msg_status.count(), 1)
+
+    @patch('chat.tasks.notify_new_message.delay')
+    def test_send_message_is_scoped_throttled(self, mock_notify):
+        """Message writes should be rate-limited without throttling reads."""
+        cache.clear()
+        url = reverse('message-list')
+
+        with patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
+            'chat_message_write': '1/minute',
+            'chat_reaction': '120/minute',
+        }):
+            first = self.client.post(url, {'chat': self.chat.id, 'content': 'First'}, format='json')
+            second = self.client.post(url, {'chat': self.chat.id, 'content': 'Second'}, format='json')
+            read = self.client.get(url, {'chat_id': self.chat.id})
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(read.status_code, status.HTTP_200_OK)
+        mock_notify.assert_called_once()
 
     @patch('chat.tasks.notify_new_message.delay')
     def test_send_rich_message_with_mention_creates_chat_mention_notification(self, mock_notify):

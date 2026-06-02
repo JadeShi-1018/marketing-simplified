@@ -8,10 +8,12 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.throttling import ScopedRateThrottle
 from django.db.models import Q, Prefetch
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.core.cache import cache
+from django.conf import settings
 from datetime import datetime
 from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, ChannelVisibility, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
 from .serializers import (
@@ -684,12 +686,67 @@ class MessageViewSet(viewsets.ModelViewSet):
     
     permission_classes = [IsAuthenticated]
     serializer_class = MessageSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_action_scopes = {
+        'create': 'chat_message_write',
+        'forward_batch': 'chat_message_write',
+        'partial_update': 'chat_message_write',
+        'update': 'chat_message_write',
+        'destroy': 'chat_message_write',
+        'hide': 'chat_message_write',
+        'revoke': 'chat_message_write',
+        'react': 'chat_reaction',
+        'remove_reaction': 'chat_reaction',
+    }
+
+    def get_throttles(self):
+        self.throttle_scope = self.throttle_action_scopes.get(getattr(self, 'action', None))
+        if not self.throttle_scope:
+            return []
+        return super().get_throttles()
+
+    def _message_queryset(self):
+        thread_replies_for_summary = (
+            Message.objects
+            .select_related('sender')
+            .only(
+                'id',
+                'chat_id',
+                'parent_message_id',
+                'sender_id',
+                'created_at',
+                'sender__id',
+                'sender__username',
+                'sender__email',
+                'sender__avatar',
+            )
+            .order_by('created_at')
+        )
+        return Message.objects.select_related(
+            'sender',
+            'chat',
+            'chat__project',
+            'reply_to',
+            'reply_to__sender',
+            'forwarded_from_message',
+        ).prefetch_related(
+            'attachments',
+            'reply_to__attachments',
+            'mentions__mentioned_user',
+            'reactions__user',
+            'statuses',
+            Prefetch(
+                'thread_replies',
+                queryset=thread_replies_for_summary,
+                to_attr='_thread_replies_for_summary',
+            ),
+        )
     
     def get_queryset(self):
         """Get messages for a specific chat"""
         # For retrieve/detail actions, return all messages (permission checked in retrieve method)
         if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction', 'remind', 'cancel_remind', 'revoke', 'destroy', 'hide', 'partial_update', 'update', 'thread_replies', 'mark_thread_as_read']:
-            return Message.objects.all()
+            return self._message_queryset()
 
         # For list action, require chat_id
         chat_id = self.request.query_params.get('chat_id')
@@ -706,7 +763,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Message.objects.none()
 
         # Filter out messages hidden by current user
-        return Message.objects.filter(
+        return self._message_queryset().filter(
             chat_id=chat_id,
             is_deleted=False
         ).exclude(
@@ -1125,7 +1182,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         replies = (
             Message.objects.filter(parent_message=root, chat=root.chat)
             .select_related('sender', 'reply_to', 'reply_to__sender')
-            .prefetch_related('attachments', 'mentions')
+            .prefetch_related('attachments', 'mentions__mentioned_user', 'reactions__user')
             .order_by('created_at')
         )
 
@@ -1397,11 +1454,11 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def revoke(self, request, pk=None):
         """
-        Revoke a message (within 2 minutes of sending).
+        Revoke a message within the configured revoke window.
 
         Rules:
         - Only sender can revoke
-        - Must be within 2 minutes of sending
+        - Must be inside the configured revoke window
         - Cannot revoke already revoked message
         """
         from django.utils import timezone
@@ -1423,11 +1480,11 @@ class MessageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if within 2 minutes
-        time_limit = timezone.now() - timedelta(minutes=2)
+        revoke_window_minutes = settings.CHAT_REVOKE_WINDOW_MINUTES
+        time_limit = timezone.now() - timedelta(minutes=revoke_window_minutes)
         if message.created_at <= time_limit:
             return Response(
-                {'error': 'Message can only be revoked within 2 minutes of sending'},
+                {'error': f'Message can only be revoked within {revoke_window_minutes} minutes of sending'},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -2201,8 +2258,16 @@ def search_messages(request):
                 )
                 .order_by('-rank', '-created_at')
             )
-        except Exception:
+        except Exception as exc:
             # Fallback: icontains (e.g. search_vector not yet populated)
+            logger.warning(
+                "chat.search_fts_fallback",
+                extra={
+                    "user_id": request.user.id,
+                    "query_length": len(q),
+                    "exception_type": exc.__class__.__name__,
+                },
+            )
             qs = qs.filter(content__icontains=q).order_by('-created_at')
     else:
         # Filter-only search — no text constraint, order by recency
@@ -2244,7 +2309,13 @@ def search_messages(request):
     if date_before:
         qs = qs.filter(created_at__date__lte=date_before)
 
-    qs = qs.select_related('sender', 'chat', 'chat__project').prefetch_related('attachments')
+    qs = qs.select_related('sender', 'chat', 'chat__project').prefetch_related(
+        'attachments',
+        Prefetch(
+            'chat__participants',
+            queryset=ChatParticipant.objects.filter(is_active=True).select_related('user'),
+        ),
+    )
 
     total = qs.count()
     page = qs[offset: offset + limit]

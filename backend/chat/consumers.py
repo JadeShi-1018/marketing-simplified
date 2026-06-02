@@ -4,12 +4,14 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.cache import cache
 from .models import Chat, ChatParticipant, Message, MessageStatus
 from .services import OnlineStatusService, MessageService
 from .tasks import build_realtime_message_payload
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+TYPING_THROTTLE_SECONDS = 1
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -164,6 +166,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not chat_id:
             await self.send_error("chat_id is required")
             return
+
+        if not await self._allow_typing_event(chat_id, True):
+            return
         
         try:
             # Broadcast to all participants except sender
@@ -193,6 +198,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         if not chat_id:
             await self.send_error("chat_id is required")
+            return
+
+        if not await self._allow_typing_event(chat_id, False):
             return
         
         try:
@@ -354,6 +362,13 @@ class ChatConsumer(AsyncWebsocketConsumer):
             query = query.exclude(user_id=exclude_user_id)
         
         return list(query.values_list('user_id', flat=True))
+
+    def allow_typing_event(self, chat_id, is_typing):
+        cache_key = f"chat:typing:{self.user.id}:{chat_id}:{int(is_typing)}"
+        return cache.add(cache_key, True, timeout=TYPING_THROTTLE_SECONDS)
+
+    async def _allow_typing_event(self, chat_id, is_typing):
+        return await database_sync_to_async(self.allow_typing_event)(chat_id, is_typing)
     
     def mark_message_read(self, message_id):
         """Mark a message as read"""

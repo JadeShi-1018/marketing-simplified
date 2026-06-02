@@ -3,6 +3,7 @@ from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import transaction
 from django.utils import timezone
+from django.conf import settings
 import logging
 import os
 import subprocess
@@ -448,7 +449,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     def get_can_revoke(self, obj):
         """
         Check if the current user can revoke this message.
-        Rules: Must be sender, message must be within 2 minutes, and not already revoked.
+        Rules: Must be sender, message must be inside the revoke window, and not already revoked.
         """
         from django.utils import timezone
         from datetime import timedelta
@@ -468,8 +469,7 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
         if obj.is_revoked:
             return False
 
-        # Check if message is within 2 minutes
-        time_limit = timezone.now() - timedelta(minutes=2)
+        time_limit = timezone.now() - timedelta(minutes=settings.CHAT_REVOKE_WINDOW_MINUTES)
         return obj.created_at > time_limit
 
     def get_is_hidden_by_me(self, obj):
@@ -1596,7 +1596,11 @@ class MessageSearchResultSerializer(serializers.ModelSerializer):
         # For private chats, return the other participant's name
         request = self.context.get('request')
         if request:
-            other = chat.participants.exclude(user=request.user).select_related('user').first()
+            prefetched = getattr(chat, '_prefetched_objects_cache', {}).get('participants')
+            if prefetched is not None:
+                other = next((participant for participant in prefetched if participant.user_id != request.user.id), None)
+            else:
+                other = chat.participants.exclude(user=request.user).select_related('user').first()
             if other:
                 return other.user.username or other.user.email or 'Direct Message'
         return 'Direct Message'
