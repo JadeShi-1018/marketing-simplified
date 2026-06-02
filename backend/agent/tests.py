@@ -1560,3 +1560,93 @@ class ChatViewUserContextNormalizationTests(APITestCase):
         b''.join(response.streaming_content)
         _, kwargs = mock_instance.handle_message.call_args
         self.assertEqual(kwargs.get('user_context'), 'Focus on ROAS')
+
+
+class OrchestratorUserContextThreadingTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Orch Org', slug='orch-org')
+        self.user = CustomUser.objects.create_user(
+            email='orch@test.com', username='orchuser', password='pass',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Orch Project', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(
+            user=self.user, project=self.project,
+        )
+
+    @patch('agent.services._run_analysis')
+    @patch('agent.services.file_parser.parse_file_to_json')
+    @patch('agent.services.data_service._get_csv_dir')
+    @patch('os.path.isfile')
+    def test_start_workflow_stores_user_context_on_run(
+        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis
+    ):
+        from agent.models import ImportedCSVFile, AgentWorkflowDefinition, AgentWorkflowStep
+        from agent.services import AgentOrchestrator
+
+        mock_isfile.return_value = True
+        mock_csv_dir.return_value = '/tmp'
+        mock_parse.return_value = {'name': 'test.csv', 'sheets': []}
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        csv_file = ImportedCSVFile.objects.create(
+            filename='test.csv',
+            original_filename='test.csv',
+            user=self.user,
+            project=self.project,
+        )
+
+        wf = AgentWorkflowDefinition.objects.create(
+            name='Test WF', is_default=True, is_system=True, status='active',
+        )
+        AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+
+        orch = AgentOrchestrator(user=self.user, project=self.project, session=self.session)
+        list(orch.handle_message(
+            '', file_id=str(csv_file.id), user_context='Focus on ROAS efficiency',
+        ))
+
+        from agent.models import AgentWorkflowRun
+        run = AgentWorkflowRun.objects.filter(session=self.session).latest('created_at')
+        self.assertEqual(run.user_context, 'Focus on ROAS efficiency')
+
+    @patch('agent.services._run_analysis')
+    @patch('agent.services.file_parser.parse_file_to_json')
+    @patch('agent.services.data_service._get_csv_dir')
+    @patch('os.path.isfile')
+    def test_start_workflow_stores_empty_string_when_context_none(
+        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis
+    ):
+        from agent.models import ImportedCSVFile, AgentWorkflowDefinition, AgentWorkflowStep
+        from agent.services import AgentOrchestrator
+
+        mock_isfile.return_value = True
+        mock_csv_dir.return_value = '/tmp'
+        mock_parse.return_value = {'name': 'test.csv', 'sheets': []}
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        csv_file = ImportedCSVFile.objects.create(
+            filename='test2.csv',
+            original_filename='test2.csv',
+            user=self.user,
+            project=self.project,
+        )
+
+        wf = AgentWorkflowDefinition.objects.create(
+            name='Test WF2', is_default=True, is_system=True, status='active',
+        )
+        AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+
+        orch = AgentOrchestrator(user=self.user, project=self.project, session=self.session)
+        list(orch.handle_message('', file_id=str(csv_file.id), user_context=None))
+
+        from agent.models import AgentWorkflowRun
+        run = AgentWorkflowRun.objects.filter(session=self.session).latest('created_at')
+        self.assertEqual(run.user_context, '')

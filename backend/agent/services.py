@@ -718,7 +718,7 @@ class AgentOrchestrator:
                        action=None, file_id=None, calendar_context=None,
                        workflow_id=None, column_mapping=None,
                        approval_id=None, approval_decision=None,
-                       approval_draft=None):
+                       approval_draft=None, user_context=None):
         """Main entry point. Routes calendar context first, then workflow engine or legacy logic.
 
         Yields SSE chunks as dicts.
@@ -824,6 +824,7 @@ class AgentOrchestrator:
                     file_id=file_id,
                     spreadsheet_id=spreadsheet_id,
                     csv_filename=csv_filename,
+                    user_context=user_context,
                 )
                 yield {"type": "done"}
                 return
@@ -1547,7 +1548,7 @@ class AgentOrchestrator:
         return {}
 
     def _start_workflow(self, workflow_def, file_id=None, spreadsheet_id=None,
-                        csv_filename=None):
+                        csv_filename=None, user_context=None):
         """Create a new WorkflowRun and execute steps."""
         input_data = self._prepare_input_data(
             file_id=file_id,
@@ -1561,6 +1562,7 @@ class AgentOrchestrator:
             status='analyzing',
             current_step_order=1,
             spreadsheet=input_data.get('spreadsheet'),
+            user_context=user_context or '',
         )
 
         yield from self._execute_steps(workflow_run, input_data)
