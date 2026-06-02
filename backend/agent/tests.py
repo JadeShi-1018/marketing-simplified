@@ -1458,3 +1458,37 @@ class ColumnDetectionTests(TestCase):
         self.assertIn('done', types)
         # The normalize step should have emitted a text event
         self.assertIn('text', types)
+
+
+class ChatInputSerializerUserContextTests(TestCase):
+    def test_user_context_absent_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello'})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_user_context_blank_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': ''})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_user_context_null_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': None})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_user_context_valid_string(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': 'Focus on ROAS'})
+        self.assertTrue(s.is_valid(), s.errors)
+        self.assertEqual(s.validated_data['user_context'], 'Focus on ROAS')
+
+    def test_user_context_exceeds_500_chars_is_invalid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': 'x' * 501})
+        self.assertFalse(s.is_valid())
+        self.assertIn('user_context', s.errors)
+
+    def test_user_context_exactly_500_chars_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': 'x' * 500})
+        self.assertTrue(s.is_valid(), s.errors)
