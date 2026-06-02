@@ -29,17 +29,26 @@ export function useForwardMessages() {
           toast.error('Forward failed. No messages were sent.');
         }
 
+        const { addMessage, addChat, updateChat } = useChatStore.getState();
+
         if (response.created_messages?.length) {
-          const { addMessage } = useChatStore.getState();
           for (const msg of response.created_messages) {
             addMessage(msg.chat_id, msg);
           }
         } else if (resolved.target_chat_ids.length) {
-          const { updateChat } = useChatStore.getState();
           await Promise.allSettled(
             resolved.target_chat_ids.map(async (chatId) => {
               const updated = await getChat(chatId);
               updateChat(chatId, { last_message: updated.last_message });
+            })
+          );
+        }
+
+        if (resolved.created_private_chat_ids.length) {
+          await Promise.allSettled(
+            resolved.created_private_chat_ids.map(async (chatId) => {
+              const newChat = await getChat(chatId);
+              addChat(newChat);
             })
           );
         }

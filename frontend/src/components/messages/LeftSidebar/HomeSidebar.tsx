@@ -541,6 +541,7 @@ export default function HomeSidebar({
   onOpenChannelDetails,
 }: HomeSidebarProps) {
   const currentUserId = useAuthStore((s) => (s.user?.id ? Number(s.user.id) : null));
+  const currentUsername = useAuthStore((s) => s.user?.username ?? null);
 
   // ---- custom sidebar sections ----
   const {
@@ -650,12 +651,22 @@ export default function HomeSidebar({
       if (chat.type !== 'private') return limitName(chat.name || 'Group chat', MAX_CHANNEL_NAME_LENGTH);
       if (!currentUserId) return chat.name || 'Direct message';
 
-      const other = chat.participants?.find((p) => p.user.id !== currentUserId);
+      const other = chat.participants?.find((p) => Number(p.user.id) !== Number(currentUserId));
       const otherUser = other?.user;
       const isBot =
         otherUser?.email === 'agent-bot@system.local' || otherUser?.username === 'agent-bot';
       if (isBot) return 'AI Agent';
-      return otherUser?.username || chat.name || 'Direct message';
+      if (!otherUser) return chat.name || currentUsername || 'Yourself';
+      return otherUser.username;
+    },
+    [currentUserId, currentUsername]
+  );
+
+  const isChatSelf = useCallback(
+    (chat: Chat): boolean => {
+      if (chat.type !== 'private' || !currentUserId) return false;
+      const other = chat.participants?.find((p) => Number(p.user.id) !== Number(currentUserId));
+      return !other;
     },
     [currentUserId]
   );
@@ -909,6 +920,7 @@ export default function HomeSidebar({
                     isActive={chat.id === currentChatId}
                     displayName={rowDisplayName(chat)}
                     isBot={isChatAgentBot(chat)}
+                    isSelf={isChatSelf(chat)}
                     currentUserId={currentUserId}
                     onClick={() => onSelectChat(chat.id)}
                     showStarToggle
@@ -1080,6 +1092,7 @@ export default function HomeSidebar({
                     isActive={chat.id === currentChatId}
                     displayName={rowDisplayName(chat)}
                     isBot={isChatAgentBot(chat)}
+                    isSelf={isChatSelf(chat)}
                     currentUserId={currentUserId}
                     onClick={() => onSelectChat(chat.id)}
                     showStarToggle={showHome}

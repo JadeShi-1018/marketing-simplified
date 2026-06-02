@@ -11,6 +11,7 @@ interface SidebarChatRowProps {
   isActive: boolean;
   displayName: string;
   isBot?: boolean;
+  isSelf?: boolean;
   currentUserId: number | null;
   onClick: () => void;
   // Star toggle (Home view only)
@@ -90,6 +91,7 @@ export default function SidebarChatRow({
   isActive,
   displayName,
   isBot,
+  isSelf,
   currentUserId,
   onClick,
   showStarToggle,
@@ -157,7 +159,9 @@ export default function SidebarChatRow({
           ].join(' ')}
         >
           {chat.type === 'private' && !isBot ? (
-            <User className="h-4 w-4" />
+            isSelf
+              ? <User className="h-4 w-4 text-[#3CCED7]" />
+              : <User className="h-4 w-4" />
           ) : (
             <Icon className="h-4 w-4" />
           )}
