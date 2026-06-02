@@ -1089,9 +1089,9 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'message', 'file_type', 'file_url', 'thumbnail_url',
             'file_size', 'file_size_display', 'original_filename',
-            'mime_type', 'transcript', 'created_at'
+            'mime_type', 'created_at'
         ]
-        read_only_fields = ['id', 'transcript', 'created_at']
+        read_only_fields = ['id', 'created_at']
     
     def get_file_url(self, obj):
         """Return the full URL for the file"""

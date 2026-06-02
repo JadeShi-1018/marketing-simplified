@@ -3,7 +3,6 @@
 All LLM inference in the agent pipeline now goes through this module.
 The endpoint and key are read from settings / environment variables.
 """
-import base64
 import json
 import logging
 import os
@@ -217,72 +216,3 @@ def call_gemini_json(
             raise RuntimeError(
                 "Gemini returned malformed output. Please retry generation."
             ) from exc
-
-
-def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/webm", timeout: int = 120) -> str:
-    """
-    Transcribe audio using Gemini's multimodal audio understanding.
-
-    Args:
-        audio_bytes: Raw audio file bytes.
-        mime_type:   MIME type of the audio (e.g. "audio/webm", "audio/mp4", "audio/mpeg").
-        timeout:     Request timeout in seconds.
-
-    Returns:
-        The transcript as a plain string.  Empty string if Gemini returns nothing.
-
-    Raises:
-        RuntimeError: If GEMINI_API_KEY is not set or the HTTP request fails.
-    """
-    api_key = _get_api_key()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not configured")
-
-    # Use generateContent (non-streaming) — simpler for binary inline data.
-    url = f"{_GEMINI_BASE}/{GEMINI_MODEL}:generateContent?key={api_key}"
-
-    audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
-
-    body = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "inlineData": {
-                            "mimeType": mime_type,
-                            "data": audio_b64,
-                        }
-                    },
-                    {
-                        "text": (
-                            "Please transcribe this audio clip exactly as spoken. "
-                            "Return only the transcript text — no labels, no timestamps, "
-                            "no commentary.  If the audio is silent or inaudible, "
-                            "return an empty string."
-                        )
-                    },
-                ],
-            }
-        ],
-        "generationConfig": {"temperature": 0},
-    }
-
-    logger.info(
-        "Transcribing audio via Gemini model=%s mime=%s size=%d bytes",
-        GEMINI_MODEL,
-        mime_type,
-        len(audio_bytes),
-    )
-
-    response = requests.post(url, json=body, timeout=timeout)
-    response.raise_for_status()
-
-    data = response.json()
-    parts = []
-    for candidate in data.get("candidates", []):
-        for part in candidate.get("content", {}).get("parts", []):
-            text = part.get("text", "")
-            if text:
-                parts.append(text)
-    return "".join(parts).strip()

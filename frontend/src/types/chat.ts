@@ -78,8 +78,6 @@ export interface MessageAttachment {
   file_size_display: string;
   original_filename: string;
   mime_type: string;
-  /** AI-generated transcript for audio attachments. Null = not yet generated. */
-  transcript?: string | null;
   created_at: string;
 }
 

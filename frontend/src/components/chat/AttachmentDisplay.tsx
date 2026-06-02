@@ -12,11 +12,8 @@ import {
   MoreVertical,
   Pause,
   Play,
-  Captions,
-  Loader2,
 } from 'lucide-react';
 import type { MessageAttachment } from '@/types/chat';
-import { transcribeAttachment } from '@/lib/api/attachmentApi';
 
 interface AttachmentDisplayProps {
   attachments: MessageAttachment[];
@@ -93,7 +90,6 @@ function VoiceMessagePlayer({
   onDownload: (attachment: MessageAttachment) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const transcriptPanelRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -114,23 +110,6 @@ function VoiceMessagePlayer({
   }, [showMenu]);
   const [waveformBars, setWaveformBars] = useState<number[]>(FALLBACK_WAVEFORM_BARS);
 
-  // Transcript: seed from attachment.transcript (cached server-side), then allow on-demand generation.
-  const [transcript, setTranscript] = useState<string | null>(attachment.transcript ?? null);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
-  const [transcriptError, setTranscriptError] = useState<string | null>(null);
-
-  // Scroll the transcript panel into view whenever it becomes visible.
-  useEffect(() => {
-    if (transcriptOpen) {
-      // rAF gives the browser one frame to paint the panel before we scroll.
-      const id = requestAnimationFrame(() => {
-        transcriptPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      });
-      return () => cancelAnimationFrame(id);
-    }
-  }, [transcriptOpen]);
-
   // Generate the real waveform from the audio file once per URL.
   useEffect(() => {
     let cancelled = false;
@@ -139,26 +118,6 @@ function VoiceMessagePlayer({
     });
     return () => { cancelled = true; };
   }, [attachment.file_url]);
-
-  const handleTranscript = async () => {
-    // If we already have one, just toggle visibility.
-    if (transcript !== null) {
-      setTranscriptOpen((prev) => !prev);
-      return;
-    }
-    // Generate for the first time.
-    setTranscriptOpen(true);
-    setTranscriptLoading(true);
-    setTranscriptError(null);
-    try {
-      const text = await transcribeAttachment(attachment.id);
-      setTranscript(text);
-    } catch {
-      setTranscriptError('Could not generate transcript. Please try again.');
-    } finally {
-      setTranscriptLoading(false);
-    }
-  };
 
   const progress = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
   const playedBars = Math.round(progress * waveformBars.length);
@@ -257,7 +216,7 @@ function VoiceMessagePlayer({
             aria-valuemax={duration || 1}
             aria-valuenow={currentTime}
             tabIndex={0}
-            className="flex h-8 w-full cursor-pointer items-center gap-[2px]"
+            className="flex h-8 w-full cursor-pointer items-center justify-between gap-[2px]"
             onClick={handleWaveformClick}
             onKeyDown={(e) => {
               const audio = audioRef.current;
@@ -279,7 +238,7 @@ function VoiceMessagePlayer({
           </div>
 
           {/* Time + speed — below the waveform, never overlaps */}
-          <div className="flex items-center gap-1 mt-0.5">
+          <div className="mt-0.5 flex items-center gap-1">
             <span className="text-[11px] font-semibold tabular-nums text-gray-500">
               {displayTime}
             </span>
@@ -298,31 +257,11 @@ function VoiceMessagePlayer({
 
         {/* Right actions */}
         <div className="flex shrink-0 items-center">
-          {/* Transcript button */}
-          <button
-            type="button"
-            onClick={handleTranscript}
-            disabled={transcriptLoading}
-            className={[
-              'rounded-md p-1 transition',
-              transcriptOpen
-                ? 'bg-sky-50 text-sky-600 hover:bg-sky-100'
-                : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700',
-              transcriptLoading ? 'cursor-wait opacity-60' : '',
-            ].join(' ')}
-            aria-label="Generate transcript"
-            title="Generate transcript"
-          >
-            {transcriptLoading
-              ? <Loader2 className="h-4 w-4 animate-spin" />
-              : <Captions className="h-4 w-4" />}
-          </button>
-
           <div ref={menuRef} className="relative">
             <button
               type="button"
               onClick={() => setShowMenu((prev) => !prev)}
-              className="rounded-md p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+              className="rounded-full p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
               aria-label="Audio clip actions"
               title="Audio clip actions"
             >
@@ -356,24 +295,6 @@ function VoiceMessagePlayer({
           </div>
         </div>
       </div>
-
-      {/* Transcript panel */}
-      {transcriptOpen && (
-        <div ref={transcriptPanelRef} className="border-t border-gray-100 px-4 py-3">
-          {transcriptLoading ? (
-            <div className="flex items-center gap-2 text-sm text-gray-400">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Generating transcript…
-            </div>
-          ) : transcriptError ? (
-            <p className="text-sm text-red-500">{transcriptError}</p>
-          ) : transcript ? (
-            <p className="text-sm leading-relaxed text-gray-700">{transcript}</p>
-          ) : (
-            <p className="text-sm italic text-gray-400">No speech detected.</p>
-          )}
-        </div>
-      )}
     </div>
   );
 }

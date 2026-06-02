@@ -116,20 +116,6 @@ export async function deleteAttachment(attachmentId: number): Promise<void> {
   await api.delete(`/api/chat/attachments/${attachmentId}/`);
 }
 
-/**
- * Request an AI-generated transcript for an audio attachment.
- * The backend generates it once and caches it; subsequent calls return instantly.
- * Uses a generous 90 s timeout because Gemini transcription can take 10–30 s.
- */
-export async function transcribeAttachment(attachmentId: number): Promise<string> {
-  const response = await api.post(
-    `/api/chat/attachments/${attachmentId}/transcribe/`,
-    undefined,
-    { timeout: 90_000 },
-  );
-  return (response.data as { transcript: string }).transcript;
-}
-
 export async function listAccessibleChatFiles(params: {
   projectId: number;
   page?: number;
@@ -183,7 +169,6 @@ export default {
   uploadAttachment,
   getAttachment,
   deleteAttachment,
-  transcribeAttachment,
   listAccessibleChatFiles,
   validateFile,
   getFileTypeFromMime,

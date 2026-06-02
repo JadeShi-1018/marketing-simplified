@@ -52,7 +52,7 @@ function MissingForwardedAttachmentCard({ item }: { item: MissingForwardedAttach
         <div className="min-w-0 flex-1">
           {isAudioLike ? (
             /* Ghost waveform matching compact player layout */
-            <div className="flex h-8 items-center gap-[2px] opacity-40">
+            <div className="flex h-8 w-full items-center justify-between gap-[2px] opacity-40">
               {Array.from({ length: 40 }).map((_, index) => (
                 <span
                   key={`missing-wave-${item.id}-${index}`}
@@ -70,6 +70,10 @@ function MissingForwardedAttachmentCard({ item }: { item: MissingForwardedAttach
           )}
           <p className="mt-0.5 text-[11px] text-gray-400">Deleted</p>
         </div>
+
+        {isAudioLike && (
+          <div className="flex h-7 w-7 shrink-0" aria-hidden="true" />
+        )}
       </div>
     </div>
   );
