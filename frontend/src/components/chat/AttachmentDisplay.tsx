@@ -374,13 +374,13 @@ export default function AttachmentDisplay({
         return (
           <div 
             key={attachment.id}
-            className="relative group cursor-pointer"
+            className="relative inline-block max-w-full cursor-pointer align-top group"
             onClick={() => setLightboxImage(attachment.file_url)}
           >
             <img
               src={attachment.file_url}
               alt={attachment.original_filename}
-              className="max-w-full max-h-64 rounded-lg object-cover shadow-sm"
+              className="block max-h-64 max-w-full rounded-lg object-cover shadow-sm"
               loading="lazy"
             />
             <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all rounded-lg flex items-center justify-center">

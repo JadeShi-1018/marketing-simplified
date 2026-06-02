@@ -194,6 +194,11 @@ export default function MessageItem({
   const forwardedFrom = message.forwarded_from?.sender_display?.trim() || '';
   const hasContent = !isDeleted && Boolean(messageContent.trim());
   const hasAttachments = !isDeleted && Boolean(message.attachments?.length);
+  const hasImageAttachment = !isDeleted && Boolean(
+    message.attachments?.some((attachment) =>
+      attachment.file_type === 'image' || attachment.mime_type?.toLowerCase().startsWith('image/')
+    )
+  );
   const missingForwardedAttachments = message.missing_forwarded_attachments ?? [];
   const hasReplyTo = !isDeleted && Boolean(message.reply_to?.id);
   const replyToAttachment = message.reply_to?.attachments?.[0] ?? null;
@@ -300,7 +305,7 @@ export default function MessageItem({
           ? 'bg-amber-50/40 scroll-mt-24'
           : isThreadActive
             ? 'bg-teal-50/40'
-            : isHovering
+            : isHovering && !hasImageAttachment
               ? 'bg-gray-50 ring-1 ring-gray-200 rounded-md'
               : '',
         isSelectMode ? 'relative pl-8' : '',
