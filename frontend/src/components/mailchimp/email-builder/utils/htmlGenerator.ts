@@ -707,6 +707,29 @@ function generateSocialHTML(block: CanvasBlock): string {
   return `<div data-block-type="Social" style="${combinedWrapperStyle}"><div style="${listStyle}">${linkItems}</div></div>`;
 }
 
+function generateLayoutHTML(block: CanvasBlock): string {
+  const columns = block.columns || 1;
+  const columnsWidths =
+    block.columnsWidths ||
+    Array.from({ length: columns }, () => Math.floor(12 / columns));
+  const columnRatio = block.columnRatio || "Equal";
+  const mobileContentOrientation =
+    block.mobileContentOrientation || "Stack left";
+
+  const attrs = [
+    `data-block-type="Layout"`,
+    `data-columns="${columns}"`,
+    `data-columns-widths="${columnsWidths.join(",")}"`,
+    `data-column-ratio="${escapeHtml(columnRatio)}"`,
+    `data-mobile-orientation="${escapeHtml(mobileContentOrientation)}"`,
+  ].join(" ");
+
+  const blockStyles = getBlockBoxStyles(block.layoutBlockStyles);
+  const styleAttr = blockStyles ? ` style="${blockStyles}"` : "";
+
+  return `<div ${attrs}${styleAttr}><div class="layout-container"></div></div>`;
+}
+
 /**
  * Generate HTML for a single block
  */
@@ -729,8 +752,7 @@ export function generateBlockHTML(block: CanvasBlock): string {
     case "Social":
       return generateSocialHTML(block);
     case "Layout":
-      // Layout blocks don't render themselves
-      return "";
+      return generateLayoutHTML(block);
     default:
       return `<div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; text-align: center; color: #6b7280; font-size: 14px;">${escapeHtml(
         block.label || block.type

@@ -40,6 +40,8 @@ export const useUndoRedo = <T,>({
     history: [cloneState(initialSnapshotRef.current)],
     future: [],
   }));
+  const stackRef = useRef(stack);
+  stackRef.current = stack;
 
   const saveSnapshot = useCallback(
     (state: T) => {
@@ -55,56 +57,60 @@ export const useUndoRedo = <T,>({
         if (nextHistory.length > capacity) {
           nextHistory.shift();
         }
-        return { history: nextHistory, future: [] };
+        const nextStack = { history: nextHistory, future: [] as T[] };
+        stackRef.current = nextStack;
+        return nextStack;
       });
     },
     [capacity]
   );
 
   const undo = useCallback((): T | null => {
-    let snapshot: T | null = null;
-    setStack((prev) => {
-      if (prev.history.length <= 1) {
-        return prev;
-      }
-      const nextHistory = [...prev.history];
-      const current = nextHistory.pop();
-      if (!current) {
-        return prev;
-      }
-      const previous = nextHistory[nextHistory.length - 1];
-      snapshot = cloneState(previous);
-      return {
-        history: nextHistory,
-        future: [cloneState(current), ...prev.future],
-      };
-    });
+    const prev = stackRef.current;
+    if (prev.history.length <= 1) {
+      return null;
+    }
+    const nextHistory = [...prev.history];
+    const current = nextHistory.pop();
+    if (!current) {
+      return null;
+    }
+    const previous = nextHistory[nextHistory.length - 1];
+    const snapshot = cloneState(previous);
+    const nextStack = {
+      history: nextHistory,
+      future: [cloneState(current), ...prev.future],
+    };
+    stackRef.current = nextStack;
+    setStack(nextStack);
     return snapshot;
   }, []);
 
   const redo = useCallback((): T | null => {
-    let snapshot: T | null = null;
-    setStack((prev) => {
-      if (prev.future.length === 0) {
-        return prev;
-      }
-      const [next, ...restFuture] = prev.future;
-      snapshot = cloneState(next);
-      return {
-        history: [...prev.history, cloneState(next)],
-        future: restFuture,
-      };
-    });
+    const prev = stackRef.current;
+    if (prev.future.length === 0) {
+      return null;
+    }
+    const [next, ...restFuture] = prev.future;
+    const snapshot = cloneState(next);
+    const nextStack = {
+      history: [...prev.history, cloneState(next)],
+      future: restFuture,
+    };
+    stackRef.current = nextStack;
+    setStack(nextStack);
     return snapshot;
   }, []);
 
   const reset = useCallback((state: T) => {
     const cloned = cloneState(state);
     initialSnapshotRef.current = cloned;
-    setStack({
+    const nextStack = {
       history: [cloned],
-      future: [],
-    });
+      future: [] as T[],
+    };
+    stackRef.current = nextStack;
+    setStack(nextStack);
   }, []);
 
   const canUndo = stack.history.length > 1;

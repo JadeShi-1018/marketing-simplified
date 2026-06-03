@@ -87,9 +87,8 @@ function extractSpacingFromAttr(html: string): Record<string, string> | null {
  * Parse Heading HTML to CanvasBlock
  */
 function parseHeadingBlock(html: string, blockId: string): CanvasBlock {
-  // Extract content and styles from h2 tag
-  const h2Match = html.match(/<h2[^>]*style="([^"]*)"[^>]*>(.*?)<\/h2>/i);
-  if (!h2Match) {
+  const headingMatch = html.match(/<h[1-3]\b([^>]*)>([\s\S]*?)<\/h[1-3]>/i);
+  if (!headingMatch) {
     return {
       id: blockId,
       type: "Heading",
@@ -99,8 +98,9 @@ function parseHeadingBlock(html: string, blockId: string): CanvasBlock {
     };
   }
 
-  const styleStr = h2Match[1];
-  let contentHtml = h2Match[2];
+  const attrs = headingMatch[1];
+  let contentHtml = headingMatch[2];
+  const styleStr = attrs.match(/style="([^"]*)"/i)?.[1] || "";
   const styles = parseInlineStyles(styleStr);
 
   let textLinkType: "Web" | "Email" | "Phone" | undefined;
@@ -222,7 +222,7 @@ function parseHeadingBlock(html: string, blockId: string): CanvasBlock {
  */
 function parseParagraphBlock(html: string, blockId: string): CanvasBlock {
   // Extract content and styles from p tag
-  const pMatch = html.match(/<p[^>]*style="([^"]*)"[^>]*>(.*?)<\/p>/i);
+  const pMatch = html.match(/<p[^>]*style="([^"]*)"[^>]*>([\s\S]*?)<\/p>/i);
   if (!pMatch) {
     return {
       id: blockId,
@@ -693,12 +693,14 @@ function detectBlockType(html: string): string {
   if (html.includes("border-top-style") || html.includes("border-top-width")) {
     return "Divider";
   }
-  if (
-    html.includes("height:") &&
-    !html.includes("<img") &&
-    !html.includes("<button")
-  ) {
-    return "Spacer";
+  if (html.includes("<p")) {
+    if (
+      html.includes("text-transform: uppercase") ||
+      html.includes("text-transform:uppercase")
+    ) {
+      return "Logo";
+    }
+    return "Paragraph";
   }
   if (
     html.includes("Social Links") ||
@@ -706,17 +708,64 @@ function detectBlockType(html: string): string {
   ) {
     return "Social";
   }
-  if (html.includes("<p")) {
-    // Check if it's a paragraph or logo
-    if (
-      html.includes("text-transform: uppercase") ||
-      html.includes("letter-spacing")
-    ) {
-      return "Logo";
-    }
-    return "Paragraph";
+  if (
+    /(?<![a-z-])height\s*:/i.test(html) &&
+    !html.includes("<img") &&
+    !html.includes("<button")
+  ) {
+    return "Spacer";
   }
   return "Paragraph"; // Default fallback
+}
+
+function parseLayoutBlock(html: string, blockId: string): CanvasBlock {
+  const columnsMatch = html.match(/data-columns="(\d+)"/i);
+  const columns = columnsMatch ? parseInt(columnsMatch[1], 10) : 1;
+
+  const widthsMatch = html.match(/data-columns-widths="([^"]+)"/i);
+  let columnsWidths: number[];
+  if (widthsMatch) {
+    columnsWidths = widthsMatch[1]
+      .split(",")
+      .map((value) => parseInt(value.trim(), 10))
+      .filter((value) => !Number.isNaN(value));
+  } else {
+    const baseWidth = Math.floor(12 / columns);
+    const remainder = 12 % columns;
+    columnsWidths = Array(columns).fill(baseWidth);
+    for (let i = 0; i < remainder; i++) {
+      columnsWidths[i]++;
+    }
+  }
+
+  const ratioMatch = html.match(/data-column-ratio="([^"]+)"/i);
+  const columnRatio =
+    (ratioMatch?.[1] as CanvasBlock["columnRatio"]) || "Equal";
+
+  const orientationMatch = html.match(/data-mobile-orientation="([^"]+)"/i);
+  const mobileContentOrientation =
+    (orientationMatch?.[1] as CanvasBlock["mobileContentOrientation"]) ||
+    "Stack left";
+
+  let layoutBlockStyles: BlockBoxStyles | undefined;
+  const wrapperMatch = html.match(
+    /<div[^>]*data-block-type="Layout"[^>]*style="([^"]*)"[^>]*>/i,
+  );
+  if (wrapperMatch) {
+    layoutBlockStyles = extractBlockBoxStyles(parseInlineStyles(wrapperMatch[1]));
+  }
+
+  return {
+    id: blockId,
+    type: "Layout",
+    label: "Layout",
+    content: "",
+    columns,
+    columnsWidths,
+    columnRatio,
+    mobileContentOrientation,
+    ...(layoutBlockStyles ? { layoutBlockStyles } : {}),
+  };
 }
 
 /**
@@ -803,6 +852,8 @@ function parseHTMLToBlock(html: string, blockId: string): CanvasBlock | null {
       return parseLogoBlock(html, blockId);
     case "Social":
       return parseSocialBlock(html, blockId);
+    case "Layout":
+      return parseLayoutBlock(html, blockId);
     default:
       // Default to paragraph if unknown
       return parseParagraphBlock(html, blockId);
