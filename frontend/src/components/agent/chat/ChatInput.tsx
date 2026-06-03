@@ -2,12 +2,14 @@
 
 import { useEffect, useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { Paperclip, Send, X, FileSpreadsheet } from "lucide-react"
+import { Paperclip, Send, X, FileSpreadsheet, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 const ACCEPTED_TYPES = ".csv,.xlsx,.xls"
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024
 const MOBILE_QUERY = "(max-width: 640px)"
+const CONTEXT_MAX = 500
+const CONTEXT_WARN = 400
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -16,8 +18,8 @@ function formatFileSize(bytes: number): string {
 }
 
 interface ChatInputProps {
-  onSend: (message: string) => void
-  onFileUpload: (file: File) => void
+  onSend: (message: string, context?: string) => void
+  onFileUpload: (file: File, context?: string) => void
   disabled?: boolean
   placeholder?: string
   helperText?: string
@@ -28,41 +30,37 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
   const [isMobile, setIsMobile] = useState(false)
+  const [contextExpanded, setContextExpanded] = useState(false)
+  const [contextText, setContextText] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const contextRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_QUERY)
-    const updateIsMobile = () => setIsMobile(media.matches)
-    updateIsMobile()
-    media.addEventListener("change", updateIsMobile)
-    return () => media.removeEventListener("change", updateIsMobile)
+    const update = () => setIsMobile(media.matches)
+    update()
+    media.addEventListener("change", update)
+    return () => media.removeEventListener("change", update)
   }, [])
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-
-    // Validate extension explicitly (browser accept can be bypassed)
     const ext = file.name.split(".").pop()?.toLowerCase()
     const allowedExts = ["csv", "xlsx", "xls"]
     if (!ext || !allowedExts.includes(ext)) {
-      setFileError(
-        `Unsupported file type "${ext ? `.${ext}` : "unknown"}". Accepted formats: CSV, XLSX, XLS`
-      )
+      setFileError(`Unsupported file type "${ext ? `.${ext}` : "unknown"}". Accepted formats: CSV, XLSX, XLS`)
       if (fileInputRef.current) fileInputRef.current.value = ""
       return
     }
-
     if (file.size > MAX_FILE_SIZE) {
       setFileError(`File too large (${formatFileSize(file.size)}). Maximum size: 10 MB`)
       if (fileInputRef.current) fileInputRef.current.value = ""
       return
     }
-
     setFileError(null)
     setSelectedFile(file)
-    // Reset input so same file can be re-selected
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
@@ -71,19 +69,29 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
     setFileError(null)
   }
 
+  const getContext = () => contextExpanded ? contextText.trim() || undefined : undefined
+
+  const resetAfterSend = () => {
+    setContextText("")
+    setContextExpanded(false)
+  }
+
   const handleSubmit = () => {
     if (disabled) return
+    const ctx = getContext()
 
     if (selectedFile) {
-      onFileUpload(selectedFile)
+      onFileUpload(selectedFile, ctx)
       setSelectedFile(null)
       setInput("")
+      resetAfterSend()
       return
     }
 
     if (input.trim()) {
-      onSend(input.trim())
+      onSend(input.trim(), ctx)
       setInput("")
+      resetAfterSend()
     }
   }
 
@@ -94,13 +102,26 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
     }
   }
 
-  // Auto-resize textarea
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
-    const textarea = e.target
-    textarea.style.height = "auto"
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`
+    const ta = e.target
+    ta.style.height = "auto"
+    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
   }
+
+  const handleContextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value.slice(0, CONTEXT_MAX)
+    setContextText(val)
+    const ta = e.target
+    ta.style.height = "auto"
+    ta.style.height = `${Math.min(ta.scrollHeight, 72)}px`
+  }
+
+  const counterColor = contextText.length >= CONTEXT_MAX
+    ? "text-red-500"
+    : contextText.length >= CONTEXT_WARN
+    ? "text-orange-400"
+    : "text-muted-foreground"
 
   const canSubmit = !disabled && (input.trim() || selectedFile)
   const inputPlaceholder = isMobile ? "Ask..." : placeholder || "Ask about your data or upload a file..."
@@ -111,7 +132,6 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
         <p className="mb-3 text-xs text-muted-foreground">{helperText}</p>
       )}
 
-      {/* Selected file chip */}
       {selectedFile && (
         <div className="mb-3 flex items-center gap-2">
           <div className="flex items-center gap-2 rounded-lg bg-muted border border-border px-3 py-1.5">
@@ -133,9 +153,7 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
         <p className="mb-2 text-xs text-red-400">{fileError}</p>
       )}
 
-      {/* Input area */}
       <div className="flex items-end gap-2">
-        {/* File upload button */}
         <Button
           type="button"
           variant="ghost"
@@ -156,9 +174,9 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
           title="Upload CSV, XLSX, or XLS file (max 10 MB)"
         />
 
-        {/* Text input */}
         <textarea
           ref={textareaRef}
+          aria-label="message"
           value={input}
           onChange={handleInputChange}
           onKeyDown={handleKeyDown}
@@ -172,7 +190,6 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
           )}
         />
 
-        {/* Send button */}
         <Button
           onClick={handleSubmit}
           disabled={!canSubmit}
@@ -183,6 +200,43 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
           <span className="sr-only">Send</span>
         </Button>
       </div>
+
+      <div className="mt-2">
+        <button
+          type="button"
+          aria-label={contextExpanded ? "Hide analysis context" : "Add analysis context"}
+          onClick={() => setContextExpanded((v) => !v)}
+          disabled={disabled}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+        >
+          {contextExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {contextExpanded ? "Analysis context" : "Add analysis context"}
+        </button>
+      </div>
+
+      {contextExpanded && (
+        <div className="mt-1">
+          <textarea
+            ref={contextRef}
+            value={contextText}
+            onChange={handleContextChange}
+            placeholder="Add context, e.g. Focus on ROAS efficiency for EU region..."
+            disabled={disabled}
+            rows={2}
+            style={{ overflowY: "auto" }}
+            className={cn(
+              "w-full resize-none rounded-lg border border-border bg-muted/50 px-2.5 py-2 text-xs",
+              "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
+              "disabled:cursor-not-allowed disabled:opacity-50"
+            )}
+          />
+          {contextText.length > 0 && (
+            <p className={cn("mt-0.5 text-right text-xs", counterColor)}>
+              {contextText.length} / {CONTEXT_MAX}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }
