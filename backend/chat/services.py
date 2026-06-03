@@ -124,35 +124,63 @@ class OnlineStatusService:
         return get_redis_connection("default")
 
     @classmethod
+    def _get_cached_connections(cls, user_id: int) -> set[str]:
+        value = cache.get(cls._connection_key(user_id), [])
+        if isinstance(value, (list, tuple, set)):
+            return {str(connection_id) for connection_id in value if connection_id}
+        return set()
+
+    @classmethod
+    def _set_cached_connections(cls, user_id: int, connection_ids: set[str]) -> int:
+        connection_key = cls._connection_key(user_id)
+        if connection_ids:
+            cache.set(connection_key, list(connection_ids), timeout=cls.ONLINE_TIMEOUT)
+        else:
+            cache.delete(connection_key)
+        return len(connection_ids)
+
+    @classmethod
     def _add_connection(cls, user_id: int, connection_id: str) -> int:
         connection_key = cls._connection_key(user_id)
-        redis = cls._redis()
-        pipe = redis.pipeline(transaction=True)
-        pipe.sadd(connection_key, connection_id)
-        pipe.expire(connection_key, cls.ONLINE_TIMEOUT)
-        pipe.scard(connection_key)
-        _, _, count = pipe.execute()
-        return int(count)
+        try:
+            redis = cls._redis()
+            pipe = redis.pipeline(transaction=True)
+            pipe.sadd(connection_key, connection_id)
+            pipe.expire(connection_key, cls.ONLINE_TIMEOUT)
+            pipe.scard(connection_key)
+            _, _, count = pipe.execute()
+            return int(count)
+        except NotImplementedError:
+            connections = cls._get_cached_connections(user_id)
+            connections.add(str(connection_id))
+            return cls._set_cached_connections(user_id, connections)
 
     @classmethod
     def _remove_connection(cls, user_id: int, connection_id: str) -> int:
         connection_key = cls._connection_key(user_id)
-        redis = cls._redis()
-        pipe = redis.pipeline(transaction=True)
-        pipe.srem(connection_key, connection_id)
-        pipe.scard(connection_key)
-        pipe.expire(connection_key, cls.ONLINE_TIMEOUT)
-        _, remaining, _ = pipe.execute()
-        remaining = int(remaining)
-        if remaining <= 0:
-            redis.delete(connection_key)
-        return max(0, remaining)
+        try:
+            redis = cls._redis()
+            pipe = redis.pipeline(transaction=True)
+            pipe.srem(connection_key, connection_id)
+            pipe.scard(connection_key)
+            pipe.expire(connection_key, cls.ONLINE_TIMEOUT)
+            _, remaining, _ = pipe.execute()
+            remaining = int(remaining)
+            if remaining <= 0:
+                redis.delete(connection_key)
+            return max(0, remaining)
+        except NotImplementedError:
+            connections = cls._get_cached_connections(user_id)
+            connections.discard(str(connection_id))
+            return cls._set_cached_connections(user_id, connections)
 
     @classmethod
     def _connection_count(cls, user_id: int) -> Optional[int]:
         connection_key = cls._connection_key(user_id)
         try:
             return int(cls._redis().scard(connection_key))
+        except NotImplementedError:
+            return len(cls._get_cached_connections(user_id))
         except Exception:
             logger.exception(f"[OnlineStatus] Failed to read Redis connection count for user {user_id}")
             return None

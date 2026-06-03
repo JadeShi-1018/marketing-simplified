@@ -47,6 +47,27 @@ class OnlineStatusServiceTest(TestCase):
         self.assertIsInstance(offline_version, int)
         self.assertFalse(OnlineStatusService.is_online(self.user.id))
 
+    def test_non_redis_cache_backend_tracks_connections(self):
+        with patch.object(OnlineStatusService, '_redis', side_effect=NotImplementedError('raw redis unavailable')):
+            count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
+            self.assertEqual(count, 1)
+            self.assertTrue(should_broadcast)
+            self.assertIsInstance(version, int)
+            self.assertTrue(OnlineStatusService.is_online(self.user.id))
+
+            self.assertEqual(OnlineStatusService.connection_opened(self.user.id, 'conn-2'), (2, False, None))
+            self.assertEqual(OnlineStatusService.connection_closed(self.user.id, 'conn-1'), (1, None))
+            self.assertTrue(OnlineStatusService.is_online(self.user.id))
+
+            remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'conn-2')
+            self.assertEqual(remaining, 0)
+            self.assertIsNotNone(offline_token)
+            self.assertTrue(OnlineStatusService.is_online(self.user.id))
+
+            offline_version = OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token)
+            self.assertIsInstance(offline_version, int)
+            self.assertFalse(OnlineStatusService.is_online(self.user.id))
+
     def test_heartbeat_refreshes_presence_without_incrementing_connections(self):
         count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
         self.assertEqual(count, 1)
