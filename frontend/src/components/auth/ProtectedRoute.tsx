@@ -1,15 +1,15 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useAuthStore } from '../../lib/authStore';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
 
 // Props for ProtectedRoute component
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredAuth?: boolean; // Whether authentication is required
   requiredRoles?: string[]; // Required roles for access
+  requireAdmin?: boolean; // Require org admin or CSM admin
   fallback?: string; // Redirect path if access is denied
   loadingComponent?: React.ReactNode; // Custom loading component
   renderChildrenWhileLoading?: boolean;
@@ -20,6 +20,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
   requiredAuth = true,
   requiredRoles = [],
+  requireAdmin = false,
   fallback = '/login',
   loadingComponent,
   renderChildrenWhileLoading = false,
@@ -31,6 +32,9 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const hasRequiredRoles =
     requiredRoles.length === 0 ||
     Boolean(user?.roles && requiredRoles.some(role => user.roles.includes(role)));
+
+  const isAdmin = Boolean(user?.is_org_admin || user?.is_csm_admin);
+  const passesAdminCheck = !requireAdmin || isAdmin;
 
   // Handle authentication and role checks
   useEffect(() => {
@@ -45,11 +49,16 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
     // If roles are required but user doesn't have them
     if (requiredRoles.length > 0 && !hasRequiredRoles) {
-      // Redirect to unauthorized page or show error
       router.push('/unauthorized');
       return;
     }
-  }, [isAuthenticated, authIsBooting, requiredAuth, requiredRoles, router, fallback, hasRequiredRoles]);
+
+    // If admin is required but user is not admin
+    if (requireAdmin && !passesAdminCheck) {
+      router.push('/unauthorized');
+      return;
+    }
+  }, [isAuthenticated, authIsBooting, requiredAuth, requiredRoles, requireAdmin, router, fallback, hasRequiredRoles, passesAdminCheck]);
 
   // Show loading while authentication is being initialized
   if (authIsBooting) {
@@ -69,6 +78,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
   // If roles are required but user doesn't have them, don't render children
   if (requiredRoles.length > 0 && !hasRequiredRoles) {
+    return null;
+  }
+
+  // If admin required but not admin
+  if (!passesAdminCheck) {
     return null;
   }
 

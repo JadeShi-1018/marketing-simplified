@@ -238,14 +238,14 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
   }, [block.content, block.id, isInlineTextBlock]);
 
   React.useEffect(() => {
-    if (!isInlineTextBlock || !isSelected || !inlineEditorRef.current) {
+    if (!isInlineTextBlock || !inlineEditorRef.current) {
       return;
     }
     const nextValue = inlineTextContent || "";
     if (inlineEditorRef.current.innerText !== nextValue) {
       inlineEditorRef.current.innerText = nextValue;
     }
-  }, [inlineTextContent, isInlineTextBlock, isSelected]);
+  }, [inlineTextContent, isInlineTextBlock]);
 
   const handleInlineTextInput = (event: React.FormEvent<HTMLSpanElement>) => {
     if (!isInlineTextBlock) return;
@@ -270,6 +270,27 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
     textDecoration: "underline",
   });
 
+  const stripTailwindFontSizeClass = (className: string) =>
+    className
+      .replace(
+        /\btext-(xs|sm|base|lg|xl|2xl|3xl|4xl|5xl|6xl|7xl|8xl|9xl)\b/g,
+        ""
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const inlineEditableTypographyStyle = (
+    styleProps: React.CSSProperties
+  ): React.CSSProperties => ({
+    fontFamily: styleProps.fontFamily,
+    fontSize: styleProps.fontSize,
+    fontWeight: styleProps.fontWeight,
+    fontStyle: styleProps.fontStyle,
+    lineHeight: styleProps.lineHeight,
+    letterSpacing: styleProps.letterSpacing,
+    textAlign: styleProps.textAlign,
+  });
+
   const renderInlineEditableText = (
     Tag: "h2" | "p",
     className: string,
@@ -280,9 +301,10 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
     isTextLinkActive?: boolean
   ) => {
     const minHeight = Tag === "p" ? "1.5em" : "1.2em";
+    const typographyStyle = inlineEditableTypographyStyle(styleProps);
     return (
       <Tag
-        className={className}
+        className={stripTailwindFontSizeClass(className)}
         style={{
           ...styleProps,
           color: styleProps.color || defaultColor,
@@ -290,16 +312,23 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
         dir={styleProps.direction as "ltr" | "rtl" | undefined}
       >
         <div
-          className="relative inline-block w-full"
-          style={{ minHeight }}
+          className="relative w-full"
+          style={{ minHeight, ...typographyStyle }}
           onClick={() => inlineEditorRef.current?.focus()}
         >
           {!inlineTextContent && placeholder && (
             <span
-              className={`absolute left-0 top-0 pointer-events-none select-none text-gray-400 ${
+              className={`absolute top-0 pointer-events-none select-none text-gray-400 ${
                 Tag === "p" ? "whitespace-pre-wrap" : ""
+              } ${
+                styleProps.textAlign === "right"
+                  ? "right-0 text-right"
+                  : styleProps.textAlign === "center"
+                    ? "left-0 right-0 text-center"
+                    : "left-0"
               }`}
               style={{
+                ...typographyStyle,
                 backgroundColor: highlightColor,
                 textDecoration: isTextLinkActive
                   ? "underline"
@@ -323,6 +352,7 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
               Tag === "p" ? "whitespace-pre-wrap" : ""
             } ${inlineTextContent ? "" : "text-gray-900"}`}
             style={{
+              ...typographyStyle,
               backgroundColor: highlightColor,
               color: isTextLinkActive
                 ? (styleProps.color as string) || "#0f766e"
@@ -330,7 +360,8 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
               textDecoration: isTextLinkActive
                 ? "underline"
                 : styleProps.textDecoration,
-              display: "inline",
+              display: "block",
+              width: "100%",
             }}
             role="textbox"
             aria-label={placeholder || "Text block content"}
@@ -415,6 +446,7 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
       const sizeMode: ImageSizeMode = block.imageDisplayMode || "Original";
       const imageClasses = imageSizeClassMap[sizeMode];
       const imageAlt = block.imageAltText?.trim() || "Image";
+      const imageBlockTestId = "email-draft-image-block";
       const scalePercent = Math.min(
         100,
         Math.max(10, block.imageScalePercent ?? 85)
@@ -473,7 +505,11 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
       };
 
       return (
-        <div className="w-full" style={wrapperStyle}>
+        <div
+          className="w-full"
+          style={wrapperStyle}
+          data-testid={imageBlockTestId}
+        >
           {block.imageUrl ? (
             withOptionalLink(
               <Image
@@ -579,7 +615,11 @@ const CanvasBlockRenderer: React.FC<CanvasBlockRendererProps> = ({
       };
 
       return (
-        <div className="w-full" style={wrapperStyle}>
+        <div
+          className="w-full"
+          style={wrapperStyle}
+          data-testid="email-draft-logo-block"
+        >
           {block.imageUrl ? (
             withOptionalLink(
               <Image

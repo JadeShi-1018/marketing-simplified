@@ -27,6 +27,10 @@ const formatDate = (value?: string): string => {
   }
 };
 
+const WRAP_CELL =
+  'px-4 py-3 align-top break-words whitespace-normal text-left [overflow-wrap:anywhere]';
+const NOWRAP_CELL = 'px-4 py-3 align-top whitespace-nowrap';
+
 export default function EmailDraftTableV2({
   platform,
   rows,
@@ -47,7 +51,26 @@ export default function EmailDraftTableV2({
 
   return (
     <div className="overflow-hidden rounded-lg bg-white ring-1 ring-gray-200">
-      <table className="w-full text-sm">
+      <table className="w-full table-fixed text-sm">
+        <colgroup>
+          {platform === 'klaviyo' ? (
+            <>
+              <col className="w-[26%]" />
+              <col className="w-[34%]" />
+              <col className="w-[14%]" />
+              <col className="w-[18%]" />
+              <col className="w-10" />
+            </>
+          ) : (
+            <>
+              <col className="w-[38%]" />
+              <col className="w-[14%]" />
+              <col className="w-[24%]" />
+              <col className="w-[18%]" />
+              <col className="w-10" />
+            </>
+          )}
+        </colgroup>
         <thead className="bg-gray-50 text-xs font-medium uppercase tracking-wide text-gray-500">
           <tr>
             {columns.map((col, idx) => (
@@ -75,21 +98,21 @@ export default function EmailDraftTableV2({
                 onMouseLeave={() => setActiveRow(null)}
                 className="border-t border-gray-100 transition hover:bg-gray-50"
               >
-                <td className="px-4 py-3">
+                <td className={WRAP_CELL}>
                   <button
                     type="button"
                     onClick={() => onOpen(row)}
-                    className="text-left font-medium text-gray-900 transition hover:text-[#3CCED7]"
+                    className="block w-full break-words text-left font-medium text-gray-900 transition [overflow-wrap:anywhere] hover:text-[#3CCED7]"
                   >
                     {titleField || 'Untitled draft'}
                   </button>
                 </td>
                 {platform === 'klaviyo' ? (
-                  <td className="px-4 py-3 text-gray-600">
+                  <td className={`${WRAP_CELL} text-gray-600`}>
                     {secondaryField || '—'}
                   </td>
                 ) : (
-                  <td className="px-4 py-3">
+                  <td className={NOWRAP_CELL}>
                     <EmailDraftStatusPill
                       platform={platform}
                       status={row.status}
@@ -97,18 +120,18 @@ export default function EmailDraftTableV2({
                   </td>
                 )}
                 {platform === 'klaviyo' ? (
-                  <td className="px-4 py-3">
+                  <td className={NOWRAP_CELL}>
                     <EmailDraftStatusPill
                       platform={platform}
                       status={row.status}
                     />
                   </td>
                 ) : (
-                  <td className="px-4 py-3 text-gray-600">
+                  <td className={`${WRAP_CELL} text-gray-600`}>
                     {secondaryField || '—'}
                   </td>
                 )}
-                <td className="px-4 py-3 text-gray-500">
+                <td className={`${NOWRAP_CELL} text-gray-500`}>
                   {formatDate(row.updatedAt || row.createdAt)}
                 </td>
                 <td className="px-2 py-2 text-right">

@@ -24,6 +24,42 @@ export const useEmailBuilder = () => {
     "Desktop" | "Mobile" | "Inbox"
   >("Desktop");
 
+  const openPreview = useCallback(() => {
+    setIsPreviewOpen(true);
+    setPreviewTab("Desktop");
+  }, []);
+
+  useEffect(() => {
+    const handleOpenPreview = () => {
+      openPreview();
+    };
+    window.addEventListener("email-draft:open-preview", handleOpenPreview);
+    return () => {
+      window.removeEventListener("email-draft:open-preview", handleOpenPreview);
+    };
+  }, [openPreview]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (isPreviewOpen) {
+      document.body.dataset.emailDraftPreviewOpen = "true";
+    } else {
+      delete document.body.dataset.emailDraftPreviewOpen;
+    }
+  }, [isPreviewOpen]);
+
+  /** Stable hook for Playwright when toolbar pointer events do not open preview. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    (
+      window as Window & { __openEmailDraftPreview?: () => void }
+    ).__openEmailDraftPreview = openPreview;
+    return () => {
+      delete (window as Window & { __openEmailDraftPreview?: () => void })
+        .__openEmailDraftPreview;
+    };
+  }, [openPreview]);
+
   // Content blocks state
   const [showMoreBlocks, setShowMoreBlocks] = useState(false);
   const [showMoreLayouts, setShowMoreLayouts] = useState(false);
@@ -328,6 +364,7 @@ export const useEmailBuilder = () => {
     setActiveCommentsTab,
     isPreviewOpen,
     setIsPreviewOpen,
+    openPreview,
     previewTab,
     setPreviewTab,
 
