@@ -1,6 +1,6 @@
 'use client';
 
-  import { useState, useEffect } from 'react';
+  import { Suspense, useState, useEffect } from 'react';
   import { useRouter, useSearchParams } from 'next/navigation';
   import Link from 'next/link';
   import { FormContainer, FormInput, FormButton, ErrorMessage } from '@/components/form';
@@ -18,7 +18,7 @@
     general?: string;
   }
 
-  export default function ResetPasswordPage() {
+  function ResetPasswordContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const [token, setToken] = useState('');
@@ -136,5 +136,13 @@
           </FormContainer>
         </div>
       </>
+    );
+  }
+
+  export default function ResetPasswordPage() {
+    return (
+      <Suspense fallback={<div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-cyan-50" />}>
+        <ResetPasswordContent />
+      </Suspense>
     );
   }
