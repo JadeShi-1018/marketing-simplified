@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import ReactFlow, {
   Background,
   BackgroundVariant,
@@ -11,7 +11,7 @@ import ReactFlow, {
   type Node,
 } from "reactflow"
 import "reactflow/dist/style.css"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { ArrowLeft, Loader2, X } from "lucide-react"
 import toast from "react-hot-toast"
 import { AgentAPI } from "@/lib/api/agentApi"
@@ -105,8 +105,81 @@ interface CanvasInnerProps {
 
 function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUpdatingStatus }: CanvasInnerProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const isNew = searchParams.get("new") === "1"
   const { fitView } = useReactFlow()
   const { projectParams } = useAgentWorkflowProjectParams()
+
+  // ── Editable workflow name ──────────────────────────────────────────────────
+  const [nameValue, setNameValue] = useState(workflow.name)
+  const [nameError, setNameError] = useState<string | null>(null)
+  const [isRenamingName, setIsRenamingName] = useState(false)
+  const nameInputRef = useRef<HTMLInputElement>(null)
+
+  // On mount: auto-focus + check for duplicate default name when arriving from "Create workflow"
+  useEffect(() => {
+    if (!isNew) return
+    AgentAPI.listWorkflows(projectParams).then((existing) => {
+      const duplicate = existing.some(
+        (w) => w.name.trim().toLowerCase() === "new workflow" && w.id !== workflowId
+      )
+      if (duplicate) {
+        setNameError("A workflow with this name already exists. Please choose a different name.")
+        setNameValue("")
+        nameInputRef.current?.focus()
+      } else {
+        nameInputRef.current?.focus()
+        nameInputRef.current?.select()
+      }
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleNameBlur = useCallback(async () => {
+    const trimmed = nameValue.trim()
+    if (!trimmed) {
+      setNameValue(workflow.name)
+      setNameError(null)
+      return
+    }
+    if (trimmed === workflow.name) {
+      setNameError(null)
+      return
+    }
+    setIsRenamingName(true)
+    try {
+      const existing = await AgentAPI.listWorkflows(projectParams)
+      const duplicate = existing.some(
+        (w) => w.name.trim().toLowerCase() === trimmed.toLowerCase() && w.id !== workflowId
+      )
+      if (duplicate) {
+        setNameError("A workflow with this name already exists. Please choose a different name.")
+        setNameValue("")
+        setTimeout(() => nameInputRef.current?.focus(), 0)
+        return
+      }
+      await AgentAPI.updateWorkflow(workflowId, { name: trimmed }, projectParams)
+      workflow.name = trimmed
+      setNameError(null)
+    } catch {
+      toast.error("Failed to rename workflow")
+      setNameValue(workflow.name)
+    } finally {
+      setIsRenamingName(false)
+    }
+  }, [nameValue, workflow, workflowId, projectParams])
+
+  const handleNameKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") nameInputRef.current?.blur()
+      if (e.key === "Escape") {
+        setNameValue(workflow.name)
+        setNameError(null)
+        nameInputRef.current?.blur()
+      }
+    },
+    [workflow.name]
+  )
 
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null)
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
@@ -224,13 +297,23 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
   )
 
   // ── Back (with unsaved-changes guard) ──────────────────────────────────────
-  const handleBack = useCallback(() => {
+  const handleBack = useCallback(async () => {
+    // Auto-delete if user exited without doing anything to a newly created workflow
+    if (isNew && !isDirty && steps.length === 0 && workflow.name === "New workflow") {
+      try {
+        await AgentAPI.deleteWorkflow(workflowId, projectParams)
+      } catch {
+        // best-effort; navigate regardless
+      }
+      router.push("/workflows")
+      return
+    }
     if (isDirty) {
       setShowUnsavedDialog(true)
     } else {
       router.push("/workflows")
     }
-  }, [isDirty, router])
+  }, [isNew, isDirty, steps.length, workflow, workflowId, projectParams, router])
 
   const handleLeave = useCallback(() => {
     router.push("/workflows")
@@ -299,10 +382,27 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
             <ArrowLeft className="h-4 w-4" />
             Back
           </button>
-          <div className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
-            <span className="text-sm font-semibold text-slate-800">{workflow.name}</span>
-            {isDirty && (
-              <span className="ml-2 text-xs font-medium text-amber-500">· Unsaved</span>
+          {/* Editable workflow name */}
+          <div className="relative">
+            <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm focus-within:border-slate-400 focus-within:ring-1 focus-within:ring-slate-300">
+              <input
+                ref={nameInputRef}
+                type="text"
+                value={nameValue}
+                onChange={(e) => { setNameValue(e.target.value); setNameError(null) }}
+                onBlur={handleNameBlur}
+                onKeyDown={handleNameKeyDown}
+                placeholder="Workflow name"
+                className="min-w-[120px] bg-transparent text-sm font-semibold text-slate-800 outline-none placeholder:font-normal placeholder:text-slate-400"
+                style={{ width: `${Math.max(nameValue.length, 12)}ch` }}
+              />
+              {isRenamingName && <Loader2 className="h-3 w-3 animate-spin text-slate-400" />}
+              {isDirty && !isRenamingName && (
+                <span className="text-xs font-medium text-amber-500">· Unsaved</span>
+              )}
+            </div>
+            {nameError && (
+              <p className="absolute left-0 top-full mt-1 whitespace-nowrap px-1 text-xs text-red-500">{nameError}</p>
             )}
           </div>
         </div>
@@ -373,7 +473,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
           toast.success("Template created successfully")
         }}
         defaultSourceWorkflowId={workflowId}
-        defaultName={workflow.name}
+        defaultName={nameValue || workflow.name}
         defaultDescription={workflow.description}
         lockSourceWorkflow
       />

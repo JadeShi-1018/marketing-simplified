@@ -3,8 +3,6 @@
 import { useRouter, useSearchParams } from "next/navigation"
 import { useState } from "react"
 import { Plus } from "lucide-react"
-import { CreateWorkflowModal } from "@/components/agent/workflow/CreateWorkflowModal"
-import { AgentAPI } from "@/lib/api/agentApi"
 import { useAgentWorkflows } from "./hooks/useAgentWorkflows"
 import WorkflowsTab from "./tabs/WorkflowsTab"
 import TemplatesTab from "./tabs/TemplatesTab"
@@ -28,7 +26,7 @@ export default function WorkflowsPageLayout() {
 
   const { activeProject, hasHydrated, createWorkflow } = useAgentWorkflows()
 
-  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
 
   const needsProject = hasHydrated && !activeProject?.id
@@ -43,17 +41,18 @@ export default function WorkflowsPageLayout() {
     router.push(`/workflows${params.size > 0 ? `?${params.toString()}` : ""}`)
   }
 
-  const handleCreate = async (data: { name: string; description?: string }) => {
+  const handleCreate = async () => {
+    if (isCreating) return
+    setIsCreating(true)
     try {
-      const created = await createWorkflow({ ...data, status: "draft" })
-      toast.success("Workflow created")
-      setShowCreateModal(false)
+      const created = await createWorkflow({ name: "New workflow", status: "draft" })
       setRefreshKey((k) => k + 1)
-      router.push(`/workflows/${created.id}`)
+      router.push(`/workflows/${created.id}?new=1`)
     } catch (err: unknown) {
       const msg =
         (err as { message?: string })?.message || "Failed to create workflow"
       toast.error(msg)
+      setIsCreating(false)
     }
   }
 
@@ -68,12 +67,12 @@ export default function WorkflowsPageLayout() {
           </h1>
           <button
             type="button"
-            disabled={needsProject}
-            onClick={() => setShowCreateModal(true)}
+            disabled={needsProject || isCreating}
+            onClick={handleCreate}
             className={brandBtnHeader}
           >
             <Plus className="h-4 w-4" />
-            Create workflow
+            {isCreating ? "Creating…" : "Create workflow"}
           </button>
         </div>
 
@@ -101,7 +100,7 @@ export default function WorkflowsPageLayout() {
         <div className="mt-8">
           {activeTab === "workflows" ? (
             <WorkflowsTab
-              onCreateClick={() => setShowCreateModal(true)}
+              onCreateClick={handleCreate}
               refreshKey={refreshKey}
             />
           ) : (
@@ -109,12 +108,6 @@ export default function WorkflowsPageLayout() {
           )}
         </div>
       </div>
-
-      <CreateWorkflowModal
-        open={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSubmit={handleCreate}
-      />
     </div>
   )
 }
