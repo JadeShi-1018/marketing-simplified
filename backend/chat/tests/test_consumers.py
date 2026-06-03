@@ -22,6 +22,12 @@ from rest_framework_simplejwt.tokens import AccessToken
 User = get_user_model()
 logger = logging.getLogger(__name__)
 TEST_CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+TEST_CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "chat-consumer-tests",
+    }
+}
 
 
 async def _disconnect_communicators(*communicators):
@@ -57,11 +63,14 @@ def reset_channel_layer_cache(settings):
     # For this pytest module, force an in-memory channel layer to avoid
     # Redis/asyncio lock cross-event-loop issues.
     settings.CHANNEL_LAYERS = TEST_CHANNEL_LAYERS
+    settings.CACHES = TEST_CACHES
     old_grace_seconds = OnlineStatusService.OFFLINE_GRACE_SECONDS
     OnlineStatusService.OFFLINE_GRACE_SECONDS = 0
     _reset_channel_layers()
+    cache.clear()
     yield
     OnlineStatusService.OFFLINE_GRACE_SECONDS = old_grace_seconds
+    cache.clear()
     _reset_channel_layers()
 
 
