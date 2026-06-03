@@ -22,6 +22,8 @@ import { AgentMessageBoardText } from "./AgentMessageBoardText"
 import { AgentMessageBoardTextProvider } from "./AgentMessageBoardTextContext"
 import { AgentMessageBoardAvatar } from "./AgentMessageBoardAvatar"
 import { getAssistantMessageBlockIds } from "./agentMessageBoardBlockIds"
+import { WorkflowConfirmCard, type WorkflowConfirmData } from "./WorkflowConfirmCard"
+import { WorkflowStepConfirmCard } from "./WorkflowStepConfirmCard"
 
 export type ChatMessageType =
   | "text"
@@ -34,6 +36,8 @@ export type ChatMessageType =
   | "calendar_invite"
   | "column_mapping"
   | "approval_request"
+  | "workflow_confirm"
+  | "confirmation_request"
 
 export interface ChatMessage {
   id: string
@@ -53,6 +57,7 @@ export interface ChatMessage {
   workflowRunId?: string
   stepProgress?: StepProgressItem[]
   approval?: PendingExternalApproval
+  workflowConfirmData?: WorkflowConfirmData
 }
 
 export interface MessageListProps {
@@ -85,6 +90,9 @@ export interface MessageListProps {
   stepState?: WorkflowStepState
   taskGenerationStatus?: TaskGenerationStatus
   isStreaming?: boolean
+  onConfirmWorkflow?: (workflowId: string, originalMessage: string) => void
+  onRejectWorkflow?: () => void
+  onResumeWorkflow?: (confirmMessageId: string) => void
 }
 
 export function MessageList({
@@ -117,6 +125,9 @@ export function MessageList({
   stepState,
   taskGenerationStatus,
   isStreaming = false,
+  onConfirmWorkflow,
+  onRejectWorkflow,
+  onResumeWorkflow,
 }: MessageListProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const prevScrollTopRef = useRef(0)
@@ -304,6 +315,32 @@ export function MessageList({
                 </AgentMessageBoardBlock>
               )}
 
+
+              {/* Workflow confirm card — AI matched a template with medium confidence */}
+              {message.role === "assistant" &&
+                message.type === "workflow_confirm" &&
+                message.workflowConfirmData && (
+                <AgentMessageBoardBlock blockId={`${message.id}-wf-confirm`}>
+                  <WorkflowConfirmCard
+                    data={message.workflowConfirmData}
+                    onConfirm={(wfId, origMsg) => onConfirmWorkflow?.(wfId, origMsg)}
+                    onReject={() => onRejectWorkflow?.()}
+                    disabled={isStreaming}
+                  />
+                </AgentMessageBoardBlock>
+              )}
+
+              {/* Workflow step paused — await_confirmation */}
+              {message.role === "assistant" &&
+                message.type === "confirmation_request" && (
+                <AgentMessageBoardBlock blockId={`${message.id}-step-confirm`}>
+                  <WorkflowStepConfirmCard
+                    message={message.content || "Please confirm to continue."}
+                    onContinue={() => onResumeWorkflow?.(message.id)}
+                    disabled={isStreaming}
+                  />
+                </AgentMessageBoardBlock>
+              )}
 
               {/* Column mapping is handled silently — stored in DB, not shown to user */}
 

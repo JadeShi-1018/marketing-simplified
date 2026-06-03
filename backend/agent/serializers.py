@@ -135,7 +135,7 @@ class ChatInputSerializer(serializers.Serializer):
         choices=[
             'analyze', 'create_tasks', 'generate_miro',
             'distribute_message', 'start_follow_up', 'cancel_follow_up',
-            'confirm_columns',
+            'confirm_columns', 'resume_workflow',
             'resolve_external_approval',
         ],
         required=False,
@@ -256,6 +256,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
             'organization', 'organization_name',
             'project_list',
             'applied_project_count',
+            'use_cases',
             'source_workflow_id', 'organization_id', 'project_ids',
             'created_at', 'updated_at',
         ]

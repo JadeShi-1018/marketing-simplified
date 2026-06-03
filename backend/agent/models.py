@@ -55,6 +55,7 @@ class AgentMessage(TimeStampedModel):
         ('decision_draft', 'Decision Draft'),
         ('task_created', 'Task Created'),
         ('confirmation_request', 'Confirmation Request'),
+        ('workflow_confirm', 'Workflow Confirm'),
         ('approval_request', 'Approval Request'),
         ('follow_up_prompt', 'Follow-up Prompt'),
         ('error', 'Error'),
@@ -687,6 +688,16 @@ class AgentWorkflowTemplate(TimeStampedModel):
         blank=True,
         related_name='workflow_templates',
         help_text='Members of any listed project can see this template',
+    )
+
+    # AI intent matching metadata
+    use_cases = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            'Example scenarios when to use this workflow (list of strings). '
+            'Used by the AI intent router to match user messages to this template.'
+        ),
     )
 
     class Meta:

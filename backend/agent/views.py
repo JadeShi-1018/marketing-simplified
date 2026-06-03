@@ -163,6 +163,7 @@ class ChatView(EnglishResponseMixin, APIView):
             'start_follow_up', 'cancel_follow_up',
             'create_tasks', 'generate_miro',
             'distribute_message', 'confirm_columns',
+            'resume_workflow',
             'resolve_external_approval',
         }
 
@@ -255,6 +256,34 @@ class ChatView(EnglishResponseMixin, APIView):
                             message_type='approval_request',
                             metadata=data or {},
                         )
+                        continue
+
+                    if chunk_type == 'workflow_confirm':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        if content:
+                            AgentMessage.objects.create(
+                                session=session,
+                                role='assistant',
+                                content=content,
+                                message_type='workflow_confirm',
+                                metadata=data or {},
+                            )
+                        continue
+
+                    if chunk_type == 'confirmation_request':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        if content:
+                            AgentMessage.objects.create(
+                                session=session,
+                                role='assistant',
+                                content=content,
+                                message_type='confirmation_request',
+                                metadata=data or {},
+                            )
                         continue
 
                     # Miro status is persisted separately (_create_agent_status_message in the
@@ -891,6 +920,38 @@ class AgentConfigStatusView(EnglishResponseMixin, APIView):
         return Response(result)
 
 
+def _auto_bind_template_to_projects(template, projects, applied_by):
+    """
+    Create AgentProjectWorkflowBinding for each project in `projects`.
+
+    Skips projects that already have a binding to this template
+    (`unique_together` would reject duplicates anyway, but get_or_create
+    avoids the DB error and makes the call idempotent).
+
+    The first binding created for a given project is set as `is_default` so
+    the AI intent router can resolve it even when no explicit trigger fires.
+    Subsequent bindings for the same project leave `is_default` as False.
+    """
+    from .models import AgentProjectWorkflowBinding
+
+    for project in projects:
+        existing_count = AgentProjectWorkflowBinding.objects.filter(
+            project=project, is_deleted=False, is_active=True
+        ).count()
+        AgentProjectWorkflowBinding.objects.get_or_create(
+            project=project,
+            template=template,
+            defaults={
+                'trigger_mode': 'message_keyword',
+                'trigger_keywords': [],
+                'priority': 10,
+                'is_default': existing_count == 0,
+                'is_active': True,
+                'applied_by': applied_by,
+            },
+        )
+
+
 def _clone_workflow_definition(
     source_workflow,
     *,
@@ -1026,19 +1087,38 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
             new_workflow.name = f"{serializer.validated_data['name']} Workflow"
             new_workflow.save()
 
-        # Create template
+        # Create template (serializer.create() also sets the projects M2M)
         serializer.save(
             created_by=self.request.user,
             workflow_definition=new_workflow,
         )
 
+        # Auto-create bindings for every project selected at creation time
+        template = serializer.instance
+        _auto_bind_template_to_projects(template, template.projects.all(), self.request.user)
+
     def perform_update(self, serializer):
-        """Only allow creator to update their templates."""
+        """Only allow creator to update their templates. Auto-bind newly added projects."""
         if serializer.instance.created_by != self.request.user:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('You can only edit templates you created.')
 
+        old_project_ids = set(
+            serializer.instance.projects.values_list('id', flat=True)
+        )
+
         serializer.save()
+
+        # Bind to projects that were newly added during this edit
+        new_project_ids = set(
+            serializer.instance.projects.values_list('id', flat=True)
+        )
+        added_ids = new_project_ids - old_project_ids
+        if added_ids:
+            added_projects = serializer.instance.projects.filter(id__in=added_ids)
+            _auto_bind_template_to_projects(
+                serializer.instance, added_projects, self.request.user
+            )
 
     def perform_destroy(self, instance):
         """Check for active bindings before deletion."""

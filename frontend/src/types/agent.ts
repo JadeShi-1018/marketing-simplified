@@ -92,6 +92,7 @@ export type SSEEventType =
   | 'calendar_updated'
   | 'step_progress'
   | 'column_mapping'
+  | 'workflow_confirm'
   | 'done'
   | 'error';
 
@@ -111,6 +112,7 @@ export type AgentAction =
   | 'start_follow_up'
   | 'cancel_follow_up'
   | 'confirm_columns'
+  | 'resume_workflow'
   | 'resolve_external_approval';
 
 export interface CalendarContextPayload {
@@ -323,6 +325,8 @@ export interface AgentWorkflowTemplate {
   /** List of projects this template is shared with (M2M). */
   project_list?: TemplateProjectInfo[];
   applied_project_count?: number;
+  /** Example phrases / scenarios that help the AI intent router select this template. */
+  use_cases?: string[];
   created_at: string;
   updated_at?: string;
 }
@@ -336,6 +340,8 @@ export interface CreateTemplateRequest {
   organization_id?: string | null;
   /** List of project IDs (integers) to share with. Empty array clears all. */
   project_ids?: number[];
+  /** Example phrases for AI intent routing. */
+  use_cases?: string[];
 }
 
 export interface UpdateTemplateRequest {
@@ -346,6 +352,8 @@ export interface UpdateTemplateRequest {
   organization_id?: string | null;
   /** Pass new list to replace. Empty array clears all. */
   project_ids?: number[];
+  /** Example phrases for AI intent routing. */
+  use_cases?: string[];
 }
 
 export interface AgentProjectWorkflowBinding {

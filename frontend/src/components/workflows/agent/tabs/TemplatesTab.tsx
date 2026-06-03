@@ -8,9 +8,7 @@ import { CreateTemplateModal } from "@/components/agent/templates/CreateTemplate
 import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
 import { AgentAPI } from "@/lib/api/agentApi"
 import { useAuthStore } from "@/lib/authStore"
-import { useProjectStore } from "@/lib/projectStore"
 import TemplateCard from "../cards/TemplateCard"
-import ApplyTemplateModal from "./ApplyTemplateModal"
 import { brandChipActive, brandChipInactive } from "../workflowBrandClasses"
 import { cn } from "@/lib/utils"
 
@@ -49,7 +47,6 @@ function SectionHeading({
 
 export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
   const user = useAuthStore((s) => s.user)
-  const activeProject = useProjectStore((s) => s.activeProject)
 
   const [templates, setTemplates] = useState<AgentWorkflowTemplate[]>([])
   const [loading, setLoading] = useState(true)
@@ -57,7 +54,6 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
   const [categoryFilter, setCategoryFilter] = useState<"all" | TemplateCategory>("all")
   const [editingTemplate, setEditingTemplate] = useState<AgentWorkflowTemplate | null>(null)
   const [deletingTemplate, setDeletingTemplate] = useState<AgentWorkflowTemplate | null>(null)
-  const [applyingTemplate, setApplyingTemplate] = useState<AgentWorkflowTemplate | null>(null)
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true)
@@ -167,7 +163,6 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
                   <TemplateCard
                     key={t.id}
                     template={t}
-                    onApply={() => setApplyingTemplate(t)}
                     onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
                     onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
                     isOwner={isOwner(t)}
@@ -186,7 +181,6 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
                   <TemplateCard
                     key={t.id}
                     template={t}
-                    onApply={() => setApplyingTemplate(t)}
                     onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
                     onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
                     isOwner={isOwner(t)}
@@ -205,7 +199,6 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
                   <TemplateCard
                     key={t.id}
                     template={t}
-                    onApply={() => setApplyingTemplate(t)}
                     onEdit={() => setEditingTemplate(t)}
                     onDelete={() => setDeletingTemplate(t)}
                     isOwner={true}
@@ -227,36 +220,6 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
         }}
         template={editingTemplate}
       />
-
-      {/* Apply to project modal */}
-      {applyingTemplate && activeProject?.id && (
-        <ApplyTemplateModal
-          open
-          template={applyingTemplate}
-          projectId={String(activeProject.id)}
-          onClose={() => setApplyingTemplate(null)}
-          onSuccess={() => {
-            toast.success(`"${applyingTemplate.name}" applied to project`)
-            setApplyingTemplate(null)
-          }}
-        />
-      )}
-      {applyingTemplate && !activeProject?.id && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="rounded-2xl bg-white p-6 text-center shadow-xl">
-            <p className="text-sm text-gray-700">
-              Select an active project first to apply this template.
-            </p>
-            <button
-              type="button"
-              onClick={() => setApplyingTemplate(null)}
-              className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
 
       <ConfirmDialog
         isOpen={!!deletingTemplate}

@@ -84,7 +84,20 @@ function restoreMessage(m: AgentMessage): ChatMessage {
       kind: String(m.data.kind ?? ""),
       draft: (m.data.draft as Record<string, unknown>) ?? {},
     }
+  } else if (m.message_type === "workflow_confirm" && m.data?.workflow_id) {
+    type = "workflow_confirm"
+  } else if (m.message_type === "confirmation_request") {
+    type = "confirmation_request"
   }
+
+  const workflowConfirmData =
+    type === "workflow_confirm" && m.data?.workflow_id
+      ? {
+          workflowId: String(m.data.workflow_id),
+          workflowName: String(m.data.workflow_name ?? "Workflow"),
+          originalMessage: String(m.data.original_message ?? ""),
+        }
+      : undefined
 
   return {
     id: String(m.id),
@@ -101,12 +114,27 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     eventType,
     workflowRunId: m.data?.workflow_run_id,
     approval,
+    workflowConfirmData,
   }
 }
 
 /** Matches backend `MIRO_LEGACY_BG_QUEUED_MESSAGE` (queued vs board-ready lines differ). */
 const LEGACY_MIRO_QUEUED_FALLBACK =
   "Queued Miro board generation — we'll notify you here when the board is ready."
+
+/** When DB metadata lacks original_message, use the preceding user turn. */
+function backfillWorkflowConfirmOriginalMessages(messages: ChatMessage[]): void {
+  for (let i = 0; i < messages.length; i++) {
+    const wf = messages[i].workflowConfirmData
+    if (messages[i].type !== "workflow_confirm" || !wf || wf.originalMessage.trim()) continue
+    for (let j = i - 1; j >= 0; j--) {
+      if (messages[j].role === "user" && messages[j].content.trim()) {
+        wf.originalMessage = messages[j].content
+        break
+      }
+    }
+  }
+}
 
 function dedupeMiroGenerationStartedMessages(messages: ChatMessage[]): ChatMessage[] {
   const seen = new Set<string>()
@@ -419,6 +447,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
     // Restore messages and back-fill recommendedTasks onto analysis messages when needed.
     const restored = session.messages.map(restoreMessage)
+    backfillWorkflowConfirmOriginalMessages(restored)
     setHasStarted(restored.length > 0)
     for (let i = 0; i < restored.length; i++) {
       if (restored[i].type === "analysis") {
@@ -566,6 +595,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       if (String(sessionIdRef.current) !== String(id)) return
       // Re-apply the same backfill logic as applySessionState so that
       const restored = session.messages.map(restoreMessage)
+      backfillWorkflowConfirmOriginalMessages(restored)
       for (let i = 0; i < restored.length; i++) {
         if (restored[i].type === "analysis") {
           latestRecommendedTasksRef.current = restored[i].recommendedTasks || null
@@ -640,6 +670,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         const session = await AgentAPI.getSession(sessionId)
         // Re-apply the same backfill logic as applySessionState so that
         const restored = session.messages.map(restoreMessage)
+        backfillWorkflowConfirmOriginalMessages(restored)
         setMessages(dedupeMiroGenerationStartedMessages(restored))
         setFollowUpAvailable(Boolean(session.follow_up_available))
         setFollowUpStarted(Boolean(session.follow_up_started))
@@ -856,11 +887,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           // Individual anomalies are added to the right panel via the
           // AnomalyCard "+ Add" button — no auto-broadcast on new analysis.
         } else if (event.type === "confirmation_request") {
-          // If column mapping already shown, don't overwrite the card — just
-          // silently wait for user confirmation via ColumnMappingCard buttons.
           if (!columnMappingReceived) {
-            contentParts.push(event.content || "")
-            updateMessage(aiMsgId, { content: contentParts.join("\n") })
+            updateMessage(aiMsgId, {
+              content: event.content || "Please confirm to continue.",
+              type: "confirmation_request",
+            })
           }
         } else if (event.type === "approval_request" && event.data) {
           const d = event.data as Record<string, unknown>
@@ -1129,8 +1160,36 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     abortRef.current?.abort()
   }, [setSessionId])
 
-  /** Handle text message send */
-  const handleSendMessage = useCallback(async (text: string, calendarContext?: Record<string, unknown>) => {
+  /** Confirm an AI-matched workflow: re-sends the original message with the explicit workflow_id. */
+  const handleConfirmWorkflow = useCallback((workflowId: string, originalMessage: string) => {
+    void handleSendMessageRef.current?.(originalMessage, undefined, workflowId)
+  }, [])
+
+  /** Dismiss a workflow_confirm message (user said No). */
+  const handleRejectWorkflow = useCallback(() => {
+    // The confirm card just disappears — no state to clear beyond hiding the buttons.
+    // The confirm message remains as text in chat history.
+  }, [])
+
+  /** Resume a workflow paused at await_confirmation (Continue button). */
+  const handleResumeWorkflow = useCallback((confirmMessageId: string) => {
+    void handleSendMessageRef.current?.(
+      "",
+      undefined,
+      undefined,
+      "resume_workflow",
+      confirmMessageId,
+    )
+  }, [])
+
+  /** Handle text message send. Pass workflowId when user confirms an AI-matched workflow. */
+  const handleSendMessage = useCallback(async (
+    text: string,
+    calendarContext?: Record<string, unknown>,
+    workflowId?: string,
+    action?: AgentAction,
+    reuseAiMsgId?: string,
+  ) => {
     setHasStarted(true)
     // Use provided context or fall back to the session-level calendar context
     const effectiveCalendarContext = calendarContext ?? sessionCalendarContext ?? undefined
@@ -1138,8 +1197,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       setSessionCalendarContext(calendarContext)
     }
 
-    const userMsgId = `user-${Date.now()}`
-    addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    const isResumeOnly = action === "resume_workflow"
+    if (!isResumeOnly && text.trim()) {
+      const userMsgId = `user-${Date.now()}`
+      addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    }
 
     // Create session if needed
     let sid = sessionId
@@ -1162,8 +1224,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       }
     }
 
-    const aiMsgId = `ai-${Date.now()}`
-    addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    const aiMsgId = reuseAiMsgId ?? `ai-${Date.now()}`
+    if (reuseAiMsgId) {
+      updateMessage(reuseAiMsgId, {
+        content: "Continuing workflow…",
+        type: "text",
+      })
+    } else {
+      addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    }
 
     setIsStreaming(true)
     setStepProgress([])
@@ -1174,7 +1243,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     abortRef.current = AgentAPI.sendMessage(
       sid!,
       {
-        message: text,
+        message: isResumeOnly ? "Continue" : text,
+        ...(workflowId ? { workflow_id: workflowId } : {}),
+        ...(action ? { action } : {}),
         ...(effectiveCalendarContext ? { calendar_context: effectiveCalendarContext as any } : {}),
       },
       (event: SSEEvent) => {
@@ -1234,6 +1305,28 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             content: event.content || "Approval required.",
             type: "approval_request",
             approval: pending,
+          })
+          return
+        }
+
+        if (event.type === "workflow_confirm" && event.data) {
+          const d = event.data as Record<string, unknown>
+          const wfId = String(d.workflow_id ?? "")
+          const wfName = String(d.workflow_name ?? "Workflow")
+          if (wfId) {
+            updateMessage(aiMsgId, {
+              content: event.content || `I can run the **${wfName}** workflow. Should I proceed?`,
+              type: "workflow_confirm",
+              workflowConfirmData: { workflowId: wfId, workflowName: wfName, originalMessage: text },
+            })
+          }
+          return
+        }
+
+        if (event.type === "confirmation_request") {
+          updateMessage(aiMsgId, {
+            content: event.content || "Please confirm to continue.",
+            type: "confirmation_request",
           })
           return
         }
@@ -1363,9 +1456,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       () => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        void refreshSession(requestSessionId)
-        void refreshFollowUpState(requestSessionId)
-        // Attach final step progress to the message
+        // Attach final step progress before refresh (refresh reloads messages from DB)
         setStepProgress((prev) => {
           if (prev.length > 0) {
             const final = prev.map((s) => ({
@@ -1378,6 +1469,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           return prev
         })
         setIsStreaming(false)
+        void refreshSession(requestSessionId)
+        void refreshFollowUpState(requestSessionId)
         if (embeddedInFloating) {
           window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
           void AgentAPI.updateSession(requestSessionId, { last_read_at: new Date().toISOString() }).catch(() => {
@@ -1784,6 +1877,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           onAction: handleAction,
           onConfirmColumns: handleConfirmColumns,
           onReupload: handleReupload,
+          onConfirmWorkflow: handleConfirmWorkflow,
+          onRejectWorkflow: handleRejectWorkflow,
+          onResumeWorkflow: handleResumeWorkflow,
           latestAnalysisMessageId,
           showFollowUpToggle: followUpAvailable || followUpStarted,
           followUpActive: followUpStarted,

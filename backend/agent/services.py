@@ -847,6 +847,25 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
+        # Resume a workflow paused at await_confirmation (user clicked Continue in chat).
+        if action == 'resume_workflow':
+            latest_run = self.session.workflow_runs.filter(
+                status='awaiting_confirmation',
+                is_deleted=False,
+            ).order_by('-created_at').first()
+            if latest_run and latest_run.workflow_definition:
+                yield from self._resume_workflow(latest_run)
+            else:
+                yield {
+                    'type': 'text',
+                    'content': (
+                        'This workflow has already finished or was continued. '
+                        'Start a new message to run it again.'
+                    ),
+                }
+            yield {'type': 'done'}
+            return
+
         # Resume after user confirms / edits the detected column mapping.
         if action == 'confirm_columns':
             latest_run = self.session.workflow_runs.filter(
@@ -900,8 +919,39 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
-        # --- Start a new workflow ---
-        if file_id or spreadsheet_id or csv_filename or (action == 'analyze'):
+        # --- AI intent routing for plain text messages (no file / action / explicit workflow) ---
+        # Only runs when the user sends a message without any other context.
+        # Returns early with a 'workflow_confirm' event (medium confidence) so the
+        # frontend can ask the user before executing, or starts the workflow directly
+        # when confidence is high enough.
+        if message and not file_id and not spreadsheet_id and not csv_filename and not action and not workflow_id:
+            workflow_def, confidence, template_name = self._resolve_workflow_intent(message)
+            if workflow_def:
+                if confidence >= 0.90:
+                    yield from self._start_workflow(workflow_def)
+                    yield {"type": "done"}
+                    return
+                elif confidence >= 0.6:
+                    yield {
+                        "type": "workflow_confirm",
+                        "content": (
+                            f"I think you want to run the **{template_name}** workflow. "
+                            "Should I proceed?"
+                        ),
+                        "data": {
+                            "workflow_id": str(workflow_def.id),
+                            "workflow_name": template_name,
+                            "confidence": round(confidence, 2),
+                            "original_message": message,
+                        },
+                    }
+                    yield {"type": "done"}
+                    return
+                # confidence < 0.6 → fall through to legacy chat
+
+        # --- Start a new workflow (file upload / analyze action / explicit workflow_id) ---
+        # Also entered when the user confirms an intent-matched workflow (workflow_id supplied).
+        if file_id or spreadsheet_id or csv_filename or (action == 'analyze') or workflow_id:
             workflow_def = self._resolve_workflow(
                 workflow_id=workflow_id,
                 action=action,
@@ -1646,6 +1696,96 @@ class AgentOrchestrator:
             status='active', is_deleted=False,
         ).first()
 
+    def _resolve_workflow_intent(self, user_message: str):
+        """
+        Use Gemini to match the user's plain-text message against project-bound templates.
+
+        Returns a 3-tuple:
+            (workflow_def, confidence, template_name)
+            - workflow_def:  AgentWorkflowDefinition or None
+            - confidence:    float 0.0-1.0
+            - template_name: str (human-readable name for confirm prompts)
+
+        Gracefully returns (None, 0.0, '') when:
+        - No project bindings exist
+        - Gemini is not configured
+        - Gemini call or JSON parse fails
+        """
+        if not self.project:
+            return None, 0.0, ''
+
+        from .models import AgentProjectWorkflowBinding
+        from .gemini_client import call_gemini_json, _get_api_key as _gemini_key
+
+        if not _gemini_key():
+            return None, 0.0, ''
+
+        bindings = AgentProjectWorkflowBinding.objects.filter(
+            project=self.project,
+            is_active=True,
+            is_deleted=False,
+        ).select_related('template__workflow_definition').order_by('-priority', 'applied_at')
+
+        if not bindings.exists():
+            return None, 0.0, ''
+
+        # Build compact template metadata for the prompt
+        templates_info = []
+        template_map = {}  # template_id → (workflow_def, template_name)
+        for b in bindings:
+            t = b.template
+            if not t or not t.workflow_definition:
+                continue
+            tid = str(t.id)
+            templates_info.append({
+                'id': tid,
+                'name': t.name,
+                'category': t.category,
+                'description': (t.description or '').strip(),
+                'use_cases': t.use_cases or [],
+            })
+            template_map[tid] = (t.workflow_definition, t.name)
+
+        if not templates_info:
+            return None, 0.0, ''
+
+        system_prompt = (
+            "You are a workflow router. Given a user message, decide which workflow template "
+            "best matches the user's intent, or return null if no workflow fits.\n\n"
+            "Rules:\n"
+            "- confidence >= 0.90: very clear match, execute immediately\n"
+            "- confidence 0.60-0.89: probable match, ask the user to confirm\n"
+            "- confidence < 0.60 or matched_id null: user is just chatting, do not trigger a workflow\n\n"
+            "Return ONLY valid JSON (no markdown, no explanation):\n"
+            '{"matched_id": "<template uuid or null>", "confidence": <0.0-1.0>, "reasoning": "<one sentence>"}'
+        )
+        user_prompt = (
+            f"User message: \"{user_message}\"\n\n"
+            f"Available workflow templates:\n{json.dumps(templates_info, ensure_ascii=False)}"
+        )
+
+        try:
+            result = call_gemini_json(system_prompt, user_prompt, temperature=0.1, timeout=15)
+        except Exception as exc:
+            logger.warning("_resolve_workflow_intent: Gemini call failed: %s", exc)
+            return None, 0.0, ''
+
+        matched_id = result.get('matched_id')
+        confidence = float(result.get('confidence', 0.0))
+
+        if not matched_id or confidence < 0.6:
+            return None, confidence, ''
+
+        entry = template_map.get(str(matched_id))
+        if not entry:
+            logger.warning(
+                "_resolve_workflow_intent: matched_id %s not in project bindings", matched_id
+            )
+            return None, 0.0, ''
+
+        workflow_def, template_name = entry
+        return workflow_def, confidence, template_name
+
     def _prepare_input_data(self, file_id=None, spreadsheet_id=None, csv_filename=None):
         """Build the initial input_data dict for the workflow engine.
 
@@ -1725,6 +1865,18 @@ class AgentOrchestrator:
         ).count()
         current_data = input_data
 
+        if not steps.exists():
+            workflow_run.status = 'completed'
+            workflow_run.save(update_fields=['status', 'updated_at'])
+            yield {
+                'type': 'text',
+                'content': (
+                    f'**{workflow_run.workflow_definition.name}** completed. '
+                    'There are no further steps in this workflow.'
+                ),
+            }
+            return
+
         for step in steps:
             execution = AgentStepExecution.objects.create(
                 workflow_run=workflow_run,
@@ -1766,15 +1918,20 @@ class AgentOrchestrator:
                 execution.completed_at = tz.now()
                 execution.save()
 
-                for event in result.sse_events:
-                    yield event
-
-                # Pause on await_confirmation
+                # Pause on await_confirmation — persist status BEFORE yielding SSE
+                # so a fast "Continue" click cannot race ahead of the DB write.
                 if step.step_type == 'await_confirmation':
                     workflow_run.status = 'awaiting_confirmation'
                     workflow_run.current_step_order = step.order + 1
-                    workflow_run.save()
+                    workflow_run.save(
+                        update_fields=['status', 'current_step_order', 'updated_at']
+                    )
+                    for event in result.sse_events:
+                        yield event
                     return
+
+                for event in result.sse_events:
+                    yield event
 
                 current_data = result.output_data or current_data
             else:
@@ -1791,7 +1948,13 @@ class AgentOrchestrator:
                 return
 
         workflow_run.status = 'completed'
-        workflow_run.save()
+        workflow_run.save(update_fields=['status', 'updated_at'])
+        yield {
+            'type': 'text',
+            'content': (
+                f'**{workflow_run.workflow_definition.name}** completed successfully.'
+            ),
+        }
 
     def _legacy_start_miro_background_if_needed(self, workflow_run):
         """Enqueue Celery job and persist started row at most once per workflow run."""
