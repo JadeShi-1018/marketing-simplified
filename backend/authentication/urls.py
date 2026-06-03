@@ -1,5 +1,6 @@
 # authentication/urls.py
 from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView,
     VerifyEmailView,
@@ -24,11 +25,17 @@ urlpatterns = [
     path('verify/', VerifyEmailView.as_view(), name='verify'),
     path('login/', LoginView.as_view(), name='login'),
     path('logout/', LogoutView.as_view(), name='logout'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
+    path('token/refresh', TokenRefreshView.as_view(), name='token-refresh-no-slash'),
     path('organization-token/refresh/', OrganizationTokenRefreshView.as_view(), name='organization-token-refresh'),
+    path('organization-token/refresh', OrganizationTokenRefreshView.as_view(), name='organization-token-refresh-no-slash'),
     path('me/', MeView.as_view(), name='me'),
+    path('me', MeView.as_view(), name='me-no-slash'),
     path('me/delete/', DeleteAccountView.as_view(), name='me-delete'),
+    path('me/delete', DeleteAccountView.as_view(), name='me-delete-no-slash'),
     path('me/teams/', UserTeamsView.as_view(), name='user-teams'),
     path('me/projects/', MeProjectsView.as_view(), name='me-projects'),
+    path('me/teams', UserTeamsView.as_view(), name='user-teams-no-slash'),
     
     # SSO endpoints (mock implementation for testing)
     path('sso/redirect/', SsoRedirectView.as_view(), name='sso-redirect'),

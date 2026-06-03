@@ -36,6 +36,66 @@ const api = axios.create({
   },
 });
 
+let refreshAccessTokenPromise: Promise<string | null> | null = null;
+
+export const getStoredAuthState = () => {
+  if (typeof window === 'undefined') return null;
+  const raw = localStorage.getItem('auth-storage');
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn('Failed to parse auth storage:', error);
+    return null;
+  }
+};
+
+export const getStoredAccessToken = (): string | null => {
+  const authData = getStoredAuthState();
+  return authData?.state?.token || null;
+};
+
+export const updateStoredAccessToken = (token: string) => {
+  if (typeof window === 'undefined') return;
+  const authData = getStoredAuthState();
+  if (!authData?.state) return;
+  authData.state.token = token;
+  localStorage.setItem('auth-storage', JSON.stringify(authData));
+};
+
+const refreshStoredAccessToken = async () => {
+  if (refreshAccessTokenPromise) return refreshAccessTokenPromise;
+
+  refreshAccessTokenPromise = (async () => {
+    const authData = getStoredAuthState();
+    const refresh = authData?.state?.refreshToken;
+    if (!refresh) return null;
+
+    try {
+      const response = await axios.post(
+        `${API_BASE_URL}/auth/token/refresh/`,
+        { refresh },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json, text/plain, */*',
+          },
+        },
+      );
+      const nextToken = response.data?.access;
+      if (!nextToken) return null;
+      updateStoredAccessToken(nextToken);
+      return nextToken;
+    } catch (error) {
+      return null;
+    } finally {
+      refreshAccessTokenPromise = null;
+    }
+  })();
+
+  return refreshAccessTokenPromise;
+};
+
 // Request interceptor to add auth token to requests
 api.interceptors.request.use(
   (config) => {
@@ -93,10 +153,11 @@ api.interceptors.request.use(
 // Response interceptor to handle auth errors globally
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error.response?.status;
     const url = error.config?.url;
     const responseData = error.response?.data;
+    const originalRequest = error.config;
 
     const isGoogleDocsUrl = typeof url === 'string' && url.startsWith('/api/google-docs/');
     const googleErrorMessage = responseData?.error;
@@ -107,7 +168,28 @@ api.interceptors.response.use(
       (typeof googleErrorMessage === 'string' && googleErrorMessage.toLowerCase().includes('google session expired'));
     const shouldBypassGlobalLogout = isGoogleDocsUrl && isGoogleIntegrationTokenError;
 
-    if (status === 401 && url !== '/auth/login/' && !shouldBypassGlobalLogout) {
+    const isAuthEndpoint =
+      url === '/auth/login/' ||
+      url === '/auth/token/refresh/' ||
+      url === '/auth/logout/';
+
+    if (
+      status === 401 &&
+      !isAuthEndpoint &&
+      !shouldBypassGlobalLogout &&
+      originalRequest &&
+      !originalRequest.__authRetry
+    ) {
+      originalRequest.__authRetry = true;
+      const refreshedToken = await refreshStoredAccessToken();
+      if (refreshedToken) {
+        originalRequest.headers = originalRequest.headers || {};
+        originalRequest.headers.Authorization = `Bearer ${refreshedToken}`;
+        return api(originalRequest);
+      }
+    }
+
+    if (status === 401 && !isAuthEndpoint && !shouldBypassGlobalLogout) {
       // Clear auth data and redirect to login on unauthorized requests
       // This will be handled by the Zustand store
       if (typeof window !== 'undefined') {
@@ -155,6 +237,11 @@ export const authAPI = {
 
   refreshOrganizationToken: async (): Promise<{ organization_access_token: string }> => {
     const response = await api.post('/auth/organization-token/refresh/');
+    return response.data;
+  },
+
+  refreshAccessToken: async (refresh: string): Promise<{ access: string }> => {
+    const response = await api.post('/auth/token/refresh/', { refresh });
     return response.data;
   },
 

@@ -7,7 +7,11 @@ import type {
   DecisionCommittedResponse,
   DecisionDraftResponse,
   DecisionSignal,
+  DecisionStatus,
 } from '@/types/decision';
+
+const DRAFT_PATCH_STATUSES = new Set<DecisionStatus>(['PREDRAFT', 'DRAFT', 'AWAITING_APPROVAL']);
+const COMMITTED_PATCH_STATUSES = new Set<DecisionStatus>(['COMMITTED', 'REVIEWED']);
 
 export type DecisionKind = 'draft' | 'committed' | 'unknown';
 
@@ -101,6 +105,35 @@ export function useDecisionDetail(decisionId: number | null, projectId: number |
     [decisionId, projectId]
   );
 
+  const saveDecision = useCallback(
+    async (payload: DecisionDraftPayload) => {
+      if (!decisionId) return null;
+      const decisionStatus = state.committed?.status;
+      try {
+        if (decisionStatus && DRAFT_PATCH_STATUSES.has(decisionStatus)) {
+          const next = await DecisionAPI.patchDraft(decisionId, payload, projectId);
+          setState((s) => ({ ...s, draft: next, kind: 'draft' }));
+          return next;
+        }
+        if (decisionStatus && COMMITTED_PATCH_STATUSES.has(decisionStatus)) {
+          const next = await DecisionAPI.patchDecision(decisionId, payload, projectId);
+          setState((s) => ({
+            ...s,
+            committed: next,
+            kind: 'committed',
+          }));
+          return next;
+        }
+        toast.error('This decision cannot be edited.');
+        return null;
+      } catch (err) {
+        toast.error(extractError(err, 'Failed to save'));
+        throw err;
+      }
+    },
+    [decisionId, projectId, state.committed?.status],
+  );
+
   const refreshSignals = useCallback(async () => {
     if (!decisionId) return;
     try {
@@ -122,6 +155,7 @@ export function useDecisionDetail(decisionId: number | null, projectId: number |
     base: getBase(),
     refetch: fetchDetail,
     patchDraft,
+    saveDecision,
     refreshSignals,
   };
 }
