@@ -11,6 +11,8 @@ import { useAuthStore } from "@/lib/authStore"
 import { useProjectStore } from "@/lib/projectStore"
 import TemplateCard from "../cards/TemplateCard"
 import ApplyTemplateModal from "./ApplyTemplateModal"
+import { brandChipActive, brandChipInactive } from "../workflowBrandClasses"
+import { cn } from "@/lib/utils"
 
 const CATEGORIES: Array<{ value: "all" | TemplateCategory; label: string }> = [
   { value: "all", label: "All" },
@@ -129,11 +131,9 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
             key={cat.value}
             type="button"
             onClick={() => setCategoryFilter(cat.value)}
-            className={`rounded-full px-3.5 py-1 text-xs font-medium transition ${
-              categoryFilter === cat.value
-                ? "bg-violet-600 text-white shadow-sm"
-                : "border border-gray-200 bg-white text-gray-600 hover:border-violet-200 hover:text-violet-700"
-            }`}
+            className={cn(
+              categoryFilter === cat.value ? brandChipActive : brandChipInactive
+            )}
           >
             {cat.label}
           </button>

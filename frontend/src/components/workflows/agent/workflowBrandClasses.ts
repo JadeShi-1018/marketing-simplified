@@ -19,3 +19,11 @@ export const brandTabActive =
 /** Inactive tab: gray text only (no border). */
 export const brandTabInactive =
   "rounded-lg px-4 py-2 text-sm font-medium text-gray-500 transition hover:text-gray-800"
+
+/** Active category filter chip (Templates tab). */
+export const brandChipActive =
+  "rounded-full bg-brand-gradient px-3.5 py-1 text-xs font-medium text-white shadow-sm transition hover:opacity-95"
+
+/** Inactive category filter chip. */
+export const brandChipInactive =
+  "rounded-full border border-gray-200 bg-white px-3.5 py-1 text-xs font-medium text-gray-600 transition hover:text-gray-800"
