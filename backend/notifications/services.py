@@ -42,6 +42,7 @@ PREFERENCE_SECTION_KEYS = (
 _EVENT_PREFERENCE_KEY: dict[str, tuple[str, str]] = {
     NotificationEventType.CHAT_NEW_MESSAGE: ("collaboration_assets", "chat_in_app"),
     NotificationEventType.CHAT_NEW_CONVERSATION: ("collaboration_assets", "chat_new_session"),
+    NotificationEventType.CHAT_MENTION: ("collaboration_assets", "chat_in_app"),
     NotificationEventType.MESSAGE_REMINDER: ("collaboration_assets", "message_reminder"),
     NotificationEventType.PROJECT_INVITE: ("collaboration_assets", "project_invite"),
     NotificationEventType.CALENDAR_REMINDER: ("collaboration_assets", "calendar_reminders"),
@@ -489,6 +490,90 @@ def repair_duplicate_chat_notifications_for_user(user) -> int:
         )
         if not keep.is_read:
             keep.save(update_fields=["metadata"])
+    return removed
+
+
+CHAT_DRAWER_EVENT_TYPES = frozenset(
+    {
+        NotificationEventType.CHAT_NEW_MESSAGE,
+        NotificationEventType.CHAT_NEW_CONVERSATION,
+        NotificationEventType.CHAT_MENTION,
+        NotificationEventType.CHAT_THREAD_REPLY,
+        NotificationEventType.CHAT_REACTION,
+    }
+)
+
+
+def _chat_id_for_notification(notification: Notification) -> int | None:
+    metadata = notification.metadata or {}
+    raw_chat_id = metadata.get("chat_id")
+    if raw_chat_id is None and notification.related_object_type == "chat":
+        raw_chat_id = notification.related_object_id
+    try:
+        return int(raw_chat_id)
+    except (TypeError, ValueError):
+        return None
+
+
+@transaction.atomic
+def repair_stale_chat_notifications_for_user(user) -> int:
+    """
+    Delete chat notifications that can no longer open for the recipient.
+
+    This handles old local/dev data and access changes: if the target chat was deleted
+    or the recipient is no longer an active participant, the notification should not
+    be listed or counted.
+    """
+    from chat.models import Chat, ChatParticipant
+
+    user_id = user.pk if hasattr(user, "pk") else user
+    candidates = list(
+        Notification.objects.filter(
+            recipient_id=user_id,
+            event_type__in=CHAT_DRAWER_EVENT_TYPES,
+        ).only("id", "event_type", "related_object_type", "related_object_id", "metadata")
+    )
+    if not candidates:
+        return 0
+
+    notification_chat_ids: dict[str, int] = {}
+    stale_ids: list[str] = []
+    chat_ids: set[int] = set()
+
+    for notification in candidates:
+        chat_id = _chat_id_for_notification(notification)
+        if chat_id is None:
+            stale_ids.append(notification.id)
+            continue
+        notification_chat_ids[str(notification.id)] = chat_id
+        chat_ids.add(chat_id)
+
+    existing_chat_ids = set(Chat.objects.filter(id__in=chat_ids).values_list("id", flat=True))
+    active_chat_ids = set(
+        ChatParticipant.objects.filter(
+            chat_id__in=existing_chat_ids,
+            user_id=user_id,
+            is_active=True,
+        ).values_list("chat_id", flat=True)
+    )
+
+    for notification in candidates:
+        key = str(notification.id)
+        chat_id = notification_chat_ids.get(key)
+        if chat_id is None:
+            continue
+        if chat_id not in existing_chat_ids or chat_id not in active_chat_ids:
+            stale_ids.append(notification.id)
+
+    if not stale_ids:
+        return 0
+
+    removed, _ = Notification.objects.filter(id__in=stale_ids).delete()
+    logger.warning(
+        "repair_stale_chat_notifications_for_user: removed %s stale chat notification(s) for user_id=%s",
+        removed,
+        user_id,
+    )
     return removed
 
 

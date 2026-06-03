@@ -2,8 +2,20 @@
 export const NOTIFICATION_EVENT = {
   CHAT_NEW_MESSAGE: "chat_new_message",
   CHAT_NEW_CONVERSATION: "chat_new_conversation",
+  CHAT_MENTION: "chat_mention",
+  CHAT_THREAD_REPLY: "chat_thread_reply",
+  CHAT_REACTION: "chat_reaction",
   DOC_ASSET_UPDATE: "doc_asset_update",
 } as const;
+
+/** All chat-related event types shown in the Activity feed. */
+export const CHAT_ACTIVITY_EVENT_TYPES = new Set([
+  "chat_new_message",
+  "chat_new_conversation",
+  "chat_mention",
+  "chat_thread_reply",
+  "chat_reaction",
+]);
 
 /** Metadata structure for chat_new_message notifications */
 export interface ChatMessageNotificationMetadata {

@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.postgres',
     'corsheaders',
     'rest_framework',
     'django_filters',
@@ -342,7 +343,13 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
     ],
     'EXCEPTION_HANDLER': 'calendars.exceptions.calendar_exception_handler',
+    'DEFAULT_THROTTLE_RATES': {
+        'chat_message_write': config('CHAT_MESSAGE_WRITE_THROTTLE_RATE', default='60/minute'),
+        'chat_reaction': config('CHAT_REACTION_THROTTLE_RATE', default='120/minute'),
+    },
 }
+
+CHAT_REVOKE_WINDOW_MINUTES = config('CHAT_REVOKE_WINDOW_MINUTES', default=2, cast=int)
 
 from datetime import timedelta
 

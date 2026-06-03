@@ -5,42 +5,343 @@ from typing import Any, Dict, List, Optional, Tuple
 from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import transaction
-from django.db.models import Q, Prefetch, Max
+from django.db.models import Count, Q, Prefetch, Max
 from django.core.cache import cache
 from django.utils import timezone
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType
+from django_redis import get_redis_connection
+from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType, ChannelVisibility, ThreadReadStatus
 from core.models import ProjectMember
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+def extract_message_plain_text(rich_body) -> str:
+    """Extract searchable plain text from a Tiptap JSON document."""
+    if rich_body is None:
+        return ""
+    if isinstance(rich_body, str):
+        return rich_body.strip()
+    parts = []
+
+    def visit(value):
+        if isinstance(value, dict):
+            # mention nodes render as @username
+            if value.get("type") == "mention":
+                attrs = value.get("attrs") or {}
+                label = attrs.get("label") or attrs.get("id") or ""
+                if label:
+                    parts.append(f"@{label}")
+                return
+            text = value.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+            for child in value.get("content", []):
+                visit(child)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+
+    visit(rich_body)
+    return " ".join(p.strip() for p in parts if p and p.strip())
+
+
+def sync_message_mentions(message: Message, mention_ids: list[int]) -> None:
+    """Sync MessageMention rows for an edited message and return new mention user ids."""
+    existing = set(message.mentions.values_list('mentioned_user_id', flat=True))
+    new_ids = set(mention_ids) - existing
+    removed_ids = existing - set(mention_ids)
+    if removed_ids:
+        message.mentions.filter(mentioned_user_id__in=removed_ids).delete()
+    if new_ids:
+        MessageMention.objects.bulk_create(
+            [MessageMention(message=message, mentioned_user_id=uid) for uid in new_ids],
+            ignore_conflicts=True,
+        )
+    return list(new_ids)
+
+
 class OnlineStatusService:
     """Service for managing user online status"""
     
     ONLINE_KEY_PREFIX = 'user_online'
+    ONLINE_CONNECTION_KEY_PREFIX = 'user_online_connections'
+    PENDING_OFFLINE_KEY_PREFIX = 'user_pending_offline'
+    PRESENCE_VERSION_KEY_PREFIX = 'user_presence_version'
+    PRESENCE_RECIPIENTS_KEY_PREFIX = 'user_presence_recipients'
     ONLINE_TIMEOUT = 60 * 5  # 5 minutes
+    OFFLINE_GRACE_SECONDS = 15
+    PRESENCE_VERSION_TIMEOUT = 60 * 60 * 24 * 30  # 30 days
+    # Recipient lists are explicitly invalidated on chat membership changes
+    # (see ChatService.invalidate_presence_recipients_for_chat), so a longer TTL
+    # is safe and keeps the cache effective beyond a single connect.
+    PRESENCE_RECIPIENTS_TIMEOUT = 60 * 5  # 5 minutes
+    # Above this many affected users, a membership change skips the explicit
+    # per-user cache fan-out and lets the TTL reconcile instead — avoids firing a
+    # multi-thousand-key Redis delete on the join/leave hot path for huge channels.
+    PRESENCE_RECIPIENTS_INVALIDATION_LIMIT = 1000
+
+    @classmethod
+    def _online_key(cls, user_id: int) -> str:
+        return f'{cls.ONLINE_KEY_PREFIX}:{user_id}'
+
+    @classmethod
+    def _connection_key(cls, user_id: int) -> str:
+        return f'{cls.ONLINE_CONNECTION_KEY_PREFIX}:{user_id}'
+
+    @classmethod
+    def _pending_offline_key(cls, user_id: int) -> str:
+        return f'{cls.PENDING_OFFLINE_KEY_PREFIX}:{user_id}'
+
+    @classmethod
+    def _presence_version_key(cls, user_id: int) -> str:
+        return f'{cls.PRESENCE_VERSION_KEY_PREFIX}:{user_id}'
+
+    @classmethod
+    def _presence_recipients_key(cls, user_id: int) -> str:
+        return f'{cls.PRESENCE_RECIPIENTS_KEY_PREFIX}:{user_id}'
+
+    @classmethod
+    def invalidate_presence_recipients(cls, user_ids) -> None:
+        """Drop cached recipient lists so chat membership changes take effect immediately."""
+        keys = [cls._presence_recipients_key(uid) for uid in set(user_ids)]
+        if not keys:
+            return
+        try:
+            cache.delete_many(keys)
+        except Exception:
+            logger.exception("[OnlineStatus] Failed to invalidate presence recipient cache")
+
+    @classmethod
+    def _touch_cache_key(cls, key: str) -> None:
+        try:
+            cache.touch(key, cls.ONLINE_TIMEOUT)
+        except Exception:
+            pass
+
+    @classmethod
+    def _redis(cls):
+        return get_redis_connection("default")
+
+    @classmethod
+    def _get_cached_connections(cls, user_id: int) -> set[str]:
+        value = cache.get(cls._connection_key(user_id), [])
+        if isinstance(value, (list, tuple, set)):
+            return {str(connection_id) for connection_id in value if connection_id}
+        return set()
+
+    @classmethod
+    def _set_cached_connections(cls, user_id: int, connection_ids: set[str]) -> int:
+        connection_key = cls._connection_key(user_id)
+        if connection_ids:
+            cache.set(connection_key, list(connection_ids), timeout=cls.ONLINE_TIMEOUT)
+        else:
+            cache.delete(connection_key)
+        return len(connection_ids)
+
+    @classmethod
+    def _add_connection(cls, user_id: int, connection_id: str) -> int:
+        connection_key = cls._connection_key(user_id)
+        try:
+            redis = cls._redis()
+            pipe = redis.pipeline(transaction=True)
+            pipe.sadd(connection_key, connection_id)
+            pipe.expire(connection_key, cls.ONLINE_TIMEOUT)
+            pipe.scard(connection_key)
+            _, _, count = pipe.execute()
+            return int(count)
+        except NotImplementedError:
+            connections = cls._get_cached_connections(user_id)
+            connections.add(str(connection_id))
+            return cls._set_cached_connections(user_id, connections)
+
+    @classmethod
+    def _remove_connection(cls, user_id: int, connection_id: str) -> int:
+        connection_key = cls._connection_key(user_id)
+        try:
+            redis = cls._redis()
+            pipe = redis.pipeline(transaction=True)
+            pipe.srem(connection_key, connection_id)
+            pipe.scard(connection_key)
+            pipe.expire(connection_key, cls.ONLINE_TIMEOUT)
+            _, remaining, _ = pipe.execute()
+            remaining = int(remaining)
+            if remaining <= 0:
+                redis.delete(connection_key)
+            return max(0, remaining)
+        except NotImplementedError:
+            connections = cls._get_cached_connections(user_id)
+            connections.discard(str(connection_id))
+            return cls._set_cached_connections(user_id, connections)
+
+    @classmethod
+    def _connection_count(cls, user_id: int) -> Optional[int]:
+        connection_key = cls._connection_key(user_id)
+        try:
+            return int(cls._redis().scard(connection_key))
+        except NotImplementedError:
+            return len(cls._get_cached_connections(user_id))
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to read Redis connection count for user {user_id}")
+            return None
+
+    @classmethod
+    def next_presence_version(cls, user_id: int) -> Optional[int]:
+        """Monotonic presence version for ordering presence events on the client."""
+        key = cls._presence_version_key(user_id)
+        seed = int(timezone.now().timestamp() * 1000)
+        try:
+            cache.add(key, seed, timeout=cls.PRESENCE_VERSION_TIMEOUT)
+            current = cache.get(key)
+            if current is None or int(current) < seed:
+                cache.set(key, seed, timeout=cls.PRESENCE_VERSION_TIMEOUT)
+            else:
+                cache.touch(key, cls.PRESENCE_VERSION_TIMEOUT)
+            return int(cache.incr(key))
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to increment presence version for user {user_id}")
+            return None
+
+    @classmethod
+    def get_presence_version(cls, user_id: int) -> int:
+        try:
+            return int(cache.get(cls._presence_version_key(user_id), 0) or 0)
+        except Exception:
+            return 0
     
     @classmethod
-    def set_online(cls, user_id: int) -> None:
+    def set_online(cls, user_id: int) -> bool:
         """Mark user as online"""
-        key = f'{cls.ONLINE_KEY_PREFIX}:{user_id}'
-        cache.set(key, True, timeout=cls.ONLINE_TIMEOUT)
-        logger.info(f"[OnlineStatus] User {user_id} marked as ONLINE (timeout: {cls.ONLINE_TIMEOUT}s)")
+        try:
+            cache.set(cls._online_key(user_id), True, timeout=cls.ONLINE_TIMEOUT)
+            cache.delete(cls._pending_offline_key(user_id))
+            logger.info(f"[OnlineStatus] User {user_id} marked as ONLINE (timeout: {cls.ONLINE_TIMEOUT}s)")
+            return True
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to mark user {user_id} ONLINE")
+            return False
     
     @classmethod
-    def set_offline(cls, user_id: int) -> None:
+    def set_offline(cls, user_id: int) -> bool:
         """Mark user as offline"""
-        key = f'{cls.ONLINE_KEY_PREFIX}:{user_id}'
-        cache.delete(key)
-        logger.info(f"[OnlineStatus] User {user_id} marked as OFFLINE")
+        try:
+            cache.delete(cls._online_key(user_id))
+            cache.delete(cls._pending_offline_key(user_id))
+            cache.delete(cls._connection_key(user_id))
+            try:
+                cls._redis().delete(cls._connection_key(user_id))
+            except Exception:
+                pass
+            logger.info(f"[OnlineStatus] User {user_id} marked as OFFLINE")
+            return True
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to mark user {user_id} OFFLINE")
+            return False
+
+    @classmethod
+    def _set_offline_keep_connection_set(cls, user_id: int) -> bool:
+        """
+        Mark offline without deleting the connection set.
+
+        Only call from finalize_offline_if_still_disconnected. The connection set
+        must survive until the post-offline re-check so a racing reconnect can
+        cancel the stale offline transition.
+        """
+        try:
+            cache.delete(cls._online_key(user_id))
+            cache.delete(cls._pending_offline_key(user_id))
+            logger.info(f"[OnlineStatus] User {user_id} marked as OFFLINE")
+            return True
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to mark user {user_id} OFFLINE")
+            return False
+
+    @classmethod
+    def connection_opened(cls, user_id: int, connection_id: str) -> Tuple[int, bool, Optional[int]]:
+        """Track a websocket connection and mark the user online."""
+        try:
+            count = cls._add_connection(user_id, connection_id)
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to add connection for user {user_id}; presence degraded")
+            return 1, False, None
+
+        if not cls.set_online(user_id):
+            return count, False, None
+
+        version = cls.next_presence_version(user_id) if count == 1 else None
+        became_online = count == 1 and version is not None
+        if count == 1 and version is None:
+            # The user is online for queries (online_key is set) but we cannot emit an
+            # ordered presence_update without a version, so recipients won't learn about
+            # this transition until the user emits another visible event or reconnects.
+            # Suppressing the undedupable broadcast is intentional; surface it so the
+            # "silent missed event" failure mode is observable in monitoring.
+            logger.warning(
+                f"[OnlineStatus] presence_broadcast_skipped reason=no_version user={user_id}; "
+                f"user is online but online transition was not broadcast"
+            )
+        logger.info(f"[OnlineStatus] User {user_id} connection opened (connections: {count})")
+        return count, became_online, version
+
+    @classmethod
+    def connection_closed(cls, user_id: int, connection_id: str) -> Tuple[int, Optional[str]]:
+        """Track a websocket disconnection and start delayed offline if no connections remain."""
+        try:
+            remaining = cls._remove_connection(user_id, connection_id)
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to remove connection for user {user_id}; presence degraded")
+            return 0, None
+        if remaining > 0:
+            cls.set_online(user_id)
+            logger.info(f"[OnlineStatus] User {user_id} connection closed (connections: {remaining})")
+            return remaining, None
+
+        offline_token = uuid.uuid4().hex
+        try:
+            cache.set(
+                cls._pending_offline_key(user_id),
+                offline_token,
+                timeout=cls.OFFLINE_GRACE_SECONDS + 30,
+            )
+            cls._touch_cache_key(cls._online_key(user_id))
+        except Exception:
+            logger.exception(f"[OnlineStatus] Failed to set pending offline for user {user_id}")
+            return 0, None
+        logger.info(f"[OnlineStatus] User {user_id} last connection closed; pending offline token {offline_token}")
+        return 0, offline_token
+
+    @classmethod
+    def finalize_offline_if_still_disconnected(cls, user_id: int, offline_token: str) -> Optional[int]:
+        """Mark offline only if no newer connection canceled this pending offline token."""
+        if cache.get(cls._pending_offline_key(user_id)) != offline_token:
+            return None
+        connection_count = cls._connection_count(user_id)
+        if connection_count is None:
+            return None
+        if connection_count > 0:
+            cache.delete(cls._pending_offline_key(user_id))
+            cls.set_online(user_id)
+            return None
+        if not cls._set_offline_keep_connection_set(user_id):
+            return None
+        connection_count = cls._connection_count(user_id)
+        if connection_count is None:
+            cls.set_online(user_id)
+            return None
+        if connection_count > 0:
+            cls.set_online(user_id)
+            return None
+        version = cls.next_presence_version(user_id)
+        if version is None:
+            return None
+        logger.info(f"[OnlineStatus] User {user_id} finalized as OFFLINE")
+        return version
     
     @classmethod
     def is_online(cls, user_id: int) -> bool:
         """Check if user is online"""
-        key = f'{cls.ONLINE_KEY_PREFIX}:{user_id}'
         try:
-            result = cache.get(key, False)
+            result = cache.get(cls._online_key(user_id), False)
         except Exception:
             result = False
         logger.debug(f"[OnlineStatus] Checking user {user_id}: {result}")
@@ -49,20 +350,140 @@ class OnlineStatusService:
     @classmethod
     def get_online_users(cls, user_ids: List[int]) -> List[int]:
         """Get list of online users from given user IDs"""
-        online_users = []
-        for user_id in user_ids:
-            if cls.is_online(user_id):
-                online_users.append(user_id)
-        return online_users
+        keys_by_user_id = {
+            user_id: cls._online_key(user_id)
+            for user_id in user_ids
+        }
+        try:
+            values_by_key = cache.get_many(keys_by_user_id.values())
+        except Exception:
+            values_by_key = {}
+        return [
+            user_id
+            for user_id, key in keys_by_user_id.items()
+            if values_by_key.get(key, False)
+        ]
     
     @classmethod
-    def heartbeat(cls, user_id: int) -> None:
+    def heartbeat(cls, user_id: int, connection_id: Optional[str] = None) -> None:
         """Update user's online status (extend timeout)"""
+        connection_key = cls._connection_key(user_id)
+        try:
+            redis = cls._redis()
+            redis.expire(connection_key, cls.ONLINE_TIMEOUT)
+        except Exception:
+            cls._touch_cache_key(connection_key)
         cls.set_online(user_id)
+
+    @classmethod
+    def presence_snapshot(cls, user_ids: List[int]) -> List[Dict[str, Any]]:
+        """Return current presence for a batch of users."""
+        keys_by_user_id = {
+            user_id: cls._online_key(user_id)
+            for user_id in user_ids
+        }
+        try:
+            values_by_key = cache.get_many(keys_by_user_id.values())
+        except Exception:
+            values_by_key = {}
+        return [
+            {
+                'user_id': user_id,
+                'is_online': bool(values_by_key.get(keys_by_user_id[user_id], False)),
+                'version': cls.get_presence_version(user_id),
+            }
+            for user_id in user_ids
+        ]
 
 
 class ChatService:
     """Service for chat-related business logic"""
+
+    @staticmethod
+    def get_presence_recipient_ids(user_id: int) -> List[int]:
+        """Users sharing an active chat with this user should receive presence changes."""
+        cache_key = OnlineStatusService._presence_recipients_key(user_id)
+        try:
+            cached = cache.get(cache_key)
+            if isinstance(cached, list) and all(isinstance(value, int) for value in cached):
+                return cached
+        except Exception:
+            cached = None
+
+        recipient_ids = list(
+            ChatParticipant.objects.filter(
+                chat__participants__user_id=user_id,
+                chat__participants__is_active=True,
+                is_active=True,
+            )
+            .exclude(user_id=user_id)
+            .values_list('user_id', flat=True)
+            .distinct()
+        )
+        try:
+            cache.set(cache_key, recipient_ids, timeout=OnlineStatusService.PRESENCE_RECIPIENTS_TIMEOUT)
+        except Exception:
+            pass
+        return recipient_ids
+
+    @staticmethod
+    def invalidate_presence_recipients_for_chat(chat: Chat, extra_user_ids=()) -> None:
+        """
+        Invalidate cached presence-recipient lists for everyone affected by a
+        membership change in this chat.
+
+        When a participant is added or removed, the recipient list of every other
+        active participant changes (they should/shouldn't receive this user's
+        presence), and so does the changed user's own list. Pass the changed
+        user(s) via extra_user_ids when they are no longer active participants and
+        so won't appear in the active-participant query — e.g. leave/remove, or a
+        future chat delete/archive path that should pass the former participants
+        (there is no such path today; the only membership mutators are the ones in
+        this service, all of which already call this helper).
+
+        Runs after the surrounding transaction commits so concurrent readers don't
+        repopulate the cache from a not-yet-committed view of membership.
+        """
+        affected_ids = set(
+            ChatParticipant.objects.filter(chat=chat, is_active=True)
+            .values_list('user_id', flat=True)
+        )
+        affected_ids.update(extra_user_ids)
+        if not affected_ids:
+            return
+        limit = OnlineStatusService.PRESENCE_RECIPIENTS_INVALIDATION_LIMIT
+        if len(affected_ids) > limit:
+            logger.info(
+                "[OnlineStatus] presence recipient invalidation skipped for chat %s: "
+                "%s affected users exceeds limit %s; relying on %ss TTL",
+                chat.id, len(affected_ids), limit, OnlineStatusService.PRESENCE_RECIPIENTS_TIMEOUT,
+            )
+            return
+        transaction.on_commit(
+            lambda: OnlineStatusService.invalidate_presence_recipients(affected_ids)
+        )
+
+    @staticmethod
+    def get_fallback_manager_user_id(chat: Chat) -> Optional[int]:
+        return (
+            ChatParticipant.objects.filter(chat=chat, is_active=True)
+            .order_by('joined_at', 'id')
+            .values_list('user_id', flat=True)
+            .first()
+        )
+
+    @staticmethod
+    def is_channel_manager(chat: Chat, user: User) -> bool:
+        participant = ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
+        if not participant:
+            return False
+        if participant.is_manager:
+            return True
+        if chat.created_by_id and chat.created_by_id == user.id:
+            return True
+        if not ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).exists():
+            return ChatService.get_fallback_manager_user_id(chat) == user.id
+        return False
     
     @staticmethod
     @transaction.atomic
@@ -105,7 +526,8 @@ class ChatService:
         # Add participants
         ChatParticipant.objects.create(chat=chat, user=current_user, is_active=True)
         ChatParticipant.objects.create(chat=chat, user=other_user, is_active=True)
-        
+
+        ChatService.invalidate_presence_recipients_for_chat(chat)
         logger.info(f"Created private chat {chat.id} between users {current_user.id} and {other_user.id}")
         return chat, True
     
@@ -145,15 +567,22 @@ class ChatService:
         chat = Chat.objects.create(
             project_id=project_id,
             type=ChatType.GROUP,
-            name=name
+            name=name,
+            created_by=current_user,
         )
         
         # Add participants
         ChatParticipant.objects.bulk_create([
-            ChatParticipant(chat=chat, user_id=user_id, is_active=True)
+            ChatParticipant(
+                chat=chat,
+                user_id=user_id,
+                is_active=True,
+                is_manager=user_id == current_user.id,
+            )
             for user_id in all_user_ids
         ])
-        
+
+        ChatService.invalidate_presence_recipients_for_chat(chat)
         logger.info(f"Created group chat {chat.id} '{name}' with {len(all_user_ids)} participants")
         return chat
     
@@ -184,7 +613,7 @@ class ChatService:
                 'participants',
                 queryset=ChatParticipant.objects.select_related('user').filter(is_active=True)
             )
-        ).select_related('project')
+        ).select_related('project', 'created_by')
         
         return query
     
@@ -205,9 +634,19 @@ class ChatService:
         if chat.type != ChatType.GROUP:
             raise ValueError("Can only add participants to group chats")
         
-        # Check if added_by is a participant
-        if not ChatParticipant.objects.filter(chat=chat, user=added_by, is_active=True).exists():
-            raise ValueError("Only participants can add new members")
+        # Self-join is allowed (user joining themselves via Browse channels).
+        # It is only allowed for public channels that appear in Browse channels.
+        if user == added_by and chat.visibility != ChannelVisibility.PUBLIC:
+            raise ValueError("This channel can only be joined by invitation")
+
+        # When adding someone else, the caller must already be a participant,
+        # and restricted channels require a manager.
+        if user != added_by:
+            added_by_participant = ChatParticipant.objects.filter(chat=chat, user=added_by, is_active=True).first()
+            if not added_by_participant:
+                raise ValueError("Only participants can add new members")
+            if chat.visibility == ChannelVisibility.MANAGER_INVITE and not ChatService.is_channel_manager(chat, added_by):
+                raise ValueError("Only channel managers can add members")
         
         # Check if user can join
         if not chat.can_user_join(user):
@@ -222,8 +661,10 @@ class ChatService:
             else:
                 # Reactivate
                 existing.is_active = True
+                existing.is_manager = False
                 existing.joined_at = timezone.now()
                 existing.save()
+                ChatService.invalidate_presence_recipients_for_chat(chat)
                 logger.info(f"Reactivated participant {user.id} in chat {chat.id}")
                 return existing
         
@@ -233,7 +674,8 @@ class ChatService:
             user=user,
             is_active=True
         )
-        
+
+        ChatService.invalidate_presence_recipients_for_chat(chat)
         logger.info(f"Added participant {user.id} to chat {chat.id} by user {added_by.id}")
         return participant
     
@@ -251,6 +693,7 @@ class ChatService:
         participant.is_active = False
         participant.save(update_fields=['is_active', 'updated_at'])
 
+        ChatService.invalidate_presence_recipients_for_chat(chat, extra_user_ids=[user.id])
         logger.info(f"User {user.id} left chat {chat.id}")
 
     @staticmethod
@@ -279,7 +722,8 @@ class ChatService:
         
         participant.is_active = False
         participant.save()
-        
+
+        ChatService.invalidate_presence_recipients_for_chat(chat, extra_user_ids=[user.id])
         logger.info(f"Removed participant {user.id} from chat {chat.id} by user {removed_by.id}")
 
 
@@ -429,6 +873,8 @@ class MessageService:
             from notifications.services import create_or_update_chat_notification
 
             for recipient in recipients:
+                if recipient.is_currently_muted() or recipient.notification_level == 'mentions':
+                    continue
                 create_or_update_chat_notification(
                     recipient_id=recipient.user_id,
                     actor_id=sender.id,
@@ -484,24 +930,88 @@ class MessageService:
         if not ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).exists():
             raise ValueError("You are not a participant of this chat")
         
+        # Root messages only — thread replies are fetched via the thread_replies endpoint
+        thread_replies_for_summary = (
+            Message.objects
+            .filter(chat=chat)
+            .select_related('sender')
+            .only(
+                'id',
+                'parent_message_id',
+                'sender_id',
+                'created_at',
+                'sender__id',
+                'sender__username',
+                'sender__email',
+                'sender__avatar',
+            )
+            .order_by('created_at')
+        )
+        thread_read_statuses_for_user = (
+            ThreadReadStatus.objects
+            .filter(user=user)
+            .only('id', 'root_message_id', 'last_read_at')
+        )
+        hidden_by_current_user = User.objects.filter(id=user.id).only('id')
+        message_statuses = MessageStatus.objects.select_related('user')
+
         query = Message.objects.filter(
             chat=chat,
-            is_deleted=False
-        ).select_related('sender')
-        
+            parent_message__isnull=True,
+        ).select_related(
+            'sender',
+            'reply_to',
+            'reply_to__sender',
+            'forwarded_from_message',
+        ).prefetch_related(
+            'attachments',
+            'reply_to__attachments',
+            'mentions',
+            'reactions__user',
+            Prefetch(
+                'statuses',
+                queryset=message_statuses,
+            ),
+            Prefetch(
+                'hidden_by_users',
+                queryset=hidden_by_current_user,
+                to_attr='_hidden_by_current_user',
+            ),
+            Prefetch(
+                'thread_replies',
+                queryset=thread_replies_for_summary,
+                to_attr='_thread_replies_for_summary',
+            ),
+            Prefetch(
+                'thread_read_statuses',
+                queryset=thread_read_statuses_for_user,
+                to_attr='_thread_read_status_for_user',
+            ),
+        ).annotate(
+            _thread_reply_count=Count(
+                'thread_replies',
+                filter=Q(thread_replies__chat=chat),
+                distinct=True,
+            ),
+            _thread_last_reply_at=Max(
+                'thread_replies__created_at',
+                filter=Q(thread_replies__chat=chat),
+            ),
+        )
+
         if before:
             query = query.filter(created_at__lt=before)
-        
+
         if after:
             query = query.filter(created_at__gt=after)
-        
+
         # Order by created_at descending for "before" (scrolling up)
         # Order by created_at ascending for "after" (new messages)
         if after:
             query = query.order_by('created_at')
         else:
             query = query.order_by('-created_at')
-        
+
         return query[:limit]
     
     @staticmethod
@@ -843,6 +1353,7 @@ class MessageService:
         failures: List[Dict[str, Any]] = []
         attempted_sends = 0
         succeeded_sends = 0
+        created_messages: List[Dict[str, Any]] = []
 
         # Expand target resolution failures into message-level failures for clearer UI reporting.
         if forwardable_messages:
@@ -887,8 +1398,9 @@ class MessageService:
                             uploader=user
                         )
 
-                    from .tasks import notify_new_message
+                    from .tasks import notify_new_message, build_realtime_message_payload
                     notify_new_message.delay(new_message.id)
+                    created_messages.append(build_realtime_message_payload(new_message))
                     succeeded_sends += 1
                 except MessageService.SourceAttachmentMissingError:
                     logger.warning(
@@ -952,6 +1464,7 @@ class MessageService:
                 'skipped_message_ids': skipped_message_ids,
             },
             'failures': failures,
+            'created_messages': created_messages,
         }
 
         logger.info(

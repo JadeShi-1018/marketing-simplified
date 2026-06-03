@@ -14,6 +14,11 @@ type MessagesUserSeed = {
 	[key: string]: unknown;
 };
 
+export function isChatListEndpoint(url: string): boolean {
+	const pathname = new URL(url).pathname.replace(/\/+$/, '');
+	return pathname === '/api/chat/chats';
+}
+
 export const DEFAULT_MESSAGES_E2E_USER: MessagesUserSeed = {
 	id: 1,
 	email: 'e2e@example.com',
@@ -79,6 +84,64 @@ export async function mockProjectShellApis(page: Page) {
 		});
 	});
 
+	// Called on every Messages page mount — must be mocked to avoid hanging without a backend.
+	await page.route('**/api/chat/messages/unread_count/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ unread_count: 0 }),
+		});
+	});
+
+	// DashboardLayout mounts useNotificationSSE which immediately fetches this.
+	// Without a mock, the fake e2e token returns 401 from the real backend,
+	// triggering the axios interceptor's hard redirect to /login.
+	await page.route('**/api/notifications/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+		});
+	});
+
+	await page.route('**/api/chat/starred/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify([]),
+		});
+	});
+
+	await page.route('**/api/chat/saved/**', async (route) => {
+		const method = route.request().method();
+		if (method === 'GET') {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+			});
+			return;
+		}
+		if (method === 'DELETE') {
+			await route.fulfill({ status: 204, body: '' });
+			return;
+		}
+		await route.fallback();
+	});
+
+	await page.route('**/api/chat/scheduled/**', async (route) => {
+		const method = route.request().method();
+		if (method === 'GET') {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
+			});
+			return;
+		}
+		await route.fallback();
+	});
+
 	await page.route('**/api/core/invitations/pending**', async (route) => {
 		await route.fulfill({
 			status: 200,
@@ -132,6 +195,39 @@ export async function mockProjectShellApis(page: Page) {
 			status: 200,
 			contentType: 'application/json',
 			body: JSON.stringify({ results: [] }),
+		});
+	});
+
+	await page.route('**/api/core/projects/*/members/**', async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ results: [], next: null }),
+		});
+	});
+
+	await page.route('**/api/chat/chats/**', async (route) => {
+		const pathname = new URL(route.request().url()).pathname;
+		if (/\/api\/chat\/chats\/\d+\/pins\/?$/.test(pathname)) {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify([]),
+			});
+			return;
+		}
+		if (!isChatListEndpoint(route.request().url())) {
+			await route.fallback();
+			return;
+		}
+		if (route.request().method() !== 'GET') {
+			await route.fallback();
+			return;
+		}
+		await route.fulfill({
+			status: 200,
+			contentType: 'application/json',
+			body: JSON.stringify({ count: 0, next: null, previous: null, results: [] }),
 		});
 	});
 }
@@ -224,7 +320,7 @@ export async function assertChatListOrEmptyState(page: Page) {
 	const noChatsState = page.getByText('No chats yet', { exact: true });
 	const selectProjectHint = page.getByText('Select a project to view chats');
 	const selectProjectStart = page.getByRole('heading', { name: 'Select a project to start' });
-	const noDirectMessages = page.getByText('No direct messages', { exact: true });
+	const noDirectMessages = page.getByText('No direct messages yet', { exact: true });
 
 	await expect
 		.poll(async () => {
@@ -254,16 +350,24 @@ export async function openFirstChatIfPresent(page: Page) {
 }
 
 export async function trySendMessage(page: Page, content: string) {
-	const messageInput = page.getByPlaceholder(/Type a message|Add a message/);
-	await expect(messageInput).toBeVisible({ timeout: 10_000 });
-	await messageInput.fill(content);
-	await page.getByRole('button', { name: 'Send message' }).click();
+	// ChatComposer uses a Tiptap contenteditable editor, not a textarea.
+	// Use the data-testid wrapper to find it reliably.
+	const composerWrapper = page.getByTestId('chat-composer-input');
+	await expect(composerWrapper).toBeVisible({ timeout: 10_000 });
+	const messageInput = composerWrapper.locator('[contenteditable]');
+	await messageInput.click();
+	// pressSequentially fires real keyboard events so ProseMirror updates its state.
+	await messageInput.pressSequentially(content, { delay: 10 });
+	// Wait for the Send button to become enabled once ProseMirror detects content.
+	const sendButton = page.getByRole('button', { name: 'Send message' });
+	await expect(sendButton).toBeEnabled({ timeout: 5_000 });
+	await sendButton.click();
 
 	await expect
 		.poll(async () => {
 			const sentVisible = await page.getByText(content, { exact: false }).isVisible().catch(() => false);
-			const inputHasText = await messageInput.inputValue().catch(() => content);
-			return sentVisible || inputHasText.trim().length === 0;
+			const inputText = await messageInput.textContent().catch(() => content);
+			return sentVisible || (inputText ?? '').trim().length === 0;
 		}, { timeout: 15_000 })
 		.toBeTruthy();
 }

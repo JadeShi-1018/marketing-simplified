@@ -127,7 +127,7 @@ export function deriveTypeKey(notification: NotificationItem): NotificationTypeK
     return "default";
   }
 
-  if (et === "task_comment_mention") return "mention";
+  if (et === "task_comment_mention" || et === "chat_mention") return "mention";
   if (DEADLINE_EVENTS.has(et)) return "deadline";
 
   if (et === "task_anomaly" || et === "billing_anomaly") return "alert";

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, type ReactNode } from 'react';
+import { Suspense, useEffect, useState, useMemo, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { GoogleAd } from '@/lib/api/googleAdsApi';
 import { getPublicGoogleAdsPreview, GoogleAdPublicPreviewResponse } from '@/lib/api/googleAdsPublicPreviewApi';
@@ -52,7 +52,7 @@ const mapImageAssets = (items?: any[]): any[] =>
     return assetObj;
   });
 
-export default function SharePreviewPage() {
+function SharePreviewContent() {
   const searchParams = useSearchParams();
   const { initialized, isAuthenticated, user } = useAuthStore();
   const [ad, setAd] = useState<GoogleAd | null>(null);
@@ -461,3 +461,10 @@ export default function SharePreviewPage() {
   );
 }
 
+export default function SharePreviewPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gray-50" />}>
+      <SharePreviewContent />
+    </Suspense>
+  );
+}

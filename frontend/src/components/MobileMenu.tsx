@@ -122,17 +122,19 @@ export default function MobileMenu() {
       {isOpen && (
         <>
           <div
-            className={`fixed inset-0 z-40 transition-opacity duration-[350ms] ease-out ${
+            className={`fixed inset-0 z-40 transition-opacity ease-out ${
               isDocsRoute ? 'bg-black/40' : 'bg-black/30 backdrop-blur-sm'
             } ${isClosing ? 'pointer-events-none opacity-0' : 'opacity-100'}`}
+            style={{ transitionDuration: `${MENU_ANIMATION_MS}ms` }}
             onClick={() => closeMenu()}
           />
 
           {isDocsRoute ? (
             <aside
-              className={`fixed inset-y-0 left-0 z-50 w-[min(82vw,360px)] overflow-y-auto bg-white px-6 py-6 shadow-2xl transition-transform duration-[350ms] ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
+              className={`fixed inset-y-0 left-0 z-50 w-[min(82vw,360px)] overflow-y-auto bg-white px-6 py-6 shadow-2xl transition-transform ease-out [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${
                 isClosing || !hasEntered ? '-translate-x-full' : 'translate-x-0'
               }`}
+              style={{ transitionDuration: `${MENU_ANIMATION_MS}ms` }}
             >
               <div className="mb-8 flex items-center justify-between">
                 <Link
@@ -228,9 +230,10 @@ export default function MobileMenu() {
             </aside>
           ) : (
             <div
-              className={`absolute top-full left-0 right-0 z-50 border-b border-gray-200 bg-white/95 shadow-2xl backdrop-blur-xl transition duration-[350ms] ease-out ${
+              className={`absolute top-full left-0 right-0 z-50 border-b border-gray-200 bg-white/95 shadow-2xl backdrop-blur-xl transition ease-out ${
                 isClosing || !hasEntered ? '-translate-y-2 opacity-0' : 'translate-y-0 opacity-100'
               }`}
+              style={{ transitionDuration: `${MENU_ANIMATION_MS}ms` }}
             >
               <nav className="px-6 py-4 space-y-4">
                 {publicLinks.map((link) => (

@@ -20,7 +20,10 @@ import DrawerChatView from "./drawer/DrawerChatView";
 function isChatNotification(notification: NotificationItem): boolean {
   return (
     notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE ||
-    notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_CONVERSATION
+    notification.event_type === NOTIFICATION_EVENT.CHAT_NEW_CONVERSATION ||
+    notification.event_type === NOTIFICATION_EVENT.CHAT_MENTION ||
+    notification.event_type === NOTIFICATION_EVENT.CHAT_THREAD_REPLY ||
+    notification.event_type === NOTIFICATION_EVENT.CHAT_REACTION
   );
 }
 

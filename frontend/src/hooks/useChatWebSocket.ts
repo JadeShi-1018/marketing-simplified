@@ -10,7 +10,10 @@ export type ChatWsEventType =
   | 'typing_indicator'
   | 'message_status_update'
   | 'reaction_update'
+  | 'presence_update'
+  | 'presence_snapshot'
   | 'in_app_notification'
+  | 'user_session_revoked'
   | 'error'
   | 'pong'
   | string;
@@ -21,6 +24,7 @@ export interface ChatWsEvent<T = any> {
   // Specific fields for different event types
   chat_id?: number;
   user_id?: number;
+  is_online?: boolean;
   is_typing?: boolean;
   message?: any;
   message_id?: number;
@@ -28,6 +32,8 @@ export interface ChatWsEvent<T = any> {
   reaction?: any;
   notification?: any;
   timestamp?: string;
+  version?: number | null;
+  users?: Array<{ user_id: number; is_online: boolean; version?: number | null }>;
 }
 
 export interface UseChatWebSocketHandlers {
@@ -35,6 +41,8 @@ export interface UseChatWebSocketHandlers {
   onTypingIndicator?: (e: ChatWsEvent) => void;
   onMessageStatusUpdate?: (e: ChatWsEvent) => void;
   onReactionUpdate?: (e: ChatWsEvent) => void;
+  onPresenceUpdate?: (e: ChatWsEvent) => void;
+  onPresenceSnapshot?: (e: ChatWsEvent) => void;
   onInAppNotification?: (e: ChatWsEvent) => void;
   onError?: (e: ChatWsEvent) => void;
   onUnknownEvent?: (e: ChatWsEvent) => void;
@@ -57,6 +65,8 @@ export function useChatWebSocket(
   const retryRef = useRef(0);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const shouldRun = useMemo(() => !!userId, [userId]);
+  const handlersRef = useRef(handlers);
+  handlersRef.current = handlers;
 
   useEffect(() => {
     if (!shouldRun) return;
@@ -73,7 +83,7 @@ export function useChatWebSocket(
       ws.onopen = () => {
         setConnected(true);
         retryRef.current = 0;
-        handlers.onOpen?.();
+        handlersRef.current.onOpen?.();
 
         // Start heartbeat every 30 seconds to keep connection alive
         heartbeatIntervalRef.current = setInterval(() => {
@@ -89,28 +99,45 @@ export function useChatWebSocket(
 
           switch (data.type) {
             case 'chat_message':
-              handlers.onChatMessage?.(data);
+              handlersRef.current.onChatMessage?.(data);
               break;
             case 'typing_indicator':
-              handlers.onTypingIndicator?.(data);
+              handlersRef.current.onTypingIndicator?.(data);
               break;
             case 'message_status_update':
-              handlers.onMessageStatusUpdate?.(data);
+              handlersRef.current.onMessageStatusUpdate?.(data);
               break;
             case 'reaction_update':
-              handlers.onReactionUpdate?.(data);
+              handlersRef.current.onReactionUpdate?.(data);
+              break;
+            case 'presence_update':
+              handlersRef.current.onPresenceUpdate?.(data);
+              break;
+            case 'presence_snapshot':
+              handlersRef.current.onPresenceSnapshot?.(data);
               break;
             case 'in_app_notification':
-              handlers.onInAppNotification?.(data);
+              handlersRef.current.onInAppNotification?.(data);
+              break;
+            case 'user_session_revoked':
+              stopped = true;
+              useAuthStore.getState().clearAuth();
+              setConnected(false);
+              try {
+                ws.close(4001, data.type);
+              } catch {}
+              if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+                window.location.href = '/login';
+              }
               break;
             case 'error':
-              handlers.onError?.(data);
+              handlersRef.current.onError?.(data);
               break;
             case 'pong':
               // Heartbeat response, ignore
               break;
             default:
-              handlers.onUnknownEvent?.(data);
+              handlersRef.current.onUnknownEvent?.(data);
           }
         } catch (e) {
           console.warn('[ChatWS] message parse error', e);
@@ -119,13 +146,13 @@ export function useChatWebSocket(
 
       ws.onerror = (ev) => {
         console.error('[ChatWS] error', ev);
-        handlers.onConnectionError?.(ev);
+        handlersRef.current.onConnectionError?.(ev);
       };
 
       ws.onclose = (ev) => {
         console.warn('[ChatWS] close', { code: ev.code, reason: ev.reason });
         setConnected(false);
-        handlers.onClose?.(ev);
+        handlersRef.current.onClose?.(ev);
         wsRef.current = null;
 
         // Clear heartbeat

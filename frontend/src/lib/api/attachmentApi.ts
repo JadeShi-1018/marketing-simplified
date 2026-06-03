@@ -24,6 +24,11 @@ export const ALLOWED_MIME_TYPES = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'application/vnd.ms-powerpoint',
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/ogg',
+    'audio/wav',
+    'audio/webm',
     'text/plain',
     'text/csv',
   ],
@@ -170,4 +175,3 @@ export default {
   formatFileSize,
   getFileIconType,
 };
-

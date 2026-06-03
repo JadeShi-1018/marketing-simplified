@@ -8,6 +8,7 @@ import { findPrivateChat } from '@/lib/api/chatApi';
 import type { CreateChatDialogProps, ChatType } from '@/types/chat';
 import ParticipantSelector from './ParticipantSelector';
 import toast from 'react-hot-toast';
+import { MAX_CHANNEL_NAME_LENGTH, limitName, normalizeLimitedName } from '@/lib/messages/nameLimits';
 
 export default function CreateChatDialog({
   isOpen,
@@ -39,9 +40,9 @@ export default function CreateChatDialog({
       return selectedParticipants.length === 1;
     }
     if (variant === 'channel') {
-      return selectedParticipants.length >= 1 && groupName.trim() !== '';
+      return selectedParticipants.length >= 1 && normalizeLimitedName(groupName, MAX_CHANNEL_NAME_LENGTH) !== '';
     }
-    return selectedParticipants.length >= 2 && groupName.trim() !== '';
+    return selectedParticipants.length >= 2 && normalizeLimitedName(groupName, MAX_CHANNEL_NAME_LENGTH) !== '';
   };
 
   // Reset form
@@ -83,7 +84,7 @@ export default function CreateChatDialog({
         type: chatType,
         project_id: parseInt(projectId),
         participant_ids: selectedParticipants,
-        name: chatType === 'group' ? groupName.trim() : undefined,
+        name: chatType === 'group' ? normalizeLimitedName(groupName, MAX_CHANNEL_NAME_LENGTH) : undefined,
       });
 
       resetForm();
@@ -199,11 +200,15 @@ export default function CreateChatDialog({
               <input
                 type="text"
                 value={groupName}
-                onChange={(e) => setGroupName(e.target.value)}
+                onChange={(e) => setGroupName(limitName(e.target.value, MAX_CHANNEL_NAME_LENGTH))}
                 placeholder={variant === 'channel' ? 'e.g., general' : 'e.g., Design Team'}
                 disabled={isCreating}
+                maxLength={MAX_CHANNEL_NAME_LENGTH}
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
               />
+              <p className="mt-1 text-[11px] text-gray-400">
+                {groupName.length}/{MAX_CHANNEL_NAME_LENGTH}
+              </p>
             </div>
           )}
 
