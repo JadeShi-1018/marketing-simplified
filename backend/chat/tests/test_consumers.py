@@ -1,6 +1,8 @@
+import asyncio
 import logging
 import json
 import pytest
+from contextlib import suppress
 from channels.testing import WebsocketCommunicator
 from channels.routing import URLRouter
 from channels.layers import channel_layers
@@ -20,6 +22,17 @@ from rest_framework_simplejwt.tokens import AccessToken
 User = get_user_model()
 logger = logging.getLogger(__name__)
 TEST_CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+
+
+async def _disconnect_communicators(*communicators):
+    for communicator in communicators:
+        if communicator is None:
+            continue
+        with suppress(Exception):
+            await communicator.disconnect(timeout=2)
+        with suppress(Exception):
+            communicator.stop(exceptions=False)
+    await asyncio.sleep(0)
 
 
 def _reset_channel_layers():
@@ -71,15 +84,14 @@ class TestChatConsumer:
             application,
             f'/ws/chat/{user.id}/?token={token}'
         )
-        
-        # Connect
-        connected, _ = await communicator.connect()
-        assert connected
-        snapshot = await communicator.receive_json_from(timeout=5)
-        assert snapshot['type'] == 'presence_snapshot'
-        
-        # Disconnect
-        await communicator.disconnect()
+        try:
+            # Connect
+            connected, _ = await communicator.connect()
+            assert connected
+            snapshot = await communicator.receive_json_from(timeout=5)
+            assert snapshot['type'] == 'presence_snapshot'
+        finally:
+            await _disconnect_communicators(communicator)
     
     async def test_websocket_connect_unauthenticated(self, db):
         """Test WebSocket connection without authentication fails"""
@@ -89,10 +101,12 @@ class TestChatConsumer:
             application,
             '/ws/chat/999/'
         )
-        
-        # Connection should fail
-        connected, _ = await communicator.connect()
-        assert not connected
+        try:
+            # Connection should fail
+            connected, _ = await communicator.connect()
+            assert not connected
+        finally:
+            await _disconnect_communicators(communicator)
     
     async def test_websocket_send_message(self, db):
         """Test sending a message via WebSocket"""
@@ -120,26 +134,26 @@ class TestChatConsumer:
             application,
             f'/ws/chat/{user1.id}/?token={token1}'
         )
-        
-        connected, _ = await communicator1.connect()
-        assert connected
-        snapshot = await communicator1.receive_json_from(timeout=5)
-        assert snapshot['type'] == 'presence_snapshot'
-        
-        # Send message
-        await communicator1.send_json_to({
-            'type': 'chat_message',
-            'chat_id': chat.id,
-            'content': 'Hello, this is a test message!'
-        })
-        
-        # Receive message echo
-        response = await communicator1.receive_json_from(timeout=5)
-        assert response['type'] == 'chat_message'
-        assert response['message']['content'] == 'Hello, this is a test message!'
-        assert response['message']['chat_id'] == chat.id
-        
-        await communicator1.disconnect()
+        try:
+            connected, _ = await communicator1.connect()
+            assert connected
+            snapshot = await communicator1.receive_json_from(timeout=5)
+            assert snapshot['type'] == 'presence_snapshot'
+
+            # Send message
+            await communicator1.send_json_to({
+                'type': 'chat_message',
+                'chat_id': chat.id,
+                'content': 'Hello, this is a test message!'
+            })
+
+            # Receive message echo
+            response = await communicator1.receive_json_from(timeout=5)
+            assert response['type'] == 'chat_message'
+            assert response['message']['content'] == 'Hello, this is a test message!'
+            assert response['message']['chat_id'] == chat.id
+        finally:
+            await _disconnect_communicators(communicator1)
     
     async def test_websocket_typing_indicator(self, db):
         """Test typing indicator via WebSocket"""
@@ -174,40 +188,39 @@ class TestChatConsumer:
             application,
             f'/ws/chat/{user2.id}/?token={token2}'
         )
-        
-        await communicator1.connect()
-        snapshot1 = await communicator1.receive_json_from(timeout=5)
-        assert snapshot1['type'] == 'presence_snapshot'
-        await communicator2.connect()
-        snapshot2 = await communicator2.receive_json_from(timeout=5)
-        assert snapshot2['type'] == 'presence_snapshot'
-        
-        # User1 starts typing
-        await communicator1.send_json_to({
-            'type': 'typing_start',
-            'chat_id': chat.id
-        })
-        
-        # User2 should receive typing indicator
-        response = await communicator2.receive_json_from(timeout=5)
-        assert response['type'] == 'typing_indicator'
-        assert response['chat_id'] == chat.id
-        assert response['user_id'] == user1.id
-        assert response['is_typing'] is True
-        
-        # User1 stops typing
-        await communicator1.send_json_to({
-            'type': 'typing_stop',
-            'chat_id': chat.id
-        })
-        
-        # User2 should receive typing stop
-        response = await communicator2.receive_json_from(timeout=5)
-        assert response['type'] == 'typing_indicator'
-        assert response['is_typing'] is False
-        
-        await communicator1.disconnect()
-        await communicator2.disconnect()
+        try:
+            await communicator1.connect()
+            snapshot1 = await communicator1.receive_json_from(timeout=5)
+            assert snapshot1['type'] == 'presence_snapshot'
+            await communicator2.connect()
+            snapshot2 = await communicator2.receive_json_from(timeout=5)
+            assert snapshot2['type'] == 'presence_snapshot'
+
+            # User1 starts typing
+            await communicator1.send_json_to({
+                'type': 'typing_start',
+                'chat_id': chat.id
+            })
+
+            # User2 should receive typing indicator
+            response = await communicator2.receive_json_from(timeout=5)
+            assert response['type'] == 'typing_indicator'
+            assert response['chat_id'] == chat.id
+            assert response['user_id'] == user1.id
+            assert response['is_typing'] is True
+
+            # User1 stops typing
+            await communicator1.send_json_to({
+                'type': 'typing_stop',
+                'chat_id': chat.id
+            })
+
+            # User2 should receive typing stop
+            response = await communicator2.receive_json_from(timeout=5)
+            assert response['type'] == 'typing_indicator'
+            assert response['is_typing'] is False
+        finally:
+            await _disconnect_communicators(communicator1, communicator2)
     
     async def test_websocket_heartbeat(self, db):
         """Test heartbeat to keep connection alive"""
@@ -220,24 +233,24 @@ class TestChatConsumer:
             application,
             f'/ws/chat/{user.id}/?token={token}'
         )
-        
-        await communicator.connect()
+        try:
+            await communicator.connect()
 
-        # Initial presence snapshot is sent on connect.
-        snapshot = await communicator.receive_json_from(timeout=5)
-        assert snapshot['type'] == 'presence_snapshot'
-        
-        # Send heartbeat
-        await communicator.send_json_to({
-            'type': 'heartbeat'
-        })
-        
-        # Receive pong
-        response = await communicator.receive_json_from(timeout=5)
-        assert response['type'] == 'pong'
-        assert 'timestamp' in response
-        
-        await communicator.disconnect()
+            # Initial presence snapshot is sent on connect.
+            snapshot = await communicator.receive_json_from(timeout=5)
+            assert snapshot['type'] == 'presence_snapshot'
+
+            # Send heartbeat
+            await communicator.send_json_to({
+                'type': 'heartbeat'
+            })
+
+            # Receive pong
+            response = await communicator.receive_json_from(timeout=5)
+            assert response['type'] == 'pong'
+            assert 'timestamp' in response
+        finally:
+            await _disconnect_communicators(communicator)
 
     async def test_multiple_websocket_connections_keep_user_online_until_last_disconnect(self, db):
         """Closing one tab should not mark the user offline while another tab is connected."""
@@ -254,18 +267,27 @@ class TestChatConsumer:
             application,
             f'/ws/chat/{user.id}/?token={token}'
         )
+        try:
+            connected1, _ = await communicator1.connect()
+            assert connected1
+            snapshot1 = await communicator1.receive_json_from(timeout=5)
+            assert snapshot1['type'] == 'presence_snapshot'
 
-        connected1, _ = await communicator1.connect()
-        connected2, _ = await communicator2.connect()
-        assert connected1
-        assert connected2
-        assert await self._is_online(user.id)
+            connected2, _ = await communicator2.connect()
+            assert connected2
+            snapshot2 = await communicator2.receive_json_from(timeout=5)
+            assert snapshot2['type'] == 'presence_snapshot'
+            assert await self._is_online(user.id)
 
-        await communicator1.disconnect()
-        assert await self._is_online(user.id)
+            await _disconnect_communicators(communicator1)
+            communicator1 = None
+            assert await self._is_online(user.id)
 
-        await communicator2.disconnect()
-        assert not await self._is_online(user.id)
+            await _disconnect_communicators(communicator2)
+            communicator2 = None
+            assert not await self._is_online(user.id)
+        finally:
+            await _disconnect_communicators(communicator1, communicator2)
 
     async def test_presence_update_broadcasts_to_shared_chat_participants(self, db):
         """Shared chat participants should receive live online/offline updates."""
@@ -287,28 +309,31 @@ class TestChatConsumer:
             application,
             f'/ws/chat/{user1.id}/?token={str(AccessToken.for_user(user1))}'
         )
+        try:
+            connected2, _ = await communicator2.connect()
+            assert connected2
+            snapshot = await communicator2.receive_json_from(timeout=5)
+            assert snapshot['type'] == 'presence_snapshot'
 
-        connected2, _ = await communicator2.connect()
-        assert connected2
-        snapshot = await communicator2.receive_json_from(timeout=5)
-        assert snapshot['type'] == 'presence_snapshot'
+            connected1, _ = await communicator1.connect()
+            assert connected1
+            snapshot1 = await communicator1.receive_json_from(timeout=5)
+            assert snapshot1['type'] == 'presence_snapshot'
 
-        connected1, _ = await communicator1.connect()
-        assert connected1
+            online_event = await communicator2.receive_json_from(timeout=5)
+            assert online_event['type'] == 'presence_update'
+            assert online_event['user_id'] == user1.id
+            assert online_event['is_online'] is True
 
-        online_event = await communicator2.receive_json_from(timeout=5)
-        assert online_event['type'] == 'presence_update'
-        assert online_event['user_id'] == user1.id
-        assert online_event['is_online'] is True
+            await _disconnect_communicators(communicator1)
+            communicator1 = None
 
-        await communicator1.disconnect()
-
-        offline_event = await communicator2.receive_json_from(timeout=5)
-        assert offline_event['type'] == 'presence_update'
-        assert offline_event['user_id'] == user1.id
-        assert offline_event['is_online'] is False
-
-        await communicator2.disconnect()
+            offline_event = await communicator2.receive_json_from(timeout=5)
+            assert offline_event['type'] == 'presence_update'
+            assert offline_event['user_id'] == user1.id
+            assert offline_event['is_online'] is False
+        finally:
+            await _disconnect_communicators(communicator1, communicator2)
 
     async def test_presence_snapshot_includes_already_online_shared_users(self, db):
         """A newly connected user should immediately learn existing shared-user presence."""
@@ -330,23 +355,22 @@ class TestChatConsumer:
             application,
             f'/ws/chat/{user2.id}/?token={str(AccessToken.for_user(user2))}'
         )
+        try:
+            connected1, _ = await communicator1.connect()
+            assert connected1
+            snapshot1 = await communicator1.receive_json_from(timeout=5)
+            assert snapshot1['type'] == 'presence_snapshot'
 
-        connected1, _ = await communicator1.connect()
-        assert connected1
-        snapshot1 = await communicator1.receive_json_from(timeout=5)
-        assert snapshot1['type'] == 'presence_snapshot'
-
-        connected2, _ = await communicator2.connect()
-        assert connected2
-        snapshot2 = await communicator2.receive_json_from(timeout=5)
-        assert snapshot2['type'] == 'presence_snapshot'
-        assert any(
-            user['user_id'] == user1.id and user['is_online'] is True
-            for user in snapshot2['users']
-        )
-
-        await communicator1.disconnect()
-        await communicator2.disconnect()
+            connected2, _ = await communicator2.connect()
+            assert connected2
+            snapshot2 = await communicator2.receive_json_from(timeout=5)
+            assert snapshot2['type'] == 'presence_snapshot'
+            assert any(
+                user['user_id'] == user1.id and user['is_online'] is True
+                for user in snapshot2['users']
+            )
+        finally:
+            await _disconnect_communicators(communicator1, communicator2)
     
     # Helper methods (database operations must use sync_to_async)
     
