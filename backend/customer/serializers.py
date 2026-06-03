@@ -1,8 +1,48 @@
 from rest_framework import serializers
 
-from .models import Customer
+from .models import Customer, CustomerOrganisation,Region
 
+class RegionSerializer(serializers.ModelSerializer):
+    class Meta:
+      model = Region
+      fields = ['id', 'name', 'organisation', 'is_active', 'created_at', 'updated_at']
+      read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def validate_name(self, value):
+      org_id = self.initial_data.get('organisation') or (self.instance.organisation_id if self.instance else None)
+      qs = Region.objects.filter(name__iexact=value, organisation_id=org_id)
+      if self.instance:
+          qs = qs.exclude(pk=self.instance.pk)
+      if qs.exists():
+          raise serializers.ValidationError(
+              'A region with this name already exists in this organisation.'
+          )
+      return value
+                          
+class CustomerOrganisationSerializer(serializers.ModelSerializer):
+    customers = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = CustomerOrganisation
+        fields = ['id', 'name', 'organization', 'domains', 'industry', 'plan', 'region', 'customers', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'customers', 'created_at', 'updated_at']
+
+    def get_customers(self, obj):
+        from .serializers import CustomerSerializer
+        return CustomerSerializer(obj.customers.all(), many=True).data
+
+    def validate_name(self, value):
+        org_id = self.initial_data.get('organization') or (self.instance.organization_id if self.instance else None)
+        qs = CustomerOrganisation.objects.filter(name__iexact=value, organization_id=org_id)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                'An organisation with this name already exists.'
+            )
+        return value
+
+    
 class CustomerSerializer(serializers.ModelSerializer):
     experience_group_name = serializers.SerializerMethodField(read_only=True)
 
@@ -16,6 +56,8 @@ class CustomerSerializer(serializers.ModelSerializer):
             'phone',
             'experience_group',
             'experience_group_name',
+            'region',
+            'organisation',
             'is_active',
             'created_at',
             'updated_at',
@@ -57,3 +99,5 @@ class CustomerSerializer(serializers.ModelSerializer):
                     {'experience_group': 'Group must belong to the same project.'}
                 )
         return attrs
+
+    

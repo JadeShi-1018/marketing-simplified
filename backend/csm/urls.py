@@ -1,0 +1,50 @@
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import (
+    QueueViewSet, QueueAgentViewSet,
+    QueueTeamViewSet, CustomerUserViewSet,
+    CsmNotificationViewSet,
+)
+
+router = DefaultRouter()
+router.register(r'queues', QueueViewSet, basename='queue')
+router.register(r'customer-users', CustomerUserViewSet, basename='customer-user')
+router.register(r'notifications', CsmNotificationViewSet, basename='csm-notification')
+
+urlpatterns = [
+    # Standard routes
+    path('', include(router.urls)),
+
+    # Project-scoped routes
+    path(
+        'projects/<int:project_id>/queues/',
+        QueueViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='project-queues',
+    ),
+    path(
+        'projects/<int:project_id>/customer-users/',
+        CustomerUserViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='project-customer-users',
+    ),
+    # Queue-scoped routes
+    path(
+        'queues/<int:queue_id>/agents/',
+        QueueAgentViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='queue-agents',
+    ),
+    path(
+        'queues/<int:queue_id>/agents/<int:pk>/',
+        QueueAgentViewSet.as_view({'delete': 'destroy'}),
+        name='queue-agent-detail',
+    ),
+    path(
+        'queues/<int:queue_id>/teams/',
+        QueueTeamViewSet.as_view({'get': 'list', 'post': 'create'}),
+        name='queue-teams',
+    ),
+    path(
+        'queues/<int:queue_id>/teams/<int:pk>/',
+        QueueTeamViewSet.as_view({'delete': 'destroy'}),
+        name='queue-team-detail',
+    ),
+]
