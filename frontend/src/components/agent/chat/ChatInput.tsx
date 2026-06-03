@@ -210,7 +210,7 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
           className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
         >
           {contextExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {contextExpanded ? "Analysis context" : "+ Add analysis context"}
+          {contextExpanded ? "Analysis context" : "Add analysis context"}
         </button>
       </div>
 
