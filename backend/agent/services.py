@@ -578,54 +578,47 @@ def _call_gemini_chat(
 
 
 def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
-    """Generate Miro snapshot (Gemini), then persist (optionally via approval gate)."""
+    """Generate Miro snapshot (Gemini) and persist the board.
+
+    Legacy ``generate_miro`` is an explicit user action — clicking Generate Miro
+    counts as approval, so we never pause on a separate miro_board approval step.
+    """
+    from .approval_gate import KIND_MIRO_BOARD
     from .miro_generation import (
         build_miro_generation_context_from_run,
         call_gemini_miro_generator,
     )
-    from .approval_gate import KIND_MIRO_BOARD, request_external_commit
     from .miro_board_service import create_board_from_snapshot
+    from .models import AgentPendingExternalApproval
 
-    context = build_miro_generation_context_from_run(
-        session=orchestrator.session,
-        workflow_run=workflow_run,
-    )
-    snapshot = call_gemini_miro_generator(
-        context,
-        user_id=str(orchestrator.user.id),
-    )
-
-    # If approval isn't required for the session, persist immediately without gating.
-    if not bool(getattr(orchestrator.session, 'approval_required', False)):
-        board, persisted_snapshot = create_board_from_snapshot(
-            project=orchestrator.project,
+    snapshot = workflow_run.miro_snapshot
+    if not snapshot:
+        context = build_miro_generation_context_from_run(
             session=orchestrator.session,
             workflow_run=workflow_run,
-            snapshot=snapshot,
         )
-        workflow_run.miro_snapshot = persisted_snapshot
-        workflow_run.miro_board = board
-        workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
-        return persisted_snapshot, board
+        snapshot = call_gemini_miro_generator(
+            context,
+            user_id=str(orchestrator.user.id),
+        )
 
-    gate = request_external_commit(
-        orchestrator=orchestrator,
+    board, persisted_snapshot = create_board_from_snapshot(
+        project=orchestrator.project,
+        session=orchestrator.session,
         workflow_run=workflow_run,
-        step_execution=None,
-        kind=KIND_MIRO_BOARD,
-        draft={'snapshot': snapshot},
-        commit_context={
-            'workflow_run_id': str(workflow_run.id),
-            'merge_output': {},
-        },
+        snapshot=snapshot,
     )
-    if gate.paused:
-        workflow_run.miro_snapshot = snapshot
-        workflow_run.save(update_fields=['miro_snapshot', 'updated_at'])
-        return snapshot, None
+    workflow_run.miro_snapshot = persisted_snapshot
+    workflow_run.miro_board = board
+    workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
 
-    workflow_run.refresh_from_db()
-    return workflow_run.miro_snapshot, workflow_run.miro_board
+    AgentPendingExternalApproval.objects.filter(
+        workflow_run=workflow_run,
+        kind=KIND_MIRO_BOARD,
+        status='pending',
+    ).update(status='approved')
+
+    return persisted_snapshot, board
 
 
 def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
@@ -1977,16 +1970,14 @@ class AgentOrchestrator:
                 },
             ).exists()
 
-            if dup:
-                return 'already_started', locked, None
-
             _enqueue_miro_generation_for_workflow_run(self, locked)
-            _create_agent_status_message(
-                self.session,
-                MIRO_LEGACY_BG_QUEUED_MESSAGE,
-                event_type='miro_generation_started',
-                workflow_run_id=str(locked.id),
-            )
+            if not dup:
+                _create_agent_status_message(
+                    self.session,
+                    MIRO_LEGACY_BG_QUEUED_MESSAGE,
+                    event_type='miro_generation_started',
+                    workflow_run_id=str(locked.id),
+                )
             return 'started', locked, None
 
     def _resume_workflow(self, workflow_run, extra_input=None):

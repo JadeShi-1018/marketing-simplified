@@ -199,6 +199,13 @@ function hasQueueRenderEffectsCompleted(jobs: RenderJob[], completed: Set<string
   return getFirstIncompleteJobId(jobs, completed) == null
 }
 
+type DetachedBlockState = {
+  parts: string[]
+  completedParts: string[]
+  blockCompleted: boolean
+  partVisibleLengths: Record<string, number>
+}
+
 export function AgentMessageBoardTextProvider({
   children,
   isStreaming = false,
@@ -215,6 +222,7 @@ export function AgentMessageBoardTextProvider({
   const blockPartsCompletedRef = useRef(new Map<string, Set<string>>())
   const generationRef = useRef(new Map<string, number>())
   const partVisibleLengthRef = useRef(new Map<string, number>())
+  const detachedBlocksRef = useRef(new Map<string, DetachedBlockState>())
   const snapshotRef = useRef<SessionRenderSnapshot | null>(
     sessionId ? loadAgentMessageBoardRenderSnapshot(sessionId) : null
   )
@@ -365,6 +373,23 @@ export function AgentMessageBoardTextProvider({
     [bumpQueue]
   )
 
+  const restoreDetachedBlock = useCallback((blockId: string) => {
+    const detached = detachedBlocksRef.current.get(blockId)
+    if (!detached) return
+
+    detachedBlocksRef.current.delete(blockId)
+    blockPartsRef.current.set(blockId, [...detached.parts])
+    blockPartsCompletedRef.current.set(blockId, new Set(detached.completedParts))
+    if (detached.blockCompleted) {
+      completedJobsRef.current.add(blockId)
+    }
+    for (const [partId, len] of Object.entries(detached.partVisibleLengths)) {
+      if (len > 0) {
+        partVisibleLengthRef.current.set(partId, len)
+      }
+    }
+  }, [])
+
   const registerBlock = useCallback(
     (blockId: string) => {
       if (!jobsRef.current.some((j) => j.id === blockId)) {
@@ -379,10 +404,33 @@ export function AgentMessageBoardTextProvider({
         if (!blockPartsCompletedRef.current.has(blockId)) {
           blockPartsCompletedRef.current.set(blockId, new Set())
         }
+        restoreDetachedBlock(blockId)
         hydrateBlockFromSnapshot(blockId)
         bumpQueue()
       }
       return () => {
+        const parts = blockPartsRef.current.get(blockId) ?? []
+        const completedParts = blockPartsCompletedRef.current.get(blockId)
+        const blockCompleted = completedJobsRef.current.has(blockId)
+        const hasProgress =
+          blockCompleted ||
+          Boolean(completedParts?.size) ||
+          parts.some((partId) => (partVisibleLengthRef.current.get(partId) ?? 0) > 0)
+
+        if (hasProgress) {
+          const partVisibleLengths: Record<string, number> = {}
+          for (const partId of parts) {
+            const len = partVisibleLengthRef.current.get(partId) ?? 0
+            if (len > 0) partVisibleLengths[partId] = len
+          }
+          detachedBlocksRef.current.set(blockId, {
+            parts: [...parts],
+            completedParts: completedParts ? [...completedParts] : [],
+            blockCompleted,
+            partVisibleLengths,
+          })
+        }
+
         jobsRef.current = jobsRef.current.filter((j) => j.id !== blockId)
         completedJobsRef.current.delete(blockId)
         blockPartsRef.current.delete(blockId)
@@ -391,7 +439,7 @@ export function AgentMessageBoardTextProvider({
         bumpQueue()
       }
     },
-    [bumpQueue, hydrateBlockFromSnapshot]
+    [bumpQueue, hydrateBlockFromSnapshot, restoreDetachedBlock]
   )
 
   const registerTextPart = useCallback(
@@ -438,6 +486,7 @@ export function AgentMessageBoardTextProvider({
 
   const isBlockRevealed = useCallback(
     (blockId: string) => {
+      if (completedJobsRef.current.has(blockId)) return true
       const canonicalOrder = canonicalBlockIdsRef.current
       if (
         canonicalOrder.length > 0 &&
@@ -445,7 +494,6 @@ export function AgentMessageBoardTextProvider({
       ) {
         return false
       }
-      if (completedJobsRef.current.has(blockId)) return true
       if (activeJobId !== blockId) return false
       const job = jobsRef.current.find((j) => j.id === blockId)
       return job?.kind === "block"
@@ -589,6 +637,7 @@ export function AgentMessageBoardTextProvider({
     blockPartsCompletedRef.current.clear()
     generationRef.current.clear()
     partVisibleLengthRef.current.clear()
+    detachedBlocksRef.current.clear()
     applySnapshotToQueueRefs(snapshotRef.current)
     setActiveJobId(
       getFirstIncompleteJobId(jobsRef.current, completedJobsRef.current)

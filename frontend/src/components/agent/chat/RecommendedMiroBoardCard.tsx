@@ -55,7 +55,7 @@ export function RecommendedMiroBoardCard({
       <CardContent className="px-4 pb-4 pt-0 space-y-3">
         <div className="flex items-center justify-end gap-2">
           <Button type="button" variant="outline" size="sm" disabled={disabled || generating} onClick={() => onReject?.()}>
-            <AgentMessageBoardText target="Reject" partId={`${messageId}-miro-reject`} blockId={blockId} />
+            Reject
           </Button>
           <Button
             type="button"
@@ -63,7 +63,7 @@ export function RecommendedMiroBoardCard({
             disabled={disabled || generating}
             onClick={() => onApprove?.()}
           >
-            <AgentMessageBoardText target="Approve" partId={`${messageId}-miro-approve`} blockId={blockId} />
+            Approve
           </Button>
         </div>
       </CardContent>

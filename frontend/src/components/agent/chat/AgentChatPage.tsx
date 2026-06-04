@@ -37,21 +37,7 @@ import {
   consumeCalendarPreload,
   type CalendarPreload,
 } from "@/lib/agentLaunchContext"
-
-function getPendingMiroWorkflowRunIds(messages: ChatMessage[]): string[] {
-  // Only treat "miro_board_created" as done — a prior failure can be retried for the same
-  // workflow_run_id, so "miro_generation_failed" must NOT stop the polling loop.
-  const completed = new Set(
-    messages
-      .filter((message) => message.workflowRunId && message.eventType === "miro_board_created")
-      .map((message) => message.workflowRunId as string)
-  )
-
-  return messages
-    .filter((message) => message.eventType === "miro_generation_started" && message.workflowRunId)
-    .map((message) => message.workflowRunId as string)
-    .filter((workflowRunId) => !completed.has(workflowRunId))
-}
+import { getPendingMiroWorkflowRunIds } from "@/lib/agentMiroBoardStatus"
 
 function hasPersistedAnalysisPayload(data?: AgentMessageData | null): boolean {
   if (!data) return false
@@ -307,10 +293,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const [skippedTaskIndexes, setSkippedTaskIndexes] = useState<number[]>([])
   const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number>>({})
   const [pendingTaskApproval, setPendingTaskApproval] = useState<PendingExternalApproval | null>(null)
-  const [pendingMiroApproval, setPendingMiroApproval] = useState<PendingExternalApproval | null>(null)
   const [selectedTaskIndexes, setSelectedTaskIndexes] = useState<number[]>([])
   const [tasksApprovalGenerating, setTasksApprovalGenerating] = useState(false)
-  const [miroApprovalGenerating, setMiroApprovalGenerating] = useState(false)
+  const [miroGenerateInFlight, setMiroGenerateInFlight] = useState(false)
   const [taskGenerationStatus, setTaskGenerationStatus] = useState<TaskGenerationStatus>("idle")
   const selectAllRecommendedTasks = useCallback((count: number) => {
     if (count > 0) {
@@ -689,9 +674,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const resetTransientChatUiState = useCallback(() => {
     setStepProgress([])
     setPendingTaskApproval(null)
-    setPendingMiroApproval(null)
     setTasksApprovalGenerating(false)
-    setMiroApprovalGenerating(false)
+    setMiroGenerateInFlight(false)
     stepProgressMsgIdRef.current = null
     pendingAutoConfirmRef.current = null
     autoExternalActionsTriggeredRef.current = false
@@ -791,37 +775,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     const intervalId = window.setInterval(async () => {
       try {
         const session = await AgentAPI.getSession(sessionId)
-        // Re-apply the same backfill logic as applySessionState so that
-        const restored = session.messages.map(restoreMessage)
-        setMessages(dedupeMiroGenerationStartedMessages(restored))
-        setFollowUpAvailable(Boolean(session.follow_up_available))
-        setFollowUpStarted(Boolean(session.follow_up_started))
-        setApprovalRequired(Boolean(session.approval_required))
-        const lastTaskCreated = [...session.messages].reverse().find(
-          (m) => m.message_type === "task_created" || (m.data?.task_ids && m.data.task_ids.length > 0)
-        )
-        const created = (lastTaskCreated as any)?.data?.created_tasks
-        if (Array.isArray(created)) {
-          const idxs = created
-            .map((c: any) => Number(c?.index))
-            .filter((n: unknown) => typeof n === "number" && Number.isFinite(n))
-          setGeneratedTaskIndexes(Array.from(new Set(idxs)))
-          const pairs = created
-            .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-            .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
-          setCreatedTaskIdByIndex(Object.fromEntries(pairs))
-        }
-        if (lastTaskCreated) {
-          setStepState((prev) => ({ ...prev, tasksCreated: true }))
-          setTaskGenerationStatus("completed")
-        }
+        if (String(sessionIdRef.current) !== String(sessionId)) return
+        applySessionState(session)
       } catch {
         // ignore polling failures; next cycle can retry
       }
     }, 5000)
 
     return () => window.clearInterval(intervalId)
-  }, [sessionId, messages])
+  }, [sessionId, messages, applySessionState])
 
   // Restore session on mount
   useEffect(() => {
@@ -1097,9 +1059,6 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
           }
         } else if (event.type === "follow_up_prompt") {
           contentParts.push(event.content || "")
@@ -1290,9 +1249,6 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
           }
         }
         if (event.type === "task_created" && event.data) {
@@ -1522,18 +1478,14 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
+            addMessage({
+              id: `approval-${approvalId}`,
+              role: "assistant",
+              content: event.content || "Approval required.",
+              type: "approval_request",
+              approval: pending,
+            })
           }
-
-          addMessage({
-            id: `approval-${approvalId}`,
-            role: "assistant",
-            content: event.content || "Approval required.",
-            type: "approval_request",
-            approval: pending,
-          })
           return
         }
 
@@ -1635,11 +1587,14 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           })
         }
         if (event.type === "miro_status") {
-          setPendingMiroApproval(null)
-          setMiroApprovalGenerating(false)
+          setMiroGenerateInFlight(false)
           const rawWr = event.data?.workflow_run_id
           const workflowRunId =
             typeof rawWr === "string" ? rawWr : rawWr != null ? String(rawWr) : undefined
+          const startedEventType =
+            typeof event.data?.event_type === "string"
+              ? event.data.event_type
+              : "miro_generation_started"
 
           setMessages((prev) => {
             const next = mergeMiroGenerationStartedIntoMessages(prev, aiMsgId, {
@@ -1649,7 +1604,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
               navigateLabel: "Generating Miro...",
               navigateDisabled: true,
               navigateHref: undefined,
-              eventType: "miro_generation_started",
+              eventType: startedEventType,
               workflowRunId,
             })
             return appendMiroResultMessage(next, event)
@@ -1718,6 +1673,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
     if (action === "create_tasks") {
       setTaskGenerationStatus("generating")
+    }
+    if (action === "generate_miro") {
+      setMiroGenerateInFlight(true)
     }
 
     const aiMsgId = `ai-${Date.now()}`
@@ -1801,11 +1759,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           })
         }
         if (event.type === "miro_status") {
-          setPendingMiroApproval(null)
-          setMiroApprovalGenerating(false)
+          setMiroGenerateInFlight(false)
           const rawWr = event.data?.workflow_run_id
           const workflowRunId =
             typeof rawWr === "string" ? rawWr : rawWr != null ? String(rawWr) : undefined
+
+          const startedEventType =
+            typeof event.data?.event_type === "string"
+              ? event.data.event_type
+              : "miro_generation_started"
 
           setMessages((prev) => {
             const next = mergeMiroGenerationStartedIntoMessages(prev, aiMsgId, {
@@ -1815,7 +1777,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
               navigateLabel: "Generating Miro...",
               navigateDisabled: true,
               navigateHref: undefined,
-              eventType: "miro_generation_started",
+              eventType: startedEventType,
               workflowRunId,
             })
             return appendMiroResultMessage(next, event)
@@ -1844,9 +1806,6 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
           }
         }
         if (event.type === "error" && action === "create_tasks") {
@@ -1858,6 +1817,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         if (String(sessionIdRef.current) !== requestSessionId) return
         if (action === "create_tasks") {
           setTaskGenerationStatus("error")
+        }
+        if (action === "generate_miro") {
+          setMiroGenerateInFlight(false)
         }
         updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
         setIsStreaming(false)
@@ -1945,7 +1907,6 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           if (activeStreamTokenRef.current !== streamToken) return
           if (String(sessionIdRef.current) !== requestSessionId) return
           if (pending.kind === "task") setTasksApprovalGenerating(false)
-          if (pending.kind === "miro_board") setMiroApprovalGenerating(false)
         },
         () => {
           if (activeStreamTokenRef.current !== streamToken) return
@@ -1998,23 +1959,6 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     resolveExternalApproval(pendingTaskApproval, "reject")
     setPendingTaskApproval(null)
   }, [pendingTaskApproval, resolveExternalApproval])
-
-  const handleApproveMiroApproval = useCallback(
-    () => {
-      if (!pendingMiroApproval) return
-      setMiroApprovalGenerating(true)
-      resolveExternalApproval(pendingMiroApproval, "approve", {})
-      setPendingMiroApproval(null)
-    },
-    [pendingMiroApproval, resolveExternalApproval]
-  )
-
-  const handleRejectMiroApproval = useCallback(() => {
-    if (!pendingMiroApproval) return
-    setMiroApprovalGenerating(false)
-    resolveExternalApproval(pendingMiroApproval, "reject")
-    setPendingMiroApproval(null)
-  }, [pendingMiroApproval, resolveExternalApproval])
 
   // Auto-run queued external actions when streaming is idle.
   useEffect(() => {
@@ -2095,10 +2039,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           tasksApprovalGenerating,
           onApproveSelectedTasks: handleApproveSelectedTasks,
           onRejectTasksApproval: handleRejectTasksApproval,
-          pendingMiroApproval,
-          miroApprovalGenerating,
-          onApproveMiroApproval: handleApproveMiroApproval,
-          onRejectMiroApproval: handleRejectMiroApproval,
+          miroGenerateInFlight,
           onAction: handleAction,
           onConfirmColumns: handleConfirmColumns,
           onConfirmAnomalies: handleConfirmAnomalies,

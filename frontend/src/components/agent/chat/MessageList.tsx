@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react"
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef } from "react"
 import { FileSpreadsheet, ArrowRight, CalendarPlus, UploadCloud } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -10,7 +10,6 @@ import { ColumnMappingCard } from "./ColumnMappingCard"
 import { FollowUpCard } from "./FollowUpCard"
 import { MiroGenerateCard } from "./MiroGenerateCard"
 import { TaskListCard } from "./TaskListCard"
-import { RecommendedMiroBoardCard } from "./RecommendedMiroBoardCard"
 import type {
   AnomalyItem,
   RecommendedTask,
@@ -22,6 +21,7 @@ import type {
 } from "@/types/agent"
 import { CalendarEventsCard } from "./CalendarEventsCard"
 import { DEFAULT_GENERATION_OUTPUTS } from "@/lib/generationOutputs"
+import { deriveMiroBoardCardState } from "@/lib/agentMiroBoardStatus"
 import { StepProgress, type StepProgressItem } from "./StepProgress"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import type { TaskGenerationStatus } from "./TaskListCard"
@@ -34,6 +34,7 @@ import {
   getAssistantMessageBlockIds,
   getMessageBoardBlockIds,
   getMiroCardsAnchorMessageId,
+  getMiroGenerateBlockId,
 } from "./agentMessageBoardBlockIds"
 
 export type ChatMessageType =
@@ -90,10 +91,7 @@ export interface MessageListProps {
   tasksApprovalGenerating?: boolean
   onApproveSelectedTasks?: (selectedIndexes: number[], destination?: Record<string, unknown>) => void
   onRejectTasksApproval?: () => void
-  pendingMiroApproval?: PendingExternalApproval | null
-  miroApprovalGenerating?: boolean
-  onApproveMiroApproval?: (destination?: Record<string, unknown>) => void
-  onRejectMiroApproval?: () => void
+  miroGenerateInFlight?: boolean
   latestAnalysisMessageId?: string | null
   showFollowUpToggle?: boolean
   followUpActive?: boolean
@@ -125,10 +123,7 @@ export function MessageList({
   tasksApprovalGenerating,
   onApproveSelectedTasks,
   onRejectTasksApproval,
-  pendingMiroApproval,
-  miroApprovalGenerating,
-  onApproveMiroApproval,
-  onRejectMiroApproval,
+  miroGenerateInFlight = false,
   latestAnalysisMessageId,
   showFollowUpToggle,
   followUpActive,
@@ -139,8 +134,12 @@ export function MessageList({
   onRenderFinishChange,
   requestedGenerationOutputs = DEFAULT_GENERATION_OUTPUTS,
 }: MessageListProps) {
-  const wantsTasks = requestedGenerationOutputs.includes("recommended_tasks")
-  const wantsMiro = requestedGenerationOutputs.includes("miro_board")
+  const effectiveGenerationOutputs =
+    requestedGenerationOutputs.length > 0
+      ? requestedGenerationOutputs
+      : DEFAULT_GENERATION_OUTPUTS
+  const wantsTasks = effectiveGenerationOutputs.includes("recommended_tasks")
+  const wantsMiro = effectiveGenerationOutputs.includes("miro_board")
   const wantsCalendar = requestedGenerationOutputs.includes("calendar_events")
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const prevScrollTopRef = useRef(0)
@@ -165,6 +164,13 @@ export function MessageList({
     latestAnalysisMessageId ??
     latestAnalysisLikeMessage?.id ??
     "board-bottom"
+  const useSingleTasksCard =
+    Boolean(approvalRequired) ||
+    Boolean(pendingTaskApproval) ||
+    taskGenerationStatus === "awaiting_approval"
+  const tasksCardMessageId = useSingleTasksCard
+    ? (latestAnalysisWithTasks?.id ?? null)
+    : null
   const canSelectRecommendedTasks =
     (taskGenerationStatus === "idle" || taskGenerationStatus === "awaiting_approval") &&
     !tasksApprovalGenerating &&
@@ -190,9 +196,51 @@ export function MessageList({
       message.role === "assistant" &&
       message.content === AGENT_MESSAGES.CHAT_THINKING
   )
+  const miroCardsAnchorMode =
+    approvalRequired && wantsTasks && stepState?.tasksCreated
+      ? ("after_tasks_created" as const)
+      : ("after_miro_started" as const)
   const miroCardsAnchorMessageId = useMemo(
-    () => getMiroCardsAnchorMessageId(messages),
-    [messages]
+    () => getMiroCardsAnchorMessageId(messages, { mode: miroCardsAnchorMode }),
+    [messages, miroCardsAnchorMode]
+  )
+  const showMiroCardAfterApprovalTasks =
+    !approvalRequired || !wantsTasks || Boolean(stepState?.tasksCreated)
+  const miroBoardCardState = useMemo(
+    () =>
+      deriveMiroBoardCardState(messages, {
+        miroGenerateInFlight,
+        approvalRequired,
+        tasksCreated: stepState?.tasksCreated,
+        wantsTasks,
+      }),
+    [
+      messages,
+      miroGenerateInFlight,
+      approvalRequired,
+      stepState?.tasksCreated,
+      wantsTasks,
+    ]
+  )
+  const showMiroCard = Boolean(
+    wantsMiro &&
+      stepState?.analysisComplete &&
+      showMiroCardAfterApprovalTasks &&
+      (showBottomActionCards ||
+        miroGenerateInFlight ||
+        miroCardsAnchorMessageId != null ||
+        miroBoardCardState.status !== "idle")
+  )
+  const suppressMiroMessageNav = Boolean(showBottomActionCards && wantsMiro)
+
+  const miroCardBlockId = useMemo(
+    () =>
+      getMiroGenerateBlockId({
+        bottomCardsMessageId,
+        miroCardsAnchorMessageId,
+        showMiroCard,
+      }),
+    [bottomCardsMessageId, miroCardsAnchorMessageId, showMiroCard]
   )
 
   const boardBlockIds = useMemo(
@@ -201,19 +249,23 @@ export function MessageList({
         latestAnalysisMessageId,
         showFollowUpToggle,
         stepState,
+        tasksCardMessageId,
         bottomCardsMessageId,
-        showBottomActionCards,
-        showMiroApproval: Boolean(pendingMiroApproval),
+        showMiroCard,
         showReupload: Boolean(stepState?.analysisComplete),
+        suppressMiroMessageNav,
+        miroCardsAnchorMode,
       }),
     [
       messages,
       latestAnalysisMessageId,
       showFollowUpToggle,
       stepState,
+      tasksCardMessageId,
       bottomCardsMessageId,
-      showBottomActionCards,
-      pendingMiroApproval,
+      showMiroCard,
+      suppressMiroMessageNav,
+      miroCardsAnchorMode,
     ]
   )
   const extraPartIdsOnQuit = useMemo(
@@ -263,37 +315,38 @@ export function MessageList({
     prevScrollHeightRef.current = el.scrollHeight
   }, [messages])
 
-  const renderMiroActionCards = () => (
-    <div className="space-y-3">
-      {showBottomActionCards && (
-        <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-miro-generate`}>
-          <MiroGenerateCard
-            onGenerate={() => onAction?.("generate_miro")}
-            messageId={bottomCardsMessageId}
-            blockId={`${bottomCardsMessageId}-miro-generate`}
-            disabled={!Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)}
-            disabledHint={
-              !Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)
-                ? "Approve task creation to enable Miro generation."
-                : undefined
-            }
-          />
-        </AgentMessageBoardBlock>
-      )}
-      {pendingMiroApproval && (
-        <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-miro-approval`}>
-          <RecommendedMiroBoardCard
-            pending={pendingMiroApproval}
-            messageId={bottomCardsMessageId}
-            blockId={`${bottomCardsMessageId}-miro-approval`}
-            disabled={Boolean(approvalDisabled)}
-            generating={Boolean(miroApprovalGenerating)}
-            onApprove={onApproveMiroApproval}
-            onReject={onRejectMiroApproval}
-          />
-        </AgentMessageBoardBlock>
-      )}
-    </div>
+  const renderMiroActionCards = (blockId: string) => (
+    <AgentMessageBoardBlock blockId={blockId}>
+      <MiroGenerateCard
+        status={miroBoardCardState.status}
+        boardHref={miroBoardCardState.boardHref}
+        errorMessage={miroBoardCardState.errorMessage}
+        messageId={bottomCardsMessageId}
+        blockId={blockId}
+        onGenerate={() => onAction?.("generate_miro")}
+        onOpenBoard={
+          miroBoardCardState.boardHref
+            ? () =>
+                onNavigate?.("miro", {
+                  id: bottomCardsMessageId,
+                  role: "assistant",
+                  content: "",
+                  navigateTo: "miro",
+                  navigateHref: miroBoardCardState.boardHref,
+                })
+            : undefined
+        }
+        disabled={
+          miroBoardCardState.status !== "idle" &&
+          miroBoardCardState.status !== "failed"
+        }
+        disabledHint={
+          miroBoardCardState.status === "waiting_tasks_generation"
+            ? "Approve task creation to enable Miro generation."
+            : undefined
+        }
+      />
+    </AgentMessageBoardBlock>
   )
 
   return (
@@ -307,7 +360,8 @@ export function MessageList({
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.map((message) => (
           message.type === "approval_request" ? null : (
-          <div key={message.id}>
+          <Fragment key={message.id}>
+          <div>
           <div
             className={cn(
               "flex gap-3",
@@ -323,6 +377,8 @@ export function MessageList({
                       latestAnalysisMessageId,
                       showFollowUpToggle,
                       stepState,
+                      tasksCardMessageId,
+                      suppressMiroMessageNav,
                     })
                   : undefined
               }
@@ -440,7 +496,8 @@ export function MessageList({
                 wantsTasks &&
                 message.recommendedTasks &&
                 message.recommendedTasks.length > 0 &&
-                (message.type === "analysis" || message.type === "tasks_created") && (
+                (message.type === "analysis" || message.type === "tasks_created") &&
+                (!tasksCardMessageId || message.id === tasksCardMessageId) && (
                 <AgentMessageBoardBlock blockId={`${message.id}-tasks`}>
                   <TaskListCard
                     tasks={message.recommendedTasks}
@@ -498,17 +555,19 @@ export function MessageList({
               )}
             </div>
           </div>
-          {message.role === "assistant" &&
-            message.id === miroCardsAnchorMessageId &&
-            (showBottomActionCards || pendingMiroApproval) &&
-            renderMiroActionCards()}
           </div>
+          {showMiroCard &&
+            miroCardBlockId &&
+            message.id === miroCardsAnchorMessageId &&
+            renderMiroActionCards(miroCardBlockId)}
+          </Fragment>
           )
         ))}
 
-        {!miroCardsAnchorMessageId &&
-          (showBottomActionCards || pendingMiroApproval) &&
-          renderMiroActionCards()}
+        {showMiroCard &&
+          miroCardBlockId &&
+          !miroCardsAnchorMessageId &&
+          renderMiroActionCards(miroCardBlockId)}
 
         {showRevisitThinkingBubble && !hasThinkingMessage && (
           <div className="flex gap-3">
