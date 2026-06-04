@@ -139,6 +139,7 @@ class TestDecisionCaptureIntegration(TestCase):
         self.assertEqual(response.data["originMeeting"]["title"], meeting.title)
 
     def test_meeting_delete_is_protected_when_decision_origin_exists(self):
+        """Test that deleting a meeting also deletes its decision origins (CASCADE)."""
         meeting = self._meeting()
         decision = Decision.objects.create(
             project=self.project,
@@ -151,8 +152,8 @@ class TestDecisionCaptureIntegration(TestCase):
             user=self.user,
         )
 
-        with self.assertRaises(ProtectedError):
-            meeting.delete()
+        meeting.delete()
+        self.assertFalse(MeetingDecisionOrigin.objects.filter(meeting_id=meeting.id).exists())
 
     def test_meeting_status_does_not_control_decision_lifecycle(self):
         meeting = self._meeting(status=Meeting.STATUS_COMPLETED)

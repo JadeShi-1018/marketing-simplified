@@ -392,6 +392,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         """Delete project and soft-delete related calendars."""
         with transaction.atomic():
             soft_delete_project_calendars(instance)
+            instance.meetings.all().delete()
             instance.delete()
 
     @action(detail=True, methods=['post'])
