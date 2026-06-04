@@ -9,10 +9,19 @@ import { AnomalyCard } from "./AnomalyCard"
 import { ColumnMappingCard } from "./ColumnMappingCard"
 import { FollowUpCard } from "./FollowUpCard"
 import { MiroGenerateCard } from "./MiroGenerateCard"
-import { DistributeMessageCard } from "./DistributeMessageCard"
 import { TaskListCard } from "./TaskListCard"
 import { RecommendedMiroBoardCard } from "./RecommendedMiroBoardCard"
-import type { AnomalyItem, RecommendedTask, ReviewedAnomaly, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
+import type {
+  AnomalyItem,
+  RecommendedTask,
+  ReviewedAnomaly,
+  WorkflowStepState,
+  ColumnDetectionData,
+  GenerationOutputKey,
+  SuggestedCalendarEvent,
+} from "@/types/agent"
+import { CalendarEventsCard } from "./CalendarEventsCard"
+import { DEFAULT_GENERATION_OUTPUTS } from "@/lib/generationOutputs"
 import { StepProgress, type StepProgressItem } from "./StepProgress"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import type { TaskGenerationStatus } from "./TaskListCard"
@@ -24,6 +33,7 @@ import { AgentMessageBoardAvatar } from "./AgentMessageBoardAvatar"
 import {
   getAssistantMessageBlockIds,
   getMessageBoardBlockIds,
+  getMiroCardsAnchorMessageId,
 } from "./agentMessageBoardBlockIds"
 
 export type ChatMessageType =
@@ -57,6 +67,7 @@ export interface ChatMessage {
   workflowRunId?: string
   stepProgress?: StepProgressItem[]
   approval?: PendingExternalApproval
+  calendarEvents?: SuggestedCalendarEvent[]
 }
 
 export interface MessageListProps {
@@ -91,6 +102,7 @@ export interface MessageListProps {
   isStreaming?: boolean
   showRevisitThinkingBubble?: boolean
   onRenderFinishChange?: (finished: boolean) => void
+  requestedGenerationOutputs?: GenerationOutputKey[]
 }
 
 export function MessageList({
@@ -125,15 +137,34 @@ export function MessageList({
   isStreaming = false,
   showRevisitThinkingBubble = false,
   onRenderFinishChange,
+  requestedGenerationOutputs = DEFAULT_GENERATION_OUTPUTS,
 }: MessageListProps) {
+  const wantsTasks = requestedGenerationOutputs.includes("recommended_tasks")
+  const wantsMiro = requestedGenerationOutputs.includes("miro_board")
+  const wantsCalendar = requestedGenerationOutputs.includes("calendar_events")
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const prevScrollTopRef = useRef(0)
   const prevScrollHeightRef = useRef(0)
   const wasAtBottomRef = useRef(true)
+  const isAnalysisLikeMessage = (m: ChatMessage) =>
+    m.type === "analysis" ||
+    m.type === "tasks_created" ||
+    (Array.isArray(m.recommendedTasks) && m.recommendedTasks.length > 0)
+
   const latestAnalysisWithTasks = [...messages]
     .reverse()
-    .find((m) => m.type === "analysis" && Array.isArray(m.recommendedTasks) && m.recommendedTasks.length > 0)
-  const bottomCardsMessageId = latestAnalysisWithTasks?.id ?? latestAnalysisMessageId ?? "board-bottom"
+    .find(
+      (m) =>
+        isAnalysisLikeMessage(m) &&
+        Array.isArray(m.recommendedTasks) &&
+        m.recommendedTasks.length > 0
+    )
+  const latestAnalysisLikeMessage = [...messages].reverse().find(isAnalysisLikeMessage)
+  const bottomCardsMessageId =
+    latestAnalysisWithTasks?.id ??
+    latestAnalysisMessageId ??
+    latestAnalysisLikeMessage?.id ??
+    "board-bottom"
   const canSelectRecommendedTasks =
     (taskGenerationStatus === "idle" || taskGenerationStatus === "awaiting_approval") &&
     !tasksApprovalGenerating &&
@@ -147,8 +178,10 @@ export function MessageList({
         !stepState?.tasksCreated))
 
   const showBottomActionCards = Boolean(
-    latestAnalysisWithTasks &&
-      (Boolean(stepState?.tasksCreated) ||
+    wantsMiro &&
+      stepState?.analysisComplete &&
+      (!wantsTasks ||
+        Boolean(stepState?.tasksCreated) ||
         Boolean(pendingTaskApproval) ||
         taskGenerationStatus === "awaiting_approval")
   )
@@ -157,6 +190,11 @@ export function MessageList({
       message.role === "assistant" &&
       message.content === AGENT_MESSAGES.CHAT_THINKING
   )
+  const miroCardsAnchorMessageId = useMemo(
+    () => getMiroCardsAnchorMessageId(messages),
+    [messages]
+  )
+
   const boardBlockIds = useMemo(
     () =>
       getMessageBoardBlockIds(messages, {
@@ -225,6 +263,39 @@ export function MessageList({
     prevScrollHeightRef.current = el.scrollHeight
   }, [messages])
 
+  const renderMiroActionCards = () => (
+    <div className="space-y-3">
+      {showBottomActionCards && (
+        <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-miro-generate`}>
+          <MiroGenerateCard
+            onGenerate={() => onAction?.("generate_miro")}
+            messageId={bottomCardsMessageId}
+            blockId={`${bottomCardsMessageId}-miro-generate`}
+            disabled={!Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)}
+            disabledHint={
+              !Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)
+                ? "Approve task creation to enable Miro generation."
+                : undefined
+            }
+          />
+        </AgentMessageBoardBlock>
+      )}
+      {pendingMiroApproval && (
+        <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-miro-approval`}>
+          <RecommendedMiroBoardCard
+            pending={pendingMiroApproval}
+            messageId={bottomCardsMessageId}
+            blockId={`${bottomCardsMessageId}-miro-approval`}
+            disabled={Boolean(approvalDisabled)}
+            generating={Boolean(miroApprovalGenerating)}
+            onApprove={onApproveMiroApproval}
+            onReject={onRejectMiroApproval}
+          />
+        </AgentMessageBoardBlock>
+      )}
+    </div>
+  )
+
   return (
     <AgentMessageBoardTextProvider
       isStreaming={isStreaming}
@@ -236,8 +307,8 @@ export function MessageList({
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.map((message) => (
           message.type === "approval_request" ? null : (
+          <div key={message.id}>
           <div
-            key={message.id}
             className={cn(
               "flex gap-3",
               message.role === "user" && "flex-row-reverse"
@@ -345,6 +416,7 @@ export function MessageList({
 
               {/* Analysis result cards — progressive gating */}
               {message.role === "assistant" &&
+                wantsTasks &&
                 message.anomalies &&
                 message.anomalies.length > 0 && (
                 <AgentMessageBoardBlock blockId={`${message.id}-anomalies`}>
@@ -365,9 +437,10 @@ export function MessageList({
 
               {/* TaskListCard: primary review surface. Prefer rendering on analysis messages. */}
               {message.role === "assistant" &&
+                wantsTasks &&
                 message.recommendedTasks &&
                 message.recommendedTasks.length > 0 &&
-                message.type === "analysis" && (
+                (message.type === "analysis" || message.type === "tasks_created") && (
                 <AgentMessageBoardBlock blockId={`${message.id}-tasks`}>
                   <TaskListCard
                     tasks={message.recommendedTasks}
@@ -398,6 +471,19 @@ export function MessageList({
               )}
 
               {message.role === "assistant" &&
+                wantsCalendar &&
+                (message.type === "analysis" || message.type === "tasks_created") &&
+                message.calendarEvents !== undefined && (
+                <AgentMessageBoardBlock blockId={`${message.id}-calendar-events`}>
+                  <CalendarEventsCard
+                    events={message.calendarEvents}
+                    messageId={message.id}
+                    blockId={`${message.id}-calendar-events`}
+                  />
+                </AgentMessageBoardBlock>
+              )}
+
+              {message.role === "assistant" &&
                 showFollowUpToggle &&
                 message.id === latestAnalysisMessageId &&
                 (!stepState || stepState.tasksCreated) && (
@@ -412,8 +498,17 @@ export function MessageList({
               )}
             </div>
           </div>
+          {message.role === "assistant" &&
+            message.id === miroCardsAnchorMessageId &&
+            (showBottomActionCards || pendingMiroApproval) &&
+            renderMiroActionCards()}
+          </div>
           )
         ))}
+
+        {!miroCardsAnchorMessageId &&
+          (showBottomActionCards || pendingMiroApproval) &&
+          renderMiroActionCards()}
 
         {showRevisitThinkingBubble && !hasThinkingMessage && (
           <div className="flex gap-3">
@@ -424,46 +519,6 @@ export function MessageList({
               </div>
             </div>
           </div>
-        )}
-
-        {/* Action cards shown at the bottom so they're immediately visible after task creation. */}
-        {showBottomActionCards && (
-          <div className="space-y-3">
-            <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-miro-generate`}>
-              <MiroGenerateCard
-                onGenerate={() => onAction?.("generate_miro")}
-                messageId={bottomCardsMessageId}
-                blockId={`${bottomCardsMessageId}-miro-generate`}
-                disabled={!Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)}
-                disabledHint={
-                  !Boolean(stepState?.tasksCreated) && Boolean(approvalRequired)
-                    ? "Approve task creation to enable Miro generation."
-                    : undefined
-                }
-              />
-            </AgentMessageBoardBlock>
-            <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-distribute`}>
-              <DistributeMessageCard
-                onDistribute={() => onAction?.("distribute_message")}
-                messageId={bottomCardsMessageId}
-                blockId={`${bottomCardsMessageId}-distribute`}
-              />
-            </AgentMessageBoardBlock>
-          </div>
-        )}
-
-        {pendingMiroApproval && (
-          <AgentMessageBoardBlock blockId={`${bottomCardsMessageId}-miro-approval`}>
-            <RecommendedMiroBoardCard
-              pending={pendingMiroApproval}
-              messageId={bottomCardsMessageId}
-              blockId={`${bottomCardsMessageId}-miro-approval`}
-              disabled={Boolean(approvalDisabled)}
-              generating={Boolean(miroApprovalGenerating)}
-              onApprove={onApproveMiroApproval}
-              onReject={onRejectMiroApproval}
-            />
-          </AgentMessageBoardBlock>
         )}
 
         {stepState?.analysisComplete && (

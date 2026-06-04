@@ -15,7 +15,20 @@ import {
   setAgentMessageBoardRenderEffectsCompletedOnQuit,
   shouldShowAgentMessageBoardThinkingBubbleOnRevisit,
 } from "@/lib/agentMessageBoardReadState"
-import type { SSEEvent, AgentAction, AgentMessage, AnalysisResult, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
+import type {
+  SSEEvent,
+  AgentAction,
+  AgentMessage,
+  AgentMessageData,
+  AnalysisResult,
+  WorkflowStepState,
+  ColumnDetectionData,
+  GenerationOutputKey,
+  RecommendedTask,
+  SuggestedCalendarEvent,
+} from "@/types/agent"
+import { useGenerationOutputs } from "@/hooks/useGenerationOutputs"
+import { GenerationOutputsSettings } from "./GenerationOutputsSettings"
 import { AGENT_MESSAGES } from "@/lib/agentMessages"
 import type { StepProgressItem } from "./StepProgress"
 import type { TaskGenerationStatus } from "./TaskListCard"
@@ -38,6 +51,26 @@ function getPendingMiroWorkflowRunIds(messages: ChatMessage[]): string[] {
     .filter((message) => message.eventType === "miro_generation_started" && message.workflowRunId)
     .map((message) => message.workflowRunId as string)
     .filter((workflowRunId) => !completed.has(workflowRunId))
+}
+
+function hasPersistedAnalysisPayload(data?: AgentMessageData | null): boolean {
+  if (!data) return false
+  if (Array.isArray(data.recommended_tasks)) return true
+  if (Array.isArray(data.anomalies) && data.anomalies.length > 0) return true
+  if (Array.isArray(data.calendar_events)) return true
+  return false
+}
+
+function restoreGenerationOutputsFromMessages(
+  messages: AgentMessage[]
+): GenerationOutputKey[] | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const raw = messages[i].data?.generation_outputs
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw as GenerationOutputKey[]
+    }
+  }
+  return null
 }
 
 /** Broadcast anomalies from restored messages to RightPanel Alerts. */
@@ -80,7 +113,7 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     navigateHref = `/miro/${m.data.board_id}`
   } else if (eventType === "miro_generation_failed") {
     type = "error"
-  } else if (m.data?.anomalies) {
+  } else if (m.message_type === "analysis" || hasPersistedAnalysisPayload(m.data)) {
     type = "analysis"
   } else if (m.message_type === "task_created" || m.data?.task_ids) {
     // Check task_created BEFORE decision_draft — backend may include decision_id on task events
@@ -88,13 +121,21 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     navigateTo = "tasks"
     navigateLabel = "Go to Tasks"
   } else if (m.message_type === "approval_request" && m.data?.approval_id) {
-    type = "approval_request"
     approval = {
       id: String(m.data.approval_id),
       kind: String(m.data.kind ?? ""),
       draft: (m.data.draft as Record<string, unknown>) ?? {},
     }
+    const draftTasks = (m.data.draft as { recommended_tasks?: unknown } | undefined)
+      ?.recommended_tasks
+    const hasDraftTasks = Array.isArray(draftTasks) && draftTasks.length > 0
+    type =
+      hasPersistedAnalysisPayload(m.data) || hasDraftTasks ? "analysis" : "approval_request"
   }
+
+  const draftRecommendedTasks = (
+    m.data?.draft as { recommended_tasks?: RecommendedTask[] } | undefined
+  )?.recommended_tasks
 
   return {
     id: String(m.id),
@@ -107,7 +148,8 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     anomalies: m.data?.reviewed_anomalies ?? m.data?.anomalies,
     anomaliesConfirmed:
       Boolean(m.data?.anomalies_confirmed) || (m.data?.anomalies?.length ?? 0) === 0,
-    recommendedTasks: m.data?.recommended_tasks,
+    recommendedTasks: m.data?.recommended_tasks ?? draftRecommendedTasks,
+    calendarEvents: m.data?.calendar_events,
     navigateTo,
     navigateLabel,
     navigateDisabled,
@@ -319,7 +361,14 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const inputHelperText = isAwaitingFollowUp
     ? "You can send one follow-up message now. Ask for an explanation, a short report, or forwarding to specific project members."
     : undefined
-  const latestAnalysisMessageId = [...messages].reverse().find((message) => message.type === "analysis")?.id ?? null
+  const latestAnalysisMessageId =
+    [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.type === "analysis" ||
+          (Array.isArray(message.recommendedTasks) && message.recommendedTasks.length > 0)
+      )?.id ?? null
   const [renderFinishSignal, setRenderFinishSignal] = useState(0)
   const showRevisitThinkingBubble = useMemo(() => {
     // Important: this value is persisted outside React (localStorage). We must re-check it
@@ -357,23 +406,50 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     }
   }, [])
 
+  const { selected: generationOutputsSelected } = useGenerationOutputs()
+  const [requestedGenerationOutputs, setRequestedGenerationOutputs] = useState<
+    GenerationOutputKey[]
+  >([])
+  const requestedGenerationOutputsRef = useRef<GenerationOutputKey[]>([])
+
   // Low-level: queue and run the downstream external actions (create tasks,
   // generate miro). Runs at most once per analysis cycle.
-  const triggerExternalActions = useCallback((requiresApprovalArg?: boolean) => {
-    if (autoExternalActionsTriggeredRef.current) return
-    autoExternalActionsTriggeredRef.current = true
-    const requiresApproval = requiresApprovalArg ?? approvalRequiredRef.current
-    autoActionQueueRef.current = requiresApproval ? ["create_tasks"] : ["create_tasks", "generate_miro"]
-    setTaskGenerationStatus("generating")
-    tryRunNextAutoAction()
-  }, [tryRunNextAutoAction])
+  const triggerExternalActions = useCallback(
+    (options?: { requiresApproval?: boolean; generationOutputs?: GenerationOutputKey[] }) => {
+      if (autoExternalActionsTriggeredRef.current) return
+      autoExternalActionsTriggeredRef.current = true
+      const outputs = options?.generationOutputs ?? requestedGenerationOutputsRef.current
+      const requiresApproval = options?.requiresApproval ?? approvalRequiredRef.current
+      const queue: string[] = []
+      if (outputs.includes("recommended_tasks")) {
+        queue.push("create_tasks")
+      }
+      if (outputs.includes("miro_board") && !requiresApproval) {
+        queue.push("generate_miro")
+      }
+      if (queue.length === 0) {
+        autoExternalActionsTriggeredRef.current = false
+        return
+      }
+      autoActionQueueRef.current = queue
+      if (queue.includes("create_tasks")) {
+        setTaskGenerationStatus("generating")
+      }
+      tryRunNextAutoAction()
+    },
+    [tryRunNextAutoAction]
+  )
 
   // After analysis: only auto-run downstream actions when there are no anomalies
   // to review (clean dataset / already confirmed). When anomalies are present,
   // defer until the user confirms them via confirm_anomalies.
   const queueAutoExternalActionsAfterAnalysis = useCallback(
-    (options?: { approvalRequired?: boolean; analysis?: AnalysisResult | null }) => {
-      if (options && 'analysis' in options) {
+    (options?: {
+      approvalRequired?: boolean
+      analysis?: AnalysisResult | null
+      generationOutputs?: GenerationOutputKey[]
+    }) => {
+      if (options && "analysis" in options) {
         const anomalies = options.analysis?.anomalies ?? []
         const alreadyConfirmed =
           Boolean(options.analysis?.anomalies_confirmed) || anomalies.length === 0
@@ -381,7 +457,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           return // wait for the user to confirm anomalies
         }
       }
-      triggerExternalActions(options?.approvalRequired)
+      triggerExternalActions({
+        requiresApproval: options?.approvalRequired,
+        generationOutputs: options?.generationOutputs,
+      })
     },
     [triggerExternalActions]
   )
@@ -502,17 +581,25 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       tasksCreated: false,
     }
     for (const m of session.messages) {
-      if (m.data?.anomalies) {
+      if (
+        m.message_type === "analysis" ||
+        hasPersistedAnalysisPayload(m.data)
+      ) {
         restoredStepState.analysisComplete = true
         restoredStepState.tasksCreated = false
         // A fresh analysis resets confirmation; clean datasets (no anomalies)
         // and already-confirmed analyses are treated as confirmed.
         restoredStepState.anomaliesConfirmed =
-          Boolean(m.data?.anomalies_confirmed) || m.data.anomalies.length === 0
+          Boolean(m.data?.anomalies_confirmed) || (m.data?.anomalies?.length ?? 0) === 0
       }
       if (m.message_type === "task_created" || m.data?.task_ids) restoredStepState.tasksCreated = true
     }
     setStepState(restoredStepState)
+    const restoredOutputs = restoreGenerationOutputsFromMessages(session.messages)
+    if (restoredOutputs) {
+      requestedGenerationOutputsRef.current = restoredOutputs
+      setRequestedGenerationOutputs(restoredOutputs)
+    }
     if (restoredStepState.analysisComplete) {
       setAgentMessageBoardWaitingForFileAnalysisResponse(String(session.id), false)
     }
@@ -623,7 +710,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
       }
       setMessages(dedupeMiroGenerationStartedMessages(restored))
-      const hasAnalysis = session.messages.some((message) => Boolean(message.data?.anomalies))
+      const hasAnalysis = session.messages.some(
+        (message) =>
+          message.message_type === "analysis" || hasPersistedAnalysisPayload(message.data)
+      )
       if (hasAnalysis) {
         setAgentMessageBoardWaitingForFileAnalysisResponse(String(id), false)
       }
@@ -828,6 +918,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   /** Handle file upload — calls upload-analyze SSE endpoint */
   const handleFileUpload = useCallback(async (file: File, userContext?: string) => {
+    if (generationOutputsSelected.length === 0) return
+    const outputsForUpload = [...generationOutputsSelected]
+    requestedGenerationOutputsRef.current = outputsForUpload
+    setRequestedGenerationOutputs(outputsForUpload)
+
     setHasStarted(true)
     // Reset workflow state so a new upload always starts from analysis
     setStepState({ analysisComplete: false, anomaliesConfirmed: false, tasksCreated: false })
@@ -886,12 +981,18 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     abortRef.current = AgentAPI.uploadAndAnalyze(
       file,
       sid,
+      outputsForUpload,
       userContext || null,
       (event: SSEEvent) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
 
         if (event.type === "file_uploaded") {
+          const fromServer = event.data?.generation_outputs
+          if (Array.isArray(fromServer) && fromServer.length > 0) {
+            requestedGenerationOutputsRef.current = fromServer as GenerationOutputKey[]
+            setRequestedGenerationOutputs(fromServer as GenerationOutputKey[])
+          }
           // File confirmed uploaded — update thinking message
           updateMessage(aiMsgId, {
             content: event.content || "File uploaded. Analyzing...",
@@ -941,33 +1042,40 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           contentParts.push(event.content || "")
           analysisData = (event.data as unknown as AnalysisResult) || null
-          latestRecommendedTasksRef.current = analysisData?.recommended_tasks || null
+          const wantsTasks = requestedGenerationOutputsRef.current.includes("recommended_tasks")
+          const tasks = wantsTasks ? analysisData?.recommended_tasks : undefined
+          latestRecommendedTasksRef.current = tasks || null
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
-          {
-            const anomConfirmed =
-              Boolean(analysisData?.anomalies_confirmed) ||
-              (analysisData?.anomalies?.length ?? 0) === 0
-            setStepState((prev) => ({
-              ...prev,
-              analysisComplete: true,
-              anomaliesConfirmed: anomConfirmed,
-            }))
-            setGeneratedTaskIndexes([])
-            setSkippedTaskIndexes([])
-            setCreatedTaskIdByIndex({})
-            updateMessage(aiMsgId, {
-              content: contentParts.join("\n"),
-              type: "analysis",
-              anomalies: analysisData?.anomalies,
-              anomaliesConfirmed: anomConfirmed,
-              recommendedTasks: analysisData?.recommended_tasks,
-            })
-            selectAllRecommendedTasks(analysisData?.recommended_tasks?.length ?? 0)
-            // Defer downstream actions until anomalies are confirmed; clean
-            // datasets (no anomalies) proceed immediately.
-            queueAutoExternalActionsAfterAnalysis({ analysis: analysisData })
+          const anomConfirmed =
+            Boolean(analysisData?.anomalies_confirmed) ||
+            (analysisData?.anomalies?.length ?? 0) === 0
+          setStepState((prev) => ({
+            ...prev,
+            analysisComplete: true,
+            anomaliesConfirmed: anomConfirmed,
+          }))
+          setGeneratedTaskIndexes([])
+          setSkippedTaskIndexes([])
+          setCreatedTaskIdByIndex({})
+          updateMessage(aiMsgId, {
+            content: contentParts.join("\n"),
+            type: "analysis",
+            anomalies: wantsTasks ? analysisData?.anomalies : undefined,
+            anomaliesConfirmed: anomConfirmed,
+            recommendedTasks: tasks,
+          })
+          if (wantsTasks) {
+            selectAllRecommendedTasks(tasks?.length ?? 0)
           }
+          queueAutoExternalActionsAfterAnalysis({
+            analysis: analysisData,
+            generationOutputs: requestedGenerationOutputsRef.current,
+          })
+        } else if (event.type === "calendar_events" && event.data) {
+          const events =
+            (event.data.calendar_events as SuggestedCalendarEvent[] | undefined) ?? []
+          updateMessage(aiMsgId, { calendarEvents: events })
         } else if (event.type === "confirmation_request") {
           // If column mapping already shown, don't overwrite the card — just
           // silently wait for user confirmation via ColumnMappingCard buttons.
@@ -1059,7 +1167,18 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
       }
     )
-  }, [sessionId, addMessage, updateMessage, setSessionId, refreshFollowUpState, refreshSession, getApprovalPref, embeddedInFloating, queueAutoExternalActionsAfterAnalysis])
+  }, [
+    sessionId,
+    addMessage,
+    updateMessage,
+    setSessionId,
+    refreshFollowUpState,
+    refreshSession,
+    getApprovalPref,
+    embeddedInFloating,
+    queueAutoExternalActionsAfterAnalysis,
+    generationOutputsSelected,
+  ])
 
   /** Confirm detected column mapping and resume paused workflow */
   const handleConfirmColumns = useCallback(async (mapping: Record<string, string>) => {
@@ -1128,7 +1247,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
         if (event.type === "analysis" && event.data) {
           const data = event.data as unknown as AnalysisResult
-          latestRecommendedTasksRef.current = data.recommended_tasks || null
+          const wantsTasks = requestedGenerationOutputsRef.current.includes("recommended_tasks")
+          const tasks = wantsTasks ? data.recommended_tasks : undefined
+          latestRecommendedTasksRef.current = tasks || null
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
           const anomConfirmed =
@@ -1143,12 +1264,17 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           setCreatedTaskIdByIndex({})
           updateMessage(aiMsgId, {
             type: "analysis",
-            anomalies: data.anomalies,
+            anomalies: wantsTasks ? data.anomalies : undefined,
             anomaliesConfirmed: anomConfirmed,
-            recommendedTasks: data.recommended_tasks,
+            recommendedTasks: tasks,
           })
-          selectAllRecommendedTasks(data.recommended_tasks?.length ?? 0)
-          queueAutoExternalActionsAfterAnalysis({ analysis: data })
+          if (wantsTasks) {
+            selectAllRecommendedTasks(tasks?.length ?? 0)
+          }
+          queueAutoExternalActionsAfterAnalysis({
+            analysis: data,
+            generationOutputs: requestedGenerationOutputsRef.current,
+          })
         }
         if (event.type === "approval_request" && event.data) {
           const d = event.data as Record<string, unknown>
@@ -1292,6 +1418,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     latestRecommendedTasksRef.current = null
     autoExternalActionsTriggeredRef.current = false
     autoActionQueueRef.current = []
+    requestedGenerationOutputsRef.current = []
+    setRequestedGenerationOutputs([])
     abortRef.current?.abort()
   }, [setSessionId])
 
@@ -1453,7 +1581,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
         if (event.type === "analysis" && event.data) {
           const data = event.data as unknown as AnalysisResult
-          latestRecommendedTasksRef.current = data.recommended_tasks || null
+          const wantsTasks = requestedGenerationOutputsRef.current.includes("recommended_tasks")
+          const tasks = wantsTasks ? data.recommended_tasks : undefined
+          latestRecommendedTasksRef.current = tasks || null
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
           const anomConfirmed =
@@ -1468,12 +1598,17 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           setCreatedTaskIdByIndex({})
           updateMessage(aiMsgId, {
             type: "analysis",
-            anomalies: data.anomalies,
+            anomalies: wantsTasks ? data.anomalies : undefined,
             anomaliesConfirmed: anomConfirmed,
-            recommendedTasks: data.recommended_tasks,
+            recommendedTasks: tasks,
           })
-          selectAllRecommendedTasks(data.recommended_tasks?.length ?? 0)
-          queueAutoExternalActionsAfterAnalysis({ analysis: data })
+          if (wantsTasks) {
+            selectAllRecommendedTasks(tasks?.length ?? 0)
+          }
+          queueAutoExternalActionsAfterAnalysis({
+            analysis: data,
+            generationOutputs: requestedGenerationOutputsRef.current,
+          })
         }
         if (event.type === "task_created" && event.data) {
           setStepState((prev) => ({ ...prev, tasksCreated: true }))
@@ -1575,7 +1710,6 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     const actionMap: Record<string, AgentAction> = {
       create_tasks: "create_tasks",
       generate_miro: "generate_miro",
-      distribute_message: "distribute_message",
       start_follow_up: "start_follow_up",
       cancel_follow_up: "cancel_follow_up",
     }
@@ -1904,8 +2038,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       {!embeddedInFloating && (
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 shrink-0 bg-background">
           <h2 className="text-sm font-semibold truncate text-foreground">{sessionTitle}</h2>
-          {sessionId ? (
-            <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0">
+            <GenerationOutputsSettings disabled={isStreaming} />
+            {sessionId ? (
+            <>
               <span className="text-[11px] text-muted-foreground font-medium">
                 Approval
               </span>
@@ -1925,8 +2061,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
                 }}
                 disabled={isStreaming}
               />
-            </div>
-          ) : null}
+            </>
+            ) : null}
+          </div>
         </div>
       )}
       {!hasStarted ? (
@@ -1941,6 +2078,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         {...({
           messages,
           sessionId,
+          requestedGenerationOutputs,
           isStreaming,
           showRevisitThinkingBubble,
           onRenderFinishChange: () => setRenderFinishSignal((prev) => prev + 1),

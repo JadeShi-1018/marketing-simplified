@@ -54,37 +54,57 @@ class AnalyzeDataExecutor(BaseStepExecutor):
             return StepResult(success=False, error='No spreadsheet_data in input')
 
         try:
+            from .generation_registry import (
+                GenerationValidationError,
+                filter_sse_analysis_payload,
+                normalize_generation_outputs,
+            )
+
             user_id = str(self.orchestrator.user.id)
             success_criteria = (
                 input_data.get('success_criteria')
                 or (self.workflow_run.success_criteria if self.workflow_run.success_criteria else None)
             )
             user_context = cache.get(f"agent:context:{self.workflow_run.id}")
+            generation_outputs = input_data.get('generation_outputs')
+            requested = frozenset(normalize_generation_outputs(generation_outputs))
+
             analysis = _run_analysis(
                 spreadsheet_data,
                 user_id=user_id,
                 success_criteria=success_criteria,
                 user_context=user_context,
+                generation_outputs=list(requested),
             )
 
             self.workflow_run.analysis_result = analysis
             self.workflow_run.save(update_fields=['analysis_result'])
 
-            anomalies = analysis.get('anomalies', [])
-            content = f"Found {len(anomalies)} anomalies in the data."
+            tasks = analysis.get('recommended_tasks', [])
+            if tasks:
+                content = f"Found {len(tasks)} recommended task(s)."
+            else:
+                content = "Analysis complete."
+
+            sse_data = filter_sse_analysis_payload(analysis, requested)
+            sse_events = [{
+                'type': 'analysis',
+                'content': content,
+                'data': sse_data,
+            }]
 
             return StepResult(
                 success=True,
                 output_data={
                     'analysis_result': analysis,
                     'spreadsheet_data': spreadsheet_data,
+                    'generation_outputs': list(requested),
                 },
-                sse_events=[{
-                    'type': 'analysis',
-                    'content': content,
-                    'data': analysis,
-                }],
+                sse_events=sse_events,
             )
+        except GenerationValidationError as e:
+            logger.warning("AnalyzeDataExecutor validation failed: %s", e)
+            return StepResult(success=False, error=str(e))
         except Exception as e:
             logger.exception("AnalyzeDataExecutor failed")
             return StepResult(success=False, error=str(e))

@@ -18,7 +18,6 @@ KIND_TASK = 'task'
 KIND_MIRO_BOARD = 'miro_board'
 KIND_CALENDAR_EVENT = 'calendar_event'
 KIND_FORWARD_MESSAGE = 'forward_message'
-KIND_DISTRIBUTE_BULK = 'distribute_bulk'
 KIND_CUSTOM_API = 'custom_api'
 KIND_EMAIL = 'email'
 
@@ -91,7 +90,7 @@ def build_destination_options(
         default = {'calendar_id': str(primary.id)} if primary else None
         return opts, default
 
-    if kind in (KIND_FORWARD_MESSAGE, KIND_DISTRIBUTE_BULK):
+    if kind == KIND_FORWARD_MESSAGE:
         forwards = draft.get('forwards') or []
         opts = []
         for i, f in enumerate(forwards):
@@ -311,32 +310,6 @@ def _commit_forward(orchestrator, draft: dict, destination: dict | None, commit_
     return {}, sse, {}
 
 
-def _commit_distribute(orchestrator, draft: dict, destination: dict | None, commit_context: dict):
-    from .services import _forward_to_users
-
-    forwards = draft.get('forwards') or []
-    if destination and destination.get('usernames'):
-        allow = {u.lower() for u in destination['usernames']}
-        forwards = [f for f in forwards if (f.get('username') or '').lower() in allow]
-    if not forwards:
-        raise ValueError('No recipients selected for distribution')
-    results = _forward_to_users(forwards, orchestrator.user, orchestrator.project)
-    sent = [r for r in results if r.get('status') == 'sent']
-    failed = [r for r in results if r.get('status') != 'sent']
-    parts = []
-    if sent:
-        parts.append(
-            f"Message sent to {len(sent)} member(s): {', '.join(r['username'] for r in sent)}."
-        )
-    if failed:
-        parts.append(
-            f"Failed to send to: {', '.join(r['username'] for r in failed)}."
-        )
-    content = ' '.join(parts) if parts else 'Distribution complete.'
-    sse = [{'type': 'text', 'content': content}]
-    return {}, sse, {}
-
-
 def _commit_custom_api(_orchestrator, draft: dict, _destination: dict | None, commit_context: dict):
     method = (draft.get('method') or commit_context.get('method') or 'POST').upper()
     url = draft.get('url') or commit_context.get('url')
@@ -368,7 +341,6 @@ COMMIT_REGISTRY = {
     KIND_MIRO_BOARD: _commit_miro_board,
     KIND_CALENDAR_EVENT: _commit_calendar_events,
     KIND_FORWARD_MESSAGE: _commit_forward,
-    KIND_DISTRIBUTE_BULK: _commit_distribute,
     KIND_CUSTOM_API: _commit_custom_api,
 }
 

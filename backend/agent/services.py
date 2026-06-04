@@ -236,10 +236,20 @@ def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
     return column_summary, json.dumps(limited, default=str), criteria_text
 
 
-def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None):
+def _call_gemini_analysis(
+    spreadsheet_data,
+    user_id=None,
+    success_criteria=None,
+    generation_outputs=None,
+    user_context=None):
     """Call Gemini to analyze spreadsheet data."""
     from .gemini_client import call_gemini_json
+    from .generation_registry import (
+        build_analysis_prompt,
+        normalize_generation_outputs,
+    )
 
+    requested = frozenset(normalize_generation_outputs(generation_outputs))
     column_summary, cleaned_data, criteria_text = _preprocess_spreadsheet(
         spreadsheet_data, success_criteria
     )
@@ -249,15 +259,19 @@ def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None,
         if criteria_text
         else _NO_CRITERIA_BLOCK
     )
-    system_prompt = _ANALYSIS_SYSTEM_PROMPT.replace("{criteria_block}", criteria_block)
+    system_prompt = build_analysis_prompt(requested, criteria_block)
     if user_context:
         system_prompt += _CONTEXT_BLOCK_TEMPLATE.format(user_context=user_context)
     user_prompt = (
         f"Data summary: {column_summary}\n\n"
-        f"Analyze the following data and identify anomalies:\n\n{cleaned_data}"
+        f"Analyze the following data:\n\n{cleaned_data}"
     )
 
-    logger.info("Calling Gemini for spreadsheet analysis user_id=%s", user_id)
+    logger.info(
+        "Calling Gemini for spreadsheet analysis user_id=%s outputs=%s",
+        user_id,
+        sorted(requested),
+    )
     return call_gemini_json(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -292,20 +306,83 @@ def _assign_anomaly_ids(analysis):
     return analysis
 
 
-def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None):
+def _call_gemini_calendar_from_analysis(
+    spreadsheet_data,
+    analysis_result,
+    user_id=None,
+    success_criteria=None,
+    user_context=None,
+):
+    """Suggest calendar events from spreadsheet + analysis context."""
+    from .gemini_client import call_gemini_json
+    from .generation_registry import (
+        build_calendar_from_analysis_user_prompt,
+        calendar_from_analysis_system_prompt,
+        validate_calendar_events_response,
+    )
+
+    column_summary, cleaned_data, _criteria_text = _preprocess_spreadsheet(
+        spreadsheet_data, success_criteria
+    )
+    raw = call_gemini_json(
+        system_prompt=calendar_from_analysis_system_prompt(),
+        user_prompt=build_calendar_from_analysis_user_prompt(
+            column_summary, cleaned_data, analysis_result
+        ),
+        temperature=0.3,
+        timeout=120,
+    )
+    logger.info("Calling Gemini for calendar events user_id=%s", user_id)
+    return validate_calendar_events_response(raw)
+
+
+def _coerce_llm_analysis_for_requested(data, requested):
+    """Map Claude/legacy full analysis JSON to the requested analysis key set."""
+    from .generation_registry import analysis_keys_for_request, validate_analysis_response
+
+    expected = analysis_keys_for_request(requested)
+    if not expected:
+        return {}
+    subset = {}
+    if 'recommended_tasks' in expected:
+        subset['recommended_tasks'] = data.get('recommended_tasks', [])
+    return validate_analysis_response(subset, requested)
+
+
+def _run_analysis(
+    spreadsheet_data,
+    user_id=None,
+    success_criteria=None,
+    generation_outputs=None,
+    user_context=None,
+):
     """Run analysis using Gemini, with Claude as fallback.
 
     Raises RuntimeError if no provider is configured or all providers fail.
+    Raises GenerationValidationError if the model JSON does not match the contract.
     """
+    from .generation_registry import (
+        GenerationValidationError,
+        normalize_generation_outputs,
+        validate_analysis_response,
+    )
+
+    requested = frozenset(normalize_generation_outputs(generation_outputs))
+
     # 1. Try Gemini (primary)
     from .gemini_client import _get_api_key as _gemini_key
     if _gemini_key():
         try:
-            return _assign_anomaly_ids(_call_gemini_analysis(
-                spreadsheet_data, user_id,
+            raw = _call_gemini_analysis(
+                spreadsheet_data,
+                user_id,
                 success_criteria=success_criteria,
                 user_context=user_context,
-            ))
+                generation_outputs=list(requested),
+            )
+            return _assign_anomaly_ids(validate_analysis_response(raw, requested))
+        except GenerationValidationError:
+            raise
         except Exception as e:
             logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
 
@@ -313,7 +390,10 @@ def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_co
     client = _get_llm_client()
     if client:
         try:
-            return _assign_anomaly_ids(_call_llm(client, spreadsheet_data))
+            raw = _call_llm(client, spreadsheet_data)
+            return _assign_anomaly_ids(_coerce_llm_analysis_for_requested(raw, requested))
+        except GenerationValidationError:
+            raise
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
 
@@ -766,7 +846,7 @@ class AgentOrchestrator:
                        action=None, file_id=None, calendar_context=None,
                        workflow_id=None, column_mapping=None,
                        approval_id=None, approval_decision=None,
-                       approval_draft=None, user_context=None,
+                       approval_draft=None, generation_outputs=None, user_context=None,
                        reviewed_anomalies=None):
         """Main entry point. Routes calendar context first, then workflow engine or legacy logic.
 
@@ -843,15 +923,6 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
-        if action == 'distribute_message':
-            latest_run = self.session.workflow_runs.filter(
-                analysis_result__isnull=False,
-                is_deleted=False,
-            ).order_by('-created_at').first()
-            yield from self._distribute_message(latest_run)
-            yield {"type": "done"}
-            return
-
         if action == 'start_follow_up':
             latest_run = self.session.workflow_runs.filter(
                 status='awaiting_confirmation',
@@ -881,6 +952,7 @@ class AgentOrchestrator:
                     file_id=file_id,
                     spreadsheet_id=spreadsheet_id,
                     csv_filename=csv_filename,
+                    generation_outputs=generation_outputs,
                     user_context=user_context,
                 )
                 yield {"type": "done"}
@@ -1405,60 +1477,6 @@ class AgentOrchestrator:
             "data": {"workflow_run_id": str(workflow_run.id)},
         }
 
-    def _distribute_message(self, workflow_run):
-        """Send analysis summary + tasks to all project members via bot private chat."""
-        if not workflow_run or not workflow_run.analysis_result:
-            yield {"type": "error", "content": "No analysis found to distribute."}
-            return
-
-        project = self.session.project
-        sender = self.session.user
-
-        # Build summary message
-        analysis = workflow_run.analysis_result
-        anomalies = analysis.get("anomalies", [])
-        tasks = analysis.get("recommended_tasks", [])
-
-        lines = [f"📊 Analysis Summary — {project.name}"]
-        lines.append("")
-
-        if anomalies:
-            lines.append("⚠️ Anomalies detected:")
-            for a in anomalies[:5]:
-                lines.append(f"  • {a.get('description', str(a))}")
-
-        if tasks:
-            lines.append("")
-            lines.append("✅ Recommended Tasks:")
-            for t in tasks[:5]:
-                priority = t.get("priority", "")
-                title = t.get("title") or t.get("summary", "")
-                lines.append(f"  • [{priority}] {title}" if priority else f"  • {title}")
-
-        content = "\n".join(lines)
-
-        # Get all active project members except the sender
-        members = _serialize_project_members(project, excluded_users=[sender])
-        if not members:
-            yield {"type": "text", "content": "No other project members to notify."}
-            return
-
-        forwards = [{"username": m["username"], "content": content} for m in members]
-        from .approval_gate import KIND_DISTRIBUTE_BULK, request_external_commit
-
-        gate = request_external_commit(
-            orchestrator=self,
-            workflow_run=workflow_run,
-            step_execution=None,
-            kind=KIND_DISTRIBUTE_BULK,
-            draft={'forwards': forwards, 'body': content},
-            commit_context={},
-        )
-        for ev in gate.sse_events:
-            yield ev
-        if gate.paused:
-            return
-
     def _workflow_run_analysis(self, workflow_run):
         """Return analysis payload for a run, including completed step output."""
         analysis = workflow_run.analysis_result
@@ -1733,13 +1751,17 @@ class AgentOrchestrator:
         return {}
 
     def _start_workflow(self, workflow_def, file_id=None, spreadsheet_id=None,
-                        csv_filename=None, user_context=None):
+                        csv_filename=None, generation_outputs=None, user_context=None):
         """Create a new WorkflowRun and execute steps."""
+        from .generation_registry import normalize_generation_outputs
+
+        outputs = normalize_generation_outputs(generation_outputs)
         input_data = self._prepare_input_data(
             file_id=file_id,
             spreadsheet_id=spreadsheet_id,
             csv_filename=csv_filename,
         )
+        input_data['generation_outputs'] = outputs
 
         workflow_run = AgentWorkflowRun.objects.create(
             session=self.session,
@@ -1747,15 +1769,80 @@ class AgentOrchestrator:
             status='analyzing',
             current_step_order=1,
             spreadsheet=input_data.get('spreadsheet'),
+            generation_outputs_requested=outputs,
+            user_context=user_context or '',
         )
         if user_context:
             cache.set(f"agent:context:{workflow_run.id}", user_context, 3600)
 
         yield from self._execute_steps(workflow_run, input_data)
 
+    def _emit_calendar_events_if_requested(self, workflow_run, input_data):
+        """After workflow steps, optionally call Gemini for calendar_events."""
+        from .generation_registry import (
+            GenerationValidationError,
+            normalize_generation_outputs,
+        )
+
+        outputs = input_data.get('generation_outputs')
+        if outputs is None:
+            outputs = getattr(workflow_run, 'generation_outputs_requested', None)
+        requested = frozenset(normalize_generation_outputs(outputs))
+        if 'calendar_events' not in requested:
+            return
+
+        spreadsheet_data = input_data.get('spreadsheet_data')
+        if not spreadsheet_data:
+            last_execution = workflow_run.step_executions.filter(
+                status='completed',
+            ).order_by('-step_order').first()
+            if last_execution and last_execution.output_data:
+                spreadsheet_data = last_execution.output_data.get('spreadsheet_data')
+
+        if not spreadsheet_data:
+            yield {
+                'type': 'error',
+                'content': 'Cannot suggest calendar events without spreadsheet data.',
+            }
+            return
+
+        try:
+            from .gemini_client import _get_api_key as _gemini_key
+            if not _gemini_key():
+                yield {
+                    'type': 'error',
+                    'content': 'Calendar AI is not configured. Please set GEMINI_API_KEY.',
+                }
+                return
+            result = _call_gemini_calendar_from_analysis(
+                spreadsheet_data,
+                workflow_run.analysis_result or {},
+                user_id=str(self.user.id),
+                success_criteria=workflow_run.success_criteria,
+            )
+            events = result.get('calendar_events', [])
+            yield {
+                'type': 'calendar_events',
+                'content': f'Suggested {len(events)} calendar event(s).',
+                'data': result,
+            }
+        except GenerationValidationError as exc:
+            logger.warning('Calendar generation validation failed: %s', exc)
+            yield {
+                'type': 'error',
+                'content': 'Calendar suggestions could not be validated. Please try again.',
+            }
+        except Exception:
+            logger.exception('Calendar generation from analysis failed')
+            yield {
+                'type': 'error',
+                'content': 'Failed to generate calendar suggestions. Please try again.',
+            }
+
     def _execute_steps(self, workflow_run, input_data):
         """Run steps in order. Pause on await_confirmation. Record AgentStepExecution."""
         from .executors import get_executor
+        from .generation_registry import normalize_generation_outputs, should_skip_workflow_step
         from django.utils import timezone as tz
 
         steps = workflow_run.workflow_definition.steps.filter(
@@ -1766,8 +1853,26 @@ class AgentOrchestrator:
             is_deleted=False
         ).count()
         current_data = input_data
+        requested = frozenset(
+            normalize_generation_outputs(input_data.get('generation_outputs'))
+        )
 
         for step in steps:
+            if should_skip_workflow_step(step.step_type, requested):
+                yield {
+                    'type': 'step_progress',
+                    'data': {
+                        'step_order': step.order,
+                        'step_name': step.name,
+                        'step_type': step.step_type,
+                        'status': 'skipped',
+                        'total_steps': total_steps,
+                    },
+                }
+                workflow_run.current_step_order = step.order + 1
+                workflow_run.save(update_fields=['current_step_order'])
+                continue
+
             execution = AgentStepExecution.objects.create(
                 workflow_run=workflow_run,
                 step=step,
@@ -1810,6 +1915,11 @@ class AgentOrchestrator:
 
                 for event in result.sse_events:
                     yield event
+
+                if step.step_type == 'analyze_data':
+                    yield from self._emit_calendar_events_if_requested(
+                        workflow_run, current_data
+                    )
 
                 # Pause on await_confirmation
                 if step.step_type == 'await_confirmation':

@@ -72,12 +72,27 @@ export interface AgentMessageData {
   original_filename?: string;
   row_count?: number;
   column_count?: number;
+  generation_outputs?: GenerationOutputKey[];
+  calendar_events?: SuggestedCalendarEvent[];
   step_order?: number;
   step_name?: string;
   total_steps?: number;
 }
 
+export interface SuggestedCalendarEvent {
+  title: string;
+  start_datetime: string;
+  end_datetime: string;
+  location?: string;
+  description?: string;
+}
+
 // ==================== SSE Stream Types ====================
+
+export type GenerationOutputKey =
+  | 'recommended_tasks'
+  | 'miro_board'
+  | 'calendar_events';
 
 export type SSEEventType =
   | 'text'
@@ -91,6 +106,7 @@ export type SSEEventType =
   | 'miro_status'
   | 'file_uploaded'
   | 'calendar_invite'
+  | 'calendar_events'
   | 'calendar_updated'
   | 'step_progress'
   | 'column_mapping'
@@ -110,7 +126,6 @@ export type AgentAction =
   | 'analyze'
   | 'create_tasks'
   | 'generate_miro'
-  | 'distribute_message'
   | 'start_follow_up'
   | 'cancel_follow_up'
   | 'confirm_columns'

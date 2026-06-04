@@ -5,11 +5,40 @@ export type MessageForBlockIds = {
   role?: "user" | "assistant"
   content: string
   type?: string
+  eventType?: string
   stepProgress?: unknown[]
   navigateTo?: string
   navigateLabel?: string
   anomalies?: unknown[]
   recommendedTasks?: unknown[]
+}
+
+/** Last queued Miro message — action cards render immediately after it when present. */
+export function getMiroCardsAnchorMessageId(
+  messages: MessageForBlockIds[]
+): string | null {
+  let anchorId: string | null = null
+  for (const message of messages) {
+    if (message.role === "assistant" && message.eventType === "miro_generation_started") {
+      anchorId = message.id
+    }
+  }
+  return anchorId
+}
+
+function getMiroActionCardBlockIds(options: {
+  bottomCardsMessageId: string
+  showBottomActionCards?: boolean
+  showMiroApproval?: boolean
+}): string[] {
+  const ids: string[] = []
+  if (options.showBottomActionCards) {
+    ids.push(`${options.bottomCardsMessageId}-miro-generate`)
+  }
+  if (options.showMiroApproval) {
+    ids.push(`${options.bottomCardsMessageId}-miro-approval`)
+  }
+  return ids
 }
 
 export type AssistantMessageBlockIdsOptions = {
@@ -49,7 +78,7 @@ export function getAssistantMessageBlockIds(
   if (
     message.recommendedTasks &&
     message.recommendedTasks.length > 0 &&
-    message.type === "analysis"
+    (message.type === "analysis" || message.type === "tasks_created")
   ) {
     ids.push(`${message.id}-tasks`)
   }
@@ -78,20 +107,20 @@ export function getMessageBoardBlockIds(
   options: MessageBoardBlockIdsOptions
 ): string[] {
   const ids: string[] = []
+  const miroAnchorId = getMiroCardsAnchorMessageId(messages)
+  const miroCardBlockIds = getMiroActionCardBlockIds(options)
 
   for (const message of messages) {
     if (message.type === "approval_request") continue
     if (message.role !== "assistant") continue
     ids.push(...getAssistantMessageBlockIds(message, options))
+    if (message.id === miroAnchorId) {
+      ids.push(...miroCardBlockIds)
+    }
   }
 
-  if (options.showBottomActionCards) {
-    ids.push(`${options.bottomCardsMessageId}-miro-generate`)
-    ids.push(`${options.bottomCardsMessageId}-distribute`)
-  }
-
-  if (options.showMiroApproval) {
-    ids.push(`${options.bottomCardsMessageId}-miro-approval`)
+  if (!miroAnchorId && miroCardBlockIds.length > 0) {
+    ids.push(...miroCardBlockIds)
   }
 
   if (options.showReupload) {

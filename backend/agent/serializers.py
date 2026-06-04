@@ -133,7 +133,7 @@ class ChatInputSerializer(serializers.Serializer):
     action = serializers.ChoiceField(
         choices=[
             'analyze', 'create_tasks', 'generate_miro',
-            'distribute_message', 'start_follow_up', 'cancel_follow_up',
+            'start_follow_up', 'cancel_follow_up',
             'confirm_columns', 'confirm_anomalies',
             'resolve_external_approval',
         ],
@@ -161,6 +161,12 @@ class ChatInputSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=500,
     )
+
+
+class UploadAnalyzeInputSerializer(serializers.Serializer):
+    """Multipart fields for POST /api/agent/upload-analyze/."""
+    session_id = serializers.UUIDField(required=False, allow_null=True)
+    generation_outputs = serializers.JSONField(required=False, allow_null=True)
 
 
 class AgentWorkflowStepSerializer(serializers.ModelSerializer):

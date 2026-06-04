@@ -6,6 +6,7 @@ import { AgentLayoutProvider } from './AgentLayoutContext';
 import { AgentChatPage } from './chat/AgentChatPage';
 import { useAgentSidePanelStore } from '@/lib/agentSidePanelStore';
 import { ApprovalToggle } from './chat/ApprovalToggle';
+import { GenerationOutputsSettings } from './chat/GenerationOutputsSettings';
 import { AgentAPI } from '@/lib/api/agentApi';
 import { AgentMessageBoardRail } from './AgentMessageBoardRail';
 import { AgentPanelToggleIcon } from './AgentPanelToggleIcon';
@@ -150,6 +151,7 @@ export default function AgentSidePanel() {
             </button>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <GenerationOutputsSettings />
             <div className="flex items-center gap-1.5 sm:gap-2">
               <span className="hidden text-[11px] font-medium text-gray-500 sm:inline">Approval</span>
               <ApprovalToggle

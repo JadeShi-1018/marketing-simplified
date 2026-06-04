@@ -513,6 +513,11 @@ class AgentWorkflowRun(TimeStampedModel):
         related_name='agent_workflow_runs',
     )
     success_criteria = models.JSONField(null=True, blank=True)
+    generation_outputs_requested = models.JSONField(
+        null=True,
+        blank=True,
+        help_text='User-selected generation outputs for this run (upload-analyze).',
+    )
     error_message = models.TextField(null=True, blank=True)
     chat_follow_up_started = models.BooleanField(default=False)
     chat_followed_up = models.BooleanField(default=False)
