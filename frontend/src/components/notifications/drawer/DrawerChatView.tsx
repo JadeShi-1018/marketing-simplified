@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { AlertCircle, X } from 'lucide-react';
+import { AlertCircle, Trash2, X } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import type { NotificationItem } from '@/types/notifications';
@@ -11,11 +11,14 @@ import { addReaction, setMessageReminder, revokeMessage, deleteMessage, hideMess
 import { useChatStore } from '@/lib/chatStore';
 import { useChatData } from '@/hooks/useChatData';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
-import { useChatWebSocket } from '@/hooks/useChatWebSocket';
+import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useAuthStore } from '@/lib/authStore';
+import { notificationsApi } from '@/lib/api/notificationsApi';
+import { useNotificationStore } from '@/lib/notificationStore';
 import DrawerChatHeader from './DrawerChatHeader';
 import DrawerChatMessages, { type DrawerChatMessagesHandle } from './DrawerChatMessages';
-import MessageInput from '@/components/chat/MessageInput';
+import ChatComposer from '@/components/chat/ChatComposer';
+import type { RichSendData } from '@/components/chat/ChatComposer';
 import ReminderPickerSheet from '@/components/chat/ReminderPickerSheet';
 import ForwardMessageSheet from '@/components/chat/ForwardMessageSheet';
 
@@ -40,6 +43,7 @@ export default function DrawerChatView({
   // Only highlight the message if this notification is still unread.
   // This ensures highlight/scroll only happens on the first view.
   const shouldHighlight = !notification.is_read;
+  const triggerNotificationRefresh = useNotificationStore((state) => state.triggerRefresh);
 
   const {
     chat,
@@ -47,8 +51,7 @@ export default function DrawerChatView({
     isLoading,
     isLoadingMessages,
     error,
-    sendMessage,
-    sendWithAttachments,
+    sendRich,
     isSending,
     highlightMessageId,
     currentUserId,
@@ -91,9 +94,33 @@ export default function DrawerChatView({
   // Ref for scrolling messages to bottom
   const messagesRef = useRef<DrawerChatMessagesHandle>(null);
 
+  // Ref for the composer wrapper — used to detect height changes (e.g. formatting bar open/close)
+  const composerWrapperRef = useRef<HTMLDivElement>(null);
+
+  // When the composer grows (formatting bar opens), scroll messages to bottom
+  // so the last message is not hidden behind the expanded composer.
+  useEffect(() => {
+    const el = composerWrapperRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      messagesRef.current?.scrollToBottom('smooth');
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   // WebSocket connection for real-time events
   const { connected, sendTypingStart, sendTypingStop } = useChatWebSocket(userId, {
-    onTypingIndicator: useCallback((event) => {
+    onPresenceUpdate: useCallback((event: ChatWsEvent) => {
+      const presenceUserId = Number(event.user_id);
+      if (!Number.isFinite(presenceUserId) || typeof event.is_online !== 'boolean') return;
+      useChatStore.getState().updateUserPresence(presenceUserId, event.is_online, event.version);
+    }, []),
+    onPresenceSnapshot: useCallback((event: ChatWsEvent) => {
+      if (!Array.isArray(event.users)) return;
+      useChatStore.getState().setPresenceSnapshot(event.users);
+    }, []),
+    onTypingIndicator: useCallback((event: ChatWsEvent) => {
       // Only handle typing events for this chat
       if (event.chat_id !== chatId) return;
 
@@ -264,16 +291,29 @@ export default function DrawerChatView({
     }
   };
 
+  const handleRemoveNotification = useCallback(async () => {
+    try {
+      await notificationsApi.clear({ scope: 'ids', ids: [notification.id] });
+      triggerNotificationRefresh();
+      toast.success('Notification removed');
+      onClose();
+    } catch (err) {
+      console.error('Failed to remove notification:', err);
+      toast.error('Could not remove notification');
+    }
+  }, [notification.id, onClose, triggerNotificationRefresh]);
+
   const handleRevoke = async (messageId: number) => {
     try {
       const result = await revokeMessage(messageId);
       // Update message in store with revoke status
       if (result.message) {
-        const { updateMessage } = useChatStore.getState();
+        const { updateMessage, triggerFilesRefresh } = useChatStore.getState();
         updateMessage(messageId, {
           is_revoked: result.message.is_revoked,
           revoked_at: result.message.revoked_at,
         });
+        triggerFilesRefresh();
       }
       toast.success('Message revoked', { icon: '↩️' });
     } catch (error: any) {
@@ -308,6 +348,7 @@ export default function DrawerChatView({
         const updatedMessages = chatMessages.filter((msg) => msg.id !== messageId);
         useChatStore.getState().setMessages(chatId, updatedMessages);
       }
+      useChatStore.getState().triggerFilesRefresh();
     } catch (error: any) {
       console.error('Failed to delete message:', error);
       const errorMsg = error?.response?.data?.error || 'Failed to delete message';
@@ -315,35 +356,17 @@ export default function DrawerChatView({
     }
   };
 
-  // Handle send message
-  const handleSendMessage = async (content: string) => {
-    const replyToId = quoteMessage?.id ?? null;
-    await sendMessage(content, replyToId);
-    // Clear quote after sending
-    if (quoteMessage) {
-      setQuoteMessage(null);
-    }
-    // Scroll to bottom after sending message
-    setTimeout(() => {
-      messagesRef.current?.scrollToBottom('smooth');
-    }, 100);
-  };
-
-  // Handle send with attachments
-  const handleSendWithAttachments = async (
-    content: string,
-    attachmentIds: number[]
-  ) => {
-    const replyToId = quoteMessage?.id ?? null;
-    await sendWithAttachments(content, attachmentIds, replyToId);
-    // Clear quote after sending
-    if (quoteMessage) {
-      setQuoteMessage(null);
-    }
-    // Scroll to bottom after sending message
-    setTimeout(() => {
-      messagesRef.current?.scrollToBottom('smooth');
-    }, 100);
+  // Handle rich send (from ChatComposer)
+  const handleSendRich = async (data: RichSendData) => {
+    await sendRich(
+      data.content,
+      data.rich_body,
+      data.mention_ids,
+      data.attachment_ids,
+      data.reply_to_id ?? quoteMessage?.id ?? null,
+    );
+    if (quoteMessage) setQuoteMessage(null);
+    setTimeout(() => { messagesRef.current?.scrollToBottom('smooth'); }, 100);
   };
 
   // Error state - no chat ID in notification
@@ -354,13 +377,23 @@ export default function DrawerChatView({
           chat={null}
           onClose={onClose}
           isLoading={false}
+          fallbackName="Conversation unavailable"
+          fallbackSubtitle="Missing chat information"
         />
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-gray-500">
           <AlertCircle className="w-12 h-12 text-gray-300 mb-3" />
-          <p className="text-sm font-medium">Unable to load chat</p>
-          <p className="text-xs text-gray-400 mt-1">
-            Chat information is missing from this notification
+          <p className="text-sm font-semibold text-gray-800">Conversation unavailable</p>
+          <p className="mt-1 max-w-[260px] text-center text-xs text-gray-400">
+            Chat information is missing from this notification.
           </p>
+          <button
+            type="button"
+            onClick={handleRemoveNotification}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Remove notification
+          </button>
         </div>
       </div>
     );
@@ -375,11 +408,23 @@ export default function DrawerChatView({
           projectId={projectId}
           onClose={onClose}
           isLoading={false}
+          fallbackName="Conversation unavailable"
+          fallbackSubtitle="This chat may have been deleted"
         />
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-gray-500">
           <AlertCircle className="w-12 h-12 text-red-300 mb-3" />
-          <p className="text-sm font-medium text-red-600">Error loading chat</p>
-          <p className="text-xs text-gray-400 mt-1 text-center">{error}</p>
+          <p className="text-sm font-semibold text-gray-800">Conversation unavailable</p>
+          <p className="mt-1 max-w-[260px] text-center text-xs text-gray-400">
+            This notification points to a chat you can no longer open.
+          </p>
+          <button
+            type="button"
+            onClick={handleRemoveNotification}
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Remove notification
+          </button>
         </div>
       </div>
     );
@@ -445,15 +490,16 @@ export default function DrawerChatView({
       )}
 
       {/* Input area */}
-      <div className="flex-shrink-0 border-t border-[#3CCED7]/25 bg-white">
-        <MessageInput
+      <div ref={composerWrapperRef} className="flex-shrink-0 border-t border-[#3CCED7]/25 bg-white">
+        <ChatComposer
           variant="drawer"
-          onSend={handleSendMessage}
-          onSendWithAttachments={handleSendWithAttachments}
+          onSendRich={handleSendRich}
           disabled={isSending || isLoading || isSelectMode}
           chatId={chatId}
+          projectId={chat?.project_id ?? null}
           onTypingStart={handleTypingStart}
           onTypingStop={handleTypingStop}
+          participants={chat?.participants ?? []}
         />
       </div>
 

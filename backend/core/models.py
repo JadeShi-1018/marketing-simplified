@@ -157,6 +157,10 @@ class Permission(TimeStampedModel):
         ("BUDGET_REQUEST", "Budget Request"),
         ("BUDGET_POOL", "Budget Pool"),
         ("BUDGET_ESCALATION", "Budget Escalation"),
+        ("QUEUE", "Queue"),                                                                                                                      
+        ("SUPPORT_TEAM", "Support Team"),                                                                                                      
+        ("TICKET", "Ticket"),                                                                                                                  
+        ("INVITATION", "Invitation"),   
     ]
     ACTION_CHOICES = [
         ("VIEW", "View"),
@@ -164,6 +168,7 @@ class Permission(TimeStampedModel):
         ("APPROVE", "Approve"),
         ("DELETE", "Delete"),
         ("EXPORT", "Export"),
+        
     ]
 
     module = models.CharField(max_length=20, choices=MODULE_CHOICES)
@@ -248,8 +253,10 @@ class Project(TimeStampedModel):
     )
     organization = models.ForeignKey(
         Organization,
-        on_delete=models.CASCADE,
-        related_name="projects"
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="projects",
     )
     owner = models.ForeignKey(
         'core.CustomUser',

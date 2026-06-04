@@ -153,6 +153,7 @@ class ChatView(EnglishResponseMixin, APIView):
         calendar_context = serializer.validated_data.get('calendar_context')
         workflow_id = serializer.validated_data.get('workflow_id')
         column_mapping = serializer.validated_data.get('column_mapping')
+        user_context = serializer.validated_data.get('user_context') or None
         approval_id = serializer.validated_data.get('approval_id')
         approval_decision = serializer.validated_data.get('approval_decision')
         approval_draft = serializer.validated_data.get('approval_draft')
@@ -222,6 +223,7 @@ class ChatView(EnglishResponseMixin, APIView):
                     approval_id=approval_id,
                     approval_decision=approval_decision,
                     approval_draft=approval_draft,
+                    user_context=user_context,
                 ):
                     chunk_type = chunk.get('type', 'text')
                     content = chunk.get('content', '')
@@ -471,6 +473,7 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
 
         # Create or reuse session
         session_id = request.data.get('session_id')
+        user_context = request.data.get('user_context') or None
         if session_id:
             try:
                 session = AgentSession.objects.get(
@@ -518,7 +521,7 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
             last_message_type = 'text'
 
             try:
-                for chunk in orchestrator.handle_message("", file_id=result['id']):
+                for chunk in orchestrator.handle_message("", file_id=result['id'], user_context=user_context):
                     chunk_type = chunk.get('type', 'text')
                     content = chunk.get('content', '')
                     data = chunk.get('data')

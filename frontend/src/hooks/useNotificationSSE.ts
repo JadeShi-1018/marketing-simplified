@@ -139,6 +139,14 @@ export function useNotificationSSE(): void {
           useChatStore.getState().incrementGlobalUnreadCount();
           useChatStore.getState().triggerChatActivity();
         }
+
+        // For @-mention notifications: flag the chat in the sidebar.
+        if (eventType === 'chat_mention') {
+          const chatId = (payload.data?.metadata as { chat_id?: number } | undefined)?.chat_id;
+          if (typeof chatId === 'number') {
+            useChatStore.getState().addMentionedChat(chatId);
+          }
+        }
       };
 
       // EventSource.onerror fires on any connection problem.

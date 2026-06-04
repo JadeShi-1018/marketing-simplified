@@ -1561,3 +1561,310 @@ class AgentWorkflowStepAPITest(APITestCase):
         self.assertEqual(response.data['order'], 1)
         self.assertEqual(response.data['step_type'], 'analyze_data')
 
+
+class ChatInputSerializerUserContextTests(TestCase):
+    def test_user_context_absent_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello'})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_user_context_blank_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': ''})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_user_context_null_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': None})
+        self.assertTrue(s.is_valid(), s.errors)
+
+    def test_user_context_valid_string(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': 'Focus on ROAS'})
+        self.assertTrue(s.is_valid(), s.errors)
+        self.assertEqual(s.validated_data['user_context'], 'Focus on ROAS')
+
+    def test_user_context_exceeds_500_chars_is_invalid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': 'x' * 501})
+        self.assertFalse(s.is_valid())
+        self.assertIn('user_context', s.errors)
+
+    def test_user_context_exactly_500_chars_is_valid(self):
+        from .serializers import ChatInputSerializer
+        s = ChatInputSerializer(data={'message': 'hello', 'user_context': 'x' * 500})
+        self.assertTrue(s.is_valid(), s.errors)
+
+
+class ChatViewUserContextNormalizationTests(APITestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Ctx Org', slug='ctx-org')
+        self.user = CustomUser.objects.create_user(
+            email='ctx@test.com', username='ctxuser', password='pass'
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Ctx Project', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(
+            user=self.user, project=self.project,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def _post_chat(self, user_context_value, **extra):
+        payload = {'message': 'hi', **extra}
+        if user_context_value is not None:
+            payload['user_context'] = user_context_value
+        return payload
+
+    @patch('agent.views.AgentOrchestrator')
+    def test_empty_string_normalised_to_none(self, MockOrch):
+        mock_instance = MagicMock()
+        mock_instance.handle_message.return_value = iter([{'type': 'done'}])
+        MockOrch.return_value = mock_instance
+
+        response = self.client.post(
+            f'/api/agent/sessions/{self.session.id}/chat/',
+            self._post_chat(''),
+            format='json',
+        )
+        b''.join(response.streaming_content)
+        _, kwargs = mock_instance.handle_message.call_args
+        self.assertIsNone(kwargs.get('user_context'))
+
+    @patch('agent.views.AgentOrchestrator')
+    def test_none_stays_none(self, MockOrch):
+        mock_instance = MagicMock()
+        mock_instance.handle_message.return_value = iter([{'type': 'done'}])
+        MockOrch.return_value = mock_instance
+
+        response = self.client.post(
+            f'/api/agent/sessions/{self.session.id}/chat/',
+            self._post_chat(None),
+            format='json',
+        )
+        b''.join(response.streaming_content)
+        _, kwargs = mock_instance.handle_message.call_args
+        self.assertIsNone(kwargs.get('user_context'))
+
+    @patch('agent.views.AgentOrchestrator')
+    def test_valid_context_passed_through(self, MockOrch):
+        mock_instance = MagicMock()
+        mock_instance.handle_message.return_value = iter([{'type': 'done'}])
+        MockOrch.return_value = mock_instance
+
+        response = self.client.post(
+            f'/api/agent/sessions/{self.session.id}/chat/',
+            self._post_chat('Focus on ROAS'),
+            format='json',
+        )
+        b''.join(response.streaming_content)
+        _, kwargs = mock_instance.handle_message.call_args
+        self.assertEqual(kwargs.get('user_context'), 'Focus on ROAS')
+
+
+class OrchestratorUserContextThreadingTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Orch Org', slug='orch-org')
+        self.user = CustomUser.objects.create_user(
+            email='orch@test.com', username='orchuser', password='pass',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Orch Project', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(
+            user=self.user, project=self.project,
+        )
+
+    @patch('agent.services._run_analysis')
+    @patch('agent.services.file_parser.parse_file_to_json')
+    @patch('agent.services.data_service._get_csv_dir')
+    @patch('os.path.isfile')
+    def test_start_workflow_stores_user_context_on_run(
+        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis
+    ):
+        from agent.models import ImportedCSVFile, AgentWorkflowDefinition, AgentWorkflowStep
+        from agent.services import AgentOrchestrator
+
+        mock_isfile.return_value = True
+        mock_csv_dir.return_value = '/tmp'
+        mock_parse.return_value = {'name': 'test.csv', 'sheets': []}
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        csv_file = ImportedCSVFile.objects.create(
+            filename='test.csv',
+            original_filename='test.csv',
+            user=self.user,
+            project=self.project,
+        )
+
+        wf = AgentWorkflowDefinition.objects.create(
+            name='Test WF', is_default=True, is_system=True, status='active',
+        )
+        AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+
+        orch = AgentOrchestrator(user=self.user, project=self.project, session=self.session)
+        list(orch.handle_message(
+            '', file_id=str(csv_file.id), user_context='Focus on ROAS efficiency',
+        ))
+
+        from agent.models import AgentWorkflowRun
+        run = AgentWorkflowRun.objects.filter(session=self.session).latest('created_at')
+        self.assertEqual(run.user_context, 'Focus on ROAS efficiency')
+
+    @patch('agent.services._run_analysis')
+    @patch('agent.services.file_parser.parse_file_to_json')
+    @patch('agent.services.data_service._get_csv_dir')
+    @patch('os.path.isfile')
+    def test_start_workflow_stores_empty_string_when_context_none(
+        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis
+    ):
+        from agent.models import ImportedCSVFile, AgentWorkflowDefinition, AgentWorkflowStep
+        from agent.services import AgentOrchestrator
+
+        mock_isfile.return_value = True
+        mock_csv_dir.return_value = '/tmp'
+        mock_parse.return_value = {'name': 'test.csv', 'sheets': []}
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        csv_file = ImportedCSVFile.objects.create(
+            filename='test2.csv',
+            original_filename='test2.csv',
+            user=self.user,
+            project=self.project,
+        )
+
+        wf = AgentWorkflowDefinition.objects.create(
+            name='Test WF2', is_default=True, is_system=True, status='active',
+        )
+        AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+
+        orch = AgentOrchestrator(user=self.user, project=self.project, session=self.session)
+        list(orch.handle_message('', file_id=str(csv_file.id), user_context=None))
+
+        from agent.models import AgentWorkflowRun
+        run = AgentWorkflowRun.objects.filter(session=self.session).latest('created_at')
+        self.assertEqual(run.user_context, '')
+
+
+class GeminiAnalysisPromptInjectionTests(TestCase):
+    @patch('agent.gemini_client.call_gemini_json')
+    def test_no_context_prompt_unchanged(self, mock_gemini):
+        from agent.services import _call_gemini_analysis
+        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        _call_gemini_analysis(
+            {'name': 'test', 'sheets': []},
+            user_id='1',
+            user_context=None,
+        )
+
+        call_kwargs = mock_gemini.call_args[1]
+        system_prompt = call_kwargs['system_prompt']
+        self.assertNotIn('User Context', system_prompt)
+
+    @patch('agent.gemini_client.call_gemini_json')
+    def test_context_appended_to_system_prompt(self, mock_gemini):
+        from agent.services import _call_gemini_analysis
+        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        _call_gemini_analysis(
+            {'name': 'test', 'sheets': []},
+            user_id='1',
+            user_context='Focus on ROAS for EU region',
+        )
+
+        call_kwargs = mock_gemini.call_args[1]
+        system_prompt = call_kwargs['system_prompt']
+        self.assertIn('User Context', system_prompt)
+        self.assertIn('Focus on ROAS for EU region', system_prompt)
+        self.assertIn('defer to their stated goals', system_prompt)
+        self.assertIn('Still surface critical anomalies', system_prompt)
+
+    @patch('agent.gemini_client.call_gemini_json')
+    def test_empty_context_prompt_unchanged(self, mock_gemini):
+        from agent.services import _call_gemini_analysis
+        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        _call_gemini_analysis(
+            {'name': 'test', 'sheets': []},
+            user_id='1',
+            user_context='',
+        )
+
+        call_kwargs = mock_gemini.call_args[1]
+        system_prompt = call_kwargs['system_prompt']
+        self.assertNotIn('User Context', system_prompt)
+
+
+class AnalyzeDataExecutorUserContextTests(TestCase):
+    def setUp(self):
+        self.org = Organization.objects.create(name='Exec Org', slug='exec-org')
+        self.user = CustomUser.objects.create_user(
+            email='exec@test.com', username='execuser', password='pass',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Exec Project', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(
+            user=self.user, project=self.project,
+        )
+
+    @patch('agent.services._run_analysis')
+    def test_executor_passes_user_context_to_run_analysis(self, mock_analysis):
+        from agent.executors import AnalyzeDataExecutor
+
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        wf = AgentWorkflowDefinition.objects.create(name='WF', status='active')
+        step = AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+        run = AgentWorkflowRun.objects.create(
+            session=self.session, workflow_definition=wf,
+            user_context='Prioritize high-spend campaigns',
+        )
+
+        class FakeOrch:
+            user = self.user
+
+        executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
+        spreadsheet_data = {'name': 'test', 'sheets': [{'columns': [], 'rows': []}]}
+        executor.execute({'spreadsheet_data': spreadsheet_data})
+
+        mock_analysis.assert_called_once()
+        _, kwargs = mock_analysis.call_args
+        self.assertEqual(kwargs.get('user_context'), 'Prioritize high-spend campaigns')
+
+    @patch('agent.services._run_analysis')
+    def test_executor_passes_none_when_context_empty(self, mock_analysis):
+        from agent.executors import AnalyzeDataExecutor
+
+        mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+
+        wf = AgentWorkflowDefinition.objects.create(name='WF3', status='active')
+        step = AgentWorkflowStep.objects.create(
+            workflow=wf, name='Analyze', step_type='analyze_data', order=1,
+        )
+        run = AgentWorkflowRun.objects.create(
+            session=self.session, workflow_definition=wf,
+            user_context='',
+        )
+
+        class FakeOrch:
+            user = self.user
+
+        executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
+        executor.execute({'spreadsheet_data': {'name': 'test', 'sheets': []}})
+
+        _, kwargs = mock_analysis.call_args
+        self.assertIsNone(kwargs.get('user_context'))

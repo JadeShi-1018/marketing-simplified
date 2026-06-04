@@ -193,6 +193,7 @@ export const AgentAPI = {
   uploadAndAnalyze: (
     file: File,
     sessionId: string | null,
+    userContext: string | null,
     onEvent: (event: SSEEvent) => void,
     onError?: (error: Error) => void,
     onDone?: () => void
@@ -207,6 +208,7 @@ export const AgentAPI = {
     const formData = new FormData();
     formData.append('file', file);
     if (sessionId) formData.append('session_id', sessionId);
+    if (userContext) formData.append('user_context', userContext);
 
     const baseURL =
       (typeof process !== 'undefined' &&

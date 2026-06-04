@@ -808,7 +808,7 @@ export default function TaskDetail({
     targetChatIds: number[],
     targetUserIds: number[],
   ) => {
-    if (!task?.id || !projectId || !currentUserId) {
+    if (!task?.id || !projectId || !currentUser?.id) {
       toast.error("Unable to share task right now.");
       return;
     }
@@ -948,28 +948,6 @@ export default function TaskDetail({
 
   useEffect(() => {
     const shouldRenderRetrospective = task?.type === "retrospective";
-    // #region agent log
-    fetch("http://127.0.0.1:7242/ingest/d1c5a812-8fba-4f4b-91ec-d69ecfc99679", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runId: "taskdetail-retro-render-check-v1",
-        hypothesisId: "H1",
-        location: "TaskDetail.tsx:renderStateEffect",
-        message: "Render state snapshot for retrospective section",
-        data: {
-          taskId: task?.id ?? null,
-          taskType: task?.type ?? null,
-          shouldRenderRetrospective,
-          retrospectiveLoading,
-          hasRetrospectiveData: Boolean(retrospective),
-          taskObjectId: task?.object_id ?? null,
-          taskContentType: task?.content_type ?? null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
   }, [
     task?.id,
     task?.type,
@@ -2431,13 +2409,13 @@ export default function TaskDetail({
               <button
                 type="button"
                 onClick={() => setShareDialogOpen(true)}
-                disabled={!currentUserId}
+                disabled={!currentUser?.id}
                 className="w-full inline-flex items-center justify-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
               >
                 <Share2 className="h-4 w-4" />
                 Share to Chat
               </button>
-              {!currentUserId ? (
+              {!currentUser?.id ? (
                 <p className="mt-2 text-xs text-gray-400">
                   Sign in to share this task.
                 </p>
@@ -2744,13 +2722,13 @@ export default function TaskDetail({
           ) : null}
         </div>
       </div>
-      {task?.id && projectId && currentUserId ? (
+      {task?.id && projectId && currentUser?.id ? (
         <ShareTaskDialog
           isOpen={shareDialogOpen}
           onClose={() => setShareDialogOpen(false)}
           projectId={String(projectId)}
           availableChats={chats}
-          currentUserId={currentUserId}
+          currentUserId={Number(currentUser.id)}
           isSharing={sharingTask}
           onSubmit={handleShareTask}
         />

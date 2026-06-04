@@ -9,7 +9,7 @@ import {
   Calendar, Users, MessageSquare, Workflow, Clock,
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
-  User as UserIcon, CreditCard, Plug, LogOut,
+  User as UserIcon, CreditCard, Plug, LogOut, Headset,
   Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank,
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
@@ -60,12 +60,15 @@ interface NavGroup {
   items: NavItem[];
 }
 
+/** Opens Agent side panel — not a routable path (deprecated /agent full page). */
+const AGENT_PANEL_NAV_HREF = '#agent-panel';
+
 const navGroups: NavGroup[] = [
   {
     title: 'OVERVIEW',
     items: [
       { label: 'Overview', href: '/overview', icon: LayoutDashboard },
-      { label: 'AI Agent', href: '#agent-chat', icon: Bot },
+      { label: 'AI Agent', href: AGENT_PANEL_NAV_HREF, icon: Bot },
     ],
   },
   {
@@ -126,7 +129,7 @@ const navGroups: NavGroup[] = [
 const adminGroup: NavGroup = {
   title: 'ADMINISTRATION',
   items: [
-    { label: 'Members', href: '/projects', icon: Users },
+    { label: 'Members', href: '/select-project', icon: Users },
     { label: 'Roles', href: '/admin/roles', icon: UserCog },
     { label: 'Permissions', href: '/admin/permissions', icon: Shield },
     { label: 'Approvers', href: '/admin/approvers', icon: UserCheck },
@@ -157,7 +160,7 @@ export default function DashboardSidebar() {
   const { toggle: toggleAgentPanel, isOpen: isAgentPanelOpen } = useAgentSidePanelStore();
 
   const handleAgentNav = (href: string) => {
-    if (href === '#agent-chat') {
+    if (href === AGENT_PANEL_NAV_HREF) {
       toggleAgentPanel();
       return;
     }
@@ -291,15 +294,10 @@ export default function DashboardSidebar() {
             {group.items.map((item) => {
               const hasChildren = !!item.children?.length;
               const isOpen = hasChildren && expanded.includes(item.label);
-              const isAgentNav = item.href === '#agent-chat';
-              const isActive = isAgentNav
-                ? isAgentPanelOpen || pathname === '/agent'
-                : !hasChildren && pathname === item.href;
-              const childActive = hasChildren && item.children!.some((c) => {
-                if (c.href === '#agent-chat') return isAgentPanelOpen;
-                if (c.href.startsWith('/agent')) return pathname === '/agent';
-                return pathname === c.href;
-              });
+              const isAgentPanelItem = item.href === AGENT_PANEL_NAV_HREF;
+              const isActive =
+                !hasChildren && !isAgentPanelItem && pathname === item.href;
+              const childActive = hasChildren && item.children!.some((c) => pathname === c.href);
 
               return (
                 <div key={item.label}>
@@ -374,18 +372,22 @@ export default function DashboardSidebar() {
                     </>
                   ) : (
                     <button
-                      onClick={() =>
-                        isAgentNav ? handleAgentNav(item.href) : router.push(item.href)
-                      }
+                      onClick={() => {
+                        if (item.href === AGENT_PANEL_NAV_HREF) {
+                          toggleAgentPanel();
+                        } else {
+                          router.push(item.href);
+                        }
+                      }}
                       title={item.label}
                       aria-label={item.label}
                       className={`relative flex h-10 w-full items-center justify-center rounded-md text-sm font-medium transition-colors sm:h-auto sm:justify-start sm:gap-3 sm:px-3 sm:py-2 ${
-                        isActive
+                        (isAgentPanelItem ? isAgentPanelOpen : isActive)
                           ? 'bg-[#3CCED7]/8 text-[#3CCED7]'
                           : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                       }`}
                     >
-                      {isActive && (
+                      {(isAgentPanelItem ? isAgentPanelOpen : isActive) && (
                         <div className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r-full bg-[#3CCED7]" />
                       )}
                       <item.icon className="h-[18px] w-[18px] shrink-0" />
@@ -396,12 +398,7 @@ export default function DashboardSidebar() {
                   {hasChildren && isOpen && (
                     <div className="ml-8 mt-1 mb-1 hidden space-y-0.5 sm:block">
                       {item.children!.map((child) => {
-                        const childIsActive =
-                          child.href === '#agent-chat'
-                            ? isAgentPanelOpen
-                            : child.href.startsWith('/agent')
-                              ? pathname === '/agent'
-                              : pathname === child.href;
+                        const childIsActive = pathname === child.href;
                         return (
                           <button
                             key={child.href}
@@ -483,6 +480,13 @@ export default function DashboardSidebar() {
           >
             <UserIcon className="text-gray-500" />
             <span>Settings</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
+            onSelect={() => router.push('/csm')}
+          >
+            <Headset className="text-gray-500" />
+            <span>Customer Service</span>
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"

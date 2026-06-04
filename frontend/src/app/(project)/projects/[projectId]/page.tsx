@@ -75,7 +75,7 @@ export default function ProjectWorkspacePage() {
 
           {/* Back link */}
           <div className="mb-4">
-            <Link href="/projects" className="text-sm text-blue-600 hover:underline">
+            <Link href="/select-project" className="text-sm text-blue-600 hover:underline">
               ← All projects
             </Link>
           </div>

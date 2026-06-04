@@ -38,6 +38,7 @@ import DrawerSectionDivider from "./DrawerSectionDivider";
 
 const NOTIFICATION_EVENT_TYPES = new Set([
   "task_comment_mention",
+  "chat_mention",
   "task_anomaly",
   "task_deadline_soon",
   "task_overdue",
@@ -595,6 +596,8 @@ export default function DrawerNotificationCard({
     switch (event_type) {
       case "task_comment_mention":
         return <CommentMentionSection metadata={meta} />;
+      case "chat_mention":
+        return <ChatMessageSection notification={notification} />;
       case "task_anomaly":
         return <TaskAnomalySection metadata={meta} />;
       case "task_deadline_soon":

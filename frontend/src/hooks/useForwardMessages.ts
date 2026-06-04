@@ -2,11 +2,16 @@
 
 import { useCallback, useState } from 'react';
 import toast from 'react-hot-toast';
-import { forwardMessagesBatch } from '@/lib/api/chatApi';
+import { forwardMessagesBatch, getChat } from '@/lib/api/chatApi';
+import { useChatStore } from '@/lib/chatStore';
+import { useAuthStore } from '@/lib/authStore';
 import type { ForwardBatchRequest, ForwardBatchResponse } from '@/types/chat';
 
 export function useForwardMessages() {
   const [isForwarding, setIsForwarding] = useState(false);
+  const currentUserId = useAuthStore((state) =>
+    state.user?.id ? Number(state.user.id) : undefined
+  );
 
   const forward = useCallback(
     async (payload: ForwardBatchRequest): Promise<ForwardBatchResponse | null> => {
@@ -26,6 +31,30 @@ export function useForwardMessages() {
           );
         } else {
           toast.error('Forward failed. No messages were sent.');
+        }
+
+        const { addMessage, addChat, updateChat } = useChatStore.getState();
+
+        if (response.created_messages?.length) {
+          for (const msg of response.created_messages) {
+            addMessage(msg.chat_id, msg, currentUserId);
+          }
+        } else if (resolved.target_chat_ids.length) {
+          await Promise.allSettled(
+            resolved.target_chat_ids.map(async (chatId) => {
+              const updated = await getChat(chatId);
+              updateChat(chatId, { last_message: updated.last_message });
+            })
+          );
+        }
+
+        if (resolved.created_private_chat_ids.length) {
+          await Promise.allSettled(
+            resolved.created_private_chat_ids.map(async (chatId) => {
+              const newChat = await getChat(chatId);
+              addChat(newChat);
+            })
+          );
         }
 
         return response;
@@ -48,7 +77,7 @@ export function useForwardMessages() {
         setIsForwarding(false);
       }
     },
-    []
+    [currentUserId]
   );
 
   return {

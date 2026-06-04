@@ -18,7 +18,7 @@ import TaskTypeBlock from '@/components/tasks/detail/TaskTypeBlock';
 import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
 import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
-import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
+import CommentSection from '@/components/comments/CommentSection';
 import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 
@@ -354,14 +354,13 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
                     onUpdated={onMutated}
                     loading={loading}
                   />
-                  {(task?.id || loading) && (
-                    <TaskActivityBlock
-                      taskId={task?.id ?? 0}
-                      readOnly={task?.status === 'LOCKED'}
-                      refreshKey={refreshKey}
-                      loading={loading}
+                  {task?.id ? (
+                    <CommentSection
+                      entityType="task"
+                      entityId={task.id}
+                      readOnlyComposer={task.status === 'LOCKED'}
                     />
-                  )}
+                  ) : null}
                 </div>
               )}
 

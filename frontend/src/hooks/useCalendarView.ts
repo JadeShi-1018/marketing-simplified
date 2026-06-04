@@ -13,6 +13,7 @@ interface UseCalendarViewOptions {
   currentDate: Date;
   calendarIds?: string[];
   activeEventTypes?: string[];
+  projectId?: number | null;
 }
 
 interface UseCalendarViewResult {
@@ -44,10 +45,11 @@ function hasValidEventDates(event: EventDTO): boolean {
 // activeEventTypes is intentionally excluded so toggling filters
 // does not trigger a new network request.
 function buildCacheKey(opts: UseCalendarViewOptions): string {
-  const { viewType, currentDate, calendarIds } = opts;
+  const { viewType, currentDate, calendarIds, projectId } = opts;
   const baseDate = startOfDay(currentDate).toISOString();
   const ids = (calendarIds || []).slice().sort().join(",");
-  return `${viewType}:${baseDate}:${ids}`;
+  const projectKey = projectId != null ? String(projectId) : "all";
+  return `${viewType}:${baseDate}:${projectKey}:${ids}`;
 }
 
 // Compute the [start, end) date range for a given view type and date.
@@ -94,7 +96,7 @@ export function useCalendarView(
   // Separate counter to force a refetch even when key hasn't changed.
   const [fetchTick, setFetchTick] = useState(0);
 
-  const { viewType, currentDate, calendarIds } = options;
+  const { viewType, currentDate, calendarIds, projectId } = options;
   const key = buildCacheKey(options);
 
   useEffect(() => {
@@ -124,12 +126,14 @@ export function useCalendarView(
         year: currentDate.getFullYear(),
         month: currentDate.getMonth() + 1,
         calendar_ids: calendarIds,
+        project_id: projectId,
       });
     } else {
       primaryRequest = CalendarAPI.getAgendaView({
         start_date: start,
         end_date: end,
         calendar_ids: calendarIds,
+        project_id: projectId,
       });
     }
 
@@ -138,7 +142,11 @@ export function useCalendarView(
         // Fetch system-derived events (auto-generated from Decisions and Tasks).
         let derivedEvents: EventDTO[] = [];
         try {
-          const derivedResponse = await CalendarAPI.getDerivedEvents({ start, end });
+          const derivedResponse = await CalendarAPI.getDerivedEvents({
+            start,
+            end,
+            project_id: projectId,
+          });
           derivedEvents = derivedResponse.data.results.map(derivedEventToEventDTO);
         } catch {
           // Derived event fetch failure should not block the main calendar display.

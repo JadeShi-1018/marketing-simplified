@@ -58,11 +58,13 @@ class AnalyzeDataExecutor(BaseStepExecutor):
                 input_data.get('success_criteria')
                 or (self.workflow_run.success_criteria if self.workflow_run.success_criteria else None)
             )
+            user_context = self.workflow_run.user_context or None
             analysis = _run_analysis(
                 spreadsheet_data,
                 user_id=user_id,
                 success_criteria=success_criteria,
                 column_mapping=input_data.get('column_mapping'),
+                user_context=user_context,
             )
 
             self.workflow_run.analysis_result = analysis

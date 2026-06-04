@@ -178,6 +178,15 @@ values. Look for outliers, zero values where positives are expected, ratios that
 impossible, and any metric that deviates significantly from the rest of the dataset.\
 """
 
+_CONTEXT_BLOCK_TEMPLATE = (
+    '\n\nUser Context:\n'
+    'The user has provided the following context to guide this analysis:\n'
+    '"{user_context}"\n'
+    'Weight your anomaly detection and recommended task priorities toward the user\'s stated goals above. '
+    'If the user\'s context conflicts with a generic pattern, defer to their stated goals. '
+    'Still surface critical anomalies outside their focus if the severity warrants it.'
+)
+
 
 def _build_criteria_text(success_criteria) -> tuple[str, list]:
     """Parse success_criteria and return (criteria_text, key_columns)."""
@@ -300,6 +309,7 @@ def _call_gemini_analysis(
     user_id=None,
     success_criteria=None,
     column_mapping=None,
+    user_context=None,
 ):
     """Call Gemini to analyze spreadsheet data."""
     from .gemini_client import call_gemini_json
@@ -314,6 +324,8 @@ def _call_gemini_analysis(
         else _NO_CRITERIA_BLOCK
     )
     system_prompt = _ANALYSIS_SYSTEM_PROMPT.replace("{criteria_block}", criteria_block)
+    if user_context:
+        system_prompt += _CONTEXT_BLOCK_TEMPLATE.format(user_context=user_context)
     user_prompt = (
         f"Data summary: {column_summary}\n\n"
         f"Analyze the following data and identify anomalies:\n\n{cleaned_data}"
@@ -333,6 +345,7 @@ def _run_analysis(
     user_id=None,
     success_criteria=None,
     column_mapping=None,
+    user_context=None,
 ):
     """Run analysis using Gemini, with Claude as fallback.
 
@@ -347,6 +360,7 @@ def _run_analysis(
                 user_id,
                 success_criteria=success_criteria,
                 column_mapping=column_mapping,
+                user_context=user_context,
             )
         except Exception as e:
             logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
@@ -361,8 +375,7 @@ def _run_analysis(
 
     # 3. No LLM available
     raise RuntimeError(
-        "No analysis provider available. Configure GEMINI_API_KEY "
-        "or ANTHROPIC_API_KEY to enable analysis."
+        "No analysis provider available."
     )
 
 
@@ -611,6 +624,7 @@ def _get_or_create_bot_private_chat(bot, target_user, project):
     third participant (e.g. via @Agent lazy-join).
     """
     from chat.models import Chat, ChatType, ChatParticipant
+    from chat.services import ChatService
 
     # First, find chats that contain both bot and target_user
     chat = (
@@ -634,16 +648,21 @@ def _get_or_create_bot_private_chat(bot, target_user, project):
     # If found, reactivate any inactive participants
     if chat:
         participants = ChatParticipant.objects.filter(chat=chat, user__in=[bot, target_user])
+        reactivated = False
         for participant in participants:
             if not participant.is_active:
                 participant.is_active = True
                 participant.save(update_fields=['is_active', 'updated_at'])
+                reactivated = True
+        if reactivated:
+            ChatService.invalidate_presence_recipients_for_chat(chat)
         return chat, False
 
     # Not found, create new chat
     chat = Chat.objects.create(project=project, type=ChatType.PRIVATE)
     ChatParticipant.objects.create(chat=chat, user=bot, is_active=True)
     ChatParticipant.objects.create(chat=chat, user=target_user, is_active=True)
+    ChatService.invalidate_presence_recipients_for_chat(chat)
     return chat, True
 
 
@@ -803,7 +822,7 @@ class AgentOrchestrator:
                        action=None, file_id=None, calendar_context=None,
                        workflow_id=None, column_mapping=None,
                        approval_id=None, approval_decision=None,
-                       approval_draft=None):
+                       approval_draft=None, user_context=None):
         """Main entry point. Routes calendar context first, then workflow engine or legacy logic.
 
         Yields SSE chunks as dicts.
@@ -933,6 +952,7 @@ class AgentOrchestrator:
                     file_id=file_id,
                     spreadsheet_id=spreadsheet_id,
                     csv_filename=csv_filename,
+                    user_context=user_context,
                 )
                 yield {"type": "done"}
                 return
@@ -1668,7 +1688,7 @@ class AgentOrchestrator:
         return {}
 
     def _start_workflow(self, workflow_def, file_id=None, spreadsheet_id=None,
-                        csv_filename=None):
+                        csv_filename=None, user_context=None):
         """Create a new WorkflowRun and execute steps."""
         input_data = self._prepare_input_data(
             file_id=file_id,
@@ -1682,6 +1702,7 @@ class AgentOrchestrator:
             status='analyzing',
             current_step_order=1,
             spreadsheet=input_data.get('spreadsheet'),
+            user_context=user_context or '',
         )
 
         yield from self._execute_steps(workflow_run, input_data)

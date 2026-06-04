@@ -104,7 +104,7 @@ describe('useNotificationSSE', () => {
     latestES = null;
 
     // Default: authenticated user with a token.
-    (useAuthStore as jest.Mock).mockImplementation(
+    (useAuthStore as unknown as jest.Mock).mockImplementation(
       (selector: (s: { token: string }) => unknown) =>
         selector({ token: 'fake-jwt-token' }),
     );
@@ -148,7 +148,7 @@ describe('useNotificationSSE', () => {
     });
 
     it('does NOT create an EventSource when the token is absent', () => {
-      (useAuthStore as jest.Mock).mockImplementation(
+      (useAuthStore as unknown as jest.Mock).mockImplementation(
         (selector: (s: { token: string | null }) => unknown) =>
           selector({ token: null }),
       );

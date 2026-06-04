@@ -4,6 +4,7 @@ import { CalendarSidebarPanel } from "@/components/calendar/CalendarSidebarPanel
 
 type CalendarSidebarContainerProps = {
   currentDate: Date;
+  projectId?: number | null;
   onVisibleCalendarsChange: (calendarIds: string[] | undefined) => void;
   onDateChange: (next: Date) => void;
   selectedCalendarId: string | null;
@@ -13,13 +14,14 @@ type CalendarSidebarContainerProps = {
 
 export function CalendarSidebarContainer({
   currentDate,
+  projectId,
   onVisibleCalendarsChange,
   onDateChange,
   selectedCalendarId,
   activeEventTypes,
   onToggleActivityType,
 }: CalendarSidebarContainerProps) {
-  const { myCalendars, otherCalendars, isLoading, error } = useCalendarSidebarData();
+  const { myCalendars, otherCalendars, isLoading, error } = useCalendarSidebarData(projectId);
 
   const handleCalendarItemClick = useCallback(
     (calendarId: string) => {

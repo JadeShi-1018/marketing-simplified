@@ -1,18 +1,26 @@
 #!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
+if [ -f "$(dirname -- "$0")/_/husky.sh" ]; then
+  . "$(dirname -- "$0")/_/husky.sh"
+fi
+
+set -e
 
 curDir=$(pwd)
 
 # Frontend Part
 echo "====start scan frontend code===="
-cd ${curDir}/frontend
+cd "${curDir}/frontend"
 
 echo "====start lint-stage===="
 npx lint-staged
 
 echo "====start terraform check===="
-cd ${curDir}/devops/infra/terraform
-terraform fmt -recursive
-terraform validate
+if command -v terraform >/dev/null 2>&1; then
+  cd "${curDir}/devops/infra/terraform"
+  terraform fmt -recursive
+  terraform validate
+else
+  echo "====skip terraform check: terraform is not installed===="
+fi
 
-echo "pre-commit huscky run finish"
+echo "pre-commit husky run finish"

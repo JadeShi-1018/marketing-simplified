@@ -8,6 +8,8 @@ type AgentMessageBoardAvatarProps = {
   role: "user" | "assistant"
   /** Assistant message blocks in render order; avatar appears with the first visible character. */
   blockIds?: string[]
+  /** Force avatar visible (used by non-queued fallback rows). */
+  forceVisible?: boolean
 }
 
 function useAssistantAvatarVisible(blockIds: string[] | undefined): boolean {
@@ -40,9 +42,13 @@ function useAssistantAvatarVisible(blockIds: string[] | undefined): boolean {
   return false
 }
 
-export function AgentMessageBoardAvatar({ role, blockIds }: AgentMessageBoardAvatarProps) {
+export function AgentMessageBoardAvatar({
+  role,
+  blockIds,
+  forceVisible = false,
+}: AgentMessageBoardAvatarProps) {
   const assistantVisible = useAssistantAvatarVisible(role === "assistant" ? blockIds : undefined)
-  const visible = role === "user" || assistantVisible
+  const visible = role === "user" || forceVisible || assistantVisible
 
   if (!visible) return null
 

@@ -183,7 +183,7 @@ export default function ChatWidgetWindow({ projectId }: ChatWidgetWindowProps) {
             
             {/* Dropdown */}
             {isProjectDropdownOpen && (
-              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 max-h-48 overflow-y-auto z-50">
+              <div className="task-tab-scrollbar absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 max-h-48 overflow-y-auto z-50">
                 {projects.length === 0 ? (
                   <div className="px-3 py-2 text-gray-500 text-sm">No projects found</div>
                 ) : (

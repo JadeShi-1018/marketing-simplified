@@ -531,6 +531,7 @@ class AgentWorkflowRun(TimeStampedModel):
     error_message = models.TextField(null=True, blank=True)
     chat_follow_up_started = models.BooleanField(default=False)
     chat_followed_up = models.BooleanField(default=False)
+    user_context = models.TextField(blank=True, default='')
 
     class Meta:
         ordering = ['-created_at']

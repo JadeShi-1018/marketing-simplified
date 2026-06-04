@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { ChevronDown } from 'lucide-react';
+import { CalendarClock, ChevronDown, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ReminderPickerSheetProps {
@@ -12,7 +12,7 @@ interface ReminderPickerSheetProps {
 }
 
 const BRAND_BUTTON_CLASS =
-  'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white border-transparent shadow-sm hover:opacity-95';
+  'bg-[#3CCED7] text-white border-transparent shadow-sm hover:bg-[#2dbbc4]';
 
 const quickOptions = [
   { label: 'In 30 min', minutes: 30 },
@@ -98,94 +98,110 @@ export default function ReminderPickerSheet({
 
   return (
     <>
-      {/* Overlay */}
       <div
         className={cn(
-          'absolute inset-0 bg-black/30 z-[100] transition-opacity duration-300',
+          'absolute inset-0 z-[100] flex items-center justify-center bg-black/30 p-4 transition-opacity duration-200',
           isAnimating && open ? 'opacity-100' : 'opacity-0'
         )}
         onClick={handleOverlayClick}
-      />
-
-      {/* Sheet */}
-      <div
-        className={cn(
-          'absolute bottom-0 left-0 right-0 z-[101]',
-          'w-full rounded-t-2xl bg-white border-t border-gray-200',
-          'p-6 shadow-lg',
-          'transition-transform duration-300 ease-out',
-          isAnimating && open ? 'translate-y-0' : 'translate-y-full'
-        )}
       >
-        {/* Title */}
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">Set Reminder Time</h2>
-        </div>
-
-        {/* Time Display - Clickable */}
         <div
-          className="flex items-center justify-between py-4 px-4 bg-gray-50 rounded-lg cursor-pointer mb-4"
-          onClick={() => setShowCustomPicker(!showCustomPicker)}
+          className={cn(
+            'w-full max-w-[440px] rounded-xl border border-gray-200 bg-white p-5 shadow-xl',
+            'transition-all duration-200 ease-out',
+            isAnimating && open ? 'translate-y-0 scale-100 opacity-100' : 'translate-y-2 scale-95 opacity-0'
+          )}
         >
-          <span className="text-base font-medium text-gray-900">
-            {formatDisplayTime(selectedTime)}
-          </span>
-          <ChevronDown
-            className={cn(
-              'w-5 h-5 text-gray-500 transition-transform',
-              showCustomPicker && 'rotate-180'
-            )}
-          />
-        </div>
-
-        {/* Custom Time Picker */}
-        {showCustomPicker && (
-          <div className="mb-4">
-            <input
-              type="datetime-local"
-              value={format(selectedTime, "yyyy-MM-dd'T'HH:mm")}
-              onChange={handleCustomTimeChange}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/40"
-              min={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
-            />
-          </div>
-        )}
-
-        {/* Quick Options */}
-        <div className="grid grid-cols-4 gap-2 mb-6">
-          {quickOptions.map((option) => (
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#E9FBFA] text-[#0F8E95]">
+                <CalendarClock className="h-5 w-5" />
+              </span>
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Set reminder</h2>
+                <p className="text-xs text-gray-500">Choose when this should come back.</p>
+              </div>
+            </div>
             <button
-              key={option.label}
-              onClick={() => handleQuickSelect(option.minutes, option.label)}
+              type="button"
+              onClick={handleClose}
+              className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+              aria-label="Close reminder picker"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            className="mb-3 flex w-full items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-3 text-left transition-colors hover:bg-gray-100"
+            onClick={() => setShowCustomPicker(!showCustomPicker)}
+          >
+            <span>
+              <span className="block text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                Reminder time
+              </span>
+              <span className="block text-sm font-semibold text-gray-900">
+                {formatDisplayTime(selectedTime)}
+              </span>
+            </span>
+            <ChevronDown
               className={cn(
-                'py-3 px-2 rounded-lg border text-sm font-medium transition-all',
-                activeButton === option.label
-                  ? BRAND_BUTTON_CLASS
-                  : 'bg-white text-gray-700 border-gray-300 hover:border-[#3CCED7]'
+                'h-4 w-4 text-gray-500 transition-transform',
+                showCustomPicker && 'rotate-180'
+              )}
+            />
+          </button>
+
+          {showCustomPicker && (
+            <div className="mb-3">
+              <input
+                type="datetime-local"
+                value={format(selectedTime, "yyyy-MM-dd'T'HH:mm")}
+                onChange={handleCustomTimeChange}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/40"
+                min={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
+              />
+            </div>
+          )}
+
+          <div className="mb-5 grid grid-cols-2 gap-2">
+            {quickOptions.map((option) => (
+              <button
+                key={option.label}
+                type="button"
+                onClick={() => handleQuickSelect(option.minutes, option.label)}
+                className={cn(
+                  'rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors',
+                  activeButton === option.label
+                    ? 'border-[#3CCED7] bg-[#E9FBFA] text-[#0F7F86]'
+                    : 'border-gray-200 bg-white text-gray-700 hover:border-[#3CCED7] hover:bg-gray-50'
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="rounded-lg px-4 py-2.5 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              className={cn(
+                'rounded-lg px-5 py-2.5 text-sm font-semibold transition-colors',
+                BRAND_BUTTON_CLASS
               )}
             >
-              {option.label}
+              Set reminder
             </button>
-          ))}
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex gap-3">
-          <button
-            onClick={handleClose}
-            className="flex-1 py-3 px-4 rounded-lg bg-gray-100 text-gray-700 font-medium hover:bg-gray-200 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleConfirm}
-            className={cn(
-              'flex-1 py-3 px-4 rounded-lg font-medium transition-all',
-              BRAND_BUTTON_CLASS
-            )}
-          >
-            Set
-          </button>
+          </div>
         </div>
       </div>
     </>

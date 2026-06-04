@@ -93,7 +93,7 @@ export interface ProjectMemberUser {
 export interface ProjectMemberData {
   id: number;
   user: ProjectMemberUser;
-  project: { id: number; name: string };
+  project: { id: number; name: string; owner?: { id: number; username?: string; email?: string } };
   role: string;
   is_active: boolean;
   created_at?: string;

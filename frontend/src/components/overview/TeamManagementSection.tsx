@@ -367,7 +367,10 @@ function MembersList({
         const displayName = m.user?.username || m.user?.email || `User #${m.user?.id}`;
         const isSelf = m.user?.id === currentUserId;
         const isMemberOwner = m.role === 'owner';
-        const canEdit = isOwner && !isMemberOwner;
+        // Primary owner (project.owner) can never be edited/removed.
+        // Co-owners (role='owner' but not project.owner) can be managed.
+        const isPrimaryOwner = m.user?.id === m.project?.owner?.id;
+        const canEdit = isOwner && !(isMemberOwner && isPrimaryOwner);
         const busy = busyId === m.id;
         return (
           <li key={m.id} className="flex flex-wrap items-center gap-3 py-3">

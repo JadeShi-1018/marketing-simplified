@@ -8,6 +8,7 @@ import DashboardSidebar from './DashboardSidebar';
 import NotificationBell from './NotificationBell';
 import UpcomingMeetingsPanel from './UpcomingMeetingsPanel';
 import AgentSidePanel from '@/components/agent/AgentSidePanel';
+import QuickStartPostCreateChecklist from '@/components/quick-start/QuickStartPostCreateChecklist';
 import { useDashboardPanelPreference } from './DashboardPanelPreferenceContext';
 import { useProjectStore } from '@/lib/projectStore';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
@@ -59,6 +60,7 @@ const BREADCRUMB_ROOT: Record<string, string> = {
   settings: 'Tools',
   agent: 'Overview',
   profile: 'Account',
+  csm: 'Service',
 };
 
 const BREADCRUMB_LEAF: Record<string, string> = {
@@ -67,6 +69,7 @@ const BREADCRUMB_LEAF: Record<string, string> = {
   spreadsheet: 'Spreadsheets',
   'mailchimp-v2': 'Mailchimp',
   'klaviyo-v2': 'Klaviyo',
+  csm: 'Customer Service',
 };
 
 const getBreadcrumb = (pathname: string | null): { root: string; leaf: string } => {
@@ -295,6 +298,7 @@ export default function DashboardLayout({
         </>
       )}
       <AgentSidePanel />
+      <QuickStartPostCreateChecklist />
     </div>
 
     {/* Notification context drawer — available on every page that uses DashboardLayout */}

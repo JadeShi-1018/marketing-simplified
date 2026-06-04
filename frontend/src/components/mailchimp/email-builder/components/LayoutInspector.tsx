@@ -613,6 +613,8 @@ const LayoutInspector: React.FC<LayoutInspectorProps> = ({
               <div className="flex gap-2">
                 <button
                   type="button"
+                  aria-label="Stack left"
+                  aria-pressed={mobileContentOrientation === "Stack left"}
                   onClick={() =>
                     updateLayoutSettings({
                       mobileContentOrientation: "Stack left",
@@ -658,6 +660,8 @@ const LayoutInspector: React.FC<LayoutInspectorProps> = ({
                 </button>
                 <button
                   type="button"
+                  aria-label="Stack right"
+                  aria-pressed={mobileContentOrientation === "Stack right"}
                   onClick={() =>
                     updateLayoutSettings({
                       mobileContentOrientation: "Stack right",
@@ -703,6 +707,8 @@ const LayoutInspector: React.FC<LayoutInspectorProps> = ({
                 </button>
                 <button
                   type="button"
+                  aria-label="Stack center"
+                  aria-pressed={mobileContentOrientation === "Stack center"}
                   onClick={() =>
                     updateLayoutSettings({
                       mobileContentOrientation: "Stack center",

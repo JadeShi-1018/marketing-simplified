@@ -14,6 +14,7 @@ from meetings.models import (
     ArtifactLink,
     MeetingDocument,
     MeetingActionItem,
+    MeetingAuditLog,
 )
 from meetings.knowledge_links import (
     generated_decisions_payload,
@@ -131,6 +132,7 @@ class MeetingSerializer(serializers.ModelSerializer):
             "related_tasks",
             "zoom_post_meeting",
             "status",
+            "is_archived",
         ]
 
     def get_participants(self, obj):
@@ -574,4 +576,28 @@ class BulkActionItemConvertItemSerializer(serializers.Serializer):
 
 class BulkActionItemConvertSerializer(serializers.Serializer):
     items = serializers.ListField(child=BulkActionItemConvertItemSerializer(), min_length=1)
+
+
+class AuditLogActorSerializer(serializers.Serializer):
+    """Serializer for actor info in audit log responses."""
+    id = serializers.IntegerField()
+    display_name = serializers.SerializerMethodField()
+    email = serializers.EmailField()
+
+    def get_display_name(self, obj):
+        full_name = f"{obj.first_name} {obj.last_name}".strip()
+        return full_name if full_name else obj.username
+
+
+class MeetingAuditLogSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for MeetingAuditLog entries.
+    Nested actor info with null fallback for system events.
+    """
+    actor = AuditLogActorSerializer(read_only=True, allow_null=True)
+
+    class Meta:
+        model = MeetingAuditLog
+        fields = ['id', 'event_type', 'timestamp', 'actor', 'before', 'after', 'context']
+        read_only_fields = fields
 

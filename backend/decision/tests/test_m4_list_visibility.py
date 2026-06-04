@@ -120,3 +120,39 @@ def test_list_includes_multiple_projects_for_user():
     project_ids = {item.get("projectId") for item in resp.data["items"]}
     assert project_a.id in project_ids
     assert project_b.id in project_ids
+
+
+@pytest.mark.django_db
+def test_list_filters_by_project_id_when_provided():
+    organization = Organization.objects.create(
+        name="Test Org",
+        email_domain="test.com",
+    )
+    user = _make_user("scoped@test.com", organization)
+
+    project_a = _create_project(organization, user, "Project A")
+    project_b = _create_project(organization, user, "Project B")
+
+    ProjectMember.objects.create(user=user, project=project_a, role="member", is_active=True)
+    ProjectMember.objects.create(user=user, project=project_b, role="member", is_active=True)
+
+    decision_a = Decision.objects.create(
+        title="Decision A",
+        status=Decision.Status.DRAFT,
+        author=user,
+        project=project_a,
+        project_seq=1,
+    )
+    Decision.objects.create(
+        title="Decision B",
+        status=Decision.Status.DRAFT,
+        author=user,
+        project=project_b,
+        project_seq=1,
+    )
+
+    client = _client_for(user)
+    resp = client.get("/api/decisions/", {"project_id": project_a.id})
+    assert resp.status_code == 200
+    ids = {item["id"] for item in resp.data["items"]}
+    assert ids == {decision_a.id}

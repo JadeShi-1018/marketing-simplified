@@ -1,12 +1,15 @@
 import logging
+import asyncio
 from typing import Any, Dict, Optional
 from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.db import transaction
+from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from .models import Message, MessageStatus, ChatParticipant
-from .services import OnlineStatusService
+from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage
+from .services import ChatService, OnlineStatusService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -152,6 +155,46 @@ def deliver_message_task(self, message_id: int):
         logger.error(f"Message {message_id} not found")
     except Exception as e:
         logger.error(f"Error delivering message {message_id}: {e}")
+        raise self.retry(exc=e)
+
+
+async def _broadcast_presence_to_recipients(channel_layer, recipient_ids, event):
+    await asyncio.gather(*(
+        channel_layer.group_send(f'chat_user_{recipient_id}', event)
+        for recipient_id in recipient_ids
+    ))
+
+
+def finalize_presence_offline_now(user_id: int, offline_token: str) -> bool:
+    """Finalize delayed offline presence once and broadcast if state changed."""
+    version = OnlineStatusService.finalize_offline_if_still_disconnected(user_id, offline_token)
+    if version is None:
+        return False
+
+    recipient_ids = ChatService.get_presence_recipient_ids(user_id)
+    recipient_ids = OnlineStatusService.get_online_users(recipient_ids)
+    if not recipient_ids:
+        return False
+
+    channel_layer = get_channel_layer()
+    event = {
+        'type': 'presence_update',
+        'user_id': user_id,
+        'is_online': False,
+        'version': version,
+        'timestamp': timezone.now().isoformat(),
+    }
+    async_to_sync(_broadcast_presence_to_recipients)(channel_layer, recipient_ids, event)
+    return True
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=5)
+def finalize_presence_offline(self, user_id: int, offline_token: str):
+    """Finalize delayed offline presence and notify online shared-chat users."""
+    try:
+        finalize_presence_offline_now(user_id, offline_token)
+    except Exception as e:
+        logger.error(f"Error finalizing offline presence for user {user_id}: {e}")
         raise self.retry(exc=e)
 
 
@@ -339,6 +382,163 @@ def notify_new_message(message_id: int):
         logger.error(f"Error notifying new message {message_id}: {e}")
 
 
+def _notification_exists_for_message(*, recipient_id: int, event_type: str, message_id: int) -> bool:
+    """Best-effort idempotency guard for retryable per-message notification tasks."""
+    from notifications.models import Notification
+
+    return Notification.objects.filter(
+        recipient_id=recipient_id,
+        event_type=event_type,
+        metadata__message_id=message_id,
+    ).exists()
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def notify_message_recipients(self, message_id: int):
+    """
+    Create persisted in-app notifications for a newly-created chat message.
+
+    WebSocket fanout stays in ``notify_new_message``; this task owns Activity /
+    notification rows so the message create request does not loop over all
+    recipients synchronously.
+    """
+    try:
+        from notifications.services import create_notification, create_or_update_chat_notification
+        from notifications.models import NotificationCategory, NotificationEventType
+
+        message = (
+            Message.objects
+            .select_related('chat', 'chat__project', 'sender', 'parent_message', 'parent_message__sender')
+            .prefetch_related('mentions__mentioned_user')
+            .get(id=message_id)
+        )
+        if message.is_deleted or message.is_revoked:
+            return
+
+        recipients = list(
+            ChatParticipant.objects.filter(chat=message.chat, is_active=True)
+            .exclude(user=message.sender)
+            .select_related('user')
+        )
+        participant_by_user_id = {participant.user_id: participant for participant in recipients}
+        active_recipient_ids = set(participant_by_user_id)
+        actor_name = message.sender.username or message.sender.email or ""
+
+        for recipient in recipients:
+            if recipient.is_currently_muted():
+                continue
+            if recipient.notification_level == 'mentions':
+                continue
+            create_or_update_chat_notification(
+                recipient_id=recipient.user_id,
+                actor_id=message.sender_id,
+                chat_id=message.chat_id,
+                message_id=message.id,
+                project_id=message.chat.project_id,
+                message_preview=message.content or "",
+                actor_name=actor_name,
+            )
+
+        for mention in message.mentions.select_related('mentioned_user').all():
+            if mention.mentioned_user_id == message.sender_id:
+                continue
+            participant = participant_by_user_id.get(mention.mentioned_user_id)
+            if participant is None:
+                continue
+            if participant.is_currently_muted():
+                continue
+            if _notification_exists_for_message(
+                recipient_id=mention.mentioned_user_id,
+                event_type=NotificationEventType.CHAT_MENTION,
+                message_id=message.id,
+            ):
+                continue
+            create_notification(
+                recipient_id=mention.mentioned_user_id,
+                actor_id=message.sender_id,
+                category=NotificationCategory.COLLABORATION,
+                event_type=NotificationEventType.CHAT_MENTION,
+                title=f"{actor_name} mentioned you",
+                body=message.content[:200] or "",
+                related_object_type="chat",
+                related_object_id=message.chat_id,
+                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&messageId={message.id}",
+                metadata={
+                    "chat_id": message.chat_id,
+                    "message_id": message.id,
+                    "project_id": message.chat.project_id,
+                    "message_preview": message.content[:200] or "",
+                },
+            )
+
+        if not message.parent_message_id:
+            return
+
+        root = message.parent_message
+        if not root or root.chat_id != message.chat_id:
+            return
+
+        muted_user_ids = {
+            participant.user_id
+            for participant in ChatParticipant.objects.filter(
+                chat=message.chat,
+                is_active=True,
+                is_muted=True,
+            )
+            if participant.is_currently_muted()
+        }
+
+        notified_ids = {message.sender_id}
+        candidate_ids = []
+        if root.sender_id != message.sender_id:
+            candidate_ids.append(root.sender_id)
+
+        previous_sender_ids = (
+            root.thread_replies
+            .filter(chat=root.chat)
+            .exclude(sender_id__in=notified_ids)
+            .order_by('sender_id')
+            .values_list('sender_id', flat=True)
+            .distinct()
+        )
+        candidate_ids.extend(previous_sender_ids)
+
+        for recipient_id in candidate_ids:
+            if recipient_id not in active_recipient_ids:
+                continue
+            if recipient_id in notified_ids or recipient_id in muted_user_ids:
+                continue
+            notified_ids.add(recipient_id)
+            if _notification_exists_for_message(
+                recipient_id=recipient_id,
+                event_type=NotificationEventType.CHAT_THREAD_REPLY,
+                message_id=message.id,
+            ):
+                continue
+            create_notification(
+                recipient_id=recipient_id,
+                actor_id=message.sender_id,
+                category=NotificationCategory.COLLABORATION,
+                event_type=NotificationEventType.CHAT_THREAD_REPLY,
+                title=f"{actor_name} replied in a thread",
+                body=message.content[:200] or "",
+                related_object_type="chat",
+                related_object_id=message.chat_id,
+                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
+                metadata={
+                    "chat_id": message.chat_id,
+                    "root_message_id": root.id,
+                    "message_id": message.id,
+                    "project_id": message.chat.project_id,
+                },
+            )
+    except Message.DoesNotExist:
+        logger.error("notify_message_recipients: message %s not found", message_id)
+    except Exception as exc:
+        logger.exception("notify_message_recipients failed for message %s: %s", message_id, exc)
+        raise self.retry(exc=exc)
+
+
 @shared_task
 def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: str):
     """
@@ -390,9 +590,141 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
 
         logger.info(f"Reaction update sent for message {message_id}: {emoji} {action} by user {user_id}")
 
+        # Persist an in-app notification for the message author when someone
+        # adds (not removes) a reaction — skip self-reactions.
+        if action == 'added' and message.sender_id != user_id:
+            try:
+                from notifications.services import create_notification
+                from notifications.models import NotificationCategory, NotificationEventType
+                sender_participant = ChatParticipant.objects.filter(
+                    chat=message.chat,
+                    user_id=message.sender_id,
+                    is_active=True,
+                ).first()
+                if sender_participant and sender_participant.is_currently_muted():
+                    return
+                create_notification(
+                    recipient_id=message.sender_id,
+                    actor_id=user_id,
+                    category=NotificationCategory.COLLABORATION,
+                    event_type=NotificationEventType.CHAT_REACTION,
+                    title=f"{user.username or user.email} reacted {emoji} to your message",
+                    body=message.content[:200] or "[Attachment]",
+                    related_object_type="chat",
+                    related_object_id=message.chat_id,
+                    action_url=(
+                        f"/messages?chatId={message.chat_id}"
+                        f"&projectId={message.chat.project_id}"
+                        f"&messageId={message_id}"
+                    ),
+                    metadata={
+                        "chat_id": message.chat_id,
+                        "message_id": message_id,
+                        "project_id": message.chat.project_id,
+                        "emoji": emoji,
+                        "message_preview": message.content[:200] or "[Attachment]",
+                    },
+                )
+            except Exception as e:
+                logger.error(f"Failed to create reaction notification for message {message_id}: {e}")
+
     except Message.DoesNotExist:
         logger.error(f"Message {message_id} not found for reaction update")
     except User.DoesNotExist:
         logger.error(f"User {user_id} not found for reaction update")
     except Exception as e:
         logger.error(f"Error notifying reaction update for message {message_id}: {e}")
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_scheduled_message(self, scheduled_message_id: int):
+    """
+    Celery task that fires at the scheduled time and creates the actual Message.
+
+    Flow:
+      1. Load ScheduledMessage; skip if not pending (already sent/cancelled).
+      2. Mark status=sending.
+      3. Create the Message (content, rich_body, attachments, mentions, reply_to).
+      4. Mark status=sent, store sent_message FK.
+      5. Dispatch notify_new_message so online users receive it via WebSocket.
+    """
+    from django.contrib.auth import get_user_model as _get_user_model
+    from .models import Message, MessageMention, MessageAttachment, ScheduledMessage
+
+    _User = _get_user_model()
+    sm = None
+    try:
+        sm = (
+            ScheduledMessage.objects
+            .select_related('chat', 'sender', 'reply_to')
+            .get(id=scheduled_message_id)
+        )
+    except ScheduledMessage.DoesNotExist:
+        logger.error(f"send_scheduled_message: ScheduledMessage {scheduled_message_id} not found")
+        return
+
+    if sm.status != ScheduledMessage.STATUS_PENDING:
+        logger.info(f"send_scheduled_message {scheduled_message_id}: status={sm.status}, skipping")
+        return
+
+    # Mark as sending so concurrent retries skip
+    sm.status = ScheduledMessage.STATUS_SENDING
+    sm.save(update_fields=['status', 'updated_at'])
+
+    try:
+        with transaction.atomic():
+            # Create the message
+            message = Message.objects.create(
+                chat=sm.chat,
+                sender=sm.sender,
+                content=sm.content,
+                rich_body=sm.rich_body,
+                reply_to_id=sm.reply_to_id,
+            )
+
+            # Link only still-unlinked attachments uploaded by the scheduling user.
+            attachment_ids = list(dict.fromkeys(sm.attachment_ids or []))
+            if attachment_ids:
+                attachments = MessageAttachment.objects.select_for_update().filter(
+                    id__in=attachment_ids,
+                    uploader=sm.sender,
+                    message__isnull=True,
+                )
+                if attachments.count() != len(attachment_ids):
+                    raise ValueError("Scheduled message attachments are no longer available.")
+                attachments.update(message=message)
+                message.has_attachments = True
+                message.save(update_fields=['has_attachments'])
+
+            # Create mention records
+            mention_ids = sm.mention_ids or []
+            for uid in mention_ids:
+                try:
+                    MessageMention.objects.get_or_create(message=message, mentioned_user_id=uid)
+                except Exception:
+                    pass
+
+        # Finalize
+        sm.status = ScheduledMessage.STATUS_SENT
+        sm.sent_message = message
+        sm.save(update_fields=['status', 'sent_message', 'updated_at'])
+
+        logger.info(
+            f"send_scheduled_message {scheduled_message_id}: created message {message.id} in chat {sm.chat_id}"
+        )
+
+        # Push to online participants
+        notify_new_message.delay(message.id)
+
+    except Exception as exc:
+        logger.error(f"send_scheduled_message {scheduled_message_id} failed: {exc}")
+        if sm is not None:
+            try:
+                sm.status = ScheduledMessage.STATUS_FAILED
+                sm.error_message = str(exc)
+                sm.save(update_fields=['status', 'error_message', 'updated_at'])
+            except Exception:
+                pass
+        if isinstance(exc, ValueError):
+            return
+        raise self.retry(exc=exc)

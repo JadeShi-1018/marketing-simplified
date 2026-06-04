@@ -349,7 +349,7 @@ const DrawerChatMessages = forwardRef<DrawerChatMessagesHandle, DrawerChatMessag
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-4"
+        className="flex-1 min-h-0 overflow-y-auto p-3 space-y-4"
       >
         {/* Loading indicator for older messages */}
         {isLoadingMore && (
@@ -427,18 +427,20 @@ const DrawerChatMessages = forwardRef<DrawerChatMessagesHandle, DrawerChatMessag
                             onReactionClick?.(message.id, emoji, isReactedByMe)
                           }
                           renderActions={() => (
-                            <MessageActionsMenu
-                              message={message}
-                              isOwnMessage={isOwnMessage}
-                              onEmojiReaction={(emoji) => onEmojiReaction?.(message.id, emoji)}
-                              onQuoteReply={() => onQuoteReply?.(message)}
-                              onForward={() => onForward?.(message.id)}
-                              onRemind={() => onRemind?.(message.id)}
-                              onMultiSelect={() => onEnterSelectMode?.(message.id)}
-                              onRevoke={() => onRevoke?.(message.id)}
-                              onDelete={() => onDelete?.(message.id)}
-                              onMenuOpenChange={handleMenuOpenChange}
-                            />
+                            <div className="absolute -top-4 right-2 z-[10000]">
+                              <MessageActionsMenu
+                                message={message}
+                                isOwnMessage={isOwnMessage}
+                                onEmojiReaction={(emoji) => onEmojiReaction?.(message.id, emoji)}
+                                onQuoteReply={() => onQuoteReply?.(message)}
+                                onForward={() => onForward?.(message.id)}
+                                onRemind={() => onRemind?.(message.id)}
+                                onMultiSelect={() => onEnterSelectMode?.(message.id)}
+                                onRevoke={() => onRevoke?.(message.id)}
+                                onDelete={() => onDelete?.(message.id)}
+                                onMenuOpenChange={handleMenuOpenChange}
+                              />
+                            </div>
                           )}
                         />
                       </div>

@@ -3,12 +3,16 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
+from django.utils import timezone
+from django.core.cache import cache
 from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework.throttling import ScopedRateThrottle
 from core.models import Project, Organization, Team, TeamMember, ProjectMember
-from chat.models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType
+from chat.models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageStatus, ChatType, ChannelVisibility
 from chat.services import MessageService
 from chat.serializers import MessageSerializer
+from notifications.models import Notification, NotificationEventType
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 User = get_user_model()
@@ -160,6 +164,20 @@ class ChatAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['id'], chat.id)
         self.assertEqual(len(response.data['participants']), 2)
+
+    def test_retrieve_chat_excludes_inactive_participants(self):
+        """Chat details should not return removed participants."""
+        chat = Chat.objects.create(project=self.project, type=ChatType.GROUP, name='Test Group')
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user3, is_active=False)
+
+        url = reverse('chat-detail', kwargs={'pk': chat.id})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        participant_user_ids = {p['user']['id'] for p in response.data['participants']}
+        self.assertEqual(participant_user_ids, {self.user1.id, self.user2.id})
     
     def test_retrieve_chat_without_permission(self):
         """Test retrieving a chat user is not part of fails"""
@@ -223,6 +241,121 @@ class ChatAPITest(TestCase):
         # Verify participant was soft-deleted
         participant = ChatParticipant.objects.get(chat=chat, user=self.user3)
         self.assertFalse(participant.is_active)
+
+    def test_manager_can_promote_and_demote_channel_manager(self):
+        """Managers can manage the channel manager list."""
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Test Group',
+            created_by=self.user1,
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True, is_manager=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        url = reverse('chat-set-manager', kwargs={'pk': chat.id})
+        promote = self.client.patch(url, {'user_id': self.user2.id, 'is_manager': True}, format='json')
+        self.assertEqual(promote.status_code, status.HTTP_200_OK)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+        demote = self.client.patch(url, {'user_id': self.user2.id, 'is_manager': False}, format='json')
+        self.assertEqual(demote.status_code, status.HTTP_200_OK)
+        self.assertFalse(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+    def test_legacy_manager_can_demote_then_remove_member(self):
+        """Fallback managers should stay explicit after assigning managers."""
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Legacy Group',
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        manager_url = reverse('chat-set-manager', kwargs={'pk': chat.id})
+        promote = self.client.patch(manager_url, {'user_id': self.user2.id, 'is_manager': True}, format='json')
+        self.assertEqual(promote.status_code, status.HTTP_200_OK)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user1).is_manager)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+        demote = self.client.patch(manager_url, {'user_id': self.user2.id, 'is_manager': False}, format='json')
+        self.assertEqual(demote.status_code, status.HTTP_200_OK)
+        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user1).is_manager)
+        self.assertFalse(ChatParticipant.objects.get(chat=chat, user=self.user2).is_manager)
+
+        remove_url = reverse('chat-remove-participant', kwargs={'pk': chat.id})
+        remove = self.client.post(remove_url, {'user_id': self.user2.id}, format='json')
+        self.assertEqual(remove.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ChatParticipant.objects.get(chat=chat, user=self.user2).is_active)
+
+    def test_non_manager_cannot_promote_channel_manager(self):
+        """Regular channel members cannot see/use manager controls server-side."""
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Test Group',
+            created_by=self.user1,
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True, is_manager=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        self.client.force_authenticate(user=self.user2)
+        url = reverse('chat-set-manager', kwargs={'pk': chat.id})
+        response = self.client.patch(url, {'user_id': self.user2.id, 'is_manager': True}, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_manager_invite_channel_only_allows_managers_to_add_members(self):
+        """Restricted channels let managers add people, but block regular members."""
+        ProjectMember.objects.create(user=self.user3, project=self.project, role='member', is_active=True)
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Restricted Group',
+            created_by=self.user1,
+            visibility=ChannelVisibility.MANAGER_INVITE,
+        )
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True, is_manager=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        url = reverse('chat-add-participant', kwargs={'pk': chat.id})
+
+        self.client.force_authenticate(user=self.user2)
+        blocked = self.client.post(url, {'user_id': self.user3.id}, format='json')
+        self.assertEqual(blocked.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.client.force_authenticate(user=self.user1)
+        allowed = self.client.post(url, {'user_id': self.user3.id}, format='json')
+        self.assertEqual(allowed.status_code, status.HTTP_201_CREATED)
+
+    def test_browse_channels_only_returns_public_project_channels(self):
+        """Browse exposes only public project channels."""
+        public_chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Public Group',
+            visibility=ChannelVisibility.PUBLIC,
+        )
+        hidden_chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name='Hidden Group',
+            visibility=ChannelVisibility.MEMBER_INVITE,
+        )
+        ChatParticipant.objects.create(chat=public_chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=hidden_chat, user=self.user1, is_active=True)
+
+        url = reverse('chat-browse')
+        response = self.client.get(url, {'project_id': self.project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        names = {row['name'] for row in response.data}
+        self.assertIn('Public Group', names)
+        self.assertNotIn('Hidden Group', names)
+
+        self.client.force_authenticate(user=self.user3)
+        forbidden = self.client.get(url, {'project_id': self.project.id})
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_leave_chat(self):
         """Test user leaving a chat"""
@@ -350,6 +483,107 @@ class MessageAPITest(TestCase):
         # Verify message status was created for recipient
         msg_status = MessageStatus.objects.filter(message=message, user=self.user2)
         self.assertEqual(msg_status.count(), 1)
+
+    def test_send_message_is_scoped_throttled(self):
+        """Message writes should be rate-limited without throttling reads."""
+        cache.clear()
+        url = reverse('message-list')
+
+        with patch.object(ScopedRateThrottle, 'THROTTLE_RATES', {
+            'chat_message_write': '1/minute',
+            'chat_reaction': '120/minute',
+        }):
+            first = self.client.post(url, {'chat': self.chat.id, 'content': 'First'}, format='json')
+            second = self.client.post(url, {'chat': self.chat.id, 'content': 'Second'}, format='json')
+            read = self.client.get(url, {'chat_id': self.chat.id})
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(read.status_code, status.HTTP_200_OK)
+
+    @patch('chat.views.notify_new_message.delay')
+    @patch('chat.views.notify_message_recipients.delay')
+    def test_send_rich_message_with_mention_queues_notification_fanout(self, mock_notify_recipients, mock_notify_ws):
+        """Sending a rich @mention stores mention data and queues async notification fanout."""
+        url = reverse('message-list')
+        rich_body = {
+            'type': 'doc',
+            'content': [
+                {
+                    'type': 'paragraph',
+                    'content': [
+                        {'type': 'text', 'text': 'Hi '},
+                        {
+                            'type': 'mention',
+                            'attrs': {'id': self.user2.id, 'label': self.user2.username},
+                        },
+                    ],
+                }
+            ],
+        }
+        data = {
+            'chat': self.chat.id,
+            'content': '',
+            'rich_body': rich_body,
+            'mention_ids': [self.user2.id],
+        }
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data['rich_body'], rich_body)
+        self.assertEqual(response.data['content'], 'Hi @user2')
+        self.assertEqual(response.data['mentioned_user_ids'], [self.user2.id])
+
+        message = Message.objects.get(id=response.data['id'])
+        self.assertEqual(message.mentions.get().mentioned_user_id, self.user2.id)
+        mock_notify_recipients.assert_called_once_with(message.id)
+        mock_notify_ws.assert_called_once_with(message.id)
+
+    def test_notify_message_recipients_creates_chat_mention_notification(self):
+        """The async fanout task creates persisted mention notifications."""
+        from chat.tasks import notify_message_recipients
+
+        message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Hi @user2',
+        )
+        message.mentions.create(mentioned_user=self.user2)
+
+        notify_message_recipients.run(message.id)
+
+        mention_notification = Notification.objects.get(
+            recipient=self.user2,
+            event_type=NotificationEventType.CHAT_MENTION,
+        )
+        self.assertEqual(mention_notification.metadata['chat_id'], self.chat.id)
+        self.assertEqual(mention_notification.metadata['message_id'], message.id)
+        self.assertIn(f'messageId={message.id}', mention_notification.action_url)
+
+    def test_notify_message_recipients_ignores_mentions_outside_chat(self):
+        """Mention fanout must not notify users who are not active chat participants."""
+        from chat.tasks import notify_message_recipients
+
+        outsider = User.objects.create_user(
+            email='outsider@example.com',
+            username='outsider',
+            password='testpass123',
+        )
+        message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Hi @outsider',
+        )
+        message.mentions.create(mentioned_user=outsider)
+
+        notify_message_recipients.run(message.id)
+
+        self.assertFalse(Notification.objects.filter(
+            recipient=outsider,
+            event_type=NotificationEventType.CHAT_MENTION,
+        ).exists())
     
     def test_send_empty_message_fails(self):
         """Test sending an empty message fails"""
@@ -416,6 +650,41 @@ class MessageAPITest(TestCase):
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 2)
+
+    def test_search_messages_supports_keyset_cursor(self):
+        """Search pagination should use next_cursor without duplicating rows."""
+        older = Message.objects.create(chat=self.chat, sender=self.user1, content='older')
+        middle = Message.objects.create(chat=self.chat, sender=self.user1, content='middle')
+        newer = Message.objects.create(chat=self.chat, sender=self.user1, content='newer')
+
+        url = reverse('message-search')
+        first = self.client.get(url, {'from_user': self.user1.username, 'limit': 2})
+
+        self.assertEqual(first.status_code, status.HTTP_200_OK)
+        self.assertEqual([row['id'] for row in first.data['results']], [newer.id, middle.id])
+        self.assertIsNotNone(first.data['next_cursor'])
+
+        second = self.client.get(url, {
+            'from_user': self.user1.username,
+            'limit': 2,
+            'cursor': first.data['next_cursor'],
+        })
+
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual([row['id'] for row in second.data['results']], [older.id])
+        self.assertIsNone(second.data['next_cursor'])
+
+    def test_search_messages_rejects_invalid_cursor(self):
+        """Bad cursors should fail clearly instead of falling back to offset."""
+        url = reverse('message-search')
+        response = self.client.get(url, {
+            'from_user': self.user1.username,
+            'limit': 2,
+            'cursor': 'not-a-cursor',
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.data['error'], 'Invalid cursor')
     
     def test_retrieve_message(self):
         """Test retrieving a specific message"""
@@ -427,6 +696,65 @@ class MessageAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['id'], message.id)
         self.assertEqual(response.data['content'], 'Test message')
+
+    def test_delete_message_soft_deletes_and_returns_tombstone(self):
+        """Deleting a message keeps a timeline tombstone instead of removing the row."""
+        message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Secret launch plan',
+            rich_body={'type': 'doc', 'content': [{'type': 'paragraph'}]},
+            has_attachments=True,
+        )
+        MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=message,
+            file=SimpleUploadedFile('secret.txt', b'content'),
+            file_type='document',
+            file_size=7,
+            original_filename='secret.txt',
+            mime_type='text/plain',
+        )
+
+        url = reverse('message-detail', kwargs={'pk': message.id})
+        response = self.client.delete(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['status'], 'deleted')
+        self.assertEqual(response.data['message']['id'], message.id)
+        self.assertTrue(response.data['message']['is_deleted'])
+        self.assertEqual(response.data['message']['content'], '')
+        self.assertIsNone(response.data['message']['rich_body'])
+        self.assertEqual(response.data['message']['attachments'], [])
+        self.assertEqual(response.data['message']['attachment_count'], 0)
+
+        message.refresh_from_db()
+        self.assertTrue(message.is_deleted)
+        self.assertEqual(message.content, '')
+        self.assertIsNone(message.rich_body)
+        self.assertIsNotNone(message.deleted_at)
+
+    def test_list_messages_includes_deleted_tombstone(self):
+        """Message history should still include soft-deleted messages."""
+        deleted_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='',
+            is_deleted=True,
+            deleted_at=timezone.now(),
+        )
+        Message.objects.create(chat=self.chat, sender=self.user2, content='Still here')
+
+        url = reverse('message-list')
+        response = self.client.get(url, {'chat_id': self.chat.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [message['id'] for message in response.data['results']]
+        self.assertIn(deleted_message.id, ids)
+        tombstone = next(message for message in response.data['results'] if message['id'] == deleted_message.id)
+        self.assertTrue(tombstone['is_deleted'])
+        self.assertEqual(tombstone['content'], '')
+        self.assertEqual(tombstone['attachments'], [])
     
     def test_mark_message_as_read(self):
         """Test marking a message as read"""
@@ -442,6 +770,31 @@ class MessageAPITest(TestCase):
         msg_status = MessageStatus.objects.get(message=message, user=self.user1)
         self.assertEqual(msg_status.status, 'read')
         self.assertIsNotNone(msg_status.read_at)
+
+    def test_thread_replies_endpoint_filters_cross_chat_rows(self):
+        """Defensive filter: a corrupted cross-chat parent link must not leak into a thread."""
+        root = Message.objects.create(chat=self.chat, sender=self.user1, content='Root')
+        same_chat_reply = Message.objects.create(
+            chat=self.chat,
+            sender=self.user2,
+            content='Visible reply',
+            parent_message=root,
+        )
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.user2, is_active=True)
+        Message.objects.create(
+            chat=other_chat,
+            sender=self.user2,
+            content='Should not leak',
+            parent_message=root,
+        )
+
+        url = reverse('message-thread-replies', kwargs={'pk': root.id})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = [message['id'] for message in response.data['results']]
+        self.assertEqual(ids, [same_chat_reply.id])
     
     def test_get_unread_count(self):
         """Test getting unread message count"""
@@ -1062,6 +1415,106 @@ class AttachmentAPITest(TestCase):
         self.assertIn('chat', row)
         self.assertEqual(row['chat']['id'], self.chat.id)
         self.assertEqual(row['message_id'], msg_allowed.id)
+
+    def test_list_accessible_files_excludes_forward_copies_after_source_delete(self):
+        """
+        Forwarded file copies should not become standalone Files-tab rows after
+        the original message is deleted.
+        """
+        source_msg = Message.objects.create(chat=self.chat, sender=self.user2, content='Original file')
+        source_attachment = MessageAttachment.objects.create(
+            uploader=self.user2,
+            message=source_msg,
+            file=SimpleUploadedFile('original.txt', b'original'),
+            file_type='document',
+            file_size=8,
+            original_filename='original.txt',
+            mime_type='text/plain',
+        )
+        forwarded_msg = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Original file',
+            forwarded_from_message=source_msg,
+            forwarded_from_sender_display=self.user2.username,
+            forwarded_from_created_at=source_msg.created_at,
+            has_attachments=True,
+        )
+        forwarded_attachment = MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=forwarded_msg,
+            file=SimpleUploadedFile('original-copy.txt', b'original'),
+            file_type='document',
+            file_size=8,
+            original_filename='original.txt',
+            mime_type='text/plain',
+        )
+
+        url = reverse('attachment-files')
+        before_delete = self.client.get(url, {'project_id': self.project.id})
+        self.assertEqual(before_delete.status_code, status.HTTP_200_OK)
+        before_ids = {row['id'] for row in before_delete.data['results']}
+        self.assertEqual(before_ids, {source_attachment.id})
+
+        source_msg.delete()
+
+        after_delete = self.client.get(url, {'project_id': self.project.id})
+        self.assertEqual(after_delete.status_code, status.HTTP_200_OK)
+        self.assertEqual(after_delete.data['results'], [])
+        self.assertTrue(MessageAttachment.objects.filter(id=forwarded_attachment.id).exists())
+        forwarded_msg.refresh_from_db()
+        self.assertFalse(forwarded_msg.has_attachments)
+
+    def test_list_accessible_files_excludes_legacy_orphan_forward_rows(self):
+        """Older forwarded copies with a missing source FK should stay out of Files."""
+        orphan_forward = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Forwarded file',
+            forwarded_from_sender_display=self.user2.username,
+            forwarded_from_created_at=None,
+            has_attachments=True,
+        )
+        MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=orphan_forward,
+            file=SimpleUploadedFile('stale-copy.txt', b'stale'),
+            file_type='document',
+            file_size=5,
+            original_filename='stale-copy.txt',
+            mime_type='text/plain',
+        )
+
+        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'], [])
+
+    def test_list_accessible_files_includes_thread_root_for_reply_attachments(self):
+        """Files attached to thread replies should deep-link through their root timeline message."""
+        root_message = Message.objects.create(chat=self.chat, sender=self.user2, content='Root')
+        thread_reply = Message.objects.create(
+            chat=self.chat,
+            sender=self.user1,
+            content='Reply with file',
+            parent_message=root_message,
+        )
+        attachment = MessageAttachment.objects.create(
+            uploader=self.user1,
+            message=thread_reply,
+            file=SimpleUploadedFile('reply.txt', b'reply'),
+            file_type='document',
+            file_size=5,
+            original_filename='reply.txt',
+            mime_type='text/plain',
+        )
+
+        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.id})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['results'][0]['id'], attachment.id)
+        self.assertEqual(response.data['results'][0]['message_id'], thread_reply.id)
+        self.assertEqual(response.data['results'][0]['thread_root_message_id'], root_message.id)
 
 
 class StarredChatAPITest(TestCase):

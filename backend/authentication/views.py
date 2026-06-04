@@ -75,25 +75,14 @@ class RegisterView(APIView):
             except Organization.DoesNotExist:
                 return Response({"error": "Organization not found"}, status=400)
         else:
+            base_name = f"{username}'s Organisation"
+            name = base_name
+            suffix = 1
+            while Organization.objects.filter(name=name).exists():
+                suffix += 1
+                name = f"{base_name} {suffix}"
             domain = email.split("@")[-1].lower() if "@" in email else None
-            if domain:
-                organization = Organization.objects.filter(email_domain__iexact=domain).first()
-                if not organization:
-                    base_name = domain.split(".")[0].replace("-", " ").replace("_", " ").title() or domain
-                    name = base_name
-                    suffix = 1
-                    while Organization.objects.filter(name=name).exists():
-                        suffix += 1
-                        name = f"{base_name} {suffix}"
-                    organization = Organization.objects.create(name=name, email_domain=domain)
-            else:
-                base_name = "Organization"
-                name = base_name
-                suffix = 1
-                while Organization.objects.filter(name=name).exists():
-                    suffix += 1
-                    name = f"{base_name} {suffix}"
-                organization = Organization.objects.create(name=name)
+            organization = Organization.objects.create(name=name, email_domain=domain)
 
         print(f"[DEBUG] Creating user with is_verified=True")
         user = User.objects.create_user(
@@ -117,6 +106,23 @@ class RegisterView(APIView):
                 defaults={"level": 30}
             )
             UserRole.objects.get_or_create(user=user, role=default_role)
+
+            # Create CustomerOrganisation + admin CustomerUser so CSM features work
+            from customer.models import CustomerOrganisation
+            from csm.models import CustomerUser
+            cust_org, _ = CustomerOrganisation.objects.get_or_create(
+                organization=organization,
+                defaults={'name': organization.name},
+            )
+            CustomerUser.objects.get_or_create(
+                user=user,
+                organisation=cust_org,
+                defaults={
+                    'user_type': 'admin',
+                    'is_active': True,
+                    'is_creator': True,
+                },
+            )
 
         # Auto-login: generate JWT tokens so the frontend can log in immediately
         refresh = RefreshToken.for_user(user)
@@ -705,10 +711,40 @@ class GoogleOAuthCallbackView(APIView):
                     
                     # Set unusable password (will be set during password setup)
                     user.set_unusable_password()
-                    
+
                     # Generate temporary token for password setup
                     temp_token = secrets.token_urlsafe(32)
                     user.verification_token = temp_token
+
+                    # Auto-create Organization + CSM records
+                    from core.models import Organization
+                    base_name = f"{username}'s Organisation"
+                    org_name = base_name
+                    suffix = 1
+                    while Organization.objects.filter(name=org_name).exists():
+                        suffix += 1
+                        org_name = f"{base_name} {suffix}"
+                    domain = email.split('@')[-1].lower() if '@' in email else None
+                    organization = Organization.objects.create(name=org_name, email_domain=domain)
+
+                    user.organization = organization
+
+                    from customer.models import CustomerOrganisation
+                    from csm.models import CustomerUser
+                    cust_org, _ = CustomerOrganisation.objects.get_or_create(
+                        organization=organization,
+                        defaults={'name': organization.name},
+                    )
+                    CustomerUser.objects.get_or_create(
+                        user=user,
+                        organisation=cust_org,
+                        defaults={
+                            'user_type': 'admin',
+                            'is_active': True,
+                            'is_creator': True,
+                        },
+                    )
+
                     user.save()
                     
                     print(f"[GOOGLE OAUTH] New user created: {email}, username: {username}")
@@ -834,7 +870,9 @@ class MeProjectsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from core.models import ProjectMember
+        from core.models import Project, ProjectMember
+        from core.admin_utils import get_org_admin_org_ids
+
         memberships = (
             ProjectMember.objects
             .filter(user=request.user, is_active=True)
@@ -849,6 +887,19 @@ class MeProjectsView(APIView):
             }
             for m in memberships
         ]
+        seen_ids = {m.project.id for m in memberships}
+
+        org_ids = get_org_admin_org_ids(request.user)
+        if org_ids:
+            for p in Project.objects.filter(
+                organization_id__in=org_ids,
+            ).exclude(id__in=seen_ids).order_by('name'):
+                data.append({
+                    'project_id': p.id,
+                    'project_name': p.name,
+                    'role': 'org_admin',
+                })
+
         return Response(data, status=status.HTTP_200_OK)
 
 
@@ -940,6 +991,37 @@ class ResetPasswordView(APIView):
         return Response({"message":"Password reset successfully"}, status=status.HTTP_200_OK)
 
 
+class LogoutView(APIView):
+    """POST /auth/logout/ — best-effort token blacklist plus websocket session close."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        refresh_token = request.data.get('refresh_token')
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception:
+                logger.exception("Failed to blacklist refresh token during logout for user %s", request.user.id)
+
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'chat_user_{request.user.id}',
+                {
+                    'type': 'user_session_revoked',
+                    'reason': 'logout',
+                },
+            )
+        except Exception:
+            logger.exception("Failed to emit logout websocket revoke for user %s", request.user.id)
+
+        return Response({'message': 'Logged out successfully.'}, status=status.HTTP_200_OK)
+
+
 class DeleteAccountView(APIView):
     """
     DELETE /auth/me/delete/
@@ -1014,5 +1096,20 @@ class DeleteAccountView(APIView):
             user.is_deleted = True
             user.set_unusable_password()
             user.save()
+
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'chat_user_{user.id}',
+                {
+                    'type': 'user_session_revoked',
+                    'reason': 'account_deleted',
+                },
+            )
+        except Exception:
+            logger.exception("Failed to emit account-delete websocket revoke for user %s", user.id)
 
         return Response({'message': 'Account deleted successfully.'}, status=status.HTTP_200_OK)

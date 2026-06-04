@@ -1,54 +1,21 @@
 import logging
-import re
-import uuid
 from datetime import timedelta
 
 from celery import shared_task
 from django.conf import settings
-from django.contrib.contenttypes.models import ContentType
-from django.core.cache import cache
+from django.contrib.auth import get_user_model
 from django.db.models import F
 from django.utils import timezone
+from django.utils.module_loading import import_string
 
-from tracking.enums import EndReason, EventType
+from tracking.enums import EndReason, Source
 from tracking.models import TrackingEvent, TrackingSession
-from tracking.services import SessionLookup
+from tracking.services import ingest_event
 
+User = get_user_model()
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 5000
-_TASK_PATH_RE = re.compile(r'^/api/tasks/(\d+)/')
-_TASK_OPEN_TTL = 30          # seconds — 30s dedup window
-_FIRST_INTERACTION_TTL = 2_592_000  # 30 days — once per user per task
-_WRITE_METHODS = frozenset({'POST', 'PATCH', 'PUT', 'DELETE'})
-
-
-def _create_tracking_events(user_id, task_id, event_types, request_meta):
-    if not event_types:
-        return
-
-    user_agent = request_meta.get('user_agent', '')
-    session_id = SessionLookup().get_or_create_session(user_id, user_agent)
-
-    try:
-        ct = ContentType.objects.get(app_label='task', model='task')
-    except ContentType.DoesNotExist:
-        logger.error("emit_tracking_event: ContentType for task.Task not found")
-        return
-
-    now = timezone.now()
-    for event_type in event_types:
-        TrackingEvent.objects.create(
-            session_id=session_id,
-            user_id=user_id,
-            content_type=ct,
-            object_id=task_id,
-            event_type=event_type,
-            occurred_at=now,
-            metadata=request_meta,
-            project_id=request_meta.get('project_id'),
-            client_event_id=uuid.uuid4(),
-        )
 
 
 @shared_task
@@ -56,30 +23,27 @@ def emit_tracking_event(user_id, request_path, request_method, request_meta=None
     if request_meta is None:
         request_meta = {}
 
-    match = _TASK_PATH_RE.match(request_path)
-    if not match:
+    try:
+        user = User.objects.get(pk=user_id)
+    except User.DoesNotExist:
+        logger.warning("emit_tracking_event: user %s not found, skipping", user_id)
         return
 
-    task_id = int(match.group(1))
-    method = request_method.upper()
-    event_types = []
-
-    if method == 'GET' and request_path == f'/api/tasks/{task_id}/':
-        if request_meta.get('internal_refetch'):
-            return
-        dedup_key = f"tracking:last_open:{user_id}:{task_id}"
-        if cache.add(dedup_key, '1', timeout=_TASK_OPEN_TTL):
-            event_types.append(EventType.TASK_OPEN)
-    elif method in _WRITE_METHODS:
-        if method == 'POST':
-            dedup_key = f"tracking:first_interaction:{user_id}:{task_id}"
-            if cache.add(dedup_key, '1', timeout=_FIRST_INTERACTION_TTL):
-                event_types.append(EventType.FIRST_INTERACTION)
-        event_types.append(EventType.TASK_WRITE)
-    else:
-        return
-
-    _create_tracking_events(user_id, task_id, event_types, request_meta)
+    for handler_path in settings.TRACKING_HANDLERS:
+        try:
+            handler = import_string(handler_path)
+            for spec in handler(user_id, request_path, request_method, request_meta):
+                ingest_event(
+                    source=Source.MIDDLEWARE,
+                    event_type=spec['event_type'],
+                    user=user,
+                    metadata=spec['metadata'],
+                    target=spec.get('target'),
+                )
+        except Exception:
+            logger.exception(
+                "emit_tracking_event: handler %r raised, skipping", handler_path
+            )
 
 
 @shared_task
