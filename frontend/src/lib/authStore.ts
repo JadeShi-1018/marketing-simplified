@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { authAPI, getStoredAccessToken } from './api';
+import { authAPI } from './api';
 import { User } from '../types/auth';
 import TeamAPI from './api/teamApi';
 import { LOGIN_ERROR_MESSAGES, isNetworkError } from './authMessages';
@@ -180,28 +180,11 @@ export const useAuthStore = create<AuthState>()(
       getCurrentUser: async () => {
         try {
           const user = await authAPI.getCurrentUser();
-          set({
-            user,
-            token: getStoredAccessToken() || get().token,
-            isAuthenticated: true,
-          });
+          set({ user, isAuthenticated: true });
           return { success: true };
         } catch (error: any) {
+          // If token is invalid, clear auth data
           if (error.response?.status === 401) {
-            const refreshToken = get().refreshToken;
-            if (refreshToken) {
-              try {
-                const refreshed = await authAPI.refreshAccessToken(refreshToken);
-                if (refreshed.access) {
-                  set({ token: refreshed.access });
-                  const user = await authAPI.getCurrentUser();
-                  set({ user, token: refreshed.access, isAuthenticated: true });
-                  return { success: true };
-                }
-              } catch {
-                // Fall through and clear auth below.
-              }
-            }
             get().clearAuth();
           }
           return { success: false, error: 'Failed to get user info' };
