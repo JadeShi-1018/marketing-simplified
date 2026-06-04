@@ -32,7 +32,7 @@ from spreadsheet.models import Spreadsheet
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowDefinition,
     AgentWorkflowStep, AgentWorkflowRun, AgentStepExecution,
-    AgentWorkflowTemplate, AgentProjectWorkflowBinding,
+    AgentWorkflowTemplate,
 )
 from .serializers import (
     AgentSessionListSerializer,
@@ -45,8 +45,6 @@ from .serializers import (
     AgentWorkflowRunSerializer,
     StepReorderSerializer,
     AgentWorkflowTemplateSerializer,
-    AgentProjectWorkflowBindingSerializer,
-    AgentProjectWorkflowBindingListSerializer,
 )
 from .services import AgentOrchestrator
 from . import data_service
@@ -256,20 +254,6 @@ class ChatView(EnglishResponseMixin, APIView):
                             message_type='approval_request',
                             metadata=data or {},
                         )
-                        continue
-
-                    if chunk_type == 'workflow_confirm':
-                        _flush_message()
-                        sse_data = json.dumps(chunk, default=str)
-                        yield f"data: {sse_data}\n\n"
-                        if content:
-                            AgentMessage.objects.create(
-                                session=session,
-                                role='assistant',
-                                content=content,
-                                message_type='workflow_confirm',
-                                metadata=data or {},
-                            )
                         continue
 
                     if chunk_type == 'confirmation_request':
@@ -920,38 +904,6 @@ class AgentConfigStatusView(EnglishResponseMixin, APIView):
         return Response(result)
 
 
-def _auto_bind_template_to_projects(template, projects, applied_by):
-    """
-    Create AgentProjectWorkflowBinding for each project in `projects`.
-
-    Skips projects that already have a binding to this template
-    (`unique_together` would reject duplicates anyway, but get_or_create
-    avoids the DB error and makes the call idempotent).
-
-    The first binding created for a given project is set as `is_default` so
-    the AI intent router can resolve it even when no explicit trigger fires.
-    Subsequent bindings for the same project leave `is_default` as False.
-    """
-    from .models import AgentProjectWorkflowBinding
-
-    for project in projects:
-        existing_count = AgentProjectWorkflowBinding.objects.filter(
-            project=project, is_deleted=False, is_active=True
-        ).count()
-        AgentProjectWorkflowBinding.objects.get_or_create(
-            project=project,
-            template=template,
-            defaults={
-                'trigger_mode': 'message_keyword',
-                'trigger_keywords': [],
-                'priority': 10,
-                'is_default': existing_count == 0,
-                'is_active': True,
-                'applied_by': applied_by,
-            },
-        )
-
-
 def _clone_workflow_definition(
     source_workflow,
     *,
@@ -1006,7 +958,7 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
             Visibility: creator (private) + org members + project members.
     - CREATE: Clone source workflow and create template
     - UPDATE: Only creator can update
-    - DELETE: Check for active bindings, return 409 if in use
+    - DELETE: Soft-delete (creator only)
     """
     permission_classes = [IsAuthenticated]
     serializer_class = AgentWorkflowTemplateSerializer
@@ -1043,13 +995,15 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
         apply_project_id = self.request.query_params.get('project_id')
         if apply_project_id and self.action == 'list':
             from django.db.models import Exists
-            applied_subquery = AgentProjectWorkflowBinding.objects.filter(
-                template_id=OuterRef('pk'),
-                project_id=apply_project_id,
-                is_active=True,
-                is_deleted=False,
+            from core.models import Project
+            qs = qs.annotate(
+                is_applied_to_project=Exists(
+                    Project.objects.filter(
+                        id=apply_project_id,
+                        workflow_templates=OuterRef('pk'),
+                    )
+                )
             )
-            qs = qs.annotate(is_applied_to_project=Exists(applied_subquery))
 
         return qs.prefetch_related('projects').select_related(
             'workflow_definition', 'created_by', 'organization'
@@ -1093,158 +1047,20 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
             workflow_definition=new_workflow,
         )
 
-        # Auto-create bindings for every project selected at creation time
-        template = serializer.instance
-        _auto_bind_template_to_projects(template, template.projects.all(), self.request.user)
-
     def perform_update(self, serializer):
-        """Only allow creator to update their templates. Auto-bind newly added projects."""
+        """Only allow creator to update their templates."""
         if serializer.instance.created_by != self.request.user:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('You can only edit templates you created.')
 
-        old_project_ids = set(
-            serializer.instance.projects.values_list('id', flat=True)
-        )
-
         serializer.save()
 
-        # Bind to projects that were newly added during this edit
-        new_project_ids = set(
-            serializer.instance.projects.values_list('id', flat=True)
-        )
-        added_ids = new_project_ids - old_project_ids
-        if added_ids:
-            added_projects = serializer.instance.projects.filter(id__in=added_ids)
-            _auto_bind_template_to_projects(
-                serializer.instance, added_projects, self.request.user
-            )
-
     def perform_destroy(self, instance):
-        """Check for active bindings before deletion."""
-        # Check if template is being used
-        active_bindings = instance.project_bindings.filter(
-            is_active=True,
-            is_deleted=False
-        ).select_related('project')
-
-        if active_bindings.exists():
-            # Return 409 Conflict with binding details
-            binding_list = [
-                {
-                    'project_id': str(binding.project.id),
-                    'project_name': binding.project.name
-                }
-                for binding in active_bindings[:10]  # Limit to 10 for response size
-            ]
-
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError({
-                'error': 'Template is in use',
-                'active_bindings': binding_list,
-                'message': 'Please remove bindings from projects before deleting this template.'
-            })
-
+        """Soft-delete template (creator only)."""
         # Only creator can delete
         if instance.created_by != self.request.user:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('You can only delete templates you created.')
-
-        # Soft delete
-        instance.is_deleted = True
-        instance.save()
-
-
-class IsProjectMember:
-    """Permission class to check if user is a project member."""
-    def has_permission(self, request, view):
-        project_id = view.kwargs.get('project_id')
-        if not project_id:
-            return False
-
-        return ProjectMember.objects.filter(
-            project_id=project_id,
-            user=request.user,
-            # Add status='active' if ProjectMember has such field
-        ).exists()
-
-
-class AgentProjectWorkflowBindingViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
-    """
-    ViewSet for managing project workflow bindings.
-
-    Nested under /api/agent/projects/{project_id}/workflows/bindings/
-
-    - LIST: All active bindings for the project
-    - CREATE: Apply a template to the project
-    - UPDATE: Modify trigger conditions, priority, is_default
-    - DELETE: Remove binding
-    """
-    permission_classes = [IsAuthenticated]
-    serializer_class = AgentProjectWorkflowBindingSerializer
-    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
-
-    def get_queryset(self):
-        project_id = self.kwargs.get('project_id')
-        if not project_id:
-            return AgentProjectWorkflowBinding.objects.none()
-
-        # Check project membership
-        if not ProjectMember.objects.filter(
-            project_id=project_id,
-            user=self.request.user
-        ).exists():
-            return AgentProjectWorkflowBinding.objects.none()
-
-        return AgentProjectWorkflowBinding.objects.filter(
-            project_id=project_id,
-            is_deleted=False
-        ).select_related('template', 'template__workflow_definition', 'applied_by').order_by('-priority', 'applied_at')
-
-    def get_serializer_class(self):
-        if self.action == 'list' and self.request.query_params.get('lightweight') == 'true':
-            # For chat interface lightweight listing
-            return AgentProjectWorkflowBindingListSerializer
-        return AgentProjectWorkflowBindingSerializer
-
-    def perform_create(self, serializer):
-        """Apply a template to the project."""
-        project_id = self.kwargs.get('project_id')
-
-        # Verify project membership
-        try:
-            project = Project.objects.get(id=project_id, is_deleted=False)
-            if not ProjectMember.objects.filter(project=project, user=self.request.user).exists():
-                from rest_framework.exceptions import PermissionDenied
-                raise PermissionDenied('You are not a member of this project.')
-        except Project.DoesNotExist:
-            from rest_framework.exceptions import NotFound
-            raise NotFound('Project not found.')
-
-        serializer.save(
-            project=project,
-            applied_by=self.request.user,
-        )
-
-    def perform_update(self, serializer):
-        """Update binding (any project member can update)."""
-        project_id = self.kwargs.get('project_id')
-
-        # Verify project membership
-        if not ProjectMember.objects.filter(project_id=project_id, user=self.request.user).exists():
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied('You are not a member of this project.')
-
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        """Remove binding (soft delete)."""
-        project_id = self.kwargs.get('project_id')
-
-        # Verify project membership
-        if not ProjectMember.objects.filter(project_id=project_id, user=self.request.user).exists():
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied('You are not a member of this project.')
 
         # Soft delete
         instance.is_deleted = True

@@ -13,10 +13,6 @@ import {
   AgentWorkflowTemplate,
   CreateTemplateRequest,
   UpdateTemplateRequest,
-  AgentProjectWorkflowBinding,
-  CreateBindingRequest,
-  UpdateBindingRequest,
-  LightweightBinding,
 } from '@/types/agent';
 
 /** Build auth headers for SSE fetch requests (mirrors Axios interceptor logic). */
@@ -506,61 +502,5 @@ export const AgentAPI = {
 
   deleteTemplate: async (templateId: string): Promise<void> => {
     await api.delete(`/api/agent/templates/${templateId}/`);
-  },
-
-  // ==================== Project Workflow Bindings ====================
-
-  listProjectBindings: async (
-    projectId: string,
-    lightweight?: boolean
-  ): Promise<AgentProjectWorkflowBinding[] | LightweightBinding[]> => {
-    const response = await api.get(
-      `/api/agent/projects/${projectId}/workflows/bindings/`,
-      { params: lightweight ? { lightweight: 'true' } : undefined }
-    );
-    const data = response.data;
-    return Array.isArray(data) ? data : (data.results || []);
-  },
-
-  createProjectBinding: async (
-    projectId: string,
-    data: CreateBindingRequest
-  ): Promise<AgentProjectWorkflowBinding> => {
-    const response = await api.post<AgentProjectWorkflowBinding>(
-      `/api/agent/projects/${projectId}/workflows/bindings/`,
-      data
-    );
-    return response.data;
-  },
-
-  getProjectBinding: async (
-    projectId: string,
-    bindingId: string
-  ): Promise<AgentProjectWorkflowBinding> => {
-    const response = await api.get<AgentProjectWorkflowBinding>(
-      `/api/agent/projects/${projectId}/workflows/bindings/${bindingId}/`
-    );
-    return response.data;
-  },
-
-  updateProjectBinding: async (
-    projectId: string,
-    bindingId: string,
-    data: UpdateBindingRequest
-  ): Promise<AgentProjectWorkflowBinding> => {
-    const response = await api.patch<AgentProjectWorkflowBinding>(
-      `/api/agent/projects/${projectId}/workflows/bindings/${bindingId}/`,
-      data
-    );
-    return response.data;
-  },
-
-  deleteProjectBinding: async (
-    projectId: string,
-    bindingId: string
-  ): Promise<void> => {
-    await api.delete(
-      `/api/agent/projects/${projectId}/workflows/bindings/${bindingId}/`
-    );
   },
 };

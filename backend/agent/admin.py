@@ -6,7 +6,7 @@ from .models import (
     AgentPendingExternalApproval,
     FieldCategory, DataSchemaTemplate,
     ImportedDataField, ImportedDataRecord,
-    AgentWorkflowTemplate, AgentProjectWorkflowBinding,
+    AgentWorkflowTemplate,
 )
 
 
@@ -98,8 +98,3 @@ class AgentWorkflowTemplateAdmin(admin.ModelAdmin):
     readonly_fields = ('id', 'created_at', 'updated_at')
 
 
-@admin.register(AgentProjectWorkflowBinding)
-class AgentProjectWorkflowBindingAdmin(admin.ModelAdmin):
-    list_display = ('id', 'project', 'template', 'trigger_mode', 'is_default', 'is_active', 'applied_at')
-    list_filter = ('trigger_mode', 'is_active', 'is_default')
-    readonly_fields = ('id', 'applied_at', 'created_at', 'updated_at')

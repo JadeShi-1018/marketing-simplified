@@ -8,6 +8,7 @@ import { CreateTemplateModal } from "@/components/agent/templates/CreateTemplate
 import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
 import { AgentAPI } from "@/lib/api/agentApi"
 import { useAuthStore } from "@/lib/authStore"
+import { isTemplateOwner } from "@/components/agent/templates/templateOwnership"
 import TemplateCard from "../cards/TemplateCard"
 import { brandChipActive, brandChipInactive } from "../workflowBrandClasses"
 import { cn } from "@/lib/utils"
@@ -89,7 +90,8 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
   const projectTemplates = filtered.filter((t) => !t.organization && (t.project_list?.length ?? 0) > 0)
   const privateTemplates = filtered.filter((t) => !t.organization && !(t.project_list?.length))
 
-  const isOwner = (t: AgentWorkflowTemplate) => t.created_by === String(user?.id)
+  const userId = user?.id
+  const isOwner = (t: AgentWorkflowTemplate) => isTemplateOwner(t, userId)
 
   const handleDeleteTemplate = async () => {
     if (!deletingTemplate) return
@@ -163,7 +165,7 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
                   <TemplateCard
                     key={t.id}
                     template={t}
-                    onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
+                    onEdit={() => setEditingTemplate(t)}
                     onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
                     isOwner={isOwner(t)}
                   />
@@ -181,7 +183,7 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
                   <TemplateCard
                     key={t.id}
                     template={t}
-                    onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
+                    onEdit={() => setEditingTemplate(t)}
                     onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
                     isOwner={isOwner(t)}
                   />

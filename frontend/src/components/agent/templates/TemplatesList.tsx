@@ -10,6 +10,7 @@ import { useAuthStore } from "@/lib/authStore"
 import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
 import { TemplateCard } from "./TemplateCard"
 import { CreateTemplateModal } from "./CreateTemplateModal"
+import { isTemplateOwner } from "./templateOwnership"
 import ConfirmDialog from "@/components/common/ConfirmDialog"
 import {
   Select,
@@ -75,14 +76,8 @@ export function TemplatesList({ userId }: TemplatesListProps) {
       await AgentAPI.deleteTemplate(deletingTemplateId)
       toast.success("Template deleted successfully")
       fetchTemplates()
-    } catch (error: any) {
-      const errorData = error.response?.data
-      if (errorData?.error === "Template is in use by active project bindings") {
-        const projects = errorData.active_bindings?.map((b: any) => b.project_name).join(", ") || "some projects"
-        toast.error(`Cannot delete: This template is currently applied to ${projects}. Remove the bindings first.`)
-      } else {
-        toast.error("Failed to delete template")
-      }
+    } catch {
+      toast.error("Failed to delete template")
     } finally {
       setDeletingTemplateId(null)
     }
@@ -107,7 +102,7 @@ export function TemplatesList({ userId }: TemplatesListProps) {
   const privateTemplates = filtered.filter((t) => !t.organization && !(t.project_list?.length))
 
   const isOwner = (t: AgentWorkflowTemplate) =>
-    t.created_by === String(user?.id) || userId === t.created_by
+    isTemplateOwner(t, userId ?? user?.id)
 
   if (loading) {
     return (
@@ -248,7 +243,7 @@ export function TemplatesList({ userId }: TemplatesListProps) {
       <ConfirmDialog
         isOpen={!!deletingTemplateId}
         title="Delete Template?"
-        message="This action cannot be undone. The template will be permanently deleted. If this template is applied to any projects, you must remove those bindings first."
+        message="This action cannot be undone. The template will be permanently deleted."
         type="danger"
         confirmText="Delete"
         onConfirm={handleDelete}

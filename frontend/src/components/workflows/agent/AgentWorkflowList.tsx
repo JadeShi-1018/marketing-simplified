@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import {
   Copy,
@@ -11,7 +10,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Settings2,
   Trash2,
   Workflow,
 } from "lucide-react"
@@ -163,10 +161,6 @@ export default function AgentWorkflowList() {
   const defaultSystemWorkflow =
     systemWorkflows.find((w) => w.is_default) || systemWorkflows[0]
   const needsProject = hasHydrated && !activeProject?.id
-  const projectSettingsHref = activeProject?.id
-    ? `/projects/${activeProject.id}/settings/agent-workflows`
-    : null
-
   const openEditor = (workflowId: string) => {
     router.push(`/workflows/${workflowId}`)
   }
@@ -238,15 +232,6 @@ export default function AgentWorkflowList() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {projectSettingsHref && (
-              <Link
-                href={projectSettingsHref}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-              >
-                <Settings2 className="h-4 w-4" />
-                Project bindings
-              </Link>
-            )}
             <button
               type="button"
               disabled={needsProject}

@@ -10,7 +10,7 @@ from core.models import Organization, Project, ProjectMember, CustomUser
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowRun,
     AgentWorkflowDefinition, AgentWorkflowStep, AgentStepExecution,
-    AgentWorkflowTemplate, AgentProjectWorkflowBinding,
+    AgentWorkflowTemplate,
 )
 from .services import (
     AgentOrchestrator,
@@ -924,20 +924,20 @@ class WorkflowEngineTests(TestCase):
         self.assertEqual(orders, [1, 2, 3])
 
     def test_default_workflow_lookup_system(self):
-        """System default is found when no project default exists."""
-        found = self.orchestrator._resolve_workflow()
+        """File upload path resolves to the system default workflow."""
+        found = self.orchestrator._resolve_workflow(file_id='test-file-trigger')
         self.assertEqual(found, self.workflow)
 
-    def test_default_workflow_lookup_project_priority(self):
-        """Project default takes priority over system default."""
-        project_wf = AgentWorkflowDefinition.objects.create(
+    def test_resolve_workflow_plain_text_returns_none(self):
+        """Chat without workflow_id does not auto-pick a workflow."""
+        AgentWorkflowDefinition.objects.create(
             name='Project Workflow',
             project=self.project,
             is_default=True,
             status='active',
         )
         found = self.orchestrator._resolve_workflow()
-        self.assertEqual(found, project_wf)
+        self.assertIsNone(found)
 
     def test_default_workflow_lookup_explicit_id(self):
         """Explicit workflow_id overrides all defaults."""
@@ -1561,218 +1561,3 @@ class AgentWorkflowStepAPITest(APITestCase):
         self.assertEqual(response.data['order'], 1)
         self.assertEqual(response.data['step_type'], 'analyze_data')
 
-
-class WorkflowIntentRoutingTests(TestCase):
-    """AGENT-10 Phase 1: AI intent-based workflow routing tests."""
-
-    def setUp(self):
-        self.org = Organization.objects.create(name='Intent Org', slug='intent-org')
-        self.user = CustomUser.objects.create_user(
-            email='intent@test.com',
-            username='intentuser',
-            password='testpass123',
-        )
-        self.user.organization = self.org
-        self.user.save()
-        self.project = Project.objects.create(
-            name='Intent Project',
-            organization=self.org,
-            owner=self.user,
-        )
-        ProjectMember.objects.create(
-            user=self.user,
-            project=self.project,
-            role='owner',
-            is_active=True,
-        )
-        self.session = AgentSession.objects.create(
-            user=self.user,
-            project=self.project,
-        )
-        self.orchestrator = AgentOrchestrator(self.user, self.project, self.session)
-
-        # Create a workflow + template + binding for tests that need them
-        self.workflow_def = AgentWorkflowDefinition.objects.create(
-            name='Review Workflow',
-            status='active',
-            is_system=False,
-            is_default=False,
-        )
-        self.template = AgentWorkflowTemplate.objects.create(
-            name='Q4 Campaign Review',
-            description='End-of-quarter review of campaign performance',
-            category='review',
-            workflow_definition=self.workflow_def,
-            created_by=self.user,
-            use_cases=[
-                'User wants to run a full campaign review',
-                'User asks for Q4 performance analysis',
-            ],
-        )
-        self.binding = AgentProjectWorkflowBinding.objects.create(
-            project=self.project,
-            template=self.template,
-            trigger_mode='message_keyword',
-            trigger_keywords=['review'],
-            priority=10,
-            is_default=True,
-            applied_by=self.user,
-        )
-
-    # ------------------------------------------------------------------
-    # _resolve_workflow_intent unit tests
-    # ------------------------------------------------------------------
-
-    def test_no_bindings_returns_none(self):
-        """No project bindings → intent resolver short-circuits with (None, 0.0, '')."""
-        # Use a fresh project with no bindings
-        empty_project = Project.objects.create(
-            name='Empty Project',
-            organization=self.org,
-            owner=self.user,
-        )
-        empty_session = AgentSession.objects.create(user=self.user, project=empty_project)
-        orch = AgentOrchestrator(self.user, empty_project, empty_session)
-
-        result = orch._resolve_workflow_intent("run a full review")
-        self.assertEqual(result, (None, 0.0, ''))
-
-    def test_no_gemini_key_returns_none(self):
-        """Gemini not configured → gracefully returns (None, 0.0, '')."""
-        with patch('agent.gemini_client._get_api_key', return_value=''):
-            result = self.orchestrator._resolve_workflow_intent("run a full review")
-        self.assertEqual(result, (None, 0.0, ''))
-
-    @patch('agent.gemini_client.call_gemini_json')
-    def test_high_confidence_returns_workflow(self, mock_gemini):
-        """Confidence ≥ 0.90 → returns the matched workflow def and template name."""
-        mock_gemini.return_value = {
-            'matched_id': str(self.template.id),
-            'confidence': 0.92,
-            'reasoning': 'User clearly wants a campaign review',
-        }
-        wf, conf, name = self.orchestrator._resolve_workflow_intent("please run a full review")
-        self.assertEqual(wf, self.workflow_def)
-        self.assertAlmostEqual(conf, 0.92)
-        self.assertEqual(name, 'Q4 Campaign Review')
-
-    @patch('agent.gemini_client.call_gemini_json')
-    def test_medium_confidence_returns_workflow(self, mock_gemini):
-        """Confidence 0.6-0.84 → still returns the workflow (caller decides to confirm)."""
-        mock_gemini.return_value = {
-            'matched_id': str(self.template.id),
-            'confidence': 0.72,
-            'reasoning': 'Probably a review request',
-        }
-        wf, conf, name = self.orchestrator._resolve_workflow_intent("check my campaign")
-        self.assertEqual(wf, self.workflow_def)
-        self.assertAlmostEqual(conf, 0.72)
-        self.assertEqual(name, 'Q4 Campaign Review')
-
-    @patch('agent.gemini_client.call_gemini_json')
-    def test_low_confidence_returns_none(self, mock_gemini):
-        """Confidence < 0.6 → returns None so the message falls through to legacy chat."""
-        mock_gemini.return_value = {
-            'matched_id': str(self.template.id),
-            'confidence': 0.4,
-            'reasoning': 'Weak match',
-        }
-        wf, conf, _ = self.orchestrator._resolve_workflow_intent("hello there")
-        self.assertIsNone(wf)
-
-    @patch('agent.gemini_client.call_gemini_json')
-    def test_null_matched_id_returns_none(self, mock_gemini):
-        """LLM returns matched_id=null → no workflow matched."""
-        mock_gemini.return_value = {
-            'matched_id': None,
-            'confidence': 0.3,
-            'reasoning': 'Just chatting',
-        }
-        wf, conf, _ = self.orchestrator._resolve_workflow_intent("how are you?")
-        self.assertIsNone(wf)
-
-    @patch('agent.gemini_client.call_gemini_json')
-    def test_gemini_failure_returns_none(self, mock_gemini):
-        """Gemini call exception → graceful fallback to (None, 0.0, '')."""
-        mock_gemini.side_effect = RuntimeError("Gemini unavailable")
-        result = self.orchestrator._resolve_workflow_intent("run a review")
-        self.assertEqual(result, (None, 0.0, ''))
-
-    # ------------------------------------------------------------------
-    # handle_message integration: workflow_confirm event emission
-    # ------------------------------------------------------------------
-
-    @patch('agent.gemini_client.call_gemini_json')
-    def test_medium_confidence_emits_workflow_confirm(self, mock_gemini):
-        """Medium confidence (0.6-0.84) makes handle_message emit workflow_confirm SSE event."""
-        mock_gemini.return_value = {
-            'matched_id': str(self.template.id),
-            'confidence': 0.75,
-            'reasoning': 'Probably a review',
-        }
-        events = list(self.orchestrator.handle_message("check my campaigns"))
-        types = [e.get('type') for e in events]
-        self.assertIn('workflow_confirm', types)
-
-        confirm_event = next(e for e in events if e.get('type') == 'workflow_confirm')
-        self.assertEqual(confirm_event['data']['workflow_id'], str(self.workflow_def.id))
-        self.assertEqual(confirm_event['data']['workflow_name'], 'Q4 Campaign Review')
-        self.assertIn('done', types)
-
-    @patch('agent.gemini_client.call_gemini_json')
-    @patch('agent.services.AgentOrchestrator._start_workflow')
-    def test_high_confidence_starts_workflow_directly(self, mock_start, mock_gemini):
-        """High confidence (≥ 0.90) makes handle_message start the workflow without confirming."""
-        mock_gemini.return_value = {
-            'matched_id': str(self.template.id),
-            'confidence': 0.90,
-            'reasoning': 'Clear review request',
-        }
-        mock_start.return_value = iter([])
-        list(self.orchestrator.handle_message("run a full campaign review"))
-        mock_start.assert_called_once_with(self.workflow_def)
-
-    def test_explicit_workflow_id_skips_intent_routing(self):
-        """Explicit workflow_id bypasses intent router entirely (user already confirmed)."""
-        events = list(self.orchestrator.handle_message(
-            "run review", workflow_id=str(self.workflow_def.id)
-        ))
-        types = [e.get('type') for e in events]
-        self.assertNotIn('workflow_confirm', types)
-
-    def test_resume_workflow_action_resumes_paused_run(self):
-        """resume_workflow action continues from await_confirmation pause."""
-        from agent.models import AgentWorkflowRun, AgentWorkflowStep
-
-        step = AgentWorkflowStep.objects.create(
-            workflow=self.workflow_def,
-            name='Confirm',
-            step_type='await_confirmation',
-            order=1,
-            config={'message': 'Please confirm to continue.'},
-        )
-        run = AgentWorkflowRun.objects.create(
-            session=self.session,
-            workflow_definition=self.workflow_def,
-            status='awaiting_confirmation',
-            current_step_order=2,
-        )
-        from django.utils import timezone as tz
-        from agent.models import AgentStepExecution
-        AgentStepExecution.objects.create(
-            workflow_run=run,
-            step=step,
-            step_order=1,
-            step_name='Confirm',
-            status='completed',
-            input_data={},
-            output_data={},
-            started_at=tz.now(),
-            completed_at=tz.now(),
-        )
-
-        with patch('agent.services.AgentOrchestrator._resume_workflow') as mock_resume:
-            mock_resume.return_value = iter([{'type': 'text', 'content': 'Resumed'}])
-            events = list(self.orchestrator.handle_message('', action='resume_workflow'))
-        mock_resume.assert_called_once()
-        self.assertIn('text', [e.get('type') for e in events])

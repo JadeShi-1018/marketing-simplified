@@ -4,7 +4,6 @@ from .models import (
     AgentSession, AgentMessage, AgentWorkflowRun, ImportedCSVFile,
     AgentWorkflowDefinition, AgentWorkflowStep, AgentStepExecution,
     AgentPendingExternalApproval, AgentWorkflowTemplate,
-    AgentProjectWorkflowBinding,
 )
 
 
@@ -281,7 +280,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         return []
 
     def get_applied_project_count(self, obj):
-        return obj.project_bindings.filter(is_active=True, is_deleted=False).count()
+        return obj.projects.count()
 
     def get_project_list(self, obj):
         """Return [{id, name}] for all shared projects."""
@@ -362,81 +361,3 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         if project_objs is not None:
             instance.projects.set(project_objs)
         return instance
-
-
-class AgentProjectWorkflowBindingSerializer(serializers.ModelSerializer):
-    """
-    Serializer for AgentProjectWorkflowBinding with nested template details.
-    """
-    template_detail = AgentWorkflowTemplateSerializer(source='template', read_only=True)
-    project_name = serializers.CharField(source='project.name', read_only=True)
-    applied_by_name = serializers.SerializerMethodField()
-
-    class Meta:
-        model = AgentProjectWorkflowBinding
-        fields = [
-            'id', 'project', 'project_name', 'template', 'template_detail',
-            'trigger_mode', 'trigger_keywords', 'priority', 'is_default',
-            'is_active', 'applied_by', 'applied_by_name', 'applied_at',
-            'created_at', 'updated_at',
-        ]
-        read_only_fields = ['id', 'applied_by', 'applied_at', 'created_at', 'updated_at']
-
-    def get_applied_by_name(self, obj):
-        """Return the name of the user who applied this binding."""
-        if obj.applied_by:
-            return f"{obj.applied_by.first_name} {obj.applied_by.last_name}".strip() or obj.applied_by.username
-        return None
-
-    def validate(self, attrs):
-        """Validate binding constraints."""
-        project = attrs.get('project', self.instance.project if self.instance else None)
-        template = attrs.get('template', self.instance.template if self.instance else None)
-        trigger_mode = attrs.get('trigger_mode', self.instance.trigger_mode if self.instance else None)
-
-        # Validate template visibility: user must be able to see the template
-        request = self.context.get('request')
-        if request and template:
-            from core.models import ProjectMember
-            user = request.user
-            is_creator = template.created_by == user
-            is_org_member = (
-                template.organization_id is not None
-                and hasattr(user, 'organization')
-                and user.organization_id == template.organization_id
-            )
-            is_project_member = ProjectMember.objects.filter(
-                project__in=template.projects.all(),
-                user=user,
-                is_active=True,
-            ).exists()
-            if not (is_creator or is_org_member or is_project_member):
-                raise serializers.ValidationError({
-                    'template': 'You do not have access to this template.'
-                })
-
-        # Validate trigger_keywords only for message_keyword mode
-        if trigger_mode == 'message_keyword':
-            keywords = attrs.get('trigger_keywords', [])
-            if not keywords or not isinstance(keywords, list) or len(keywords) == 0:
-                raise serializers.ValidationError({
-                    'trigger_keywords': 'At least one keyword is required for message_keyword trigger mode.'
-                })
-
-        return attrs
-
-
-class AgentProjectWorkflowBindingListSerializer(serializers.ModelSerializer):
-    """
-    Lightweight serializer for listing active bindings (used in chat interface).
-    """
-    template_name = serializers.CharField(source='template.name', read_only=True)
-    template_category = serializers.CharField(source='template.category', read_only=True)
-
-    class Meta:
-        model = AgentProjectWorkflowBinding
-        fields = [
-            'id', 'template_name', 'template_category',
-            'trigger_mode', 'trigger_keywords', 'is_default',
-        ]
-        read_only_fields = fields

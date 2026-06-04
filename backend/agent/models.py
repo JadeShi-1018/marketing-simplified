@@ -56,6 +56,7 @@ class AgentMessage(TimeStampedModel):
         ('task_created', 'Task Created'),
         ('confirmation_request', 'Confirmation Request'),
         ('workflow_confirm', 'Workflow Confirm'),
+        ('workflow_choice', 'Workflow Choice'),
         ('approval_request', 'Approval Request'),
         ('follow_up_prompt', 'Follow-up Prompt'),
         ('error', 'Error'),
@@ -690,13 +691,12 @@ class AgentWorkflowTemplate(TimeStampedModel):
         help_text='Members of any listed project can see this template',
     )
 
-    # AI intent matching metadata
     use_cases = models.JSONField(
         default=list,
         blank=True,
         help_text=(
-            'Example scenarios when to use this workflow (list of strings). '
-            'Used by the AI intent router to match user messages to this template.'
+            'Example scenarios / phrases describing when to use this template '
+            '(documentation for users; not used for automatic routing).'
         ),
     )
 
@@ -711,97 +711,3 @@ class AgentWorkflowTemplate(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} ({self.get_category_display()})"
-
-
-class AgentProjectWorkflowBinding(TimeStampedModel):
-    """
-    Links a workflow template to a project with trigger conditions.
-
-    Defines WHEN the Agent should run a specific template for a project:
-    - file_upload: When user uploads a file
-    - analyze_action: When action='analyze' is triggered
-    - message_keyword: When user message contains specific keywords
-
-    Priority determines which binding wins when multiple bindings match.
-    is_default marks the fallback template when no trigger conditions match.
-    """
-
-    TRIGGER_MODE_CHOICES = [
-        ('file_upload', 'File Upload'),
-        ('analyze_action', 'Analyze Action'),
-        ('message_keyword', 'Message Keyword'),
-    ]
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    project = models.ForeignKey(
-        'core.Project',
-        on_delete=models.CASCADE,
-        related_name='workflow_bindings',
-    )
-    template = models.ForeignKey(
-        AgentWorkflowTemplate,
-        on_delete=models.CASCADE,
-        related_name='project_bindings',
-    )
-
-    # Trigger mechanism
-    trigger_mode = models.CharField(
-        max_length=20,
-        choices=TRIGGER_MODE_CHOICES,
-        help_text='How this workflow should be triggered',
-    )
-    trigger_keywords = models.JSONField(
-        default=list,
-        help_text='Keywords for message_keyword mode, e.g. ["analyze", "review"]',
-    )
-
-    # Priority and default
-    priority = models.IntegerField(
-        default=0,
-        help_text='Higher priority wins when multiple bindings match (same trigger_mode)',
-    )
-    is_default = models.BooleanField(
-        default=False,
-        help_text='Fallback template when no trigger conditions match (only one per project)',
-    )
-    is_active = models.BooleanField(default=True)
-
-    applied_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-    applied_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'agent_project_workflow_binding'
-        unique_together = [('project', 'template')]
-        ordering = ['-priority', 'applied_at']
-        indexes = [
-            models.Index(fields=['project', 'is_active', 'priority']),
-            models.Index(fields=['project', 'is_default']),
-            models.Index(fields=['trigger_mode']),
-        ]
-
-    def save(self, *args, **kwargs):
-        """
-        Atomic operation: When setting is_default=True, unset all other bindings
-        for the same project to ensure only one default exists.
-        """
-        from django.db import transaction
-
-        if self.is_default:
-            with transaction.atomic():
-                # Unset other defaults for this project
-                AgentProjectWorkflowBinding.objects.filter(
-                    project=self.project,
-                    is_default=True,
-                ).exclude(pk=self.pk).update(is_default=False)
-                super().save(*args, **kwargs)
-        else:
-            super().save(*args, **kwargs)
-
-    def __str__(self):
-        default_marker = ' [Default]' if self.is_default else ''
-        return f"{self.project.name} → {self.template.name}{default_marker}"

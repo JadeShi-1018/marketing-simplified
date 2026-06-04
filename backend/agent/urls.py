@@ -18,7 +18,6 @@ from .views import (
     WorkflowRunDetailView,
     WorkflowRunListView,
     AgentWorkflowTemplateViewSet,
-    AgentProjectWorkflowBindingViewSet,
 )
 
 router = DefaultRouter()
@@ -42,18 +41,6 @@ urlpatterns = [
         name='agent-workflow-runs-list',
     ),
     path('workflow-runs/<uuid:run_id>/', WorkflowRunDetailView.as_view(), name='agent-workflow-run-detail'),
-
-    # Project workflow bindings (nested under projects)
-    path(
-        'projects/<uuid:project_id>/workflows/bindings/',
-        AgentProjectWorkflowBindingViewSet.as_view({'get': 'list', 'post': 'create'}),
-        name='agent-project-binding-list'
-    ),
-    path(
-        'projects/<uuid:project_id>/workflows/bindings/<uuid:pk>/',
-        AgentProjectWorkflowBindingViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}),
-        name='agent-project-binding-detail'
-    ),
 
     path('spreadsheets/', SpreadsheetListView.as_view(), name='agent-spreadsheets'),
     path('data/reports/', DataReportListView.as_view(), name='agent-data-reports'),

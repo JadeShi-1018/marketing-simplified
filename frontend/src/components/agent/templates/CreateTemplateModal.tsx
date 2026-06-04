@@ -19,6 +19,7 @@ import type {
   AgentWorkflowDefinition,
   TemplateCategory,
 } from "@/types/agent"
+import { UseCasesEditor } from "./UseCasesEditor"
 
 interface CreateTemplateModalProps {
   open: boolean
@@ -67,8 +68,7 @@ export function CreateTemplateModal({
   const [shareProject, setShareProject] = useState(false)
   // Multi-select: set of project IDs (numbers)
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<number>>(new Set())
-  // Use-cases: one example phrase per line, stored as string[] on the model
-  const [useCasesText, setUseCasesText] = useState("")
+  const [useCases, setUseCases] = useState<string[]>([])
 
   const isEditMode = !!template
 
@@ -83,7 +83,7 @@ export function CreateTemplateModal({
       const existing = template.project_list ?? []
       setShareProject(existing.length > 0)
       setSelectedProjectIds(new Set(existing.map((p) => p.id)))
-      setUseCasesText((template.use_cases ?? []).join("\n"))
+      setUseCases(template.use_cases ?? [])
     } else {
       setName(defaultName || "")
       setDescription(defaultDescription || "")
@@ -91,7 +91,7 @@ export function CreateTemplateModal({
       setShareOrg(false)
       setShareProject(false)
       setSelectedProjectIds(new Set())
-      setUseCasesText("")
+      setUseCases([])
       setSourceWorkflowId(defaultSourceWorkflowId || "")
       if (!lockSourceWorkflow) {
         setLoadingWorkflows(true)
@@ -124,29 +124,21 @@ export function CreateTemplateModal({
     try {
       const orgId = shareOrg && userOrg ? String(userOrg.id) : null
       const projectIds = shareProject ? Array.from(selectedProjectIds) : []
-      const useCases = useCasesText
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean)
+      const payload = {
+        name,
+        description: description || undefined,
+        category,
+        organization_id: orgId,
+        project_ids: projectIds,
+        use_cases: useCases,
+      }
 
       if (isEditMode && template) {
-        await AgentAPI.updateTemplate(template.id, {
-          name,
-          description: description || undefined,
-          category,
-          organization_id: orgId,
-          project_ids: projectIds,
-          use_cases: useCases,
-        })
+        await AgentAPI.updateTemplate(template.id, payload)
       } else {
         await AgentAPI.createTemplate({
           source_workflow_id: sourceWorkflowId,
-          name,
-          description: description || undefined,
-          category,
-          organization_id: orgId,
-          project_ids: projectIds,
-          use_cases: useCases,
+          ...payload,
         })
       }
       onSuccess()
@@ -246,20 +238,16 @@ export function CreateTemplateModal({
             />
           </div>
 
-          {/* AI intent use-cases */}
+          {/* Use cases (documentation for users) */}
           <div>
             <p className="mb-1 text-xs font-semibold text-gray-500">When to use this template</p>
             <p className="mb-2 text-[11px] text-gray-400">
-              One example phrase per line. The AI uses these to automatically pick this workflow when a user's message matches.
+              Optional example phrases so your team knows when to run this template.
             </p>
-            <textarea
-              value={useCasesText}
-              onChange={(e) => setUseCasesText(e.target.value)}
-              placeholder={
-                "User asks to run a full campaign review\nUser wants to analyze sales data trends\nUser requests a weekly optimization report"
-              }
-              rows={3}
-              className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 placeholder:text-gray-300 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100 resize-none"
+            <UseCasesEditor
+              value={useCases}
+              onChange={setUseCases}
+              placeholder="e.g. run a full campaign review"
             />
           </div>
 
@@ -394,9 +382,6 @@ export function CreateTemplateModal({
                   <div className="border-t border-gray-200 px-3 py-2">
                     <span className="text-[11px] text-indigo-600 font-medium">
                       {selectedProjectIds.size} project{selectedProjectIds.size !== 1 ? "s" : ""} selected
-                    </span>
-                    <span className="ml-2 text-[11px] text-gray-400">
-                      — Agent bindings will be created automatically
                     </span>
                   </div>
                 )}

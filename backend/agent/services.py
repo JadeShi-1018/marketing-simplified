@@ -919,38 +919,7 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
-        # --- AI intent routing for plain text messages (no file / action / explicit workflow) ---
-        # Only runs when the user sends a message without any other context.
-        # Returns early with a 'workflow_confirm' event (medium confidence) so the
-        # frontend can ask the user before executing, or starts the workflow directly
-        # when confidence is high enough.
-        if message and not file_id and not spreadsheet_id and not csv_filename and not action and not workflow_id:
-            workflow_def, confidence, template_name = self._resolve_workflow_intent(message)
-            if workflow_def:
-                if confidence >= 0.90:
-                    yield from self._start_workflow(workflow_def)
-                    yield {"type": "done"}
-                    return
-                elif confidence >= 0.6:
-                    yield {
-                        "type": "workflow_confirm",
-                        "content": (
-                            f"I think you want to run the **{template_name}** workflow. "
-                            "Should I proceed?"
-                        ),
-                        "data": {
-                            "workflow_id": str(workflow_def.id),
-                            "workflow_name": template_name,
-                            "confidence": round(confidence, 2),
-                            "original_message": message,
-                        },
-                    }
-                    yield {"type": "done"}
-                    return
-                # confidence < 0.6 → fall through to legacy chat
-
         # --- Start a new workflow (file upload / analyze action / explicit workflow_id) ---
-        # Also entered when the user confirms an intent-matched workflow (workflow_id supplied).
         if file_id or spreadsheet_id or csv_filename or (action == 'analyze') or workflow_id:
             workflow_def = self._resolve_workflow(
                 workflow_id=workflow_id,
@@ -1616,23 +1585,22 @@ class AgentOrchestrator:
     # Workflow engine methods (AGENT-9)
     # ------------------------------------------------------------------
 
-    def _resolve_workflow(self, workflow_id=None, action=None, file_id=None, user_message=''):
+    def _resolve_workflow(
+        self,
+        workflow_id=None,
+        action=None,
+        file_id=None,
+        spreadsheet_id=None,
+        csv_filename=None,
+        user_message='',
+    ):
         """
-        Find workflow definition using unified resolution logic.
+        Resolve which workflow definition to run.
 
-        Fallback chain:
-        1. Explicit workflow_id (highest priority)
-        2. Project binding - file_upload trigger
-        3. Project binding - analyze_action trigger
-        4. Project binding - message_keyword trigger
-        5. Project binding - is_default=True (fallback)
-        6. Project workflow - is_default=True (backward compatibility)
-        7. System workflow - is_default=True
-        8. None (no workflow configured)
+        - Explicit workflow_id: user-selected template/workflow (highest priority).
+        - File upload / analyze / spreadsheet paths: system default workflow (legacy bot).
+        - Plain text without workflow_id: no workflow (handled by legacy chat).
         """
-        from .models import AgentProjectWorkflowBinding
-
-        # 1. Explicit workflow ID (highest priority)
         if workflow_id:
             try:
                 return AgentWorkflowDefinition.objects.get(
@@ -1641,53 +1609,10 @@ class AgentOrchestrator:
             except AgentWorkflowDefinition.DoesNotExist:
                 return None
 
-        # If no session or project, skip to system default
-        if not self.session or not self.project:
+        if file_id or action == 'analyze' or spreadsheet_id or csv_filename:
             return self._get_system_default_workflow()
 
-        # 2-5. Project template bindings (ordered by priority)
-        bindings = AgentProjectWorkflowBinding.objects.filter(
-            project=self.project,
-            is_active=True,
-            is_deleted=False
-        ).select_related('template__workflow_definition').order_by('-priority', 'applied_at')
-
-        # 2. File upload trigger
-        if file_id:
-            for binding in bindings:
-                if binding.trigger_mode == 'file_upload':
-                    return binding.template.workflow_definition
-
-        # 3. Analyze action trigger
-        if action == 'analyze':
-            for binding in bindings:
-                if binding.trigger_mode == 'analyze_action':
-                    return binding.template.workflow_definition
-
-        # 4. Message keyword trigger (same mode, highest priority wins)
-        if user_message:
-            message_lower = user_message.lower()
-            for binding in bindings:
-                if binding.trigger_mode == 'message_keyword':
-                    keywords = binding.trigger_keywords or []
-                    if any(kw.lower() in message_lower for kw in keywords):
-                        return binding.template.workflow_definition
-
-        # 5. Project binding default (explicit fallback)
-        default_binding = bindings.filter(is_default=True).first()
-        if default_binding:
-            return default_binding.template.workflow_definition
-
-        # 6. Project-level workflow default (backward compatibility)
-        project_default = AgentWorkflowDefinition.objects.filter(
-            project=self.project, is_default=True,
-            status='active', is_deleted=False,
-        ).first()
-        if project_default:
-            return project_default
-
-        # 7. System-level default
-        return self._get_system_default_workflow()
+        return None
 
     def _get_system_default_workflow(self):
         """Get system default workflow."""
@@ -1695,96 +1620,6 @@ class AgentOrchestrator:
             project__isnull=True, is_system=True, is_default=True,
             status='active', is_deleted=False,
         ).first()
-
-    def _resolve_workflow_intent(self, user_message: str):
-        """
-        Use Gemini to match the user's plain-text message against project-bound templates.
-
-        Returns a 3-tuple:
-            (workflow_def, confidence, template_name)
-            - workflow_def:  AgentWorkflowDefinition or None
-            - confidence:    float 0.0-1.0
-            - template_name: str (human-readable name for confirm prompts)
-
-        Gracefully returns (None, 0.0, '') when:
-        - No project bindings exist
-        - Gemini is not configured
-        - Gemini call or JSON parse fails
-        """
-        if not self.project:
-            return None, 0.0, ''
-
-        from .models import AgentProjectWorkflowBinding
-        from .gemini_client import call_gemini_json, _get_api_key as _gemini_key
-
-        if not _gemini_key():
-            return None, 0.0, ''
-
-        bindings = AgentProjectWorkflowBinding.objects.filter(
-            project=self.project,
-            is_active=True,
-            is_deleted=False,
-        ).select_related('template__workflow_definition').order_by('-priority', 'applied_at')
-
-        if not bindings.exists():
-            return None, 0.0, ''
-
-        # Build compact template metadata for the prompt
-        templates_info = []
-        template_map = {}  # template_id → (workflow_def, template_name)
-        for b in bindings:
-            t = b.template
-            if not t or not t.workflow_definition:
-                continue
-            tid = str(t.id)
-            templates_info.append({
-                'id': tid,
-                'name': t.name,
-                'category': t.category,
-                'description': (t.description or '').strip(),
-                'use_cases': t.use_cases or [],
-            })
-            template_map[tid] = (t.workflow_definition, t.name)
-
-        if not templates_info:
-            return None, 0.0, ''
-
-        system_prompt = (
-            "You are a workflow router. Given a user message, decide which workflow template "
-            "best matches the user's intent, or return null if no workflow fits.\n\n"
-            "Rules:\n"
-            "- confidence >= 0.90: very clear match, execute immediately\n"
-            "- confidence 0.60-0.89: probable match, ask the user to confirm\n"
-            "- confidence < 0.60 or matched_id null: user is just chatting, do not trigger a workflow\n\n"
-            "Return ONLY valid JSON (no markdown, no explanation):\n"
-            '{"matched_id": "<template uuid or null>", "confidence": <0.0-1.0>, "reasoning": "<one sentence>"}'
-        )
-        user_prompt = (
-            f"User message: \"{user_message}\"\n\n"
-            f"Available workflow templates:\n{json.dumps(templates_info, ensure_ascii=False)}"
-        )
-
-        try:
-            result = call_gemini_json(system_prompt, user_prompt, temperature=0.1, timeout=15)
-        except Exception as exc:
-            logger.warning("_resolve_workflow_intent: Gemini call failed: %s", exc)
-            return None, 0.0, ''
-
-        matched_id = result.get('matched_id')
-        confidence = float(result.get('confidence', 0.0))
-
-        if not matched_id or confidence < 0.6:
-            return None, confidence, ''
-
-        entry = template_map.get(str(matched_id))
-        if not entry:
-            logger.warning(
-                "_resolve_workflow_intent: matched_id %s not in project bindings", matched_id
-            )
-            return None, 0.0, ''
-
-        workflow_def, template_name = entry
-        return workflow_def, confidence, template_name
 
     def _prepare_input_data(self, file_id=None, spreadsheet_id=None, csv_filename=None):
         """Build the initial input_data dict for the workflow engine.

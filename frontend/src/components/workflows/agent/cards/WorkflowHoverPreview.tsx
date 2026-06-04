@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Bookmark, PlusCircle, Trash2 } from "lucide-react"
+import { Bookmark, Pencil, PlusCircle, Trash2 } from "lucide-react"
 import { getStepMeta } from "../canvas/canvasStepMeta"
 import { brandBtnSm } from "../workflowBrandClasses"
 import { Building2, FolderKanban, Lock } from "lucide-react"
@@ -221,6 +221,8 @@ interface TemplateHoverContentProps {
   organizationName?: string
   projectList?: TemplateProjectInfo[]
   onApply?: () => void
+  onEdit?: () => void
+  onDelete?: () => void
 }
 
 export function TemplateHoverContent({
@@ -232,6 +234,8 @@ export function TemplateHoverContent({
   organizationName,
   projectList,
   onApply,
+  onEdit,
+  onDelete,
 }: TemplateHoverContentProps) {
   const scopeBadges: React.ReactNode[] = []
   if (organization) {
@@ -271,7 +275,36 @@ export function TemplateHoverContent({
     <>
       <FlowDiagram stepTypes={stepTypes} />
       <div className="flex flex-1 flex-col gap-2 px-5 py-4">
-        <p className="text-sm font-semibold leading-snug text-slate-800">{name}</p>
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-sm font-semibold leading-snug text-slate-800">{name}</p>
+          {(onEdit || onDelete) && (
+            <div className="flex shrink-0 items-center gap-1">
+              {onEdit && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onEdit() }}
+                  className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  aria-label="Edit template"
+                  title="Edit template"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onDelete() }}
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 hover:text-red-700"
+                  aria-label="Delete template"
+                  title="Delete template"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         {description ? (
           <p className="line-clamp-3 text-xs leading-relaxed text-slate-500">{description}</p>
         ) : (

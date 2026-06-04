@@ -92,7 +92,6 @@ export type SSEEventType =
   | 'calendar_updated'
   | 'step_progress'
   | 'column_mapping'
-  | 'workflow_confirm'
   | 'done'
   | 'error';
 
@@ -298,10 +297,9 @@ export interface AgentWorkflowRun {
   updated_at: string;
 }
 
-// ==================== Template & Binding Types ====================
+// ==================== Template Types ====================
 
 export type TemplateCategory = 'review' | 'optimization' | 'analysis' | 'reporting' | 'other';
-export type TriggerMode = 'file_upload' | 'analyze_action' | 'message_keyword';
 
 export interface TemplateProjectInfo {
   id: number;
@@ -325,7 +323,7 @@ export interface AgentWorkflowTemplate {
   /** List of projects this template is shared with (M2M). */
   project_list?: TemplateProjectInfo[];
   applied_project_count?: number;
-  /** Example phrases / scenarios that help the AI intent router select this template. */
+  /** Example phrases / scenarios describing when to use this template. */
   use_cases?: string[];
   created_at: string;
   updated_at?: string;
@@ -340,7 +338,6 @@ export interface CreateTemplateRequest {
   organization_id?: string | null;
   /** List of project IDs (integers) to share with. Empty array clears all. */
   project_ids?: number[];
-  /** Example phrases for AI intent routing. */
   use_cases?: string[];
 }
 
@@ -352,49 +349,5 @@ export interface UpdateTemplateRequest {
   organization_id?: string | null;
   /** Pass new list to replace. Empty array clears all. */
   project_ids?: number[];
-  /** Example phrases for AI intent routing. */
   use_cases?: string[];
-}
-
-export interface AgentProjectWorkflowBinding {
-  id: string;
-  project: string;
-  project_name?: string;
-  template: string;
-  template_detail?: AgentWorkflowTemplate;
-  trigger_mode: TriggerMode;
-  trigger_keywords?: string[];
-  priority: number;
-  is_default: boolean;
-  is_active: boolean;
-  applied_by?: string;
-  applied_by_name?: string;
-  applied_at: string;
-  created_at: string;
-  updated_at?: string;
-}
-
-export interface CreateBindingRequest {
-  template_id: string;
-  trigger_mode: TriggerMode;
-  trigger_keywords?: string[];
-  priority?: number;
-  is_default?: boolean;
-}
-
-export interface UpdateBindingRequest {
-  trigger_mode?: TriggerMode;
-  trigger_keywords?: string[];
-  priority?: number;
-  is_default?: boolean;
-  is_active?: boolean;
-}
-
-export interface LightweightBinding {
-  id: string;
-  template_name: string;
-  template_category: TemplateCategory;
-  trigger_mode: TriggerMode;
-  trigger_keywords?: string[];
-  is_default: boolean;
 }

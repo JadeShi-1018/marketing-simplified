@@ -100,6 +100,8 @@ export default function TemplateCard({
           organizationName={template.organization_name}
           projectList={template.project_list}
           onApply={onApply}
+          onEdit={onEdit}
+          onDelete={onDelete}
         />
       </HoverCardPortal>
 
@@ -117,7 +119,9 @@ export default function TemplateCard({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v) }}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-gray-100 hover:text-gray-700"
+              className={`flex h-7 w-7 items-center justify-center rounded-lg text-gray-400 transition-opacity hover:bg-gray-100 hover:text-gray-700 ${
+                onEdit ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              }`}
               aria-label="Template options"
             >
               <MoreHorizontal className="h-4 w-4" />
