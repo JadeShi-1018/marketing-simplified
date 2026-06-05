@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import requests
+from django.core.cache import cache
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone as django_timezone
@@ -1583,8 +1584,9 @@ class AgentOrchestrator:
             status='analyzing',
             current_step_order=1,
             spreadsheet=input_data.get('spreadsheet'),
-            user_context=user_context or '',
         )
+        if user_context:
+            cache.set(f"agent:context:{workflow_run.id}", user_context, 3600)
 
         yield from self._execute_steps(workflow_run, input_data)
 
