@@ -39,6 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.eslintcache
 
 # IDE
 /.idea
@@ -51,6 +52,7 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 e2e/.auth/
+e2e/auth/.auth/
 
 # Lighthouse CI
 /.lighthouseci/

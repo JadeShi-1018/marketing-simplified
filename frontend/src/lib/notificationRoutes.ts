@@ -112,7 +112,8 @@ export function buildNotificationFullPageTarget(
 
   if (
     eventType === NOTIFICATION_EVENT.CHAT_NEW_MESSAGE ||
-    eventType === NOTIFICATION_EVENT.CHAT_NEW_CONVERSATION
+    eventType === NOTIFICATION_EVENT.CHAT_NEW_CONVERSATION ||
+    eventType === NOTIFICATION_EVENT.CHAT_MENTION
   ) {
     if (actionUrl) {
       return translateLegacyActionUrl(actionUrl) ?? { href: actionUrl, requiresProjectSwitch: false };

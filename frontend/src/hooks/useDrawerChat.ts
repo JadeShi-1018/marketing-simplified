@@ -5,6 +5,7 @@ import { useChatStore } from '@/lib/chatStore';
 import { useAuthStore } from '@/lib/authStore';
 import { getChat, getMessages, sendMessage, markChatAsRead } from '@/lib/api/chatApi';
 import type { Chat, Message, SendMessageRequest } from '@/types/chat';
+import type { TiptapJSONContent } from '@/types/comment';
 import toast from 'react-hot-toast';
 
 const DEFAULT_MESSAGE_LIMIT = 20;
@@ -27,6 +28,7 @@ interface UseDrawerChatReturn {
   // Sending
   sendMessage: (content: string, replyToId?: number | null) => Promise<Message | null>;
   sendWithAttachments: (content: string, attachmentIds: number[], replyToId?: number | null) => Promise<Message | null>;
+  sendRich: (content: string, richBody: TiptapJSONContent, mentionIds: number[], attachmentIds?: number[], replyToId?: number | null) => Promise<Message | null>;
   isSending: boolean;
 
   // State
@@ -277,6 +279,55 @@ export function useDrawerChat({
     [chatId, currentUserId]
   );
 
+  // Send rich message (Tiptap JSON + mentions)
+  const handleSendRich = useCallback(
+    async (
+      content: string,
+      richBody: TiptapJSONContent,
+      mentionIds: number[],
+      attachmentIds?: number[],
+      replyToId?: number | null,
+    ): Promise<Message | null> => {
+      if (!chatId) return null;
+      if (!content.trim() && (!attachmentIds || attachmentIds.length === 0)) return null;
+
+      try {
+        setIsSending(true);
+        setError(null);
+
+        const data: SendMessageRequest = {
+          chat_id: chatId,
+          content: content.trim() || '',
+          rich_body: richBody,
+          mention_ids: mentionIds,
+          ...(attachmentIds && attachmentIds.length > 0 ? { attachment_ids: attachmentIds } : {}),
+          ...(replyToId ? { reply_to_id: replyToId } : {}),
+        };
+
+        const newMessage = await sendMessage(data);
+
+        setLocalMessages((prev) => {
+          if (prev.some((m) => m.id === newMessage.id)) return prev;
+          return [...prev, newMessage];
+        });
+
+        const { addMessage } = useChatStore.getState();
+        addMessage(chatId, newMessage, currentUserId);
+
+        return newMessage;
+      } catch (err: any) {
+        const errorMsg = err?.response?.data?.detail || 'Failed to send message';
+        setError(errorMsg);
+        console.error('Error sending rich message:', err);
+        toast.error(errorMsg);
+        return null;
+      } finally {
+        setIsSending(false);
+      }
+    },
+    [chatId, currentUserId],
+  );
+
   // Fetch data when chatId changes
   useEffect(() => {
     if (!enabled || !chatId) {
@@ -322,6 +373,7 @@ export function useDrawerChat({
     error,
     sendMessage: handleSendMessage,
     sendWithAttachments: handleSendWithAttachments,
+    sendRich: handleSendRich,
     isSending,
     highlightMessageId,
     currentUserId,

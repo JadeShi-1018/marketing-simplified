@@ -235,7 +235,7 @@ describe('auditLogApi', () => {
       const mockError = new axios.AxiosError(
         'Unauthorized',
         'ERR_BAD_REQUEST',
-        { method: 'get', url: '/api/projects/123/meetings/456/audit-log/' },
+        { method: 'get', url: '/api/projects/123/meetings/456/audit-log/' } as any,
         null,
         {
           status: 401,
@@ -256,7 +256,7 @@ describe('auditLogApi', () => {
       const mockError = new axios.AxiosError(
         'Forbidden',
         'ERR_BAD_REQUEST',
-        { method: 'get', url: '/api/projects/123/meetings/456/audit-log/' },
+        { method: 'get', url: '/api/projects/123/meetings/456/audit-log/' } as any,
         null,
         {
           status: 403,
@@ -277,7 +277,7 @@ describe('auditLogApi', () => {
       const mockError = new axios.AxiosError(
         'Not Found',
         'ERR_BAD_REQUEST',
-        { method: 'get', url: '/api/projects/123/meetings/456/audit-log/' },
+        { method: 'get', url: '/api/projects/123/meetings/456/audit-log/' } as any,
         null,
         {
           status: 404,

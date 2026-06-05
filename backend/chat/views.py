@@ -1,4 +1,6 @@
 import logging
+import base64
+import json
 import re
 import requests
 from bs4 import BeautifulSoup
@@ -8,12 +10,15 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.throttling import ScopedRateThrottle
+from django.db import transaction
 from django.db.models import Q, Prefetch
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from django.core.cache import cache
+from django.conf import settings
 from datetime import datetime
-from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, MessageAttachment, MessageReaction
+from .models import Chat, ChatParticipant, Message, MessageStatus, ChatType, ChannelVisibility, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
 from .serializers import (
     ChatSerializer,
     ChatListSerializer,
@@ -21,6 +26,10 @@ from .serializers import (
     ChatStarCreateSerializer,
     ChatStarReorderSerializer,
     ChatCreateSerializer,
+    ChatUpdateSerializer,
+    PinnedMessageSerializer,
+    ParticipantNotificationSerializer,
+    SavedMessageSerializer,
     MessageSerializer,
     MessageCreateSerializer,
     MessageWithAttachmentsSerializer,
@@ -32,11 +41,41 @@ from .serializers import (
     AttachmentUploadSerializer,
     AttachmentFileListRowSerializer,
     AddReactionSerializer,
+    ScheduledMessageSerializer,
+    ScheduledMessageCreateSerializer,
 )
 from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
-from .tasks import notify_new_message
+from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
+from core.models import ProjectMember
 
 logger = logging.getLogger(__name__)
+
+
+def _encode_search_cursor(message, include_rank=False):
+    payload = {
+        'created_at': message.created_at.isoformat(),
+        'id': message.id,
+    }
+    if include_rank:
+        payload['rank'] = float(getattr(message, 'rank', 0) or 0)
+    raw = json.dumps(payload, separators=(',', ':')).encode('utf-8')
+    return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+
+
+def _decode_search_cursor(cursor):
+    try:
+        padded = cursor + ('=' * (-len(cursor) % 4))
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
+        created_at = datetime.fromisoformat(str(payload['created_at']).replace('Z', '+00:00'))
+        message_id = int(payload['id'])
+        rank = payload.get('rank')
+        return {
+            'created_at': created_at,
+            'id': message_id,
+            'rank': float(rank) if rank is not None else None,
+        }
+    except Exception:
+        return None
 
 
 class StarredChatViewSet(
@@ -134,20 +173,31 @@ class ChatViewSet(viewsets.ModelViewSet):
     """
     
     permission_classes = [IsAuthenticated]
+
+    def _get_active_participant(self, chat, user):
+        return ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
+
+    def _get_fallback_manager_user_id(self, chat):
+        """Legacy channels may predate managers; treat the first active member as manager."""
+        return ChatService.get_fallback_manager_user_id(chat)
+
+    def _is_channel_manager(self, chat, user):
+        return ChatService.is_channel_manager(chat, user)
     
     def get_queryset(self):
         """Get chats where user is a participant"""
-        # For retrieve/detail actions, return all chats (permission checked in retrieve method)
-        if self.action == 'retrieve':
+        # For actions where the user may not be a member yet, return all chats.
+        # Actual permission / membership checks happen inside those views.
+        if self.action in ('retrieve', 'add_participant', 'browse'):
             return Chat.objects.all()
-        
+
         # For list and other actions, filter by user participation
         user = self.request.user
         project_id = (
             self.request.query_params.get('project_id')
             or self.request.query_params.get('pro_ct_id')
         )
-        
+
         return ChatService.get_user_chats(user, project_id)
     
     def get_serializer_class(self):
@@ -236,6 +286,7 @@ class ChatViewSet(viewsets.ModelViewSet):
                 'type': chat.type,
                 'name': chat.name,
                 'project': chat.project.id,
+                'visibility': chat.visibility,
                 'created_at': chat.created_at.isoformat(),
                 'participants': [
                     {
@@ -246,6 +297,7 @@ class ChatViewSet(viewsets.ModelViewSet):
                             'email': p.user.email,
                         },
                         'joined_at': p.joined_at.isoformat() if p.joined_at else None,
+                        'is_manager': p.is_manager,
                     }
                     for p in chat.participants.filter(is_active=True).select_related('user')
                 ],
@@ -355,15 +407,30 @@ class ChatViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Only channel managers can remove others.
+        if not self._is_channel_manager(chat, request.user):
+            return Response(
+                {'error': 'Only channel managers can remove members'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         try:
             from django.contrib.auth import get_user_model
             User = get_user_model()
             user = User.objects.get(id=user_id)
-            
+
+            if chat.created_by_id and user.id == chat.created_by_id and request.user.id != user.id:
+                return Response({'error': 'The channel creator cannot be removed by another manager'}, status=status.HTTP_400_BAD_REQUEST)
+            target_participant = ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
+            if target_participant and target_participant.is_manager:
+                active_manager_count = ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).count()
+                if active_manager_count <= 1:
+                    return Response({'error': 'A channel must have at least one manager'}, status=status.HTTP_400_BAD_REQUEST)
+
             ChatService.remove_participant(chat, user, request.user)
             logger.info(f"User {request.user.id} removed user {user_id} from chat {chat.id}")
             return Response(status=status.HTTP_204_NO_CONTENT)
-            
+
         except User.DoesNotExist:
             return Response(
                 {'error': 'User not found'},
@@ -372,32 +439,282 @@ class ChatViewSet(viewsets.ModelViewSet):
         except ValueError as e:
             logger.warning(f"Failed to remove user {user_id} from chat {chat.id}: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['patch'], url_path='manager')
+    def set_manager(self, request, pk=None):
+        """
+        Promote or demote a channel participant as manager.
+
+        Body:
+        - user_id: participant user id
+        - is_manager: boolean
+        """
+        chat = self.get_object()
+        if chat.type != ChatType.GROUP:
+            return Response({'error': 'Only group chats have managers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_request_manager = self._is_channel_manager(chat, request.user)
+        if not is_request_manager:
+            return Response({'error': 'Only channel managers can assign managers'}, status=status.HTTP_403_FORBIDDEN)
+
+        user_id = request.data.get('user_id')
+        is_manager = request.data.get('is_manager')
+        if user_id is None or is_manager is None:
+            return Response({'error': 'user_id and is_manager are required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(is_manager, bool):
+            return Response({'error': 'is_manager must be a boolean'}, status=status.HTTP_400_BAD_REQUEST)
+
+        participant = ChatParticipant.objects.filter(chat=chat, user_id=user_id, is_active=True).select_related('user').first()
+        if not participant:
+            return Response({'error': 'User is not a participant'}, status=status.HTTP_404_NOT_FOUND)
+
+        request_participant = ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).first()
+        had_explicit_manager = ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).exists()
+        request_user_is_legacy_manager = bool(
+            not chat.created_by_id
+            and not had_explicit_manager
+            and request_participant
+            and ChatService.get_fallback_manager_user_id(chat) == request.user.id
+        )
+
+        if chat.created_by_id and participant.user_id == chat.created_by_id and not is_manager:
+            return Response({'error': 'The channel creator must remain a manager'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_manager and not participant.is_manager:
+            assigned_manager_count = ChatParticipant.objects.filter(
+                chat=chat,
+                is_active=True,
+                is_manager=True,
+            ).exclude(user_id=chat.created_by_id).count()
+            if assigned_manager_count >= 5 and participant.user_id != chat.created_by_id:
+                return Response({'error': 'A channel can have at most 5 assigned managers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not is_manager and participant.is_manager:
+            active_manager_count = ChatParticipant.objects.filter(chat=chat, is_active=True, is_manager=True).count()
+            if active_manager_count <= 1:
+                return Response({'error': 'A channel must have at least one manager'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request_user_is_legacy_manager and request_participant and not request_participant.is_manager:
+            request_participant.is_manager = True
+            request_participant.save(update_fields=['is_manager', 'updated_at'])
+
+        participant.is_manager = is_manager
+        participant.save(update_fields=['is_manager', 'updated_at'])
+        return Response(ChatParticipantSerializer(participant).data)
     
     @action(detail=True, methods=['post'])
     def mark_as_read(self, request, pk=None):
         """
         Mark all messages in a chat as read (up to a specific message).
-        
+
         Body (optional):
         - message_id: Mark messages up to this message (inclusive)
         """
         chat = self.get_object()
-        
+
         serializer = MarkAsReadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         message_id = serializer.validated_data.get('message_id')
         message = None
-        
+
         if message_id:
             message = get_object_or_404(Message, id=message_id, chat=chat)
-        
+
         try:
             MessageService.mark_chat_as_read(chat, request.user, message)
             logger.info(f"User {request.user.id} marked chat {chat.id} as read")
             return Response({'status': 'success'})
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['patch'], url_path='update_details')
+    def update_details(self, request, pk=None):
+        """
+        Update channel name, topic, and/or description.
+        Only participants may call this; only group chats support name changes.
+
+        Body (all optional):
+        - name: New channel name (group chats only)
+        - topic: Short topic line
+        - description: Longer description
+        """
+        chat = self.get_object()
+
+        # Verify user is a participant
+        if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
+            return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+            return Response({'error': 'Only channel managers can update channel details'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Only group chats can have their name changed via this endpoint
+        data = request.data.copy()
+        if chat.type != ChatType.GROUP:
+            data.pop('name', None)
+            data.pop('visibility', None)
+
+        serializer = ChatUpdateSerializer(chat, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        chat = serializer.save()
+        logger.info(f"User {request.user.id} updated details for chat {chat.id}")
+
+        return Response(ChatSerializer(chat, context={'request': request}).data)
+
+    @action(detail=True, methods=['get'], url_path='pins')
+    def list_pins(self, request, pk=None):
+        """List pinned messages for a channel (participant-only)."""
+        chat = self.get_object()
+        if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
+            return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        pins = PinnedMessage.objects.filter(chat=chat).select_related('message', 'message__sender', 'pinned_by')
+        serializer = PinnedMessageSerializer(pins, many=True, context={'request': request})
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'], url_path='files')
+    def list_files(self, request, pk=None):
+        """
+        List files (attachments) shared in this chat, newest first.
+
+        Query params:
+        - page: default 1
+        - page_size: default 25 (max 100)
+        """
+        chat = self.get_object()
+        if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
+            return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 25))
+        page = max(page, 1)
+        page_size = max(1, min(page_size, 100))
+
+        queryset = (
+            MessageAttachment.objects.filter(
+                message__isnull=False,
+                message__chat=chat,
+                message__is_revoked=False,
+                message__is_deleted=False,
+            )
+            .exclude(message__hidden_by_users=request.user)
+            .exclude(
+                Q(message__forwarded_from_message__isnull=False)
+                | Q(message__forwarded_from_sender_display__isnull=False)
+                | Q(message__forwarded_from_created_at__isnull=False)
+            )
+            .select_related('uploader', 'message__chat')
+            .order_by('-created_at')
+        )
+
+        total = queryset.count()
+        start = (page - 1) * page_size
+        end = start + page_size
+        rows = queryset[start:end]
+        serializer = AttachmentFileListRowSerializer(rows, many=True, context={'request': request})
+        return Response({
+            'results': serializer.data,
+            'page': page,
+            'page_size': page_size,
+            'total': total,
+        })
+
+    @action(detail=True, methods=['post'], url_path='pin')
+    def pin_message(self, request, pk=None):
+        """Pin a message in a channel. Body: { message_id }"""
+        chat = self.get_object()
+        if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
+            return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+            return Response({'error': 'Only channel managers can pin messages'}, status=status.HTTP_403_FORBIDDEN)
+        message_id = request.data.get('message_id')
+        if not message_id:
+            return Response({'error': 'message_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            message = Message.objects.get(id=message_id, chat=chat, is_deleted=False)
+        except Message.DoesNotExist:
+            return Response({'error': 'Message not found'}, status=status.HTTP_404_NOT_FOUND)
+        pin, created = PinnedMessage.objects.get_or_create(
+            chat=chat, message=message,
+            defaults={'pinned_by': request.user},
+        )
+        return Response(
+            PinnedMessageSerializer(pin, context={'request': request}).data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['delete'], url_path='pin/(?P<message_id>[^/.]+)')
+    def unpin_message(self, request, pk=None, message_id=None):
+        """Unpin a message from a channel."""
+        chat = self.get_object()
+        if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
+            return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+            return Response({'error': 'Only channel managers can unpin messages'}, status=status.HTTP_403_FORBIDDEN)
+        deleted, _ = PinnedMessage.objects.filter(chat=chat, message_id=message_id).delete()
+        if not deleted:
+            return Response({'error': 'Pin not found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=['get'], url_path='browse')
+    def browse(self, request):
+        """
+        List all group chats in a project that the current user can see,
+        annotated with whether they are already a member.
+
+        Query params: project_id (required)
+        """
+        project_id = request.query_params.get('project_id')
+        if not project_id:
+            return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            project_id = int(project_id)
+        except (TypeError, ValueError):
+            return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not ProjectMember.objects.filter(project_id=project_id, user=request.user, is_active=True).exists():
+            return Response({'error': 'You are not a member of this project'}, status=status.HTTP_403_FORBIDDEN)
+
+        # All group chats in this project
+        chats = Chat.objects.filter(
+            project_id=project_id,
+            type=ChatType.GROUP,
+            visibility=ChannelVisibility.PUBLIC,
+        ).order_by('name')
+
+        user_chat_ids = set(
+            ChatParticipant.objects.filter(
+                user=request.user, is_active=True
+            ).values_list('chat_id', flat=True)
+        )
+
+        results = []
+        for chat in chats:
+            results.append({
+                'id': chat.id,
+                'name': chat.name or 'Unnamed',
+                'topic': chat.topic,
+                'description': chat.description,
+                'visibility': chat.visibility,
+                'participant_count': chat.participants.filter(is_active=True).count(),
+                'is_member': chat.id in user_chat_ids,
+            })
+
+        return Response(results)
+
+    @action(detail=True, methods=['patch'], url_path='notification_settings')
+    def notification_settings(self, request, pk=None):
+        """
+        Update the current user's notification preferences for this chat.
+        Body (all optional): { is_muted, notification_level }
+        """
+        chat = self.get_object()
+        try:
+            participant = ChatParticipant.objects.get(chat=chat, user=request.user, is_active=True)
+        except ChatParticipant.DoesNotExist:
+            return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        serializer = ParticipantNotificationSerializer(participant, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class MessageViewSet(viewsets.ModelViewSet):
@@ -412,12 +729,67 @@ class MessageViewSet(viewsets.ModelViewSet):
     
     permission_classes = [IsAuthenticated]
     serializer_class = MessageSerializer
+    throttle_classes = [ScopedRateThrottle]
+    throttle_action_scopes = {
+        'create': 'chat_message_write',
+        'forward_batch': 'chat_message_write',
+        'partial_update': 'chat_message_write',
+        'update': 'chat_message_write',
+        'destroy': 'chat_message_write',
+        'hide': 'chat_message_write',
+        'revoke': 'chat_message_write',
+        'react': 'chat_reaction',
+        'remove_reaction': 'chat_reaction',
+    }
+
+    def get_throttles(self):
+        self.throttle_scope = self.throttle_action_scopes.get(getattr(self, 'action', None))
+        if not self.throttle_scope:
+            return []
+        return super().get_throttles()
+
+    def _message_queryset(self):
+        thread_replies_for_summary = (
+            Message.objects
+            .select_related('sender')
+            .only(
+                'id',
+                'chat_id',
+                'parent_message_id',
+                'sender_id',
+                'created_at',
+                'sender__id',
+                'sender__username',
+                'sender__email',
+                'sender__avatar',
+            )
+            .order_by('created_at')
+        )
+        return Message.objects.select_related(
+            'sender',
+            'chat',
+            'chat__project',
+            'reply_to',
+            'reply_to__sender',
+            'forwarded_from_message',
+        ).prefetch_related(
+            'attachments',
+            'reply_to__attachments',
+            'mentions__mentioned_user',
+            'reactions__user',
+            'statuses',
+            Prefetch(
+                'thread_replies',
+                queryset=thread_replies_for_summary,
+                to_attr='_thread_replies_for_summary',
+            ),
+        )
     
     def get_queryset(self):
         """Get messages for a specific chat"""
         # For retrieve/detail actions, return all messages (permission checked in retrieve method)
-        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction', 'remind', 'cancel_remind', 'revoke', 'destroy', 'hide']:
-            return Message.objects.all()
+        if self.action in ['retrieve', 'mark_as_read', 'react', 'remove_reaction', 'remind', 'cancel_remind', 'revoke', 'destroy', 'hide', 'partial_update', 'update', 'thread_replies', 'mark_thread_as_read']:
+            return self._message_queryset()
 
         # For list action, require chat_id
         chat_id = self.request.query_params.get('chat_id')
@@ -434,7 +806,7 @@ class MessageViewSet(viewsets.ModelViewSet):
             return Message.objects.none()
 
         # Filter out messages hidden by current user
-        return Message.objects.filter(
+        return self._message_queryset().filter(
             chat_id=chat_id,
             is_deleted=False
         ).exclude(
@@ -574,25 +946,8 @@ class MessageViewSet(viewsets.ModelViewSet):
                 for recipient in recipients
             ])
 
-            # Create in-app notifications for all recipients (sync)
-            try:
-                from notifications.services import create_or_update_chat_notification
-
-                for recipient in recipients:
-                    create_or_update_chat_notification(
-                        recipient_id=recipient.user_id,
-                        actor_id=request.user.id,
-                        chat_id=message.chat.id,
-                        message_id=message.id,
-                        project_id=message.chat.project_id,
-                        message_preview=message.content or "",
-                        actor_name=request.user.username or request.user.email or "",
-                    )
-            except Exception as e:
-                logger.exception(f"Failed to create in-app notifications for message {message.id}: {e}")
-
-            # Trigger async notification task (for WebSocket delivery)
-            notify_new_message.delay(message.id)
+            transaction.on_commit(lambda: notify_message_recipients.delay(message.id))
+            transaction.on_commit(lambda: notify_new_message.delay(message.id))
 
             # Refresh message with all relationships for response
             message = Message.objects.select_related(
@@ -608,6 +963,56 @@ class MessageViewSet(viewsets.ModelViewSet):
             logger.warning(f"Failed to create message: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
+    def partial_update(self, request, *args, **kwargs):
+        from .services import extract_message_plain_text, sync_message_mentions
+        message = self.get_object()
+        if message.sender != request.user:
+            return Response({'error': 'You can only edit your own messages'}, status=status.HTTP_403_FORBIDDEN)
+
+        data = request.data.copy()
+
+        # If rich_body supplied, re-derive plain content automatically
+        rich_body = data.get('rich_body')
+        if rich_body and not data.get('content'):
+            data['content'] = extract_message_plain_text(rich_body)
+
+        normalized_mention_ids = None
+        if 'mention_ids' in request.data:
+            mention_ids = request.data.get('mention_ids', [])
+            if not isinstance(mention_ids, list):
+                return Response(
+                    {'mention_ids': 'Mentioned users must be sent as a list.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            normalized_mention_ids = [int(uid) for uid in mention_ids]
+            if len(normalized_mention_ids) != len(set(normalized_mention_ids)):
+                return Response(
+                    {'mention_ids': 'Duplicate mentioned users are not allowed.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            valid_ids = set(
+                ChatParticipant.objects.filter(
+                    chat=message.chat,
+                    is_active=True,
+                    user_id__in=normalized_mention_ids,
+                ).values_list('user_id', flat=True)
+            )
+            if set(normalized_mention_ids) - valid_ids:
+                return Response(
+                    {'mention_ids': 'Mentioned users must be active participants in this chat.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        serializer = self.get_serializer(message, data=data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(is_edited=True)
+
+        # Sync mentions only when the edit request intentionally supplies them.
+        if normalized_mention_ids is not None:
+            sync_message_mentions(message, normalized_mention_ids)
+
+        return Response(serializer.data)
+
     def retrieve(self, request, *args, **kwargs):
         """Get message details"""
         message = self.get_object()
@@ -666,6 +1071,66 @@ class MessageViewSet(viewsets.ModelViewSet):
             'unread_count': count,
             'chat_id': chat_id
         })
+
+    @action(detail=True, methods=['get'], url_path='thread_replies')
+    def thread_replies(self, request, pk=None):
+        """
+        List the thread replies for a root message.
+
+        GET /api/chat/messages/{id}/thread_replies/
+
+        Returns replies in ascending chronological order.
+        Also marks the thread as read for the current user.
+        """
+        root = get_object_or_404(Message, pk=pk)
+
+        # Access check: user must be a chat participant
+        if not ChatParticipant.objects.filter(
+            chat=root.chat,
+            user=request.user,
+            is_active=True,
+        ).exists():
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        replies = (
+            Message.objects.filter(parent_message=root, chat=root.chat)
+            .select_related('sender', 'reply_to', 'reply_to__sender')
+            .prefetch_related('attachments', 'mentions__mentioned_user', 'reactions__user')
+            .order_by('created_at')
+        )
+
+        serializer = MessageWithAttachmentsSerializer(replies, many=True, context={'request': request})
+        return Response({'results': serializer.data})
+
+    @action(detail=True, methods=['post'], url_path='mark_thread_as_read')
+    def mark_thread_as_read(self, request, pk=None):
+        """
+        Mark all current thread replies for a root message as read by the current user.
+
+        POST /api/chat/messages/{id}/mark_thread_as_read/
+        """
+        from django.utils import timezone as tz
+        from .models import ThreadReadStatus
+
+        root = get_object_or_404(Message, pk=pk)
+
+        # Access check
+        if not ChatParticipant.objects.filter(
+            chat=root.chat,
+            user=request.user,
+            is_active=True,
+        ).exists():
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        last_reply = root.thread_replies.filter(chat=root.chat).order_by('-created_at').first()
+        if last_reply:
+            ThreadReadStatus.objects.update_or_create(
+                user=request.user,
+                root_message=root,
+                defaults={'last_read_at': last_reply.created_at},
+            )
+
+        return Response({'status': 'ok'})
 
     @action(detail=False, methods=['post'])
     def forward_batch(self, request):
@@ -902,11 +1367,11 @@ class MessageViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def revoke(self, request, pk=None):
         """
-        Revoke a message (within 2 minutes of sending).
+        Revoke a message within the configured revoke window.
 
         Rules:
         - Only sender can revoke
-        - Must be within 2 minutes of sending
+        - Must be inside the configured revoke window
         - Cannot revoke already revoked message
         """
         from django.utils import timezone
@@ -928,11 +1393,11 @@ class MessageViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if within 2 minutes
-        time_limit = timezone.now() - timedelta(minutes=2)
+        revoke_window_minutes = settings.CHAT_REVOKE_WINDOW_MINUTES
+        time_limit = timezone.now() - timedelta(minutes=revoke_window_minutes)
         if message.created_at <= time_limit:
             return Response(
-                {'error': 'Message can only be revoked within 2 minutes of sending'},
+                {'error': f'Message can only be revoked within {revoke_window_minutes} minutes of sending'},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -1031,10 +1496,11 @@ class MessageViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         """
-        Delete a message (hard delete from database).
+        Delete a message for everyone by soft-deleting it.
 
         Rules:
         - Only sender can delete their own messages
+        - Keep a tombstone row in the timeline
         """
         message = self.get_object()
 
@@ -1046,14 +1512,31 @@ class MessageViewSet(viewsets.ModelViewSet):
             )
 
         message_id = message.id
-        chat_id = message.chat_id
 
-        # Hard delete the message
-        message.delete()
+        if not message.is_deleted:
+            message.is_deleted = True
+            message.deleted_at = timezone.now()
+            message.content = ''
+            message.rich_body = None
+            message.has_attachments = False
+            message.is_edited = False
+            message.save(update_fields=[
+                'is_deleted',
+                'deleted_at',
+                'content',
+                'rich_body',
+                'has_attachments',
+                'is_edited',
+                'updated_at',
+            ])
 
-        logger.info(f"User {request.user.id} deleted message {message_id}")
+        logger.info(f"User {request.user.id} soft-deleted message {message_id}")
 
-        return Response({'status': 'deleted'}, status=status.HTTP_204_NO_CONTENT)
+        response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+        return Response({
+            'status': 'deleted',
+            'message': response_serializer.data,
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def hide(self, request, pk=None):
@@ -1237,6 +1720,17 @@ class AttachmentViewSet(viewsets.GenericViewSet):
             MessageAttachment.objects.filter(
                 message__isnull=False,
                 message__chat_id__in=chat_ids,
+                message__is_revoked=False,
+                message__is_deleted=False,
+            )
+            .exclude(message__hidden_by_users=request.user)
+            # Files tab should not surface forwarded attachment copies. The live
+            # original attachment appears once; if the original message is deleted,
+            # forwarded copies are hidden/cleaned up instead of becoming stale rows.
+            .exclude(
+                Q(message__forwarded_from_message__isnull=False)
+                | Q(message__forwarded_from_sender_display__isnull=False)
+                | Q(message__forwarded_from_created_at__isnull=False)
             )
             .select_related('uploader', 'message__chat')
             .order_by('-created_at')
@@ -1255,6 +1749,127 @@ class AttachmentViewSet(viewsets.GenericViewSet):
                 'total': total,
             }
         )
+
+
+class SavedMessageViewSet(
+    mixins.ListModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    """
+    Saved (bookmarked) messages for the current user.
+
+    - GET  /saved/           list saved messages (newest first)
+    - POST /saved/           save a message   body: { message_id }
+    - DELETE /saved/{id}/    unsave (pk = SavedMessage.id)
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = SavedMessageSerializer
+
+    def get_queryset(self):
+        return SavedMessage.objects.filter(user=self.request.user).select_related(
+            'message', 'message__sender', 'message__chat'
+        )
+
+    def create(self, request, *args, **kwargs):
+        message_id = request.data.get('message_id')
+        if not message_id:
+            return Response({'error': 'message_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            message = Message.objects.get(id=message_id, is_deleted=False)
+        except Message.DoesNotExist:
+            return Response({'error': 'Message not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Verify user has access to the chat
+        if not ChatParticipant.objects.filter(chat=message.chat, user=request.user, is_active=True).exists():
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        saved, created = SavedMessage.objects.get_or_create(user=request.user, message=message)
+        serializer = SavedMessageSerializer(saved, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class ScheduledMessageViewSet(
+    mixins.ListModelMixin,
+    mixins.DestroyModelMixin,
+    viewsets.GenericViewSet,
+):
+    """
+    Scheduled (send-later) messages owned by the current user.
+
+    - GET  /scheduled/?chat_id={id}   list pending scheduled messages for a chat
+    - POST /scheduled/                schedule a new message  body: ScheduledMessageCreateSerializer
+    - DELETE /scheduled/{id}/         cancel (must be pending)
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = ScheduledMessageSerializer
+
+    def get_queryset(self):
+        qs = ScheduledMessage.objects.filter(sender=self.request.user)
+        chat_id = self.request.query_params.get('chat_id')
+        if chat_id:
+            qs = qs.filter(chat_id=chat_id, status=ScheduledMessage.STATUS_PENDING)
+        return qs.order_by('scheduled_at')
+
+    def create(self, request, *args, **kwargs):
+        ser = ScheduledMessageCreateSerializer(data=request.data, context={'request': request})
+        ser.is_valid(raise_exception=True)
+        data = ser.validated_data
+
+        # Verify user is a participant in the target chat
+        try:
+            chat = Chat.objects.get(id=data['chat_id'])
+        except Chat.DoesNotExist:
+            return Response({'error': 'Chat not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        sm = ScheduledMessage.objects.create(
+            chat=chat,
+            sender=request.user,
+            content=data.get('content', ''),
+            rich_body=data.get('rich_body'),
+            attachment_ids=data.get('attachment_ids', []),
+            mention_ids=data.get('mention_ids', []),
+            reply_to_id=data.get('reply_to_id'),
+            scheduled_at=data['scheduled_at'],
+        )
+
+        # Dispatch Celery task with ETA
+        result = send_scheduled_message.apply_async(args=[sm.id], eta=sm.scheduled_at)
+        sm.task_id = result.id
+        sm.save(update_fields=['task_id', 'updated_at'])
+
+        return Response(
+            ScheduledMessageSerializer(sm).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        sm = self.get_object()
+        if sm.sender_id != request.user.id:
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        if sm.status != ScheduledMessage.STATUS_PENDING:
+            return Response(
+                {'error': f'Cannot cancel a message with status={sm.status}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # Mark cancelled in DB first — the task checks this flag on execution,
+        # so even if the Celery revoke never lands, the message won't be sent.
+        sm.status = ScheduledMessage.STATUS_CANCELLED
+        sm.save(update_fields=['status', 'updated_at'])
+        # Fire-and-forget revoke in a background thread so it never blocks the
+        # HTTP response (broker broadcasts can stall under load).
+        task_id = sm.task_id
+        if task_id:
+            import threading
+            def _revoke_task():
+                try:
+                    from celery import current_app
+                    current_app.control.revoke(task_id, terminate=False, reply=False)
+                except Exception as exc:
+                    logger.warning(f"Could not revoke task {task_id}: {exc}")
+            threading.Thread(target=_revoke_task, daemon=True).start()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @api_view(['POST'])
@@ -1405,3 +2020,170 @@ def fetch_link_preview(request):
             {'error': 'Internal server error'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+# ── Full-text message search ───────────────────────────────────────────────────
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def search_messages(request):
+    """
+    GET /api/chat/search/
+
+    Query params:
+      q            str   required, min 2 chars
+      from_user    str   optional — username/email substring
+      in_chat      int   optional — chat id
+      has          str   optional — 'file'
+      date_after   str   optional — ISO date YYYY-MM-DD
+      date_before  str   optional — ISO date YYYY-MM-DD
+      limit        int   default 20, max 50
+      offset       int   default 0
+      cursor       str   optional — keyset cursor from previous response
+    """
+    from django.contrib.postgres.search import SearchQuery, SearchRank, SearchHeadline
+    from .serializers import MessageSearchResultSerializer
+
+    q = request.query_params.get('q', '').strip()
+    has_filters = any([
+        request.query_params.get('from_user', '').strip(),
+        request.query_params.get('in_chat', '').strip(),
+        request.query_params.get('has', '').strip(),
+        request.query_params.get('date_after', '').strip(),
+        request.query_params.get('date_before', '').strip(),
+        request.query_params.get('threads_only', '').lower() in ('true', '1'),
+        request.query_params.get('mentions_me', '').strip(),
+    ])
+    if len(q) < 2 and not has_filters:
+        return Response({'results': [], 'total': 0, 'q': q})
+
+    limit = min(int(request.query_params.get('limit', 20)), 50)
+    offset = max(int(request.query_params.get('offset', 0)), 0)
+    cursor = request.query_params.get('cursor', '').strip()
+    decoded_cursor = _decode_search_cursor(cursor) if cursor else None
+    if cursor and decoded_cursor is None:
+        return Response({'error': 'Invalid cursor'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Parse threads_only early — it changes the base queryset shape
+    threads_only = request.query_params.get('threads_only', '').lower() in ('true', '1')
+
+    # Base queryset — only chats the current user participates in.
+    # When threads_only is active we must include thread replies too, so we
+    # drop the parent_message__isnull=True restriction.
+    base_qs_filter = dict(
+        chat__participants__user=request.user,
+        chat__participants__is_active=True,
+        is_deleted=False,
+        is_revoked=False,
+    )
+    if not threads_only:
+        base_qs_filter['parent_message__isnull'] = True  # root messages only
+
+    qs = Message.objects.filter(**base_qs_filter).exclude(
+        hidden_by_users=request.user
+    ).distinct()
+
+    # Full-text search with icontains fallback — only when query is provided
+    uses_rank_cursor = False
+    if len(q) >= 2:
+        try:
+            sq = SearchQuery(q, search_type='websearch', config='english')
+            qs = (
+                qs
+                .filter(search_vector=sq)
+                .annotate(
+                    rank=SearchRank('search_vector', sq),
+                    highlight=SearchHeadline(
+                        'content', sq,
+                        config='english',
+                        options='MaxFragments=1,MaxWords=15,MinWords=5,StartSel=<mark>,StopSel=</mark>',
+                    ),
+                )
+                .order_by('-rank', '-created_at', '-id')
+            )
+            uses_rank_cursor = True
+        except Exception as exc:
+            # Fallback: icontains (e.g. search_vector not yet populated)
+            logger.warning(
+                "chat.search_fts_fallback",
+                extra={
+                    "user_id": request.user.id,
+                    "query_length": len(q),
+                    "exception_type": exc.__class__.__name__,
+                },
+            )
+            qs = qs.filter(content__icontains=q).order_by('-created_at', '-id')
+    else:
+        # Filter-only search — no text constraint, order by recency
+        qs = qs.order_by('-created_at', '-id')
+
+    # Optional filters
+    from_user = request.query_params.get('from_user', '').strip()
+    if from_user:
+        qs = qs.filter(
+            Q(sender__username__icontains=from_user) |
+            Q(sender__email__icontains=from_user)
+        )
+
+    in_chat = request.query_params.get('in_chat', '').strip()
+    if in_chat and in_chat.isdigit():
+        qs = qs.filter(chat_id=int(in_chat))
+
+    has = request.query_params.get('has', '').strip()
+    if has == 'file':
+        qs = qs.filter(has_attachments=True)
+    elif has == 'link':
+        qs = qs.filter(content__iregex=r'https?://')
+
+    # threads_only: include root messages that have replies AND the replies themselves
+    if threads_only:
+        qs = qs.filter(
+            Q(thread_replies__isnull=False) | Q(parent_message__isnull=False)
+        ).distinct()
+
+    mentions_me = request.query_params.get('mentions_me', '').strip()
+    if mentions_me:
+        qs = qs.filter(content__icontains=f'@{mentions_me}')
+
+    date_after = request.query_params.get('date_after', '').strip()
+    if date_after:
+        qs = qs.filter(created_at__date__gte=date_after)
+
+    date_before = request.query_params.get('date_before', '').strip()
+    if date_before:
+        qs = qs.filter(created_at__date__lte=date_before)
+
+    qs = qs.select_related('sender', 'chat', 'chat__project').prefetch_related(
+        'attachments',
+        Prefetch(
+            'chat__participants',
+            queryset=ChatParticipant.objects.filter(is_active=True).select_related('user'),
+        ),
+    )
+
+    total = qs.count()
+    if decoded_cursor:
+        created_at = decoded_cursor['created_at']
+        message_id = decoded_cursor['id']
+        if uses_rank_cursor:
+            rank = decoded_cursor.get('rank') or 0
+            qs = qs.filter(
+                Q(rank__lt=rank) |
+                Q(rank=rank, created_at__lt=created_at) |
+                Q(rank=rank, created_at=created_at, id__lt=message_id)
+            )
+        else:
+            qs = qs.filter(
+                Q(created_at__lt=created_at) |
+                Q(created_at=created_at, id__lt=message_id)
+            )
+        page_rows = list(qs[:limit + 1])
+    else:
+        page_rows = list(qs[offset: offset + limit + 1])
+
+    has_next = len(page_rows) > limit
+    page = page_rows[:limit]
+    next_cursor = _encode_search_cursor(page[-1], include_rank=uses_rank_cursor) if has_next and page else None
+
+    serializer = MessageSearchResultSerializer(page, many=True, context={'request': request})
+    return Response({'results': serializer.data, 'total': total, 'q': q, 'next_cursor': next_cursor})

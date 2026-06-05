@@ -17,6 +17,8 @@ interface DrawerChatHeaderProps {
   onBulkForward?: () => void;
   // Typing indicator
   typingUserId?: number | null;
+  fallbackName?: string;
+  fallbackSubtitle?: string;
 }
 
 export default function DrawerChatHeader({
@@ -29,6 +31,8 @@ export default function DrawerChatHeader({
   onCancelSelect,
   onBulkForward,
   typingUserId = null,
+  fallbackName = 'Conversation unavailable',
+  fallbackSubtitle = '',
 }: DrawerChatHeaderProps) {
   const router = useRouter();
   const user = useAuthStore((state) => state.user);
@@ -38,8 +42,8 @@ export default function DrawerChatHeader({
   const getChatInfo = () => {
     if (!chat) {
       return {
-        name: 'Loading...',
-        subtitle: '',
+        name: isLoading ? 'Loading...' : fallbackName,
+        subtitle: isLoading ? '' : fallbackSubtitle,
         isPrivate: false,
       };
     }

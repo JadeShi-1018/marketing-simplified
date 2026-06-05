@@ -3,9 +3,10 @@ import {
   validateQuickStartConfirm,
 } from '@/components/quick-start/buildConfirmRequest';
 import { INITIAL_QUICK_START_WIZARD_STATE } from '@/components/quick-start/constants';
+import type { QuickStartPreviewPayload } from '@/components/quick-start/types';
 import { QUICK_START_BLUEPRINT_VERSION } from '@/types/quickStart';
 
-const samplePreview = {
+const samplePreview: QuickStartPreviewPayload = {
   outline: {
     project: { title: 'Launch', description: '' },
     modules: {},

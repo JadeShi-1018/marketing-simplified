@@ -116,6 +116,8 @@ export interface Meeting {
   related_tasks?: KnowledgeNavigationLink[];
   /** Workspace layout: legacy list of blocks, or `{ blocks, nestedSections }`. */
   layout_config?: unknown | null;
+  /** Optional summary text returned on the detail endpoint. */
+  summary?: string | null;
 }
 
 /** List row from GET /meetings/ (knowledge discovery). */

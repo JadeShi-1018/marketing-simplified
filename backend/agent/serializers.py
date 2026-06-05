@@ -152,6 +152,12 @@ class ChatInputSerializer(serializers.Serializer):
     # User-approved column mapping for confirm_columns action.
     # Format: {original_header: canonical_name or "unknown"}
     column_mapping = serializers.JSONField(required=False, allow_null=True)
+    user_context = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=500,
+    )
 
 
 class AgentWorkflowStepSerializer(serializers.ModelSerializer):

@@ -1,23 +1,45 @@
 import logging
+from datetime import timedelta
 from io import BytesIO
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 from core.models import Project, Organization
-from chat.models import Chat, ChatParticipant, Message, MessageAttachment, ChatType
+from chat.models import Chat, ChatParticipant, Message, MessageAttachment, MessageMention, MessageReaction, ScheduledMessage, ChatType
 from chat.serializers import (
     MessageAttachmentSerializer,
     AttachmentUploadSerializer,
     MessageWithAttachmentsSerializer,
     MessageCreateWithAttachmentsSerializer,
+    ScheduledMessageCreateSerializer,
     ChatSerializer,
     ChatListSerializer,
     MessageSerializer,
+    UserSimpleSerializer,
 )
+from chat.tasks import send_scheduled_message
+from chat.services import OnlineStatusService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+class UserSimpleSerializerTest(TestCase):
+    """Test cases for chat user serialization."""
+
+    def test_includes_online_status(self):
+        user = User.objects.create_user(
+            email='online@example.com',
+            username='onlineuser',
+            password='testpass123',
+        )
+        OnlineStatusService.set_online(user.id)
+
+        data = UserSimpleSerializer(user).data
+
+        self.assertTrue(data['is_online'])
 
 
 class MessageAttachmentSerializerTest(TestCase):
@@ -197,6 +219,28 @@ class AttachmentUploadSerializerTest(TestCase):
         
         self.assertEqual(attachment.file_type, 'video')
 
+    def test_upload_audio_recording(self):
+        """Test uploading a browser-recorded audio attachment."""
+        audio_file = SimpleUploadedFile(
+            'audio-recording.webm',
+            b'audio content',
+            content_type='audio/webm'
+        )
+
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = AttachmentUploadSerializer(
+            data={'file': audio_file},
+            context={'request': request}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        attachment = serializer.save()
+
+        self.assertEqual(attachment.file_type, 'document')
+        self.assertEqual(attachment.mime_type, 'audio/webm')
+
 
 class MessageWithAttachmentsSerializerTest(TestCase):
     """Test cases for MessageWithAttachmentsSerializer"""
@@ -278,6 +322,118 @@ class MessageWithAttachmentsSerializerTest(TestCase):
         self.assertIn('file_url', attachment_data)
         self.assertIn('original_filename', attachment_data)
 
+    def test_deleted_message_redaction_is_centralized(self):
+        """Deleted message output should redact user-controlled fields in one pass."""
+        reply_source = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='reply source',
+        )
+        forward_source = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='forward source',
+        )
+        deleted_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='secret body',
+            rich_body={'type': 'doc', 'content': [{'type': 'paragraph'}]},
+            is_deleted=True,
+            deleted_at=timezone.now(),
+            has_attachments=True,
+            forwarded_from_message=forward_source,
+            forwarded_from_sender_display=self.user.username,
+            forwarded_from_created_at=forward_source.created_at,
+            reply_to=reply_source,
+        )
+        MessageAttachment.objects.create(
+            message=deleted_message,
+            uploader=self.user,
+            file=SimpleUploadedFile('secret.txt', b'secret'),
+            file_type='document',
+            file_size=6,
+            original_filename='secret.txt',
+            mime_type='text/plain',
+        )
+        MessageMention.objects.create(message=deleted_message, mentioned_user=self.user)
+        MessageReaction.objects.create(message=deleted_message, user=self.user, emoji='ok')
+
+        request = self.factory.get('/')
+        request.user = self.user
+        data = MessageWithAttachmentsSerializer(
+            deleted_message,
+            context={'request': request},
+        ).data
+
+        self.assertTrue(data['is_deleted'])
+        self.assertEqual(data['content'], '')
+        self.assertIsNone(data['rich_body'])
+        self.assertFalse(data['has_attachments'])
+        self.assertEqual(data['attachment_count'], 0)
+        self.assertFalse(data['is_forwarded'])
+        self.assertIsNone(data['forwarded_from'])
+        self.assertIsNone(data['reply_to'])
+        self.assertEqual(data['reactions'], [])
+        self.assertFalse(data['can_revoke'])
+        self.assertEqual(data['mentioned_user_ids'], [])
+        self.assertEqual(data['missing_forwarded_attachments'], [])
+        self.assertEqual(data['attachments'], [])
+
+    def test_orphan_forwarded_message_hides_attachments(self):
+        """Legacy forwarded file copies should not render after their source is gone."""
+        forwarded_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='Forwarded file',
+            forwarded_from_sender_display='source-user',
+            has_attachments=True,
+        )
+        MessageAttachment.objects.create(
+            message=forwarded_message,
+            uploader=self.user,
+            file=SimpleUploadedFile('forwarded.txt', b'content'),
+            file_type='document',
+            file_size=7,
+            original_filename='forwarded.txt',
+            mime_type='text/plain',
+        )
+        request = self.factory.get('/')
+        request.user = self.user
+
+        data = MessageWithAttachmentsSerializer(
+            forwarded_message,
+            context={'request': request},
+        ).data
+
+        self.assertEqual(data['attachments'], [])
+        self.assertFalse(data['has_attachments'])
+        self.assertEqual(data['attachment_count'], 0)
+        self.assertEqual(len(data['missing_forwarded_attachments']), 1)
+        self.assertEqual(data['missing_forwarded_attachments'][0]['kind'], 'document')
+        self.assertEqual(data['missing_forwarded_attachments'][0]['original_filename'], 'forwarded.txt')
+
+    def test_orphan_forwarded_attachment_only_message_gets_generic_tombstone(self):
+        """Already-cleaned forwarded attachment-only messages should still show a tombstone."""
+        forwarded_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='',
+            forwarded_from_sender_display='source-user',
+            has_attachments=False,
+        )
+        request = self.factory.get('/')
+        request.user = self.user
+
+        data = MessageWithAttachmentsSerializer(
+            forwarded_message,
+            context={'request': request},
+        ).data
+
+        self.assertEqual(data['attachments'], [])
+        self.assertEqual(len(data['missing_forwarded_attachments']), 1)
+        self.assertEqual(data['missing_forwarded_attachments'][0]['kind'], 'unknown')
+
 
 class MessageCreateWithAttachmentsSerializerTest(TestCase):
     """Test cases for MessageCreateWithAttachmentsSerializer"""
@@ -295,12 +451,23 @@ class MessageCreateWithAttachmentsSerializerTest(TestCase):
             username='testuser',
             password='testpass123'
         )
+        self.mentioned_user = User.objects.create_user(
+            email='mentioned@example.com',
+            username='mentioned',
+            password='testpass123'
+        )
+        self.unrelated_user = User.objects.create_user(
+            email='unrelated@example.com',
+            username='unrelated',
+            password='testpass123'
+        )
         
         self.chat = Chat.objects.create(
             project=self.project,
             type=ChatType.PRIVATE
         )
         ChatParticipant.objects.create(chat=self.chat, user=self.user, is_active=True)
+        ChatParticipant.objects.create(chat=self.chat, user=self.mentioned_user, is_active=True)
         
         # Create unlinked attachment
         self.unlinked_attachment = MessageAttachment.objects.create(
@@ -333,6 +500,116 @@ class MessageCreateWithAttachmentsSerializerTest(TestCase):
         
         self.assertEqual(message.content, 'Test message content')
         self.assertEqual(message.sender, self.user)
+
+    def test_create_rich_message_derives_plain_text_and_mentions(self):
+        """Rich messages store Tiptap JSON plus searchable plain text and mention rows."""
+        request = self.factory.post('/')
+        request.user = self.user
+        rich_body = {
+            'type': 'doc',
+            'content': [
+                {
+                    'type': 'paragraph',
+                    'content': [
+                        {'type': 'text', 'text': 'Hello '},
+                        {
+                            'type': 'mention',
+                            'attrs': {
+                                'id': self.mentioned_user.id,
+                                'label': self.mentioned_user.username,
+                            },
+                        },
+                    ],
+                }
+            ],
+        }
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': '',
+                'rich_body': rich_body,
+                'mention_ids': [self.mentioned_user.id],
+            },
+            context={'request': request}
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        message = serializer.save()
+
+        self.assertEqual(message.rich_body, rich_body)
+        self.assertEqual(message.content, 'Hello @mentioned')
+        self.assertTrue(
+            MessageMention.objects.filter(
+                message=message,
+                mentioned_user=self.mentioned_user,
+            ).exists()
+        )
+
+    def test_mentions_must_be_active_chat_participants(self):
+        """Mention ids are limited to users who can see the chat."""
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': 'Hello @unrelated',
+                'mention_ids': [self.unrelated_user.id],
+            },
+            context={'request': request}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('mention_ids', serializer.errors)
+
+    def test_reply_target_must_belong_to_same_chat(self):
+        """Quote replies cannot point at a message from another chat."""
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.unrelated_user, is_active=True)
+        other_message = Message.objects.create(
+            chat=other_chat,
+            sender=self.unrelated_user,
+            content='Outside message',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': 'Cross-chat quote',
+                'reply_to_id': other_message.id,
+            },
+            context={'request': request}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('reply_to_id', serializer.errors)
+
+    def test_thread_parent_must_belong_to_same_chat(self):
+        """Thread replies cannot point at a parent message from another chat."""
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.unrelated_user, is_active=True)
+        other_message = Message.objects.create(
+            chat=other_chat,
+            sender=self.unrelated_user,
+            content='Outside parent',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = MessageCreateWithAttachmentsSerializer(
+            data={
+                'chat': self.chat.id,
+                'content': 'Cross-chat thread',
+                'parent_message_id': other_message.id,
+            },
+            context={'request': request}
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('parent_message_id', serializer.errors)
     
     def test_create_message_with_attachments(self):
         """Test creating a message with attachments"""
@@ -357,6 +634,88 @@ class MessageCreateWithAttachmentsSerializerTest(TestCase):
         self.assertEqual(message.attachments.count(), 1)
         self.assertEqual(self.unlinked_attachment.message, message)
         self.assertTrue(message.has_attachments)
+
+    def test_scheduled_attachments_must_be_owned_unlinked(self):
+        """Schedule-send cannot reserve another user's uploaded attachment."""
+        other_attachment = MessageAttachment.objects.create(
+            message=None,
+            uploader=self.unrelated_user,
+            file=SimpleUploadedFile('other.txt', b'content'),
+            file_type='document',
+            file_size=7,
+            original_filename='other.txt',
+            mime_type='text/plain',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = ScheduledMessageCreateSerializer(
+            data={
+                'chat_id': self.chat.id,
+                'attachment_ids': [other_attachment.id],
+                'scheduled_at': (timezone.now() + timedelta(hours=1)).isoformat(),
+            },
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('attachment_ids', serializer.errors)
+
+    def test_scheduled_reply_target_must_belong_to_same_chat(self):
+        """Schedule-send quote replies cannot point at another chat."""
+        other_chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=other_chat, user=self.unrelated_user, is_active=True)
+        other_message = Message.objects.create(
+            chat=other_chat,
+            sender=self.unrelated_user,
+            content='Outside message',
+        )
+        request = self.factory.post('/')
+        request.user = self.user
+
+        serializer = ScheduledMessageCreateSerializer(
+            data={
+                'chat_id': self.chat.id,
+                'content': 'Scheduled cross-chat quote',
+                'reply_to_id': other_message.id,
+                'scheduled_at': (timezone.now() + timedelta(hours=1)).isoformat(),
+            },
+            context={'request': request},
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn('reply_to_id', serializer.errors)
+
+    def test_scheduled_send_revalidates_attachment_before_linking(self):
+        """A queued send fails if its attachment was linked before the task runs."""
+        existing_message = Message.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='Already sent',
+        )
+        self.unlinked_attachment.message = existing_message
+        self.unlinked_attachment.save(update_fields=['message'])
+        scheduled = ScheduledMessage.objects.create(
+            chat=self.chat,
+            sender=self.user,
+            content='Scheduled message',
+            attachment_ids=[self.unlinked_attachment.id],
+            scheduled_at=timezone.now() + timedelta(minutes=1),
+        )
+
+        send_scheduled_message.run(scheduled.id)
+
+        scheduled.refresh_from_db()
+        self.unlinked_attachment.refresh_from_db()
+        self.assertEqual(scheduled.status, ScheduledMessage.STATUS_FAILED)
+        self.assertEqual(self.unlinked_attachment.message_id, existing_message.id)
+        self.assertFalse(
+            Message.objects.filter(
+                chat=self.chat,
+                sender=self.user,
+                content='Scheduled message',
+            ).exists()
+        )
     
     def test_require_content_or_attachments(self):
         """Test that either content or attachments is required"""

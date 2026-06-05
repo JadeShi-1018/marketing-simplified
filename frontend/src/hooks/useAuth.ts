@@ -20,6 +20,9 @@ export default function useAuth() {
 
   // Login function with enhanced, normalized error handling
   const login = async (credentials: LoginRequest): Promise<ApiResponse<void>> => {
+    // Dismiss any toasts left over from a previous logout so the
+    // "Logged out successfully" banner doesn't linger into the new session.
+    toast.dismiss();
     try {
       const result = await storeLogin(credentials.email, credentials.password);
 

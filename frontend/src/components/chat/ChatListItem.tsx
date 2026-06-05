@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Users, User, Bot, ChevronDown, Trash2, Star } from 'lucide-react';
+import { BellOff, Users, User, Bot, ChevronDown, Trash2, Star } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import type { ChatListItemProps } from '@/types/chat';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
 import { deleteChat } from '@/lib/api/chatApi';
+import { isParticipantCurrentlyMuted } from '@/lib/chatMute';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import toast from 'react-hot-toast';
 
@@ -30,7 +31,14 @@ export default function ChatListItem({
   // Use selector for stable reference
   const currentUser = useAuthStore(state => state.user);
   const removeChat = useChatStore(state => state.removeChat);
+  const hasMention = useChatStore(state =>
+    Boolean(state.mentionedChatIds[chat.id]) || (chat.mention_unread_count ?? 0) > 0
+  );
   
+  const currentUserId = currentUser?.id ? Number(currentUser.id) : null;
+  const myParticipant = chat.participants?.find((p) => p.user.id === currentUserId);
+  const isMuted = isParticipantCurrentlyMuted(myParticipant);
+
   // Get the other participant (not current user) for private chats
   const getOtherParticipant = () => {
     if (chat.type === 'group' || !chat.participants) return null;
@@ -259,9 +267,19 @@ export default function ChatListItem({
                 </p>
                 
                 <div className="flex items-center gap-2 flex-shrink-0">
+                  {/* Mention Badge - shown when current user was @-mentioned */}
+                  {hasMention && (
+                    <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-sky-500 text-[10px] font-bold text-white shadow-sm">
+                      @
+                    </span>
+                  )}
+                  {/* Muted indicator */}
+                  {isMuted && (
+                    <span title="Muted"><BellOff className="h-3.5 w-3.5 text-gray-400" /></span>
+                  )}
                   {/* Unread Badge - only show when count > 0 */}
                   {(chat.unread_count ?? 0) > 0 && (
-                    <span className="bg-[#3CCED7] text-white text-xs font-bold rounded-full min-w-[22px] h-[22px] flex items-center justify-center px-1.5 shadow-sm">
+                    <span className={`text-white text-xs font-bold rounded-full min-w-[22px] h-[22px] flex items-center justify-center px-1.5 shadow-sm ${isMuted ? 'bg-gray-400' : 'bg-[#3CCED7]'}`}>
                       {chat.unread_count! > 99 ? '99+' : chat.unread_count}
                     </span>
                   )}

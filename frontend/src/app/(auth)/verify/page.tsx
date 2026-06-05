@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import useAuth from '@/hooks/useAuth';
 import { FormContainer } from '@/components/form';
 import toast from 'react-hot-toast';
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const [verificationStatus, setVerificationStatus] = useState<'loading' | 'success' | 'error' | 'already_verified'>('loading');
   const [message, setMessage] = useState<string>('');
   const searchParams = useSearchParams();
@@ -159,10 +159,10 @@ export default function VerifyEmailPage() {
             {verificationStatus === 'error' && (
               <div className="space-y-3">
                 <div className="text-sm text-gray-600">
-                  <p>If you're having trouble, you can:</p>
+                  <p>If you&apos;re having trouble, you can:</p>
                   <ul className="mt-2 space-y-1 text-left">
                     <li>• Check your email for the correct verification link</li>
-                    <li>• Make sure the link hasn't expired</li>
+                    <li>• Make sure the link hasn&apos;t expired</li>
                     <li>• Try registering again if the problem persists</li>
                   </ul>
                 </div>
@@ -188,4 +188,12 @@ export default function VerifyEmailPage() {
       </FormContainer>
     </div>
   );
-} 
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-cyan-50" />}>
+      <VerifyEmailContent />
+    </Suspense>
+  );
+}

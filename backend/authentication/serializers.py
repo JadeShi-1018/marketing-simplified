@@ -30,10 +30,25 @@ class UserProfileSerializer(serializers.ModelSerializer):
     organization = OrganizationSerializer(read_only=True)
     roles = serializers.SerializerMethodField()
     avatar = serializers.SerializerMethodField()
+    is_org_admin = serializers.SerializerMethodField()
+    is_csm_admin = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'username', 'is_verified', 'is_staff', 'organization', 'roles', 'first_name', 'last_name', 'avatar', 'job', 'department', 'location']
+        fields = [
+            'id', 'email', 'username', 'is_verified', 'is_staff',
+            'organization', 'roles', 'first_name', 'last_name',
+            'avatar', 'job', 'department', 'location',
+            'is_org_admin', 'is_csm_admin',
+        ]
+
+    def get_is_org_admin(self, obj):
+        from core.admin_utils import is_org_admin
+        return is_org_admin(obj)
+
+    def get_is_csm_admin(self, obj):
+        from core.admin_utils import is_csm_admin
+        return is_csm_admin(obj)
 
     def get_roles(self, obj):
         """

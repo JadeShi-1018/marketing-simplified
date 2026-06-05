@@ -1,21 +1,15 @@
-"""
-Pytest configuration for experiment tests
-Overrides cache settings to avoid django_redis dependency
-"""
+"""Pytest configuration for experiment tests."""
 import os
 import pytest
-from django.conf import settings
 
 # Disable OpenTelemetry in test environment
 os.environ['OTEL_ENABLED'] = 'False'
 
-# Override cache settings before Django setup
-@pytest.fixture(scope='session', autouse=True)
-def configure_test_cache():
-    """Configure dummy cache for all tests"""
+@pytest.fixture(autouse=True)
+def configure_test_cache(settings):
+    """Use a dummy cache for experiment tests without leaking into other modules."""
     settings.CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
         }
     }
-

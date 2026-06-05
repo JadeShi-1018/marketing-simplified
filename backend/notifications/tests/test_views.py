@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from core.models import Organization, Project, ProjectInvitation, ProjectMember
+from chat.models import Chat, ChatParticipant, ChatType
 from notifications.models import (
     Notification,
     NotificationCategory,
@@ -46,6 +47,52 @@ class NotificationAPITests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data["count"], 1)
         self.assertEqual(r.data["results"][0]["title"], "Hello")
+
+    def test_list_removes_chat_notification_for_missing_chat(self):
+        Notification.objects.create(
+            recipient=self.user,
+            actor=self.other,
+            category=NotificationCategory.COLLABORATION,
+            event_type=NotificationEventType.CHAT_NEW_MESSAGE,
+            related_object_type="chat",
+            related_object_id="999999",
+            title="9 new messages",
+            body="Old dev data",
+            metadata={"chat_id": 999999, "message_count": 9},
+        )
+
+        url = reverse("notification-list")
+        r = self.client.get(url)
+
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["count"], 0)
+        self.assertEqual(r.data["unread_count"], 0)
+        self.assertFalse(Notification.objects.filter(recipient=self.user).exists())
+
+    def test_list_removes_chat_notification_when_recipient_is_inactive_participant(self):
+        organization = Organization.objects.create(name="Org", email_domain="example.com")
+        project = Project.objects.create(name="Chat Project", organization=organization, owner=self.other)
+        chat = Chat.objects.create(project=project, type=ChatType.GROUP, name="general", created_by=self.other)
+        ChatParticipant.objects.create(chat=chat, user=self.user, is_active=False)
+        ChatParticipant.objects.create(chat=chat, user=self.other, is_active=True)
+        Notification.objects.create(
+            recipient=self.user,
+            actor=self.other,
+            category=NotificationCategory.COLLABORATION,
+            event_type=NotificationEventType.CHAT_NEW_MESSAGE,
+            related_object_type="chat",
+            related_object_id=str(chat.id),
+            title="New message",
+            body="Message from a chat you left",
+            metadata={"chat_id": chat.id, "message_count": 1},
+        )
+
+        url = reverse("notification-list")
+        r = self.client.get(url)
+
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["count"], 0)
+        self.assertFalse(Notification.objects.filter(recipient=self.user).exists())
 
     def test_mark_read_ids(self):
         n = create_notification(

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -90,3 +91,26 @@ class LoginViewTests(APITestCase):
         response = self.client.post(self.login_url, data)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
+
+    @patch('channels.layers.get_channel_layer')
+    def test_logout_emits_session_revoked_event(self, mock_get_channel_layer):
+        calls = []
+
+        class FakeChannelLayer:
+            async def group_send(self, group, message):
+                calls.append((group, message))
+
+        mock_get_channel_layer.return_value = FakeChannelLayer()
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(reverse('logout'), {})
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['message'], 'Logged out successfully.')
+        self.assertEqual(calls, [(
+            f'chat_user_{self.user.id}',
+            {
+                'type': 'user_session_revoked',
+                'reason': 'logout',
+            },
+        )])

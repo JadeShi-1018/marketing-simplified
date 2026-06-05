@@ -37,9 +37,15 @@ def can_invite_project_members(user, project: Project) -> bool:
 def can_manage_project_members(user, project: Project) -> bool:
     """
     Manage operation (change roles / approve invitations / remove members) is allowed to:
+    - org admin (for projects in their org)
     - project owner (via `Project.owner`)
     - admin/super roles from the project membership (`ProjectMember.role`)
     """
+    from core.admin_utils import is_org_admin
+
+    if is_org_admin(user) and project and project.organization_id is not None and project.organization_id == getattr(user, 'organization_id', None):
+        return True
+
     if is_project_owner(user, project):
         return True
 
@@ -57,9 +63,14 @@ class IsProjectMember(permissions.BasePermission):
     """Allow access only to users with active membership on the project."""
 
     def has_object_permission(self, request, view, obj):
+        from core.admin_utils import is_org_admin
+
         project = self._resolve_project(obj)
         if not project:
             return False
+
+        if is_org_admin(request.user) and project.organization_id is not None and project.organization_id == getattr(request.user, 'organization_id', None):
+            return True
 
         return ProjectMember.objects.filter(
             user=request.user,
@@ -74,12 +85,18 @@ class IsProjectMember(permissions.BasePermission):
 
 
 class IsProjectOwner(permissions.BasePermission):
-    """Allow access only to the project owner."""
+    """Allow access only to the project owner or org admin."""
 
     def has_object_permission(self, request, view, obj):
+        from core.admin_utils import is_org_admin
+
         project = self._resolve_project(obj)
         if not project:
             return False
+
+        if is_org_admin(request.user) and project.organization_id is not None and project.organization_id == getattr(request.user, 'organization_id', None):
+            return True
+
         return project.owner_id == request.user.id
 
     def _resolve_project(self, obj):
