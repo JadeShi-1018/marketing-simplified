@@ -2,12 +2,7 @@ FROM python:3.10
 
 WORKDIR /app
 
-# Copy requirements.txt first to leverage Docker cache
-COPY requirements.txt .
-
-COPY . .
-
-# Install system dependencies for media inspection and comment attachment previews.
+# Install system dependencies first (rarely change)
 RUN apt-get update && apt-get install -y \
     fontconfig \
     fonts-dejavu \
@@ -16,7 +11,12 @@ RUN apt-get update && apt-get install -y \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy requirements.txt and install Python dependencies (change occasionally)
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code last (changes every commit)
+COPY . .
 
 # Add non-root user(Debian/Ubuntu)
 RUN adduser --disabled-password --gecos "" appuser

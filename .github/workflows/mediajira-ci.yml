@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, prod-preview]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   block:
     runs-on: ubuntu-latest
@@ -359,8 +363,6 @@ jobs:
             python manage.py migrate teams&&
             python manage.py makemigrations user_preferences&&
             python manage.py migrate user_preferences&&
-            echo 'Running tests...' &&
-            python manage.py test --verbosity=2 &&
             echo 'Running pytest tests...' &&
             pytest -v
            "
