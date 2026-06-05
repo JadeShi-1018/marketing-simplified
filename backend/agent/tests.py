@@ -1577,14 +1577,15 @@ class OrchestratorUserContextThreadingTests(TestCase):
             user=self.user, project=self.project,
         )
 
+    @patch('agent.services.cache')
     @patch('agent.services._run_analysis')
     @patch('agent.services.file_parser.parse_file_to_json')
     @patch('agent.services.data_service._get_csv_dir')
     @patch('os.path.isfile')
     def test_start_workflow_stores_user_context_on_run(
-        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis
+        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis, mock_cache
     ):
-        from agent.models import ImportedCSVFile, AgentWorkflowDefinition, AgentWorkflowStep
+        from agent.models import ImportedCSVFile, AgentWorkflowDefinition, AgentWorkflowStep, AgentWorkflowRun
         from agent.services import AgentOrchestrator
 
         mock_isfile.return_value = True
@@ -1598,7 +1599,6 @@ class OrchestratorUserContextThreadingTests(TestCase):
             user=self.user,
             project=self.project,
         )
-
         wf = AgentWorkflowDefinition.objects.create(
             name='Test WF', is_default=True, is_system=True, status='active',
         )
@@ -1611,16 +1611,18 @@ class OrchestratorUserContextThreadingTests(TestCase):
             '', file_id=str(csv_file.id), user_context='Focus on ROAS efficiency',
         ))
 
-        from agent.models import AgentWorkflowRun
         run = AgentWorkflowRun.objects.filter(session=self.session).latest('created_at')
-        self.assertEqual(run.user_context, 'Focus on ROAS efficiency')
+        mock_cache.set.assert_called_once_with(
+            f"agent:context:{run.id}", 'Focus on ROAS efficiency', 3600
+        )
 
+    @patch('agent.services.cache')
     @patch('agent.services._run_analysis')
     @patch('agent.services.file_parser.parse_file_to_json')
     @patch('agent.services.data_service._get_csv_dir')
     @patch('os.path.isfile')
     def test_start_workflow_stores_empty_string_when_context_none(
-        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis
+        self, mock_isfile, mock_csv_dir, mock_parse, mock_analysis, mock_cache
     ):
         from agent.models import ImportedCSVFile, AgentWorkflowDefinition, AgentWorkflowStep
         from agent.services import AgentOrchestrator
@@ -1636,7 +1638,6 @@ class OrchestratorUserContextThreadingTests(TestCase):
             user=self.user,
             project=self.project,
         )
-
         wf = AgentWorkflowDefinition.objects.create(
             name='Test WF2', is_default=True, is_system=True, status='active',
         )
@@ -1647,9 +1648,7 @@ class OrchestratorUserContextThreadingTests(TestCase):
         orch = AgentOrchestrator(user=self.user, project=self.project, session=self.session)
         list(orch.handle_message('', file_id=str(csv_file.id), user_context=None))
 
-        from agent.models import AgentWorkflowRun
-        run = AgentWorkflowRun.objects.filter(session=self.session).latest('created_at')
-        self.assertEqual(run.user_context, '')
+        mock_cache.set.assert_not_called()
 
 
 class GeminiAnalysisPromptInjectionTests(TestCase):
@@ -1717,11 +1716,14 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
             user=self.user, project=self.project,
         )
 
+    @patch('agent.executors.cache')
     @patch('agent.services._run_analysis')
-    def test_executor_passes_user_context_to_run_analysis(self, mock_analysis):
+    def test_executor_passes_user_context_to_run_analysis(self, mock_analysis, mock_cache):
         from agent.executors import AnalyzeDataExecutor
+        from agent.models import AgentWorkflowDefinition, AgentWorkflowStep, AgentWorkflowRun
 
         mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+        mock_cache.get.return_value = 'Prioritize high-spend campaigns'
 
         wf = AgentWorkflowDefinition.objects.create(name='WF', status='active')
         step = AgentWorkflowStep.objects.create(
@@ -1729,25 +1731,26 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
         )
         run = AgentWorkflowRun.objects.create(
             session=self.session, workflow_definition=wf,
-            user_context='Prioritize high-spend campaigns',
         )
 
         class FakeOrch:
             user = self.user
 
         executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
-        spreadsheet_data = {'name': 'test', 'sheets': [{'columns': [], 'rows': []}]}
-        executor.execute({'spreadsheet_data': spreadsheet_data})
+        executor.execute({'spreadsheet_data': {'name': 'test', 'sheets': [{'columns': [], 'rows': []}]}})
 
-        mock_analysis.assert_called_once()
+        mock_cache.get.assert_called_once_with(f"agent:context:{run.id}")
         _, kwargs = mock_analysis.call_args
         self.assertEqual(kwargs.get('user_context'), 'Prioritize high-spend campaigns')
 
+    @patch('agent.executors.cache')
     @patch('agent.services._run_analysis')
-    def test_executor_passes_none_when_context_empty(self, mock_analysis):
+    def test_executor_passes_none_when_context_empty(self, mock_analysis, mock_cache):
         from agent.executors import AnalyzeDataExecutor
+        from agent.models import AgentWorkflowDefinition, AgentWorkflowStep, AgentWorkflowRun
 
         mock_analysis.return_value = {'anomalies': [], 'recommended_tasks': []}
+        mock_cache.get.return_value = None
 
         wf = AgentWorkflowDefinition.objects.create(name='WF3', status='active')
         step = AgentWorkflowStep.objects.create(
@@ -1755,7 +1758,6 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
         )
         run = AgentWorkflowRun.objects.create(
             session=self.session, workflow_definition=wf,
-            user_context='',
         )
 
         class FakeOrch:

@@ -6,6 +6,7 @@ the logic for that particular action.
 """
 import logging
 import os
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class AnalyzeDataExecutor(BaseStepExecutor):
                 input_data.get('success_criteria')
                 or (self.workflow_run.success_criteria if self.workflow_run.success_criteria else None)
             )
-            user_context = self.workflow_run.user_context or None
+            user_context = cache.get(f"agent:context:{self.workflow_run.id}")
             analysis = _run_analysis(
                 spreadsheet_data,
                 user_id=user_id,
