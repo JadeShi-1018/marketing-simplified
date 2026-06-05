@@ -1,18 +1,24 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { Bookmark, Hash, MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
 import { useChatData } from '@/hooks/useChatData';
-import { useChatSocket } from '@/hooks/useChatSocket';
 import { useProjectMemberRoles } from '@/hooks/useProjectMemberRoles';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
 import { useProjectStore } from '@/lib/projectStore';
+import { getChat } from '@/lib/api/chatApi';
 import ChatWindow from '@/components/chat/ChatWindow';
 import CreateChatDialog from '@/components/chat/CreateChatDialog';
 import SlackMessagesLayout from '@/components/messages/SlackMessagesLayout';
+import SearchPanel from '@/components/chat/search/SearchPanel';
+import SavedItemsPanel from '@/components/chat/SavedItemsPanel';
+import ChatCommandPalette from '@/components/chat/ChatCommandPalette';
+import BrowseChannelsDialog from '@/components/chat/BrowseChannelsDialog';
+import type { MessageSearchResult } from '@/types/chat';
+import type { SearchFilters } from '@/hooks/useMessageSearch';
 
 const MESSAGES_MOBILE_QUERY = '(max-width: 767px)';
 
@@ -22,7 +28,9 @@ const isMessagesMobileViewport = () =>
 export default function MessagePageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const user = useAuthStore(state => state.user);
+  const isAuthenticated = useAuthStore(state => state.isAuthenticated);
+  const currentUser = useAuthStore(state => state.user);
+  const currentUserId = currentUser?.id ? Number(currentUser.id) : 0;
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
@@ -30,10 +38,14 @@ export default function MessagePageContent() {
   const [isCreateChannelDialogOpen, setIsCreateChannelDialogOpen] = useState(false);
   const [isConversationDrawerOpen, setIsConversationDrawerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  
-  // Ensure userId is a number for consistent comparison in addMessage
-  const userId = user?.id ? Number(user.id) : null;
-  
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchInitialFilters, setSearchInitialFilters] = useState<Partial<SearchFilters> | undefined>();
+  const [searchFilterSignal, setSearchFilterSignal] = useState(0);
+  const [detailsSignal, setDetailsSignal] = useState<{ chatId: number; seq: number } | null>(null);
+  const [isSavedOpen, setIsSavedOpen] = useState(false);
+  const [isBrowseOpen, setIsBrowseOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
   // Chat store state
   const currentChatId = useChatStore(state => state.currentChatId);
   const setCurrentChat = useChatStore(state => state.setCurrentChat);
@@ -53,23 +65,36 @@ export default function MessagePageContent() {
     autoFetch: false,
   });
   
-  // Connect to WebSocket for real-time updates
-  const { connected } = useChatSocket(userId, {
-    enabled: true,
-    onMessage: (message) => {
-      console.log('[MessagePage] New message received:', message);
-    },
-    onOpen: () => {
-      console.log('[MessagePage] WebSocket connected');
-    },
-    onClose: () => {
-      console.warn('[MessagePage] WebSocket disconnected');
-    },
-  });
-  
-  // Fetch chats when project changes or WebSocket connects
-  // Combined into one effect to prevent duplicate fetches
+  // Real-time updates are handled by useNotificationSSE (mounted in ChatWidget).
+  // When a chat SSE event arrives, chatStore.lastChatActivity is bumped and the
+  // widget's fetchChats runs.  Here we only need to fetch on project change.
+  const lastChatActivity = useChatStore(state => state.lastChatActivity);
   const hasFetchedRef = useRef<string | null>(null);
+
+  // Global Cmd/Ctrl-K → open conversation switcher
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        // Don't steal from Tiptap composer
+        if ((e.target as HTMLElement)?.closest?.('.ProseMirror')) return;
+        e.preventDefault();
+        setIsCommandPaletteOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // Re-fetch the chat list when the project changes or an SSE chat event arrives.
+  useEffect(() => {
+    if (isAuthenticated && selectedProjectId) {
+      const fetchKey = `${selectedProjectId}-${lastChatActivity}`;
+      if (hasFetchedRef.current !== fetchKey) {
+        hasFetchedRef.current = fetchKey;
+        fetchChats();
+      }
+    }
+  }, [isAuthenticated, selectedProjectId, lastChatActivity, fetchChats]);
 
   useEffect(() => {
     const projectIdParam = searchParams.get('projectId');
@@ -125,22 +150,12 @@ export default function MessagePageContent() {
     [router, searchParams]
   );
   
-  useEffect(() => {
-    if (selectedProjectId) {
-      // Only fetch if we haven't fetched for this project yet, or if WebSocket just connected
-      const fetchKey = `${selectedProjectId}-${connected}`;
-      if (hasFetchedRef.current !== fetchKey) {
-        hasFetchedRef.current = fetchKey;
-        console.log('[MessagePage] Fetching chats for project:', selectedProjectId, 'connected:', connected);
-        fetchChats();
-      }
-    }
-  }, [selectedProjectId, connected, fetchChats]);
-  
+
   // Get current chat from store
   const currentChat = chats.find(chat => chat.id === currentChatId);
   
   // Filter chats by search query
+  const isSearchingConversations = searchQuery.trim().length > 0;
   const filteredChats = chats.filter(chat => {
     if (!searchQuery.trim()) return true;
     
@@ -171,6 +186,14 @@ export default function MessagePageContent() {
     selectedProjectId === null && (!hasProjectStoreHydrated || hasProjectCandidate);
   
   const handleSelectChat = (chatId: number) => {
+    setIsSearchOpen(false);
+    setIsSavedOpen(false);
+    // Clicking the already-open chat closes it and returns to the list
+    if (chatId === currentChatId) {
+      setCurrentChat(null);
+      replaceMessagesQuery({ projectId: selectedProjectId, chatId: null, messageId: null });
+      return;
+    }
     setCurrentChat(chatId);
     replaceMessagesQuery({
       projectId: selectedProjectId,
@@ -182,15 +205,7 @@ export default function MessagePageContent() {
   const handleBackToList = () => {
     if (isMessagesMobileViewport()) {
       setIsConversationDrawerOpen(true);
-      return;
     }
-
-    setCurrentChat(null);
-    replaceMessagesQuery({
-      projectId: selectedProjectId,
-      chatId: null,
-      messageId: null,
-    });
   };
   
   const handleCreateChat = () => {
@@ -245,16 +260,113 @@ export default function MessagePageContent() {
     }
   }, [selectedProjectId, chats, createNewChat, setCurrentChat, replaceMessagesQuery]);
 
+  // When the user clicks a search result: navigate to that chat + message
+  const handleSelectSearchResult = useCallback(
+    (result: MessageSearchResult) => {
+      setIsSearchOpen(false);
+      // Switch project if the result is from a different one
+      if (result.project_id && result.project_id !== selectedProjectId) {
+        setSelectedProjectId(result.project_id);
+      }
+      setCurrentChat(result.chat_id);
+      replaceMessagesQuery({
+        projectId: result.project_id ?? selectedProjectId,
+        chatId: result.chat_id,
+        messageId: result.id,
+      });
+    },
+    [selectedProjectId, setCurrentChat, replaceMessagesQuery]
+  );
+
+  const handleSearchInChat = useCallback((chatId: number) => {
+    setSearchInitialFilters({ inChat: chatId });
+    setSearchFilterSignal((n) => n + 1);
+    setIsSearchOpen(true);
+  }, []);
+
+  const handleOpenChannelDetails = useCallback((chatId: number) => {
+    setIsSearchOpen(false);
+    setIsSavedOpen(false);
+    setCurrentChat(chatId);
+    replaceMessagesQuery({
+      projectId: selectedProjectId,
+      chatId,
+      messageId: null,
+    });
+    setDetailsSignal((prev) => ({ chatId, seq: (prev?.seq ?? 0) + 1 }));
+  }, [replaceMessagesQuery, selectedProjectId, setCurrentChat]);
+
+  const handleSavedJump = useCallback(
+    async (
+      msgId: number,
+      chatId: number,
+      parentMsgId?: number | null,
+      savedProjectId?: number | null,
+    ) => {
+      setIsSavedOpen(false);
+
+      let targetProjectId =
+        savedProjectId && Number.isFinite(savedProjectId) && savedProjectId > 0
+          ? savedProjectId
+          : null;
+
+      let targetChat = targetProjectId
+        ? chatsByProject[targetProjectId]?.find((chat) => Number(chat.id) === Number(chatId))
+        : undefined;
+
+      if (!targetChat) {
+        targetChat = Object.values(chatsByProject)
+          .flat()
+          .find((chat) => Number(chat.id) === Number(chatId));
+      }
+
+      if (!targetChat) {
+        try {
+          targetChat = await getChat(chatId);
+          useChatStore.getState().addChat(targetChat);
+        } catch {
+          // Let ChatWindow's target resolution show the normal not-found state.
+        }
+      }
+
+      const rawProjectId = targetChat?.project_id ?? targetChat?.project ?? targetProjectId ?? selectedProjectId;
+      const parsedProjectId = rawProjectId ? Number(rawProjectId) : NaN;
+      if (Number.isFinite(parsedProjectId) && parsedProjectId > 0) {
+        targetProjectId = parsedProjectId;
+        setSelectedProjectId(parsedProjectId);
+      }
+
+      const params = new URLSearchParams(searchParams.toString());
+      if (targetProjectId) params.set('projectId', String(targetProjectId));
+      params.set('chatId', String(chatId));
+      params.set('jumpId', `saved:${chatId}:${parentMsgId ?? msgId}:${msgId}:${Date.now()}`);
+
+      if (parentMsgId) {
+        params.set('messageId', String(parentMsgId));
+        params.set('threadMessageId', String(msgId));
+      } else {
+        params.set('messageId', String(msgId));
+        params.delete('threadMessageId');
+      }
+
+      setCurrentChat(chatId);
+      router.push(`/messages?${params.toString()}`);
+    },
+    [chatsByProject, router, searchParams, selectedProjectId, setCurrentChat],
+  );
+
+  // Sidebar chat-list filter input (mobile drawer only).
   const renderSearchInput = (testId: string) => (
     <div className="relative w-full">
       <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
       <input
         type="text"
-        placeholder="Search conversations..."
+        placeholder="Search conversations…"
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         className="w-full rounded-md border border-gray-200 py-1.5 pl-10 pr-4 text-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/30"
         data-testid={testId}
+        aria-label="Search conversations"
       />
     </div>
   );
@@ -283,8 +395,62 @@ export default function MessagePageContent() {
           <PanelLeftOpen className="h-4 w-4" />
           <span className="hidden min-[380px]:inline">Chats</span>
         </button>
-        <div className="ml-auto hidden flex-1 md:block md:max-w-md">
-          {renderSearchInput('messages-search')}
+        <div className="ml-auto hidden items-center gap-1 md:flex">
+          {selectedProjectId && (
+            <div className="relative group/browse">
+              <button
+                type="button"
+                onClick={() => setIsBrowseOpen(true)}
+                className="rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+                aria-label="Browse channels"
+              >
+                <Hash className="h-4 w-4" />
+              </button>
+              <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-50 whitespace-nowrap rounded-md bg-white px-2 py-1 text-xs text-gray-700 shadow-md ring-1 ring-gray-200 opacity-0 group-hover/browse:opacity-100 transition-opacity">
+                Browse channels
+              </div>
+            </div>
+          )}
+          <div className="relative group/search">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSearchOpen(true);
+                setIsSavedOpen(false);
+              }}
+              className="rounded-md p-2 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
+              data-testid="messages-search"
+              aria-label="Search messages"
+            >
+              <Search className="h-4 w-4" />
+            </button>
+            <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-50 whitespace-nowrap rounded-md bg-white px-2 py-1 text-xs text-gray-700 shadow-md ring-1 ring-gray-200 opacity-0 group-hover/search:opacity-100 transition-opacity">
+              Search messages
+            </div>
+          </div>
+          <div className="relative group/saved">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSavedOpen((v) => !v);
+                setIsSearchOpen(false);
+              }}
+              className={[
+                'rounded-md p-2 transition',
+                isSavedOpen
+                  ? 'bg-teal-50 text-teal-700'
+                  : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600',
+              ].join(' ')}
+              data-testid="messages-saved"
+              aria-label="Saved messages"
+              aria-pressed={isSavedOpen}
+            >
+              <Bookmark className="h-4 w-4" />
+            </button>
+            <div className="pointer-events-none absolute right-0 top-full mt-1.5 z-50 whitespace-nowrap rounded-md bg-white px-2 py-1 text-xs text-gray-700 shadow-md ring-1 ring-gray-200 opacity-0 group-hover/saved:opacity-100 transition-opacity">
+              Saved messages
+            </div>
+          </div>
         </div>
       </div>
 
@@ -303,6 +469,9 @@ export default function MessagePageContent() {
         mobileSidebarOpen={isConversationDrawerOpen}
         onMobileSidebarOpenChange={setIsConversationDrawerOpen}
         mobileSidebarHeader={renderSearchInput('messages-mobile-search')}
+        isSearchActive={isSearchingConversations}
+        onSearchInChat={handleSearchInChat}
+        onOpenChannelDetails={handleOpenChannelDetails}
         chatListEmptyState={
           selectedProjectId ? (
             <div className="p-6 text-sm text-gray-500">No chats yet</div>
@@ -316,7 +485,25 @@ export default function MessagePageContent() {
           )
         }
         chatPanel={
-          projectSelectionLoading ? (
+          isSearchOpen ? (
+            <div className="h-full">
+              <SearchPanel
+                projectId={selectedProjectId}
+                chats={chats}
+                onSelectResult={handleSelectSearchResult}
+                onClose={() => setIsSearchOpen(false)}
+                initialFilters={searchInitialFilters}
+                filterSignal={searchFilterSignal}
+              />
+            </div>
+          ) : isSavedOpen ? (
+            <div className="h-full">
+              <SavedItemsPanel
+                onClose={() => setIsSavedOpen(false)}
+                onJumpToMessage={handleSavedJump}
+              />
+            </div>
+          ) : projectSelectionLoading ? (
             <div className="flex-1" />
           ) : !selectedProjectId ? (
             <div className="flex-1 flex items-center justify-center p-6 text-center">
@@ -326,7 +513,7 @@ export default function MessagePageContent() {
                   Select a project to start
                 </h3>
                 <p className="text-gray-500 text-sm max-w-sm">
-                  Choose a project from the dropdown above to view and manage your team conversations.
+                  Select a project from the workspace navigation to view and manage team conversations.
                 </p>
               </div>
             </div>
@@ -356,6 +543,8 @@ export default function MessagePageContent() {
                 chat={currentChat}
                 onBack={handleBackToList}
                 roleByUserId={roleByUserId}
+                hideBackOnDesktop
+                openDetailsSignal={detailsSignal ?? undefined}
               />
             </div>
           )
@@ -380,6 +569,30 @@ export default function MessagePageContent() {
           />
         </>
       )}
+
+      {/* Browse channels dialog */}
+      {isBrowseOpen && selectedProjectId && (
+        <BrowseChannelsDialog
+          projectId={selectedProjectId}
+          currentUserId={currentUserId}
+          onClose={() => setIsBrowseOpen(false)}
+          onJoinedChannel={(chatId) => {
+            setIsBrowseOpen(false);
+            getChat(chatId)
+              .then((joined) => useChatStore.getState().addChat(joined))
+              .catch(() => {});
+          }}
+        />
+      )}
+
+      {/* Cmd/Ctrl-K conversation switcher */}
+      <ChatCommandPalette
+        isOpen={isCommandPaletteOpen}
+        onOpenChange={setIsCommandPaletteOpen}
+        projectId={selectedProjectId}
+        currentChatId={currentChatId}
+        onSelectChat={handleSelectChat}
+      />
     </div>
   );
 }

@@ -45,6 +45,14 @@ class Task(models.Model):
       null=True,
       help_text="The user who is currently reviewing the task"
     )
+    owner_invite_pending = models.BooleanField(
+        default=False,
+        help_text="True while the assigned owner has not yet accepted the task assignment.",
+    )
+    approver_invite_pending = models.BooleanField(
+        default=False,
+        help_text="True while the assigned approver has not yet accepted the approver assignment.",
+    )
     created_by = models.ForeignKey(
       User,
       related_name='created_tasks',
@@ -171,6 +179,12 @@ class Task(models.Model):
         null=True,
         blank=True,
         help_text="Draft form state captured from task create panel",
+    )
+
+    tags = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Frontend-owned task tags [{name, color}, ...]",
     )
 
     # Lineage: optional one-to-one link when this task was converted from a meeting action item.
@@ -875,7 +889,7 @@ class TaskFieldHistory(models.Model):
 
     TRACKED_FIELDS = [
         'summary', 'status', 'priority', 'type', 'owner',
-        'due_date', 'planned_start_date', 'description',
+        'due_date', 'planned_start_date', 'description', 'tags',
     ]
 
     task = models.ForeignKey(

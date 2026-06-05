@@ -1,11 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Search, Loader2, AlertCircle, Mail } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import ProjectCard from '@/components/select-project/ProjectCard';
 import CreateProjectCard from '@/components/select-project/CreateProjectCard';
+import CreateProjectChoiceModal from '@/components/select-project/CreateProjectChoiceModal';
 import QuickCreateProjectModal from '@/components/select-project/QuickCreateProjectModal';
 import ChatFAB from '@/components/global-chat/ChatFAB';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -13,8 +15,13 @@ import Modal from '@/components/ui/Modal';
 import { useProjects } from '@/hooks/useProjects';
 import { useProjectStore } from '@/lib/projectStore';
 import { ProjectAPI, type ProjectInvitationData } from '@/lib/api/projectApi';
+import { quickStartPathWithCreateProjectReturn } from '@/lib/quickStartReturn';
+
+type CreateProjectFlow = 'closed' | 'chooser' | 'classic';
 
 export default function SelectProjectPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     projects,
     loading,
@@ -31,7 +38,13 @@ export default function SelectProjectPage() {
   const [invitesError, setInvitesError] = useState<string | null>(null);
   const [acceptingInviteId, setAcceptingInviteId] = useState<number | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createFlow, setCreateFlow] = useState<CreateProjectFlow>('closed');
+
+  useEffect(() => {
+    if (searchParams.get('create') !== 'chooser') return;
+    setCreateFlow('chooser');
+    router.replace('/select-project');
+  }, [searchParams, router]);
 
   const loadPendingInvites = useCallback(async () => {
     try {
@@ -272,7 +285,7 @@ export default function SelectProjectPage() {
                 deleting={deletingProjectId === project.id}
               />
             ))}
-            <CreateProjectCard onClick={() => setCreateOpen(true)} />
+            <CreateProjectCard onClick={() => setCreateFlow('chooser')} />
           </div>
         )}
 
@@ -283,9 +296,19 @@ export default function SelectProjectPage() {
         )}
       </div>
 
+      <CreateProjectChoiceModal
+        open={createFlow === 'chooser'}
+        onClose={() => setCreateFlow('closed')}
+        onQuickStart={() => {
+          router.push(quickStartPathWithCreateProjectReturn());
+        }}
+        onClassic={() => setCreateFlow('classic')}
+      />
+
       <QuickCreateProjectModal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        open={createFlow === 'classic'}
+        onClose={() => setCreateFlow('closed')}
+        onExit={() => setCreateFlow('chooser')}
         onCreated={async () => {
           await fetchProjects();
         }}

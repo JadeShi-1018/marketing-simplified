@@ -23,7 +23,7 @@ import {
   exportMatrixToCSV,
   exportMatrixToXLSX,
 } from '@/components/spreadsheets/spreadsheetImportExport';
-import { formatDateShort } from '@/components/tasks/TYPE_META';
+import { formatTaskDateShort } from '@/lib/tasks/taskDates';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -71,7 +71,7 @@ interface StatusReportData {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string) {
-  return formatDateShort(iso);
+  return formatTaskDateShort(iso);
 }
 
 /** Converts "UNDER_REVIEW" → "Under Review", "high" → "High", etc. */

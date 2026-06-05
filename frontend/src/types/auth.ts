@@ -14,6 +14,8 @@ export interface User {
   last_name?: string;
   avatar?: string;
   is_staff?: boolean;
+  is_org_admin?: boolean;
+  is_csm_admin?: boolean;
   organization: Organization | null;
   roles: string[];
   team_id?: number;

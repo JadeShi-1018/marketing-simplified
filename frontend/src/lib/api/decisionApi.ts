@@ -19,6 +19,7 @@ export interface DecisionDraftPayload {
   riskLevel?: string | null;
   confidenceScore?: number | null;
   options?: DecisionOptionDraft[];
+  topic?: string | null;
 }
 
 export interface DecisionSignalPayload {
@@ -31,6 +32,12 @@ export interface DecisionSignalPayload {
   deltaValue?: DecisionSignal['deltaValue'] | null;
   deltaUnit?: DecisionSignal['deltaUnit'] | null;
   displayTextOverride?: DecisionSignal['displayTextOverride'] | null;
+}
+
+export interface DecisionTopicLabelResponse {
+  topic: string;
+  title: string;
+  defaultTitle: string;
 }
 
 const withProject = (projectId?: number | null) => {
@@ -76,6 +83,19 @@ export const DecisionAPI = {
     const response = await api.get<DecisionCommittedResponse>(
       `/api/decisions/${decisionId}/`,
       withProject(projectId)
+    );
+    return response.data;
+  },
+  /** Update content fields on committed/reviewed decisions (tree panel amend). */
+  patchDecision: async (
+    decisionId: number,
+    payload: DecisionDraftPayload,
+    projectId?: number | null,
+  ) => {
+    const response = await api.patch<DecisionCommittedResponse>(
+      `/api/decisions/${decisionId}/`,
+      payload,
+      withProject(projectId),
     );
     return response.data;
   },
@@ -157,9 +177,15 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  getDecisionGraph: async (projectId: number): Promise<DecisionGraphResponse> => {
+  getDecisionGraph: async (
+    projectId: number,
+    options?: { scope?: 'project' | 'all_projects' },
+  ): Promise<DecisionGraphResponse> => {
     const response = await api.get<DecisionGraphResponse>(
-      `/api/core/projects/${projectId}/decisions/graph/`
+      `/api/core/projects/${projectId}/decisions/graph/`,
+      options?.scope && options.scope !== 'project'
+        ? { params: { scope: options.scope } }
+        : undefined,
     );
     return response.data;
   },
@@ -181,6 +207,71 @@ export const DecisionAPI = {
       withProject(projectId)
     );
     return response.data;
+  },
+  updateConnectionsById: async (
+    decisionId: number,
+    connectedDecisionIds: number[],
+    projectId?: number | null
+  ) => {
+    const response = await api.put<DecisionConnectionsResponse>(
+      `/api/decisions/${decisionId}/connections/`,
+      { connectedDecisionIds },
+      withProject(projectId)
+    );
+    return response.data;
+  },
+  moveDecisionToProject: async (
+    decisionId: number,
+    fromProjectId: number,
+    targetProjectId: number,
+  ) => {
+    const response = await api.post<DecisionDraftResponse>(
+      `/api/decisions/${decisionId}/move-project/`,
+      { projectId: targetProjectId },
+      withProject(fromProjectId),
+    );
+    return response.data;
+  },
+  moveDecisionToTopic: async (
+    decisionId: number,
+    projectId: number,
+    topic: string,
+  ) => {
+    const response = await api.post<DecisionDraftResponse>(
+      `/api/decisions/${decisionId}/move-topic/`,
+      { topic },
+      withProject(projectId),
+    );
+    return response.data;
+  },
+  renameDecisionTopic: async (
+    projectId: number,
+    topic: string,
+    title: string,
+  ) => {
+    const response = await api.patch<DecisionTopicLabelResponse>(
+      `/api/core/projects/${projectId}/decision-topic-labels/${topic}/`,
+      { title },
+    );
+    return response.data;
+  },
+  createDecisionTopic: async (
+    projectId: number,
+    title: string,
+  ) => {
+    const response = await api.post<DecisionTopicLabelResponse>(
+      `/api/core/projects/${projectId}/decision-topic-labels/${encodeURIComponent(title)}/`,
+      { title },
+    );
+    return response.data;
+  },
+  deleteDecisionTopic: async (
+    projectId: number,
+    topic: string,
+  ) => {
+    await api.delete(
+      `/api/core/projects/${projectId}/decision-topic-labels/${encodeURIComponent(topic)}/`,
+    );
   },
   createSignal: async (
     decisionId: number,

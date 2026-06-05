@@ -25,6 +25,7 @@ class Decision(TimeStampedModel):
         HIGH = 'HIGH', 'High'
 
     title = models.CharField(max_length=255, null=True, blank=True)
+    topic = models.CharField(max_length=64, blank=True, default="other")
     context_summary = models.TextField(null=True, blank=True)
     reasoning = models.TextField(null=True, blank=True)
     risk_level = models.CharField(max_length=10, choices=RiskLevel.choices, null=True, blank=True)
@@ -148,23 +149,8 @@ class Decision(TimeStampedModel):
             raise ValidationError("Decision must be saved before commit.")
 
         errors = {}
-        if not self.context_summary:
-            errors["context_summary"] = "Context summary is required before commit."
-        if self.signals.count() < 1:
-            errors["signals"] = "At least one signal is required before commit."
-        if self.options.count() < 2:
-            errors["options"] = "At least two options are required before commit."
-        non_empty_options = self.options.exclude(text__isnull=True).exclude(text__exact="").count()
-        if non_empty_options < 2:
-            errors["options"] = "At least two non-empty options are required before commit."
-        if self.options.filter(is_selected=True).count() != 1:
-            errors["options_selected"] = "Exactly one option must be selected before commit."
-        if not self.reasoning:
-            errors["reasoning"] = "Reasoning is required before commit."
-        if not self.risk_level:
-            errors["risk_level"] = "Risk level is required before commit."
-        if self.confidence is None:
-            errors["confidence"] = "Confidence is required before commit."
+        if not (self.title or "").strip():
+            errors["title"] = "Title is required before commit."
 
         if errors:
             raise ValidationError(errors)
@@ -214,7 +200,38 @@ class Decision(TimeStampedModel):
         return None
 
 
+class DecisionTopicLabel(TimeStampedModel):
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='decision_topic_labels',
+    )
+    topic = models.CharField(max_length=64)
+    title = models.CharField(max_length=80)
+
+    class Meta:
+        db_table = 'decision_topic_labels'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'topic'],
+                name='unique_project_decision_topic_label',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.project_id}:{self.topic} -> {self.title}"
+
+
 class DecisionEdge(TimeStampedModel):
+    class EdgeType(models.TextChoices):
+        FOLLOW_UP = 'FOLLOW_UP', 'Follow-up'
+        RELATED = 'RELATED', 'Related'
+
+    edge_type = models.CharField(
+        max_length=32,
+        choices=EdgeType.choices,
+        default=EdgeType.RELATED,
+    )
     from_decision = models.ForeignKey(
         Decision,
         on_delete=models.CASCADE,

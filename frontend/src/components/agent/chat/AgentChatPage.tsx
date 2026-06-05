@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useRef, useEffect } from "react"
+import { useState, useCallback, useRef, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { useAgentLayout, type AgentView } from "@/components/agent/AgentLayoutContext"
 import { WelcomeScreen } from "./WelcomeScreen"
@@ -10,10 +10,20 @@ import { ActionBar } from "./ActionBar"
 import { ApprovalToggle } from "./ApprovalToggle"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import { AgentAPI } from "@/lib/api/agentApi"
+import {
+  setAgentMessageBoardWaitingForFileAnalysisResponse,
+  setAgentMessageBoardRenderEffectsCompletedOnQuit,
+  shouldShowAgentMessageBoardThinkingBubbleOnRevisit,
+} from "@/lib/agentMessageBoardReadState"
 import type { SSEEvent, AgentAction, AgentMessage, AnalysisResult, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
 import { AGENT_MESSAGES } from "@/lib/agentMessages"
 import type { StepProgressItem } from "./StepProgress"
 import type { TaskGenerationStatus } from "./TaskListCard"
+import {
+  AGENT_PANEL_OPENED_EVENT,
+  consumeCalendarPreload,
+  type CalendarPreload,
+} from "@/lib/agentLaunchContext"
 
 function getPendingMiroWorkflowRunIds(messages: ChatMessage[]): string[] {
   // Only treat "miro_board_created" as done — a prior failure can be retried for the same
@@ -152,8 +162,6 @@ function mergeMiroGenerationStartedIntoMessages(
   return dedupeMiroGenerationStartedMessages(stripped)
 }
 
-type CalendarPreload = { message: string; context: Record<string, unknown> }
-
 function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMessage[] {
   if (event.type !== "miro_status") return prev
   const eventType = event.data?.event_type
@@ -224,34 +232,8 @@ function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMess
   return prev
 }
 
-// Module-level flag — persists across React StrictMode's unmount+remount cycles.
-// Reset to false each time new calendar context is loaded so the auto-send fires once per navigation.
+// Reset when new calendar context is consumed so auto-send fires once per launch.
 let _calendarAutoSendFired = false
-
-function buildCalendarPreload(): CalendarPreload | null {
-  if (typeof window === "undefined") return null
-  const raw = sessionStorage.getItem("agent-calendar-context")
-  if (!raw) return null
-  sessionStorage.removeItem("agent-calendar-context")
-  _calendarAutoSendFired = false  // new context arrived — allow one send
-  try {
-    const ctx = JSON.parse(raw)
-    let message: string
-    if (ctx.type === "event") {
-      const start = new Date(ctx.startDatetime)
-      const end = new Date(ctx.endDatetime)
-      const dateStr = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
-      const startTime = start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      const endTime = end.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      message = `I'm looking at a calendar event: "${ctx.eventTitle}" on ${dateStr} from ${startTime} to ${endTime}.${ctx.description ? ` Description: ${ctx.description}.` : ""} Can you help me understand this event and suggest what I should prepare or do?`
-    } else {
-      message = `I'm viewing my calendar (${ctx.currentView ?? "week"} view). Can you help me understand my calendar events, check my availability, or assist with scheduling?`
-    }
-    return { message, context: ctx }
-  } catch {
-    return null
-  }
-}
 
 type AgentChatPageProps = {
   /** Hide title + approval row; used when the floating window title bar shows them. */
@@ -305,7 +287,13 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const abortRef = useRef<AbortController | null>(null)
   const activeStreamTokenRef = useRef(0)
   const sessionLoadRequestRef = useRef(0)
-  const [pendingCalendarPreload] = useState<CalendarPreload | null>(buildCalendarPreload)
+  const [pendingCalendarPreload, setPendingCalendarPreload] = useState<CalendarPreload | null>(() => {
+    const preload = consumeCalendarPreload()
+    if (preload) {
+      _calendarAutoSendFired = false
+    }
+    return preload
+  })
   // Persist calendar context for the lifetime of this session so follow-up messages
   // also go through the calendar workflow, not the generic fallback.
   const [sessionCalendarContext, setSessionCalendarContext] = useState<Record<string, unknown> | null>(
@@ -327,6 +315,18 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     ? "You can send one follow-up message now. Ask for an explanation, a short report, or forwarding to specific project members."
     : undefined
   const latestAnalysisMessageId = [...messages].reverse().find((message) => message.type === "analysis")?.id ?? null
+  const [renderFinishSignal, setRenderFinishSignal] = useState(0)
+  const showRevisitThinkingBubble = useMemo(() => {
+    // Important: this value is persisted outside React (localStorage). We must re-check it
+    // once the message board finishes (re)rendering, otherwise a revisit can miss the
+    // transition to `renderFinish=true`.
+    void renderFinishSignal
+    return Boolean(
+      sessionId &&
+        !isStreaming &&
+        shouldShowAgentMessageBoardThinkingBubbleOnRevisit(sessionId)
+    )
+  }, [sessionId, isStreaming, renderFinishSignal])
 
   const sessionIdRef = useRef<string | null>(null)
   const stepProgressMsgIdRef = useRef<string | null>(null)
@@ -473,6 +473,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       if (m.message_type === "task_created" || m.data?.task_ids) restoredStepState.tasksCreated = true
     }
     setStepState(restoredStepState)
+    if (restoredStepState.analysisComplete) {
+      setAgentMessageBoardWaitingForFileAnalysisResponse(String(session.id), false)
+    }
     const pendingTaskApprovalFromMessages = !restoredStepState.tasksCreated
       ? [...restored].reverse().find((message) => message.approval?.kind === "task")?.approval ?? null
       : null
@@ -517,7 +520,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           /* ignore */
         })
     }
-  }, [setSessionId, embeddedInFloating, queueAutoExternalActionsAfterAnalysis])
+  }, [
+    setSessionId,
+    embeddedInFloating,
+    queueAutoExternalActionsAfterAnalysis,
+  ])
 
   const refreshFollowUpState = useCallback(async (id: string) => {
     try {
@@ -540,6 +547,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   }, [])
 
   const invalidateActiveStreams = useCallback(() => {
+    const sid = sessionIdRef.current
+    const streaming = isStreamingRef.current
+    if (sid && streaming) {
+      setAgentMessageBoardWaitingForFileAnalysisResponse(String(sid), true)
+    }
     activeStreamTokenRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
@@ -570,6 +582,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
       }
       setMessages(dedupeMiroGenerationStartedMessages(restored))
+      const hasAnalysis = session.messages.some((message) => Boolean(message.data?.anomalies))
+      if (hasAnalysis) {
+        setAgentMessageBoardWaitingForFileAnalysisResponse(String(id), false)
+      }
       setApprovalRequired(Boolean(session.approval_required))
       setFollowUpAvailable(Boolean(session.follow_up_available))
       setFollowUpStarted(Boolean(session.follow_up_started))
@@ -625,7 +641,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   // Abort SSE on unmount
   useEffect(() => {
-    return () => { abortRef.current?.abort() }
+    return () => {
+      const sid = sessionIdRef.current
+      const streaming = isStreamingRef.current
+      // Persist "waiting" so revisit can show the thinking bubble once render finishes.
+      if (sid && streaming) {
+        setAgentMessageBoardWaitingForFileAnalysisResponse(String(sid), true)
+      }
+      abortRef.current?.abort()
+    }
   }, [])
 
   useEffect(() => {
@@ -679,6 +703,43 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     }
   }, [getApprovalPref, loadSessionById])
 
+  // Calendar context staged while the panel was closed (Calendar → Ask Agent).
+  useEffect(() => {
+    const onPanelOpened = () => {
+      const preload = consumeCalendarPreload()
+      if (!preload) {
+        return
+      }
+      sessionLoadRequestRef.current += 1
+      invalidateActiveStreams()
+      resetTransientChatUiState()
+      setSessionId(null)
+      sessionStorage.removeItem("agent-session-calendar-context")
+      setMessages([])
+      setHasStarted(false)
+      setFollowUpAvailable(false)
+      setFollowUpStarted(false)
+      setSessionTitle("Chat")
+      setApprovalRequired(getApprovalPref())
+      setStepState({ analysisComplete: false, tasksCreated: false })
+      setGeneratedTaskIndexes([])
+      setSkippedTaskIndexes([])
+      setCreatedTaskIdByIndex({})
+      setTaskGenerationStatus("idle")
+      setSessionCalendarContext(preload.context)
+      setPendingCalendarPreload(preload)
+      _calendarAutoSendFired = false
+    }
+
+    window.addEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpened)
+    return () => window.removeEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpened)
+  }, [
+    getApprovalPref,
+    invalidateActiveStreams,
+    resetTransientChatUiState,
+    setSessionId,
+  ])
+
   // Listen for sidebar events
   useEffect(() => {
     const handleNewChat = () => {
@@ -725,7 +786,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   }, [])
 
   /** Handle file upload — calls upload-analyze SSE endpoint */
-  const handleFileUpload = useCallback(async (file: File) => {
+  const handleFileUpload = useCallback(async (file: File, userContext?: string) => {
     setHasStarted(true)
     // Reset workflow state so a new upload always starts from analysis
     setStepState({ analysisComplete: false, tasksCreated: false })
@@ -778,10 +839,13 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
     const streamToken = activeStreamTokenRef.current
     const requestSessionId = String(sid)
+    setAgentMessageBoardRenderEffectsCompletedOnQuit(requestSessionId, false)
+    setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, true)
 
     abortRef.current = AgentAPI.uploadAndAnalyze(
       file,
       sid,
+      userContext || null,
       (event: SSEEvent) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
@@ -833,6 +897,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             updateMessage(aiMsgId, { content: contentParts.join("\n") })
           }
         } else if (event.type === "analysis") {
+          setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           contentParts.push(event.content || "")
           analysisData = (event.data as unknown as AnalysisResult) || null
           latestRecommendedTasksRef.current = analysisData?.recommended_tasks || null
@@ -886,8 +951,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             isFollowUpPrompt: true,
           })
         } else if (event.type === "error") {
+          setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           updateMessage(aiMsgId, { content: event.content || "An error occurred.", type: "error" })
         } else if (event.type === "done") {
+          // Stream ended: stop the revisit thinking state.
+          setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           // Capture session_id from done event
           const sid = event.data?.session_id
           if (sid) {
@@ -921,12 +989,14 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       (error) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
+        setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
         updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
         setIsStreaming(false)
       },
       () => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
+        setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
         void refreshSession(requestSessionId)
         void refreshFollowUpState(requestSessionId)
         setIsStreaming(false)
@@ -1127,7 +1197,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   }, [setSessionId])
 
   /** Handle text message send */
-  const handleSendMessage = useCallback(async (text: string, calendarContext?: Record<string, unknown>) => {
+  const handleSendMessage = useCallback(async (
+    text: string,
+    calendarContext?: Record<string, unknown>,
+    userContext?: string,
+  ) => {
     setHasStarted(true)
     // Use provided context or fall back to the session-level calendar context
     const effectiveCalendarContext = calendarContext ?? sessionCalendarContext ?? undefined
@@ -1173,6 +1247,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       {
         message: text,
         ...(effectiveCalendarContext ? { calendar_context: effectiveCalendarContext as any } : {}),
+        user_context: userContext || undefined,
       },
       (event: SSEEvent) => {
         if (activeStreamTokenRef.current !== streamToken) return
@@ -1759,6 +1834,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         {...({
           messages,
           sessionId,
+          isStreaming,
+          showRevisitThinkingBubble,
+          onRenderFinishChange: () => setRenderFinishSignal((prev) => prev + 1),
           approvalDisabled: isStreaming,
           approvalRequired,
           generatedTaskIndexes,
@@ -1800,7 +1878,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       )}
       <ActionBar stepState={stepState} onReupload={handleReupload} disabled={isStreaming} />
       <ChatInput
-        onSend={handleSendMessage}
+        onSend={(msg, ctx) => handleSendMessage(msg, undefined, ctx)}
         onFileUpload={handleFileUpload}
         disabled={isStreaming}
         placeholder={inputPlaceholder}

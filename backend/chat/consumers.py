@@ -1,15 +1,20 @@
 import logging
 import json
+import asyncio
+import uuid
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.cache import cache
 from .models import Chat, ChatParticipant, Message, MessageStatus
-from .services import OnlineStatusService, MessageService
-from .tasks import build_realtime_message_payload
+from .services import ChatService, OnlineStatusService, MessageService
+from .tasks import build_realtime_message_payload, finalize_presence_offline, finalize_presence_offline_now
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+TYPING_THROTTLE_SECONDS = 1
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -37,6 +42,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Handle WebSocket connection"""
         self.user_id = self.scope['url_route']['kwargs']['user_id']
         self.user = self.scope.get('user')
+        self.presence_connection_id = uuid.uuid4().hex
         
         # Verify authentication
         if not self.user or not self.user.is_authenticated:
@@ -57,11 +63,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         
-        # Mark user as online
-        await database_sync_to_async(OnlineStatusService.set_online)(self.user.id)
+        # Track this websocket so one closed tab does not mark a still-connected user offline.
+        connection_count, became_online, presence_version = await sync_to_async(
+            OnlineStatusService.connection_opened,
+            thread_sensitive=False,
+        )(self.user.id, self.presence_connection_id)
         
         await self.accept()
         logger.info(f"[WebSocket] User {self.user_id} ({self.user.username}) connected and marked as ONLINE")
+
+        presence_recipient_ids = await database_sync_to_async(self.get_presence_recipient_ids)()
+        await self.send_presence_snapshot(presence_recipient_ids)
+
+        if became_online:
+            await self.broadcast_presence_update(
+                is_online=True,
+                recipient_ids=presence_recipient_ids,
+                version=presence_version,
+            )
         
         # Send any queued messages
         await self.send_queued_messages()
@@ -75,10 +94,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.channel_name
             )
             
-            # Mark user as offline
+            # Mark user offline only after their last websocket disconnects.
             if hasattr(self, 'user') and self.user:
-                await database_sync_to_async(OnlineStatusService.set_offline)(self.user.id)
-                logger.info(f"[WebSocket] User {self.user_id} ({self.user.username}) disconnected and marked as OFFLINE (code: {close_code})")
+                remaining_connections, offline_token = await sync_to_async(
+                    OnlineStatusService.connection_closed,
+                    thread_sensitive=False,
+                )(self.user.id, getattr(self, 'presence_connection_id', self.channel_name))
+                logger.info(
+                    f"[WebSocket] User {self.user_id} ({self.user.username}) disconnected "
+                    f"(remaining connections: {remaining_connections}, code: {close_code})"
+                )
+                if offline_token:
+                    if OnlineStatusService.OFFLINE_GRACE_SECONDS > 0:
+                        finalize_presence_offline.apply_async(
+                            args=[self.user.id, offline_token],
+                            countdown=OnlineStatusService.OFFLINE_GRACE_SECONDS,
+                        )
+                    else:
+                        await sync_to_async(
+                            finalize_presence_offline_now,
+                            thread_sensitive=False,
+                        )(self.user.id, offline_token)
             else:
                 logger.info(f"[WebSocket] User {self.user_id} disconnected (code: {close_code})")
     
@@ -164,6 +200,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not chat_id:
             await self.send_error("chat_id is required")
             return
+
+        if not await self._allow_typing_event(chat_id, True):
+            return
         
         try:
             # Broadcast to all participants except sender
@@ -193,6 +232,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         if not chat_id:
             await self.send_error("chat_id is required")
+            return
+
+        if not await self._allow_typing_event(chat_id, False):
             return
         
         try:
@@ -252,7 +294,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def handle_heartbeat(self, data):
         """Handle heartbeat to keep connection alive"""
         # Update online status
-        await database_sync_to_async(OnlineStatusService.set_online)(self.user.id)
+        await sync_to_async(OnlineStatusService.heartbeat, thread_sensitive=False)(
+            self.user.id,
+            getattr(self, 'presence_connection_id', None),
+        )
         logger.debug(f"[WebSocket] Heartbeat from user {self.user_id}, refreshed online status")
         
         # Send pong response
@@ -314,7 +359,47 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'type': 'chat_created',
             'chat': event['chat']
         }))
-    
+
+    async def in_app_notification(self, event):
+        """Push in-app notification (bell) to the same channel as chat."""
+        await self.send(text_data=json.dumps({
+            'type': 'in_app_notification',
+            'notification': event['notification'],
+        }))
+
+    async def reaction_update(self, event):
+        """Send reaction update to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'reaction_update',
+            'reaction': event['reaction'],
+        }))
+
+    async def presence_update(self, event):
+        """Send user online/offline status changes to WebSocket"""
+        await self.send(text_data=json.dumps({
+            'type': 'presence_update',
+            'user_id': event['user_id'],
+            'is_online': event['is_online'],
+            'version': event.get('version'),
+            'timestamp': event.get('timestamp'),
+        }))
+
+    async def presence_snapshot(self, event):
+        """Send initial presence state for users this socket can see."""
+        await self.send(text_data=json.dumps({
+            'type': 'presence_snapshot',
+            'users': event['users'],
+            'timestamp': event.get('timestamp'),
+        }))
+
+    async def user_session_revoked(self, event):
+        """Close this socket when the authenticated session is explicitly revoked."""
+        await self.send(text_data=json.dumps({
+            'type': 'user_session_revoked',
+            'reason': event.get('reason', 'session_revoked'),
+        }))
+        await self.close(code=4001)
+
     async def send_error(self, message):
         """Send error message to client"""
         await self.send(text_data=json.dumps({
@@ -340,6 +425,65 @@ class ChatConsumer(AsyncWebsocketConsumer):
             query = query.exclude(user_id=exclude_user_id)
         
         return list(query.values_list('user_id', flat=True))
+
+    def get_presence_recipient_ids(self):
+        """Users sharing an active chat with this user should receive presence changes."""
+        return ChatService.get_presence_recipient_ids(self.user.id)
+
+    async def send_presence_snapshot(self, user_ids=None):
+        try:
+            if user_ids is None:
+                user_ids = await database_sync_to_async(self.get_presence_recipient_ids)()
+            users = await sync_to_async(
+                OnlineStatusService.presence_snapshot,
+                thread_sensitive=False,
+            )(user_ids)
+            await self.send(text_data=json.dumps({
+                'type': 'presence_snapshot',
+                'users': users,
+                'timestamp': timezone.now().isoformat(),
+            }))
+        except Exception as e:
+            logger.error(f"Error sending presence snapshot for user {self.user_id}: {e}")
+
+    async def broadcast_presence_update(self, is_online: bool, recipient_ids=None, version=None):
+        """Broadcast this user's presence transition to shared chat participants."""
+        try:
+            if recipient_ids is None:
+                recipient_ids = await database_sync_to_async(self.get_presence_recipient_ids)()
+            recipient_ids = await sync_to_async(
+                OnlineStatusService.get_online_users,
+                thread_sensitive=False,
+            )(recipient_ids)
+            if not recipient_ids:
+                return
+            event = {
+                'type': 'presence_update',
+                'user_id': self.user.id,
+                'is_online': is_online,
+                'version': version,
+                'timestamp': timezone.now().isoformat(),
+            }
+            await asyncio.gather(*(
+                self.channel_layer.group_send(
+                    f'chat_user_{participant_id}',
+                    event,
+                )
+                for participant_id in recipient_ids
+            ))
+            logger.debug(
+                f"[WebSocket] Presence update for user {self.user_id} sent to "
+                f"{len(recipient_ids)} recipient(s): is_online={is_online}"
+            )
+        except Exception as e:
+            logger.error(f"Error broadcasting presence update for user {self.user_id}: {e}")
+
+    def allow_typing_event(self, chat_id, is_typing):
+        cache_key = f"chat:typing:{self.user.id}:{chat_id}:{int(is_typing)}"
+        return cache.add(cache_key, True, timeout=TYPING_THROTTLE_SECONDS)
+
+    async def _allow_typing_event(self, chat_id, is_typing):
+        return await database_sync_to_async(self.allow_typing_event)(chat_id, is_typing)
     
     def mark_message_read(self, message_id):
         """Mark a message as read"""

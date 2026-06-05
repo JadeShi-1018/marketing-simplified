@@ -10,8 +10,8 @@ declare global {
 
 // Caching session when logging in via page visit
 Cypress.Commands.add("login", () => {
-  const email = Cypress.expose("DEV_USER_EMAIL") || "devuser@example.com";
-  const password = Cypress.expose("DEV_USER_PASSWORD") || "password123!";
+  const email = Cypress.env("DEV_USER_EMAIL") || "devuser@example.com";
+  const password = Cypress.env("DEV_USER_PASSWORD") || "password123!";
 
   cy.session([email], () => {
     cy.visit("/login");

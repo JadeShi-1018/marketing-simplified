@@ -1,10 +1,10 @@
 import axios from 'axios';
-import { 
-  LoginRequest, 
-  LoginResponse, 
-  RegisterRequest, 
-  RegisterResponse, 
-  User, 
+import {
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  RegisterResponse,
+  User,
   AuthError,
   GoogleAuthResponse,
   SetPasswordRequest
@@ -15,6 +15,11 @@ const DEFAULT_API_BASE_URL = '';
 const API_BASE_URL =
   (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.trim()) ||
   DEFAULT_API_BASE_URL;
+
+/** Resolved API origin for browser and server; respects `NEXT_PUBLIC_API_URL` when set. */
+export function resolveApiBaseUrl(): string {
+  return API_BASE_URL;
+}
 
 // Create axios instance for API calls
 // indexes: null => array params serialize as repeated keys (e.g. status=A&status=B)
@@ -137,8 +142,8 @@ export const authAPI = {
     return response.data;
   },
   
-  logout: async (): Promise<{ message: string }> => {
-    const response = await api.post('/auth/logout/');
+  logout: async (refreshToken?: string | null): Promise<{ message: string }> => {
+    const response = await api.post('/auth/logout/', refreshToken ? { refresh_token: refreshToken } : {});
     return response.data;
   },
   
@@ -186,4 +191,59 @@ export const authAPI = {
   },
 };
 
-export default api; 
+export type CreateDecisionFromMeetingPayload = {
+  title?: string;
+  contextSummary?: string;
+  context_summary?: string;
+};
+
+export type DecisionOriginResponse = {
+  decisionId: number;
+  meeting: {
+    id: number;
+    title: string;
+  };
+  originTimestamp: string;
+  createdBy: number;
+  creationContext: Record<string, unknown>;
+};
+
+export const decisionCaptureAPI = {
+  createDecisionFromMeeting: async (
+    projectId: number | string,
+    meetingId: number | string,
+    payload: CreateDecisionFromMeetingPayload
+  ) => {
+    const response = await api.post(
+      `/api/projects/${projectId}/meetings/${meetingId}/decisions/`,
+      payload
+    );
+    return response.data;
+  },
+
+  getMeetingDecisions: async (
+    projectId: number | string,
+    meetingId: number | string
+  ) => {
+    const response = await api.get(
+      `/api/projects/${projectId}/meetings/${meetingId}/decisions/`
+    );
+    return response.data;
+  },
+
+  getDecisionOrigin: async (
+    decisionId: number | string,
+    projectId?: number | string
+  ): Promise<DecisionOriginResponse> => {
+    const response = await api.get(
+      `/api/decisions/${decisionId}/origin/`,
+      {
+        params: projectId ? { project_id: projectId } : undefined,
+      }
+    );
+    return response.data;
+  },
+};
+
+
+export default api;

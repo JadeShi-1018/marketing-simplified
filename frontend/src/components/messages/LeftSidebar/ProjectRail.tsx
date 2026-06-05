@@ -55,7 +55,7 @@ export default function ProjectRail({ selectedProjectId, onSelectProject }: Proj
         <FolderOpen className="w-5 h-5" />
       </div>
 
-      <div className="flex-1 overflow-y-auto w-full px-2 space-y-2">
+      <div className="task-tab-scrollbar flex-1 overflow-y-auto w-full px-2 space-y-2">
         {isLoading ? (
           <div className="space-y-2">
             {Array.from({ length: 4 }).map((_, idx) => (

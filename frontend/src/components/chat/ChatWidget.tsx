@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { useChatStore } from '@/lib/chatStore';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatData } from '@/hooks/useChatData';
-import { useChatSocket } from '@/hooks/useChatSocket';
+import { useNotificationSSE } from '@/hooks/useNotificationSSE';
 import ChatWidgetButton from './ChatWidgetButton';
 import ChatWidgetWindow from './ChatWidgetWindow';
 
@@ -122,29 +122,18 @@ export default function ChatWidget({ contextProjectId }: ChatWidgetProps = {}) {
     autoFetch: !!effectiveProjectId
   });
   
-  // Connect to WebSocket for real-time updates
-  const userId = user?.id ? Number(user.id) : null;
-  const socketEnabled = isWidgetOpen && !isMessagePageOpen;
-  const { connected } = useChatSocket(userId, {
-    enabled: socketEnabled,
-    onMessage: (message) => {
-      console.log('[ChatWidget] New message received:', message);
-    },
-    onOpen: () => {
-      console.log('[ChatWidget] Chat WebSocket connected');
-    },
-    onClose: () => {
-      console.warn('[ChatWidget] Chat WebSocket disconnected');
-    },
-  });
+  // SSE connection: delivers real-time notifications (bell badge) and signals
+  // chat activity so we can refresh the chat list without WebSocket.
+  useNotificationSSE();
 
-  // Refresh chats when WebSocket connects or project changes
+  // Refresh chats when an SSE chat event arrives (new message / new conversation).
+  const lastChatActivity = useChatStore(state => state.lastChatActivity);
   useEffect(() => {
-    if (connected && effectiveProjectId) {
+    if (effectiveProjectId && lastChatActivity) {
       fetchChats();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected, effectiveProjectId]); // Don't include fetchChats to avoid infinite loop
+  }, [lastChatActivity, effectiveProjectId]);
 
   // Don't render during SSR
   if (!isMounted) {

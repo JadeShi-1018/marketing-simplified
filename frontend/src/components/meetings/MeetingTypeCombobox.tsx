@@ -10,6 +10,7 @@ interface Props {
   placeholder?: string;
   ariaLabel?: string;
   id?: string;
+  disabled?: boolean;
 }
 
 export default function MeetingTypeCombobox({
@@ -19,6 +20,7 @@ export default function MeetingTypeCombobox({
   placeholder = 'Select or create a type…',
   ariaLabel,
   id,
+  disabled = false,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -65,8 +67,9 @@ export default function MeetingTypeCombobox({
         aria-label={ariaLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex w-full items-center justify-between gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none transition hover:border-gray-300 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        className="inline-flex w-full items-center justify-between gap-2 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-900 outline-none transition hover:border-gray-300 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/30 disabled:bg-gray-50 disabled:text-gray-500 disabled:cursor-not-allowed"
       >
         <span className={value ? '' : 'text-gray-400'}>{value || placeholder}</span>
         <ChevronDown className="h-3.5 w-3.5 shrink-0 text-gray-400" aria-hidden="true" />

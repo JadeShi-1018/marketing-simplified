@@ -13,3 +13,10 @@ class EventType(models.TextChoices):
     TASK_WRITE = 'TASK_WRITE', 'Task Write'
     IDLE_START = 'IDLE_START', 'Idle Start'
     IDLE_END = 'IDLE_END', 'Idle End'
+
+
+class Source(models.TextChoices):
+    MIDDLEWARE = 'middleware', 'Middleware'
+    EXPLICIT = 'explicit', 'Explicit'
+    # Reserved: no inbound path this release — re-enable when client endpoint ships
+    CLIENT = 'client', 'Client'

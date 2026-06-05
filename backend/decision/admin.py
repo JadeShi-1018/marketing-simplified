@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Decision, Signal, Option
+from .models import Decision, DecisionTopicLabel, Signal, Option
 
 
 class SignalInline(admin.TabularInline):
@@ -28,3 +28,10 @@ class DecisionAdmin(admin.ModelAdmin):
         'project_seq', 'is_reference_case',
     )
     inlines = [SignalInline, OptionInline]
+
+
+@admin.register(DecisionTopicLabel)
+class DecisionTopicLabelAdmin(admin.ModelAdmin):
+    list_display = ('id', 'project', 'topic', 'title')
+    list_filter = ('project',)
+    search_fields = ('topic', 'title', 'project__name')

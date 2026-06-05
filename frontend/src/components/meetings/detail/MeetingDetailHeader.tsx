@@ -1,10 +1,12 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Users, CalendarDays, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Users, CalendarDays, ExternalLink, History } from 'lucide-react';
 import type { Meeting, MeetingStatus } from '@/types/meeting';
 import MeetingStatusPill from '@/components/meetings/MeetingStatusPill';
 import MeetingFSMActionBar from './MeetingFSMActionBar';
+import AuditLogDrawer from '@/components/audit/AuditLogDrawer';
 
 interface Props {
   projectId: number;
@@ -46,6 +48,7 @@ export default function MeetingDetailHeader({
   onTransitioned,
   onOpenDocument,
 }: Props) {
+  const [isAuditDrawerOpen, setIsAuditDrawerOpen] = useState(false);
   const scheduled = formatScheduled(meeting.scheduled_date, meeting.scheduled_time);
 
   const preCheck = (target: string): string | null => {
@@ -73,15 +76,32 @@ export default function MeetingDetailHeader({
           <ArrowLeft className="h-3 w-3" aria-hidden="true" />
           <span>Meetings</span>
         </Link>
-        <button
-          type="button"
-          onClick={onOpenDocument}
-          className="inline-flex h-8 items-center gap-1 rounded-lg bg-white px-3 text-xs font-medium text-gray-700 ring-1 ring-gray-200 transition hover:ring-gray-300"
-        >
-          <span>Open document</span>
-          <ExternalLink className="h-3 w-3" aria-hidden="true" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsAuditDrawerOpen(true)}
+            className="inline-flex h-8 items-center gap-1 rounded-lg bg-white px-3 text-xs font-medium text-gray-700 ring-1 ring-gray-200 transition hover:ring-gray-300"
+          >
+            <History className="h-3 w-3" aria-hidden="true" />
+            <span>History</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenDocument}
+            className="inline-flex h-8 items-center gap-1 rounded-lg bg-white px-3 text-xs font-medium text-gray-700 ring-1 ring-gray-200 transition hover:ring-gray-300"
+          >
+            <span>Open document</span>
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </div>
       </nav>
+
+      <AuditLogDrawer
+        isOpen={isAuditDrawerOpen}
+        onClose={() => setIsAuditDrawerOpen(false)}
+        projectId={projectId}
+        meetingId={meeting.id}
+      />
 
       <div className="space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -107,14 +127,20 @@ export default function MeetingDetailHeader({
         </div>
       </div>
 
-      <MeetingFSMActionBar
-        projectId={projectId}
-        meetingId={meeting.id}
-        currentStatus={meeting.status}
-        availableTransitions={availableTransitions}
-        preCheck={preCheck}
-        onTransitioned={onTransitioned}
-      />
+      {meeting.status === 'archived' ? (
+        <p className="text-xs text-gray-400">
+          This meeting is archived and read-only.
+        </p>
+      ) : (
+        <MeetingFSMActionBar
+          projectId={projectId}
+          meetingId={meeting.id}
+          currentStatus={meeting.status}
+          availableTransitions={availableTransitions}
+          preCheck={preCheck}
+          onTransitioned={onTransitioned}
+        />
+      )}
     </header>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Image from "next/image";
 import { X, Play, Facebook, Instagram, Share2 } from "lucide-react";
 import { CanvasBlock, PreviewTab, SocialPlatform } from "../types";
@@ -25,6 +26,19 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   canvasBlocks,
   previewContainerRef,
 }) => {
+  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const root = document.createElement("div");
+    root.setAttribute("data-testid", "email-draft-preview-portal-root");
+    document.body.appendChild(root);
+    setPortalRoot(root);
+    return () => {
+      root.remove();
+      setPortalRoot(null);
+    };
+  }, []);
+
   const buildHref = (
     value?: string,
     type: "Web" | "Email" | "Phone" = "Web"
@@ -1415,14 +1429,16 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
     </div>
   );
 
-  if (!isPreviewOpen) return null;
+  if (!isPreviewOpen || !portalRoot) return null;
 
-  return (
+  return createPortal(
     <div
-      className="absolute inset-0 z-50 flex flex-col bg-black/40"
+      data-testid="email-draft-preview-overlay"
+      className="fixed inset-0 z-[100] flex flex-col bg-black/40"
       onClick={() => setIsPreviewOpen(false)}
     >
       <div
+        data-testid="email-draft-preview-panel"
         className="mt-auto bg-white rounded-t-3xl shadow-2xl border-t border-gray-200 h-[95vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
@@ -1466,7 +1482,8 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
           {renderPreviewEmailInfo()}
         </div>
       </div>
-    </div>
+    </div>,
+    portalRoot,
   );
 };
 

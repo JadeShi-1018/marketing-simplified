@@ -10,6 +10,7 @@ import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import type { TaskData } from '@/types/task';
+import { normalizeTaskFromApi } from '@/lib/tasks/normalizeTaskFromApi';
 
 import TaskDetailHeader from '@/components/tasks/detail/TaskDetailHeader';
 import TaskDescriptionBlock from '@/components/tasks/detail/TaskDescriptionBlock';
@@ -17,12 +18,13 @@ import TaskTypeBlock from '@/components/tasks/detail/TaskTypeBlock';
 import TaskSubtasksBlock from '@/components/tasks/detail/TaskSubtasksBlock';
 import TaskRelationsBlock from '@/components/tasks/detail/TaskRelationsBlock';
 import TaskAttachmentsBlock from '@/components/tasks/detail/TaskAttachmentsBlock';
-import TaskActivityBlock from '@/components/tasks/detail/TaskActivityBlock';
 import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlock';
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 import ApprovalTimelinePanel from '@/components/tasks/detail/ApprovalTimelinePanel';
 import { useAuthStore } from '@/lib/authStore';
+import { useTaskStore } from '@/lib/taskStore';
 import EngagementPanel from '@/components/tasks/detail/EngagementPanel';
+import CommentSection from '@/components/comments/CommentSection';
 
 export default function TaskV2DetailPage() {
   const params = useParams();
@@ -30,6 +32,7 @@ export default function TaskV2DetailPage() {
   const taskId = params?.taskId ? Number(params.taskId) : null;
 
   const [task, setTask] = useState<TaskData | null>(null);
+  const updateTaskInStore = useTaskStore((s) => s.updateTask);
   const projectId = task?.project?.id ?? task?.project_id ?? null;
   const { markInteraction } = useTaskTracking(taskId ?? 0, projectId);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
@@ -42,9 +45,12 @@ export default function TaskV2DetailPage() {
   const load = useCallback(
     async (options?: { internalRefetch?: boolean }) => {
       if (!taskId) return;
+      setLoading(true);
       try {
         const resp = await TaskAPI.getTask(taskId, options);
-        setTask(resp.data as TaskData);
+        const fresh = normalizeTaskFromApi(resp.data);
+        setTask(fresh);
+        if (fresh.id) updateTaskInStore(fresh.id, fresh);
         setError(null);
       } catch (e) {
         setError((e as any)?.response?.data?.detail || 'Failed to load task');
@@ -81,10 +87,15 @@ export default function TaskV2DetailPage() {
   }, []);
 
   /** Reload task shell after field/status edits; does not count as a page open. */
-  const reloadTask = useCallback(async () => {
+  const reloadTask = useCallback(async (updatedTask?: TaskData) => {
+    if (updatedTask?.id) {
+      const normalized = normalizeTaskFromApi(updatedTask);
+      setTask(normalized);
+      updateTaskInStore(normalized.id!, normalized);
+    }
     setRefreshKey((k) => k + 1);
     await load({ internalRefetch: true });
-  }, [load]);
+  }, [load, updateTaskInStore]);
 
   const doDelete = async () => {
     if (!task?.id) return;
@@ -191,14 +202,13 @@ export default function TaskV2DetailPage() {
                   />
                 )}
                 {(task?.id || loading) && (
-                  <TaskActivityBlock
-                    taskId={task?.id ?? 0}
-                    readOnly={task?.status === 'LOCKED'}
-                    refreshKey={refreshKey}
-                    loading={loading}
-                    onMutated={onMutated}
-                    onFirstInteraction={() => markInteraction('comment_box', 'click')}
-                  />
+                  task?.id ? (
+                    <CommentSection
+                      entityType="task"
+                      entityId={task.id}
+                      readOnlyComposer={Boolean(readOnly)}
+                    />
+                  ) : null
                 )}
                 </>)}
                 {activeTab === 'history' && (task?.id || loading) && (

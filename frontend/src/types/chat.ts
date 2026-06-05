@@ -1,7 +1,8 @@
 // Chat feature TypeScript types
 // Based on OpenAPI spec: /openapi/openapi_spec/chat.yaml
 
-import type { DragEvent, MouseEvent } from 'react';
+import type { DragEvent, MouseEvent, ReactNode } from 'react';
+import type { TiptapJSONContent } from '@/types/comment';
 
 // ==================== User Types ====================
 
@@ -9,6 +10,7 @@ export interface User {
   id: number;
   email: string;
   username: string;
+  avatar?: string | null;
   is_online?: boolean;
 }
 
@@ -20,6 +22,7 @@ export interface UserWithName extends User {
 // ==================== Chat Types ====================
 
 export type ChatType = 'private' | 'group';
+export type ChannelVisibility = 'public' | 'member_invite' | 'manager_invite';
 
 export interface ChatParticipant {
   id: number;
@@ -27,6 +30,11 @@ export interface ChatParticipant {
   chat_id: number;
   joined_at: string;
   last_read_at?: string | null;
+  is_active?: boolean;
+  is_manager?: boolean;
+  is_muted?: boolean;
+  muted_until?: string | null;
+  notification_level?: 'all' | 'mentions' | 'none';
 }
 
 export interface Chat {
@@ -35,11 +43,17 @@ export interface Chat {
   project?: number; // Backend may send this instead of project_id
   type: ChatType;
   name?: string | null;
+  topic?: string | null;
+  description?: string | null;
+  visibility?: ChannelVisibility;
+  created_by_id?: number | null;
+  created_by?: User | null;
   participants: ChatParticipant[];
   created_at: string;
   updated_at: string;
   last_message?: Message | null;
   unread_count?: number;
+  mention_unread_count?: number;
 }
 
 // ==================== Message Types ====================
@@ -68,6 +82,14 @@ export interface MessageAttachment {
   created_at: string;
 }
 
+export interface MissingForwardedAttachment {
+  id: number;
+  kind: 'audio' | 'video' | 'image' | 'document' | 'unknown';
+  original_filename: string;
+  file_size_display?: string;
+  reason: 'original_deleted';
+}
+
 export interface ChatContext {
   id: number;
   type: ChatType;
@@ -78,6 +100,22 @@ export interface ChatFileListItem extends MessageAttachment {
   uploader: UserWithName;
   chat: ChatContext | null;
   message_id: number | null;
+  /** Root message id when the attachment belongs to a thread reply. */
+  thread_root_message_id?: number | null;
+  /** True when this attachment was forwarded and its original source message has been deleted. */
+  is_orphaned_forward?: boolean;
+}
+
+export interface ReactionUser {
+  id: number;
+  username: string;
+}
+
+export interface Reaction {
+  emoji: string;
+  count: number;
+  users: ReactionUser[];
+  reacted_by_me: boolean;
 }
 
 export interface Message {
@@ -92,13 +130,49 @@ export interface Message {
     sender_display: string;
     created_at: string | null;
   } | null;
+  reply_to?: {
+    id: number;
+    sender: User;
+    content: string;
+    created_at: string | null;
+    attachments?: Array<{
+      id: number;
+      file_type: 'image' | 'video' | 'document';
+      original_filename: string | null;
+      file_url: string | null;
+      mime_type: string | null;
+    }>;
+  } | null;
+  reactions?: Reaction[];
   created_at: string;
   updated_at: string;
   statuses?: MessageStatus[];
   is_read?: boolean;
+  is_edited?: boolean;
+  is_deleted?: boolean;
+  deleted_at?: string | null;
+  is_revoked?: boolean;
+  revoked_at?: string | null;
+  can_revoke?: boolean;
   has_attachments?: boolean;
   attachment_count?: number;
   attachments?: MessageAttachment[];
+  missing_forwarded_attachments?: MissingForwardedAttachment[];
+  is_hidden_by_me?: boolean;
+  /** Tiptap JSON document, present when the message was composed with the rich editor. */
+  rich_body?: TiptapJSONContent | null;
+  /** IDs of users @-mentioned in the message. */
+  mentioned_user_ids?: number[];
+  /** ID of the root message when this is a thread reply. Null for root/timeline messages. */
+  parent_message_id?: number | null;
+  /** Number of thread replies on this root message. */
+  thread_reply_count?: number | null;
+  /** ISO timestamp of the most recent thread reply. */
+  thread_last_reply_at?: string | null;
+  /** Up to 4 participant stubs for the thread avatar stack. */
+  thread_participants?: Array<{ id: number; username: string; email: string; avatar?: string | null }>;
+  /** True when there are thread replies the current user has not seen. */
+  has_unread_thread_replies?: boolean;
 }
 
 // ==================== API Request/Response Types ====================
@@ -116,6 +190,13 @@ export interface SendMessageRequest {
   chat_id: number;
   content: string;
   attachment_ids?: number[];
+  reply_to_id?: number | null;
+  /** ID of the root message when posting a thread reply. */
+  parent_message_id?: number | null;
+  /** Tiptap JSON for rich messages. */
+  rich_body?: TiptapJSONContent | null;
+  /** IDs of @-mentioned users. */
+  mention_ids?: number[];
 }
 
 export interface SendMessageResponse extends Message {}
@@ -150,6 +231,7 @@ export interface ForwardBatchResponse {
     skipped_message_ids: number[];
   };
   failures: ForwardFailureItem[];
+  created_messages?: Message[];
 }
 
 export interface GetChatsParams {
@@ -187,16 +269,45 @@ export interface MarkAsReadRequest {
 
 // ==================== WebSocket Types ====================
 
-export type WebSocketMessageType = 
+export type WebSocketMessageType =
   | 'new_message'
   | 'chat_message'
   | 'message_status_update'
   | 'send_message'
   | 'typing_start'
   | 'typing_stop'
+  | 'typing_indicator'
   | 'chat_created'
+  | 'in_app_notification'
+  | 'reaction_update'
+  | 'presence_update'
+  | 'presence_snapshot'
+  | 'user_session_revoked'
   | 'pong'
   | 'error';
+
+/** In-app notification payload mirrors API NotificationSerializer. */
+export interface WebSocketInAppNotificationPayload {
+  id: string;
+  category: string;
+  event_type: string;
+  related_object_type: string;
+  related_object_id: string;
+  title: string;
+  body: string;
+  is_read: boolean;
+  action_url: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface WebSocketReactionPayload {
+  message_id: number;
+  chat_id: number;
+  user: ReactionUser;
+  emoji: string;
+  action: 'added' | 'removed';
+}
 
 export interface WebSocketMessage {
   type: WebSocketMessageType;
@@ -207,7 +318,13 @@ export interface WebSocketMessage {
   status?: MessageStatusType;
   message_id?: number;
   user_id?: number;
+  is_online?: boolean;
+  version?: number | null;
+  users?: Array<{ user_id: number; is_online: boolean; version?: number | null }>;
+  is_typing?: boolean;
   error?: string;
+  notification?: WebSocketInAppNotificationPayload;
+  reaction?: WebSocketReactionPayload;
 }
 
 // ==================== Store Types ====================
@@ -219,7 +336,11 @@ export interface ChatState {
   widgetChatId: number | null;   // For Chat Widget (independent)
   messages: Record<number, Message[]>; // Keyed by chat_id
   unreadCounts: Record<number, number>; // Keyed by chat_id
+  capturedUnreadCounts: Record<number, number>; // Snapshot taken at the moment a chat is opened — used for the "New messages" divider
   globalUnreadCount: number; // Total unread across ALL projects
+  typingUsersByChat: Record<number, number[]>; // chatId -> userIds currently typing
+  presenceByUserId: Record<number, boolean>; // Current online/offline state keyed by user id
+  presenceVersionByUserId: Record<number, number>; // Last applied presence event version keyed by user id
   
   // UI State
   isWidgetOpen: boolean;
@@ -245,9 +366,18 @@ export interface ChatState {
   addMessage: (chatId: number, message: Message, currentUserId?: number) => void;
   prependMessages: (chatId: number, messages: Message[]) => void;
   updateMessage: (messageId: number, updates: Partial<Message>) => void;
+  removeMessage: (messageId: number) => void;
+  applyReactionUpdate: (messageId: number, emoji: string, action: 'added' | 'removed', user: ReactionUser, currentUserId: number | null) => void;
+  updateUserPresence: (userId: number, isOnline: boolean, version?: number | null) => void;
+  setPresenceSnapshot: (users: Array<{ user_id: number; is_online: boolean; version?: number | null }>) => void;
   
   updateUnreadCount: (chatId: number, count: number) => void;
   decrementUnreadCount: (chatId: number) => void;
+
+  // Typing indicator actions
+  setTypingUser: (chatId: number, userId: number) => void;
+  clearTypingUser: (chatId: number, userId: number) => void;
+  getTypingUsers: (chatId: number) => number[];
   
   // Global unread count actions
   fetchGlobalUnreadCount: () => Promise<number>;
@@ -263,10 +393,39 @@ export interface ChatState {
   
   setLoading: (loading: boolean) => void;
   
+  // SSE-driven chat activity signal
+  /** Epoch ms bumped whenever an SSE notification for a chat event is received. */
+  lastChatActivity: number;
+  /** Called by useNotificationSSE when a chat-related event arrives. */
+  triggerChatActivity: () => void;
+
+  /** Timestamp bumped when a message is deleted/revoked — signals FilesSidebarView to refetch. */
+  filesRefreshAt: number;
+  triggerFilesRefresh: () => void;
+
+  // Mention badges: chat IDs where the current user has an unread @-mention
+  mentionedChatIds: Record<number, true>;
+  addMentionedChat: (chatId: number) => void;
+  clearMentionedChat: (chatId: number) => void;
+
+  // Thread panel
+  /** ID of the root message whose thread panel is currently open, or null. */
+  activeThreadMessageId: number | null;
+  setActiveThreadMessageId: (id: number | null) => void;
+  /** Thread replies keyed by root message ID. */
+  threadReplies: Record<number, Message[]>;
+  setThreadReplies: (rootId: number, replies: Message[]) => void;
+  addThreadReply: (rootId: number, reply: Message) => void;
+  updateThreadReply: (replyId: number, updates: Partial<Message>) => void;
+
   // Helpers
   getCurrentChat: () => Chat | undefined;
   getCurrentMessages: () => Message[];
   getTotalUnreadCount: () => number;
+
+  // Clears all per-user in-memory state on logout so the next login starts
+  // with a clean slate and always picks up fresh counts from the backend.
+  clearUserState: () => void;
 }
 
 // ==================== Component Props Types ====================
@@ -309,6 +468,40 @@ export interface ChatWindowProps {
   isLoading: boolean;
 }
 
+export interface MessageItemProps {
+  message: Message;
+  isOwnMessage: boolean;
+  showSender?: boolean;
+  isCompact?: boolean;
+  senderRole?: string;
+  isSelectMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (messageId: number) => void;
+  /** When true, visually emphasize this message (e.g. jump target). */
+  isHighlighted?: boolean;
+  onEdit?: (messageId: number, newContent: string) => void;
+  onDelete?: (messageId: number) => void;
+  /** When true, show hover actions (e.g. more button). */
+  isHovered?: boolean;
+  /** Render prop for actions to show in the message action area. */
+  renderActions?: () => ReactNode;
+  /** Callback when a reaction is clicked (toggle reaction). */
+  onReactionClick?: (emoji: string, isReactedByMe: boolean) => void;
+  onReactionAdd?: (emoji: string) => void;
+  onReactionRemove?: (emoji: string) => void;
+  onQuoteReply?: () => void;
+  onForwardSingle?: () => void;
+  onEnterSelectMode?: () => void;
+  onOpenThread?: () => void;
+  /** True when this message's thread panel is open. */
+  isThreadActive?: boolean;
+  onPin?: (messageId: number) => void;
+  onSave?: (messageId: number) => void;
+  onRemind?: (messageId: number) => void;
+  isPinned?: boolean;
+  isSaved?: boolean;
+}
+
 export interface MessageListProps {
   messages: Message[];
   currentUserId: number;
@@ -322,23 +515,37 @@ export interface MessageListProps {
   isSelectMode?: boolean;
   selectedMessageIds?: number[];
   onToggleSelectMessage?: (messageId: number) => void;
-}
-
-export interface MessageItemProps {
-  message: Message;
-  isOwnMessage: boolean;
-  showSender?: boolean;
-  senderRole?: string;
-  isSelectMode?: boolean;
-  isSelected?: boolean;
-  onToggleSelect?: (messageId: number) => void;
-  /** When true, visually emphasize this message (e.g. jump target). */
-  isHighlighted?: boolean;
+  firstUnreadMessageId?: number | null;
+  onEditMessage?: (messageId: number, newContent: string) => void;
+  onDeleteMessage?: (messageId: number) => void;
+  onReactionAdd?: (messageId: number, emoji: string) => void;
+  onReactionRemove?: (messageId: number, emoji: string) => void;
+  onQuoteReply?: (message: Message) => void;
+  onForwardSingle?: (messageId: number) => void;
+  onEnterSelectMode?: () => void;
+  onOpenThread?: (message: Message) => void;
+  /** ID of the message whose thread panel is currently open (highlights the row). */
+  activeThreadMessageId?: number | null;
+  onPinMessage?: (messageId: number) => void;
+  onSaveMessage?: (messageId: number) => void;
+  onRemindMessage?: (messageId: number) => void;
+  pinnedMessageIds?: Set<number>;
+  savedMessageIds?: Set<number>;
+  /** Route-driven jump target from Files/search deep links. */
+  jumpTarget?: {
+    messageId: number;
+    attachmentId?: number;
+    requestId: string;
+  } | null;
 }
 
 export interface MessageInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
+  /** Drawer-style input: brand top border handled by parent; gradient send button. */
+  variant?: 'default' | 'drawer';
+  replyingTo?: Message | null;
+  onClearReply?: () => void;
 }
 
 export interface CreateChatDialogProps {
@@ -391,4 +598,49 @@ export interface LinkPreview {
   image: string | null;
   site_name: string | null;
   type: string;
+}
+
+// ==================== Search Types ====================
+
+export interface MessageSearchSender {
+  id: number;
+  username: string;
+  email: string;
+  avatar?: string | null;
+}
+
+export interface MessageSearchResult {
+  id: number;
+  chat_id: number;
+  chat_name: string;
+  chat_type: 'private' | 'group';
+  project_id: number;
+  content: string;
+  /** HTML snippet with <mark> tags around matched terms */
+  highlight: string;
+  created_at: string;
+  sender: MessageSearchSender;
+  has_attachments: boolean;
+  attachment_count: number;
+}
+
+export interface SearchMessagesParams {
+  q: string;
+  from_user?: string;
+  in_chat?: number;
+  has?: 'file' | 'link';
+  date_after?: string;
+  date_before?: string;
+  threads_only?: boolean;
+  mentions_me?: string;
+  limit?: number;
+  offset?: number;
+  cursor?: string;
+}
+
+export interface SearchMessagesResponse {
+  results: MessageSearchResult[];
+  total: number;
+  q: string;
+  next_cursor?: string | null;
 }

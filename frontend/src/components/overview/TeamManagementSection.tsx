@@ -41,6 +41,30 @@ const formatDate = (iso?: string | null): string => {
   }
 };
 
+const getApiErrorMessage = (err: unknown, fallback: string): string => {
+  const responseData = (err as { response?: { data?: Record<string, unknown> } })?.response?.data;
+  if (!responseData) {
+    return (err as { message?: string })?.message || fallback;
+  }
+  const roleError = responseData.role;
+  if (Array.isArray(roleError) && roleError[0]) {
+    return String(roleError[0]);
+  }
+  if (typeof roleError === 'string' && roleError) {
+    return roleError;
+  }
+  if (typeof responseData.error === 'string' && responseData.error) {
+    return responseData.error;
+  }
+  if (typeof responseData.detail === 'string' && responseData.detail) {
+    return responseData.detail;
+  }
+  if (typeof responseData.message === 'string' && responseData.message) {
+    return responseData.message;
+  }
+  return fallback;
+};
+
 export default function TeamManagementSection({ projectId, projectName }: Props) {
   const currentUser = useAuthStore((s) => s.user);
   const [tab, setTab] = useState<Tab>('members');
@@ -107,8 +131,7 @@ export default function TeamManagementSection({ projectId, projectName }: Props)
       setInviteRole(defaultRole);
       await loadAll();
     } catch (err) {
-      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      toast.error(message || 'Failed to send invitation');
+      toast.error(getApiErrorMessage(err, 'Failed to send invitation'));
     } finally {
       setInviting(false);
     }
@@ -122,8 +145,7 @@ export default function TeamManagementSection({ projectId, projectName }: Props)
       toast.success(`Role updated for ${member.user?.username || member.user?.email}`);
       await loadAll();
     } catch (err) {
-      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      toast.error(message || 'Failed to update role');
+      toast.error(getApiErrorMessage(err, 'Failed to update role'));
     } finally {
       setBusyMember(null);
     }
@@ -141,8 +163,7 @@ export default function TeamManagementSection({ projectId, projectName }: Props)
       toast.success('Ownership transferred');
       await loadAll();
     } catch (err) {
-      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      toast.error(message || 'Failed to transfer ownership');
+      toast.error(getApiErrorMessage(err, 'Failed to transfer ownership'));
     } finally {
       setBusyMember(null);
     }
@@ -160,8 +181,7 @@ export default function TeamManagementSection({ projectId, projectName }: Props)
       toast.success('Member removed');
       await loadAll();
     } catch (err) {
-      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      toast.error(message || 'Failed to remove member');
+      toast.error(getApiErrorMessage(err, 'Failed to remove member'));
     } finally {
       setBusyMember(null);
     }
@@ -175,8 +195,7 @@ export default function TeamManagementSection({ projectId, projectName }: Props)
       toast.success(`Invitation to ${invitation.email} approved`);
       await loadAll();
     } catch (err) {
-      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      toast.error(message || 'Failed to approve invitation');
+      toast.error(getApiErrorMessage(err, 'Failed to approve invitation'));
     } finally {
       setBusyInvite(null);
     }
@@ -190,8 +209,7 @@ export default function TeamManagementSection({ projectId, projectName }: Props)
       toast.success('Invitation rejected');
       await loadAll();
     } catch (err) {
-      const message = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      toast.error(message || 'Failed to reject invitation');
+      toast.error(getApiErrorMessage(err, 'Failed to reject invitation'));
     } finally {
       setBusyInvite(null);
     }
@@ -349,7 +367,10 @@ function MembersList({
         const displayName = m.user?.username || m.user?.email || `User #${m.user?.id}`;
         const isSelf = m.user?.id === currentUserId;
         const isMemberOwner = m.role === 'owner';
-        const canEdit = isOwner && !isMemberOwner;
+        // Primary owner (project.owner) can never be edited/removed.
+        // Co-owners (role='owner' but not project.owner) can be managed.
+        const isPrimaryOwner = m.user?.id === m.project?.owner?.id;
+        const canEdit = isOwner && !(isMemberOwner && isPrimaryOwner);
         const busy = busyId === m.id;
         return (
           <li key={m.id} className="flex flex-wrap items-center gap-3 py-3">

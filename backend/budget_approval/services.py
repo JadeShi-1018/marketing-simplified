@@ -2,6 +2,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction, OperationalError
 from .models import BudgetRequest, BudgetPool, BudgetEscalationRule, BudgetRequestStatus
 from .tasks import trigger_escalation
+from . import notifications as budget_notifications
 from core.models import AdChannel
 
 
@@ -79,7 +80,12 @@ class BudgetRequestService:
             # status: DRAFT --> SUBMITTED
             budget_request.submit()
             budget_request.save()
-            
+
+            budget_notifications.notify_budget_submitted(
+                budget_request,
+                actor_id=budget_request.requested_by_id,
+            )
+
             return budget_request
     
     @staticmethod
@@ -150,6 +156,17 @@ class BudgetRequestService:
                     locked_request.forward_to_next()
                     locked_request.current_approver = next_approver
                     locked_request.save()
+                    budget_notifications.notify_budget_forwarded(
+                        locked_request,
+                        actor_id=approver.id if approver else None,
+                        next_approver_id=next_approver.id,
+                    )
+                else:
+                    budget_notifications.notify_budget_approved(
+                        locked_request,
+                        actor_id=approver.id if approver else None,
+                        comment=comment or "",
+                    )
                 # Pool deduction (APPROVED → LOCKED) is intentionally deferred.
                 # It happens only when the linked task is explicitly locked.
 
@@ -157,7 +174,12 @@ class BudgetRequestService:
             else:
                 locked_request.reject()
                 locked_request.save()
-            
+                budget_notifications.notify_budget_rejected(
+                    locked_request,
+                    actor_id=approver.id if approver else None,
+                    comment=comment or "",
+                )
+
             return locked_request
 
     @staticmethod
@@ -179,7 +201,7 @@ class BudgetRequestService:
             return budget_request    
 
     @staticmethod
-    def lock_budget_request(budget_request):
+    def lock_budget_request(budget_request, actor_id=None):
         """Lock budget request and deduct amount from pool with concurrency control"""
         if not budget_request.can_lock():
             raise ValidationError("Budget request cannot be locked in current status")
@@ -199,14 +221,21 @@ class BudgetRequestService:
 
                 # Validate budget availability before locking (critical check)
                 if not BudgetRequestService.check_budget_availability(budget_pool, locked_request.amount):
+                    budget_notifications.notify_budget_pool_insufficient(
+                        locked_request,
+                        actor_id=actor_id,
+                    )
                     raise ValidationError("Insufficient budget available for locking")
-
-                # TODO: send pool underflow notification - need to reallocate the budget pool
 
                 # status: APPROVED --> LOCKED or REJECTED --> LOCKED
                 # The lock() method in the model will automatically deduct from budget pool
                 locked_request.lock()
                 locked_request.save()
+
+                budget_notifications.notify_budget_locked(
+                    locked_request,
+                    actor_id=actor_id,
+                )
 
                 return locked_request
 
@@ -216,6 +245,19 @@ class BudgetRequestService:
                     raise ValidationError("Budget request or pool is currently being accessed by another request. Please try again.")
                 raise
     
+
+    @staticmethod
+    def cancel_budget_request(budget_request, actor_id=None):
+        """Cancel a budget request and notify stakeholders."""
+        with transaction.atomic():
+            locked_request = BudgetRequest.objects.select_for_update().get(id=budget_request.id)
+            locked_request.cancel()
+            locked_request.save()
+            budget_notifications.notify_budget_cancelled(
+                locked_request,
+                actor_id=actor_id,
+            )
+            return locked_request
 
 
 class BudgetPoolService:

@@ -116,12 +116,16 @@ export interface Meeting {
   related_tasks?: KnowledgeNavigationLink[];
   /** Workspace layout: legacy list of blocks, or `{ blocks, nestedSections }`. */
   layout_config?: unknown | null;
+  /** Optional summary text returned on the detail endpoint. */
+  summary?: string | null;
 }
 
 /** List row from GET /meetings/ (knowledge discovery). */
 export interface MeetingListParticipant {
   user_id: number;
   role: string | null;
+  username?: string;
+  avatar?: string | null;
 }
 
 export interface MeetingListTag {

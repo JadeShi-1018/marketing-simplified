@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { resolveApiBaseUrl } from '../api';
 import {
   UserPreferences,
   UserPreferencesUpdate,
@@ -7,11 +8,7 @@ import {
   SlackIntegrationUpdate
 } from '../../types/preferences';
 
-const DEFAULT_API_BASE_URL = 'http://localhost:8000';
-
-const API_BASE_URL =
-  (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL.trim()) ||
-  DEFAULT_API_BASE_URL;
+const API_BASE_URL = resolveApiBaseUrl();
 
 const api = axios.create({
   baseURL: API_BASE_URL,

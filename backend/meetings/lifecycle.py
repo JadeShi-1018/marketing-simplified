@@ -5,6 +5,7 @@ Defines valid transitions and validation rules for each transition.
 Validation functions raise rest_framework.exceptions.ValidationError on failure.
 """
 
+from django.db import transaction
 from rest_framework.exceptions import ValidationError
 
 from meetings.models import Meeting
@@ -89,25 +90,34 @@ def execute_transition(meeting: Meeting, to_state: str) -> Meeting:
     if to_state not in valid_states:
         raise ValidationError({"to_state": f"'{to_state}' is not a valid meeting state."})
 
-    allowed = get_available_transitions(meeting)
-    if not allowed:
-        raise ValidationError(
-            {"transition": f"Meeting is in a terminal state ('{meeting.status}') and cannot be transitioned."}
-        )
-    if to_state not in allowed:
-        raise ValidationError(
-            {
-                "transition": (
-                    f"Cannot transition from '{meeting.status}' to '{to_state}'. "
-                    f"Allowed transitions: {allowed}."
-                )
-            }
-        )
+    with transaction.atomic():
+        # Re-fetch with row lock so concurrent transitions on the same meeting
+        # are serialized: the second caller sees the already-committed status.
+        meeting = Meeting.objects.select_for_update().get(pk=meeting.pk)
 
-    validator = _TRANSITION_VALIDATORS.get(to_state)
-    if validator:
-        validator(meeting)
+        allowed = get_available_transitions(meeting)
+        if not allowed:
+            raise ValidationError(
+                {"transition": f"Meeting is in a terminal state ('{meeting.status}') and cannot be transitioned."}
+            )
+        if to_state not in allowed:
+            raise ValidationError(
+                {
+                    "transition": (
+                        f"Cannot transition from '{meeting.status}' to '{to_state}'. "
+                        f"Allowed transitions: {allowed}."
+                    )
+                }
+            )
 
-    meeting.status = to_state
-    meeting.save(update_fields=["status"])
+        validator = _TRANSITION_VALIDATORS.get(to_state)
+        if validator:
+            validator(meeting)
+
+        meeting.status = to_state
+        fields_to_update = ["status"]
+        if to_state == Meeting.STATUS_ARCHIVED:
+            meeting.is_archived = True
+            fields_to_update.append("is_archived")
+        meeting.save(update_fields=fields_to_update)
     return meeting

@@ -1,13 +1,22 @@
 'use client';
 
-import { useState, useRef, useEffect, KeyboardEvent, ChangeEvent } from 'react';
+import {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  type KeyboardEvent,
+  type ChangeEvent,
+  type ClipboardEvent,
+  type DragEvent,
+} from 'react';
 import { Send, Smile, Paperclip, X, Image as ImageIcon, FileText, Film, Loader2 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import toast from 'react-hot-toast';
-import type { MessageInputProps, MessageAttachment } from '@/types/chat';
-import { 
-  uploadAttachment, 
-  validateFile, 
+import type { MessageInputProps, MessageAttachment, Message } from '@/types/chat';
+import {
+  uploadAttachment,
+  validateFile,
   getFileTypeFromMime,
   formatFileSize,
 } from '@/lib/api/attachmentApi';
@@ -39,23 +48,40 @@ interface PendingAttachment {
 
 interface ExtendedMessageInputProps extends MessageInputProps {
   onSendWithAttachments?: (content: string, attachmentIds: number[]) => void;
+  chatId?: number | null;
+  onTypingStart?: () => void;
+  onTypingStop?: () => void;
+  replyingTo?: Message | null;
+  onClearReply?: () => void;
 }
 
-export default function MessageInput({ 
-  onSend, 
+export default function MessageInput({
+  onSend,
   onSendWithAttachments,
-  disabled = false 
+  disabled = false,
+  variant = 'default',
+  chatId,
+  onTypingStart,
+  onTypingStop,
+  replyingTo,
+  onClearReply,
 }: ExtendedMessageInputProps) {
   const [content, setContent] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [shouldRefocus, setShouldRefocus] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const emojiPickerRef = useRef<HTMLDivElement>(null);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Typing indicator refs
+  const isTypingRef = useRef(false);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_QUERY);
@@ -93,14 +119,107 @@ export default function MessageInput({
     };
   }, [pendingAttachments]);
 
+  // Refocus input after sending message
+  useEffect(() => {
+    if (shouldRefocus) {
+      textareaRef.current?.focus();
+      setShouldRefocus(false);
+    }
+  }, [shouldRefocus]);
+
+  // Cleanup typing timers on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (typingDebounceRef.current) {
+        clearTimeout(typingDebounceRef.current);
+      }
+    };
+  }, []);
+
+  /**
+   * Stop typing indicator
+   */
+  const stopTyping = useCallback(() => {
+    if (!chatId || !onTypingStop) return;
+
+    if (isTypingRef.current) {
+      isTypingRef.current = false;
+      onTypingStop();
+    }
+
+    // Clear all timers
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+      typingDebounceRef.current = null;
+    }
+  }, [chatId, onTypingStop]);
+
+  /**
+   * Start typing indicator with debounce
+   */
+  const startTyping = useCallback(() => {
+    if (!chatId || !onTypingStart) return;
+
+    // Clear existing debounce timer
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+    }
+
+    // If not already typing, send typing_start
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      onTypingStart();
+    }
+
+    // Clear existing auto-stop timer
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    // Auto-stop after 3 seconds of no typing
+    typingTimeoutRef.current = setTimeout(() => {
+      stopTyping();
+    }, 3000);
+  }, [chatId, onTypingStart, stopTyping]);
+
+  /**
+   * Handle content change with typing indicator
+   */
+  const handleContentChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+    const newContent = e.target.value;
+    setContent(newContent);
+
+    // Don't send typing if input is empty or disabled
+    if (!newContent.trim() || disabled) {
+      stopTyping();
+      return;
+    }
+
+    // Debounce typing_start to avoid sending too frequently (300ms)
+    if (typingDebounceRef.current) {
+      clearTimeout(typingDebounceRef.current);
+    }
+
+    typingDebounceRef.current = setTimeout(() => {
+      startTyping();
+    }, 300);
+  }, [disabled, startTyping, stopTyping]);
+
   const handleSend = async () => {
     const trimmedContent = content.trim();
     const uploadedAttachments = pendingAttachments.filter(a => a.uploaded);
-    
+
     // Must have content or attachments
     if (!trimmedContent && uploadedAttachments.length === 0) return;
     if (disabled) return;
-    
+
     // Check if still uploading
     if (pendingAttachments.some(a => a.uploading)) {
       toast.error('Please wait for uploads to complete');
@@ -114,19 +233,26 @@ export default function MessageInput({
       return;
     }
 
+    // Stop typing indicator before sending
+    stopTyping();
+
+    // Clear state first to provide immediate feedback
+    setContent('');
+    setPendingAttachments([]);
+    setShowEmojiPicker(false);
+
+    // Send the message
     if (uploadedAttachments.length > 0 && onSendWithAttachments) {
       const attachmentIds = uploadedAttachments
         .map(a => a.uploaded?.id)
         .filter((id): id is number => id !== undefined);
-      onSendWithAttachments(trimmedContent, attachmentIds);
+      await Promise.resolve(onSendWithAttachments(trimmedContent, attachmentIds));
     } else {
-      onSend(trimmedContent);
+      await Promise.resolve(onSend(trimmedContent));
     }
-    
-    // Clear state
-    setContent('');
-    setPendingAttachments([]);
-    setShowEmojiPicker(false);
+
+    // Trigger refocus after next render cycle
+    setShouldRefocus(true);
   };
 
   const handleKeyPress = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -162,87 +288,8 @@ export default function MessageInput({
   const handleFileSelect = async (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
-    const newAttachments: PendingAttachment[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      
-      // Validate file
-      const { isValid, error } = validateFile(file);
-      if (!isValid) {
-        toast.error(error || 'Invalid file');
-        continue;
-      }
-
-      // Create preview for images
-      let preview: string | undefined;
-      if (file.type.startsWith('image/')) {
-        preview = URL.createObjectURL(file);
-      }
-
-      const tempId = `temp-${Date.now()}-${i}`;
-      newAttachments.push({
-        id: tempId,
-        file,
-        preview,
-        progress: 0,
-        uploading: true,
-      });
-    }
-
-    if (newAttachments.length === 0) {
-      // Reset file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      return;
-    }
-
-    setPendingAttachments(prev => [...prev, ...newAttachments]);
-    setIsUploading(true);
-
-    // Upload files
-    for (const attachment of newAttachments) {
-      try {
-        const uploaded = await uploadAttachment(attachment.file, (progress) => {
-          setPendingAttachments(prev => 
-            prev.map(a => 
-              a.id === attachment.id 
-                ? { ...a, progress } 
-                : a
-            )
-          );
-        });
-
-        setPendingAttachments(prev => 
-          prev.map(a => 
-            a.id === attachment.id 
-              ? { ...a, uploading: false, uploaded } 
-              : a
-          )
-        );
-      } catch (error: any) {
-        console.error('Upload failed:', error);
-        const errorMsg = error?.response?.data?.error || 'Upload failed';
-        
-        setPendingAttachments(prev => 
-          prev.map(a => 
-            a.id === attachment.id 
-              ? { ...a, uploading: false, error: errorMsg } 
-              : a
-          )
-        );
-        toast.error(`Failed to upload ${attachment.file.name}`);
-      }
-    }
-
-    setIsUploading(false);
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    await uploadFiles(Array.from(files));
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleRemoveAttachment = (id: string) => {
@@ -251,6 +298,66 @@ export default function MessageInput({
       URL.revokeObjectURL(attachment.preview);
     }
     setPendingAttachments(prev => prev.filter(a => a.id !== id));
+  };
+
+  const uploadFiles = async (files: File[]) => {
+    const newAttachments: PendingAttachment[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const { isValid, error } = validateFile(file);
+      if (!isValid) {
+        toast.error(error || `Invalid file: ${file.name}`);
+        continue;
+      }
+      let preview: string | undefined;
+      if (file.type.startsWith('image/')) preview = URL.createObjectURL(file);
+      newAttachments.push({ id: `temp-${Date.now()}-${i}`, file, preview, progress: 0, uploading: true });
+    }
+
+    if (newAttachments.length === 0) return;
+    setPendingAttachments(prev => [...prev, ...newAttachments]);
+    setIsUploading(true);
+
+    for (const attachment of newAttachments) {
+      try {
+        const uploaded = await uploadAttachment(attachment.file, (progress) => {
+          setPendingAttachments(prev => prev.map(a => a.id === attachment.id ? { ...a, progress } : a));
+        });
+        setPendingAttachments(prev => prev.map(a => a.id === attachment.id ? { ...a, uploading: false, uploaded } : a));
+      } catch (err: any) {
+        const errorMsg = err?.response?.data?.error || 'Upload failed';
+        setPendingAttachments(prev => prev.map(a => a.id === attachment.id ? { ...a, uploading: false, error: errorMsg } : a));
+        toast.error(`Failed to upload ${attachment.file.name}`);
+      }
+    }
+    setIsUploading(false);
+  };
+
+  const handlePaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files);
+    if (files.length > 0) {
+      e.preventDefault();
+      uploadFiles(files);
+    }
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) uploadFiles(files);
   };
 
   const handleAttachmentClick = () => {
@@ -278,7 +385,38 @@ export default function MessageInput({
     : (isMobile ? 'Message...' : 'Type a message...');
 
   return (
-    <div className="relative border-t border-gray-200 bg-white px-3 py-2 sm:px-4 sm:py-3">
+    <div
+      className={[
+        'relative bg-white px-3 py-2 sm:px-4 sm:py-3 transition-colors',
+        variant === 'drawer' ? '' : 'border-t border-gray-200',
+        isDragOver ? 'bg-[#3CCED7]/5' : '',
+      ].join(' ')}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragOver && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-[#3CCED7] bg-[#3CCED7]/5">
+          <p className="text-sm font-medium text-[#3CCED7]">Drop files to attach</p>
+        </div>
+      )}
+      {/* Reply preview bar */}
+      {replyingTo && (
+        <div className="mb-2 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-1.5">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-medium text-[#3CCED7]">Replying to {replyingTo.sender.username}</p>
+            <p className="truncate text-xs text-gray-500">{replyingTo.content || '[Attachment]'}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClearReply}
+            className="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600"
+            aria-label="Cancel reply"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
       {/* Attachment Previews */}
       {hasAttachments && (
         <div className="mb-3 flex flex-wrap gap-2">
@@ -385,8 +523,10 @@ export default function MessageInput({
         <textarea
           ref={textareaRef}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={handleContentChange}
           onKeyPress={handleKeyPress}
+          onBlur={stopTyping}
+          onPaste={handlePaste}
           placeholder={inputPlaceholder}
           disabled={disabled}
           rows={1}
@@ -401,7 +541,11 @@ export default function MessageInput({
         <button
           onClick={handleSend}
           disabled={!canSend || disabled}
-          className="bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-lg p-2 transition-colors flex-shrink-0"
+          className={`flex-shrink-0 rounded-lg p-2 text-white transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50 ${
+            variant === 'drawer'
+              ? 'bg-gradient-to-r from-[#3CCED7] to-[#A6E661] shadow-sm'
+              : 'bg-[#3CCED7] hover:bg-[#2AB5BD] disabled:bg-gray-300 disabled:opacity-100'
+          }`}
           aria-label="Send message"
         >
           <Send className="w-5 h-5" />
