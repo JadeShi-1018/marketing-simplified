@@ -155,9 +155,12 @@ function DecisionDetailContent() {
     setBusy((b) => ({ ...b, commit: true }));
     try {
       await DecisionAPI.commit(decisionId, projectId);
-      toast.success('Decision committed');
+      toast.success(
+        riskLevel === 'HIGH' ? 'Decision submitted for approval' : 'Decision committed',
+      );
       setFieldErrors({});
-      await detail.refetch();
+      const qs = projectId ? `?project_id=${projectId}` : '';
+      router.replace(`/decisions${qs}`);
       return null;
     } catch (err: any) {
       const body = err?.response?.data;
