@@ -171,6 +171,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Free disk space before frontend build
+        run: docker buildx prune -af --keep-storage 2GB
+
       # Build frontend image with cache
       - name: Build frontend image
         uses: docker/build-push-action@v5
