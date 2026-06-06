@@ -20,12 +20,17 @@ export default function ChatList({
   onCreateChat,
   roleByUserId,
 }: ChatListProps) {
-  // Pin bot chats to the top of the list
+  // Pin bot chats to the top, then sort by most recent activity.
   const sortedChats = useMemo(() => {
+    const activityTs = (chat: Chat): number => {
+      const ts = chat.last_message?.created_at ?? chat.updated_at ?? chat.created_at;
+      return ts ? new Date(ts).getTime() : 0;
+    };
     return [...chats].sort((a, b) => {
       const aBot = isBotChat(a) ? 0 : 1;
       const bBot = isBotChat(b) ? 0 : 1;
-      return aBot - bBot;
+      if (aBot !== bBot) return aBot - bBot;
+      return activityTs(b) - activityTs(a);
     });
   }, [chats]);
 

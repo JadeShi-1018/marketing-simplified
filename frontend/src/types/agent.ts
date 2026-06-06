@@ -134,12 +134,11 @@ export interface AgentChatRequest {
   action?: AgentAction;
   calendar_context?: CalendarContextPayload;
   workflow_id?: string;
-  // User-approved column mapping for confirm_columns action.
-  // Format: {original_header: canonical_name or "unknown"}
   column_mapping?: Record<string, string>;
   approval_id?: string;
   approval_decision?: 'approve' | 'reject';
   approval_draft?: Record<string, unknown>;
+  user_context?: string;
 }
 
 // ==================== Analysis Types ====================

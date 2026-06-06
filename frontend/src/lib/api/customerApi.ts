@@ -1,7 +1,10 @@
 import api from '../api';
 import { Customer, CreateCustomerData, UpdateCustomerData } from '@/types/customer';
 
+
 const BASE = '/api/customers';
+
+
 
 type PaginatedCustomers = {
   count: number;
@@ -9,6 +12,8 @@ type PaginatedCustomers = {
   previous: string | null;
   results: Customer[];
 };
+
+
 
 export const CustomerAPI = {
   list: (params?: { project?: number; experience_group?: number; is_active?: boolean }) =>

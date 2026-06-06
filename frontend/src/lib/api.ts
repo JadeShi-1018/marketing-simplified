@@ -142,8 +142,8 @@ export const authAPI = {
     return response.data;
   },
   
-  logout: async (): Promise<{ message: string }> => {
-    const response = await api.post('/auth/logout/');
+  logout: async (refreshToken?: string | null): Promise<{ message: string }> => {
+    const response = await api.post('/auth/logout/', refreshToken ? { refresh_token: refreshToken } : {});
     return response.data;
   },
   
@@ -246,4 +246,4 @@ export const decisionCaptureAPI = {
 };
 
 
-export default api; 
+export default api;

@@ -29,8 +29,9 @@ from core.serializers import (
     ProjectSerializer,
     ProjectSummarySerializer,
 )
-from decision.models import Decision, DecisionEdge
+from decision.models import Decision, DecisionEdge, DecisionTopicLabel
 from decision.serializers import DecisionEdgeSerializer, DecisionGraphNodeSerializer
+from decision.services import decision_topic_label as default_decision_topic_label, normalize_decision_topic
 from core.services.project_initialization import ProjectInitializationService
 from core.utils.invitations import accept_invitation, create_project_invitation, send_invitation_email
 from core.utils.kpi_suggestions import get_kpi_suggestions
@@ -205,32 +206,37 @@ class ProjectOnboardingView(APIView):
                     )
 
     def _ensure_organization_for_user(self, user):
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser
+
+        base_name = f"{user.username}'s Organisation"
+        name = base_name
+        suffix = 1
+        while Organization.objects.filter(name=name).exists():
+            suffix += 1
+            name = f"{base_name} {suffix}"
         email = getattr(user, 'email', '') or ''
         domain = email.split('@')[-1].lower() if '@' in email else None
-        organization = None
-
-        if domain:
-            organization = Organization.objects.filter(email_domain__iexact=domain).first()
-            if not organization:
-                base_name = domain.split('.')[0].replace('-', ' ').replace('_', ' ').title() or domain
-                name = base_name
-                suffix = 1
-                while Organization.objects.filter(name=name).exists():
-                    suffix += 1
-                    name = f"{base_name} {suffix}"
-                organization = Organization.objects.create(name=name, email_domain=domain)
-
-        if not organization:
-            base_name = "Organization"
-            name = base_name
-            suffix = 1
-            while Organization.objects.filter(name=name).exists():
-                suffix += 1
-                name = f"{base_name} {suffix}"
-            organization = Organization.objects.create(name=name)
+        organization = Organization.objects.create(name=name, email_domain=domain)
 
         user.organization = organization
         user.save(update_fields=['organization'])
+
+        # Create a CustomerOrganisation + admin CustomerUser so CSM features work
+        cust_org, created = CustomerOrganisation.objects.get_or_create(
+            organization=organization,
+            defaults={'name': organization.name},
+        )
+        CustomerUser.objects.get_or_create(
+            user=user,
+            organisation=cust_org,
+            defaults={
+                'user_type': 'admin',
+                'is_active': True,
+                'is_creator': True,
+            },
+        )
+
         return organization
 
 
@@ -276,16 +282,25 @@ class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Filter projects by user's memberships."""
+        """Filter projects by user's access level."""
+        from core.admin_utils import get_org_admin_org_ids
+
         user = self.request.user
 
-        # Get all projects where user is a member
-        project_ids = ProjectMember.objects.filter(
-            user=user,
-            is_active=True
+        # Base: projects where user has active membership
+        member_ids = ProjectMember.objects.filter(
+            user=user, is_active=True,
         ).values_list('project_id', flat=True)
 
-        queryset = Project.objects.filter(id__in=project_ids).select_related('organization', 'owner')
+        org_ids = get_org_admin_org_ids(user)
+        if org_ids:
+            queryset = Project.objects.filter(
+                Q(id__in=member_ids) | Q(organization_id__in=org_ids)
+            ).distinct()
+        else:
+            queryset = Project.objects.filter(id__in=member_ids)
+
+        queryset = queryset.select_related('organization', 'owner')
 
         # Filter by active_only query parameter
         active_only = self.request.query_params.get('active_only', 'false').lower() == 'true'
@@ -301,18 +316,20 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def perform_create(self, serializer):
-        """Create project and add user as owner."""
+        """Create project and add user as owner.
+
+        If the user has no Organization yet, one is auto-created from their
+        email prefix and they become its admin (via CustomerUser).
+        """
         user = self.request.user
         organization = getattr(user, 'organization', None)
 
         if not organization:
-            raise ValidationError({
-                'organization': 'User must belong to an organization to create projects'
-            })
+            organization = self._auto_create_organization(user)
 
         project = serializer.save(
             organization=organization,
-            owner=user
+            owner=user,
         )
 
         # Create project membership
@@ -331,6 +348,46 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ensure_project_calendar(project)
 
         return project
+
+    @staticmethod
+    def _auto_create_organization(user):
+        """Auto-create an Organization for a user who doesn't have one yet."""
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser
+
+        org_name = f"{user.username}'s Organisation"
+
+        # Ensure uniqueness
+        base_name = org_name
+        counter = 1
+        while Organization.objects.filter(name=org_name).exists():
+            counter += 1
+            org_name = f"{base_name} ({counter})"
+
+        organization = Organization.objects.create(name=org_name)
+
+        # Link user to the new organization
+        user.organization = organization
+        user.save(update_fields=['organization'])
+
+        # Also create a CustomerOrganisation so CSM features work
+        cust_org, _ = CustomerOrganisation.objects.get_or_create(
+            organization=organization,
+            defaults={'name': org_name},
+        )
+
+        # Make user the admin (and creator) of the CSM org
+        CustomerUser.objects.get_or_create(
+            user=user,
+            organisation=cust_org,
+            defaults={
+                'user_type': 'admin',
+                'is_active': True,
+                'is_creator': True,
+            },
+        )
+
+        return organization
 
     def perform_destroy(self, instance):
         """Delete project and soft-delete related calendars."""
@@ -369,16 +426,108 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='decisions/graph')
     def decisions_graph(self, request, pk=None):
-        """Return decision graph (nodes + edges) for a project."""
+        """Return decision graph (nodes + edges) for one project or all member projects."""
         project = self.get_object()
-        nodes_qs = Decision.objects.filter(project=project, is_deleted=False).order_by('-updated_at')
-        edges_qs = DecisionEdge.objects.filter(
-            from_decision__project=project,
-            to_decision__project=project,
+        scope = request.query_params.get('scope')
+        if scope == 'all_projects':
+            if request.user.is_superuser:
+                project_ids = Project.objects.filter(
+                    organization=project.organization,
+                    is_deleted=False,
+                ).values_list('id', flat=True)
+            else:
+                project_ids = ProjectMember.objects.filter(
+                    user=request.user,
+                    is_active=True,
+                    project__organization=project.organization,
+                    project__is_deleted=False,
+                ).values_list('project_id', flat=True)
+        else:
+            project_ids = [project.id]
+
+        nodes_qs = Decision.objects.filter(project_id__in=project_ids, is_deleted=False).select_related('project').order_by(
+            'project_id',
+            'project_seq',
+            'id',
         )
-        nodes = DecisionGraphNodeSerializer(nodes_qs, many=True).data
+        edges_qs = DecisionEdge.objects.filter(
+            from_decision__project_id__in=project_ids,
+            to_decision__project_id__in=project_ids,
+        )
+        topic_labels = {
+            label.topic: label.title
+            for label in DecisionTopicLabel.objects.filter(
+                project=project,
+                is_deleted=False,
+            )
+        }
+        nodes = DecisionGraphNodeSerializer(
+            nodes_qs,
+            many=True,
+            context={"request": request, "topic_labels": topic_labels},
+        ).data
         edges = DecisionEdgeSerializer(edges_qs, many=True).data
-        return Response({"nodes": nodes, "edges": edges})
+        topics = [
+            {
+                "topic": topic,
+                "title": title,
+                "defaultTitle": default_decision_topic_label(topic),
+            }
+            for topic, title in sorted(topic_labels.items(), key=lambda item: item[1].lower())
+        ]
+        return Response({"nodes": nodes, "edges": edges, "topics": topics})
+
+    @action(
+        detail=True,
+        methods=['patch', 'post', 'delete'],
+        url_path=r'decision-topic-labels/(?P<topic>[^/.]+)',
+    )
+    def decision_topic_label(self, request, pk=None, topic=None):
+        """Create, rename, or remove a topic column title for this project view."""
+        project = self.get_object()
+        normalized_topic = normalize_decision_topic(topic)
+
+        if request.method == 'DELETE':
+            if Decision.objects.filter(
+                project=project,
+                topic=normalized_topic,
+                is_deleted=False,
+            ).exists():
+                return Response(
+                    {'detail': 'Only empty topics can be deleted.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            DecisionTopicLabel.objects.filter(
+                project=project,
+                topic=normalized_topic,
+                is_deleted=False,
+            ).update(is_deleted=True)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            return Response(
+                {'title': 'Title is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(title) > 80:
+            return Response(
+                {'title': 'Title must be 80 characters or fewer.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        label, _ = DecisionTopicLabel.objects.update_or_create(
+            project=project,
+            topic=normalized_topic,
+            defaults={'title': title, 'is_deleted': False},
+        )
+        return Response(
+            {
+                'topic': normalized_topic,
+                'title': label.title,
+                'defaultTitle': default_decision_topic_label(normalized_topic),
+            }
+        )
 
 
 class ProjectMemberViewSet(viewsets.ModelViewSet):
@@ -624,10 +773,11 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """Remove member from project."""
-        # Prevent removing project owner
-        if instance.role == 'owner':
+        # Only the authoritative project owner (project.owner_id) cannot be removed.
+        # Co-owners (role='owner' but not project.owner) can be removed normally.
+        if instance.user_id == instance.project.owner_id:
             raise ValidationError({
-                'error': 'Cannot remove project owner'
+                'error': 'Cannot remove the project owner. Transfer ownership first.'
             })
 
         removed_user = instance.user

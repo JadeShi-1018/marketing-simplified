@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/meta_ads/', include('meta_ads.urls')),
     path('api/access_control/', include('access_control.urls')),
     path('api/teams/', include('teams.urls')),
+    path('api/csm/', include('csm.urls')),
     path('auth/', include('authentication.urls')),
     path('users/', include('user_preferences.urls')),
     path('api/assets/', include('asset.urls')),

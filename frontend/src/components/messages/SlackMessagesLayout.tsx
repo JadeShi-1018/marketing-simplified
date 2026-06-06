@@ -28,6 +28,9 @@ interface SlackMessagesLayoutProps {
   mobileSidebarOpen: boolean;
   onMobileSidebarOpenChange: (open: boolean) => void;
   mobileSidebarHeader?: React.ReactNode;
+  isSearchActive?: boolean;
+  onSearchInChat?: (chatId: number) => void;
+  onOpenChannelDetails?: (chatId: number) => void;
 }
 
 export default function SlackMessagesLayout({
@@ -47,6 +50,9 @@ export default function SlackMessagesLayout({
   mobileSidebarOpen,
   onMobileSidebarOpenChange,
   mobileSidebarHeader,
+  isSearchActive = false,
+  onSearchInChat,
+  onOpenChannelDetails,
 }: SlackMessagesLayoutProps) {
   const [navView, setNavView] = useState<MessagesNavView>('home');
 
@@ -72,6 +78,9 @@ export default function SlackMessagesLayout({
         onStartDM(userId);
         onMobileSidebarOpenChange(false);
       }}
+      isSearchActive={isSearchActive}
+      onSearchInChat={onSearchInChat}
+      onOpenChannelDetails={onOpenChannelDetails}
     />
   );
 
@@ -97,8 +106,8 @@ export default function SlackMessagesLayout({
             aria-label="Close conversations"
             onClick={() => onMobileSidebarOpenChange(false)}
           />
-          <aside className="absolute left-0 top-0 flex h-full w-[min(22rem,calc(100vw-2rem))] flex-col bg-white shadow-2xl">
-            <div className="flex shrink-0 items-center gap-2 border-b border-gray-200 px-3 py-2">
+          <aside className="absolute left-0 top-0 flex h-full w-[min(22rem,calc(100vw-1rem))] flex-col bg-white shadow-2xl">
+            <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-gray-200 px-3 py-3">
               <div className="min-w-0 flex-1">{mobileSidebarHeader}</div>
               <button
                 type="button"

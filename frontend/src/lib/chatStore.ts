@@ -4,6 +4,11 @@ import { persist } from 'zustand/middleware';
 import type { ChatState, Chat, Message } from '@/types/chat';
 import { getUnreadCount } from './api/chatApi';
 
+// Session-scoped set of message IDs the current user has deleted.
+// Not persisted — only lives until page refresh, but that's enough to
+// filter stale search results within the same browsing session.
+export const deletedMessageIds = new Set<number>();
+
 const resolveChatProjectId = (chat: Chat): number | null => {
   const rawProjectId = chat.project_id ?? chat.project;
   const parsed = Number(rawProjectId);
@@ -22,6 +27,47 @@ const normalizeChatProject = (chat: Chat, fallbackProjectId?: number): Chat => {
   };
 };
 
+// The single place that turns an observed user into a presence entry. Anything
+// that ingests a user object (message sender, reply sender, chat creator/
+// participant, reaction actor) funnels through here so presenceByUserId stays in
+// sync. Users whose payload carries no is_online (e.g. ReactionUser today) are a
+// no-op, but the path is ready if their payload ever grows the field.
+const collectUserPresence = (
+  user: { id?: number | string; is_online?: boolean } | null | undefined,
+  target: Record<number, boolean>,
+) => {
+  if (!user || typeof user.is_online !== 'boolean') return;
+  const userId = Number(user.id);
+  if (Number.isFinite(userId) && !(userId in target)) target[userId] = user.is_online;
+};
+
+const collectMessagePresence = (message: Message | null | undefined, target: Record<number, boolean>) => {
+  if (!message) return;
+  collectUserPresence(message.sender, target);
+  collectUserPresence(message.reply_to?.sender, target);
+};
+
+// Returns a new presence map seeded from the given messages. Every mutator that
+// ingests Message objects should funnel through this so newly observed senders are
+// always reflected in presenceByUserId — skipping it leaves their dots stale until
+// the next presence_update WebSocket event.
+const presenceFromMessages = (
+  current: Record<number, boolean>,
+  messages: (Message | null | undefined)[],
+): Record<number, boolean> => {
+  const next = { ...current };
+  messages.forEach(message => collectMessagePresence(message, next));
+  return next;
+};
+
+const collectChatPresence = (chat: Chat, target: Record<number, boolean>) => {
+  collectUserPresence(chat.created_by, target);
+  for (const participant of chat.participants ?? []) {
+    collectUserPresence(participant.user, target);
+  }
+  collectMessagePresence(chat.last_message, target);
+};
+
 export const useChatStore = create<ChatState>()(
   persist(
     (set, get) => ({
@@ -31,6 +77,15 @@ export const useChatStore = create<ChatState>()(
       widgetChatId: null,       // For Chat Widget (independent)
       messages: {},
       unreadCounts: {},
+      capturedUnreadCounts: {}, // Snapshot of unread_count at the moment each chat is opened
+      typingUsersByChat: {},    // chatId -> userIds currently typing (ephemeral, not persisted)
+      presenceByUserId: {},     // userId -> current online/offline state
+      presenceVersionByUserId: {}, // userId -> latest applied presence version
+      mentionedChatIds: {},     // chatId -> true when current user has unread @-mention
+
+      // Thread panel
+      activeThreadMessageId: null,
+      threadReplies: {},
       globalUnreadCount: 0,     // Total unread across ALL projects
       isWidgetOpen: false,
       isMessagePageOpen: false,
@@ -49,6 +104,8 @@ export const useChatStore = create<ChatState>()(
           const normalizedChats = chats.map(chat => normalizeChatProject(chat, projectId));
           const currentUnreadCounts = state.unreadCounts;
           const currentChatId = state.currentChatId;
+          const nextPresenceByUserId = { ...state.presenceByUserId };
+          normalizedChats.forEach(chat => collectChatPresence(chat, nextPresenceByUserId));
 
           // Build new unread counts, but preserve local values in certain cases:
           // 1. If user is currently viewing a chat (currentChatId), keep its unread as 0
@@ -79,18 +136,33 @@ export const useChatStore = create<ChatState>()(
             }
           });
           
+          // Always refresh capturedUnreadCounts for the currently-viewed chat from the
+          // backend. This handles two races:
+          //   1. setCurrentChat fired before fetchChats → captured 0 instead of real count
+          //   2. Account switch without remount → stale count from previous session
+          // The ChatWindow capture-unread effect is guarded by unreadCapturedForChatRef,
+          // so an overwrite here only shows a new divider when the ref hasn't been locked yet.
+          const newCapturedUnreadCounts = { ...state.capturedUnreadCounts };
+          if (currentChatId !== null) {
+            const currentChatBackendCount =
+              normalizedChats.find(c => Number(c.id) === Number(currentChatId))?.unread_count ?? 0;
+            newCapturedUnreadCounts[currentChatId] = currentChatBackendCount;
+          }
+
           // Update chats with synced unread_count values
           const updatedChats = normalizedChats.map(chat => ({
             ...chat,
             unread_count: newUnreadCounts[chat.id] ?? chat.unread_count ?? 0,
           }));
 
-          return { 
+          return {
             chatsByProject: {
               ...state.chatsByProject,
               [projectId]: updatedChats,
             },
             unreadCounts: newUnreadCounts,
+            capturedUnreadCounts: newCapturedUnreadCounts,
+            presenceByUserId: nextPresenceByUserId,
           };
         });
       },
@@ -110,6 +182,8 @@ export const useChatStore = create<ChatState>()(
           const normalizedChat = normalizeChatProject(chat, projectId);
           const existingChats = state.chatsByProject[projectId] || [];
           const dedupedChats = existingChats.filter(existing => existing.id !== normalizedChat.id);
+          const nextPresenceByUserId = { ...state.presenceByUserId };
+          collectChatPresence(normalizedChat, nextPresenceByUserId);
 
           return {
             chatsByProject: {
@@ -120,6 +194,7 @@ export const useChatStore = create<ChatState>()(
               ...state.unreadCounts,
               [normalizedChat.id]: normalizedChat.unread_count || 0,
             },
+            presenceByUserId: nextPresenceByUserId,
           };
         });
       },
@@ -181,21 +256,40 @@ export const useChatStore = create<ChatState>()(
             currentView: numericChatId !== null ? 'chat' : 'list',
           };
           
-          // Reset unread count for this chat (both in unreadCounts AND chat.unread_count)
+          // Snapshot the real unread count before zeroing the badge counter.
+          // capturedUnreadCounts[chatId] is immune to subsequent setChatsForProject calls
+          // (which see localCount=0 and would zero chat.unread_count), so ChatWindow
+          // can reliably read it when the "New messages" divider effect runs.
           if (numericChatId !== null) {
+            // Look up current unread_count from chatsByProject
+            let capturedCount = 0;
+            Object.values(state.chatsByProject).forEach(chats => {
+              const found = chats.find(c => Number(c.id) === numericChatId);
+              if (found) capturedCount = found.unread_count ?? 0;
+            });
+
             const newUnreadCounts = { ...state.unreadCounts };
             newUnreadCounts[numericChatId] = 0;
             updates.unreadCounts = newUnreadCounts;
-            
-            // Also update the chat object's unread_count for consistency in all projects
-            const newChatsByProject = { ...state.chatsByProject };
-            Object.keys(newChatsByProject).forEach(projectIdStr => {
+
+            updates.capturedUnreadCounts = {
+              ...state.capturedUnreadCounts,
+              [numericChatId]: capturedCount,
+            };
+
+            // Clear mention badge when opening the chat
+            const nextMentionedChatIds = { ...state.mentionedChatIds };
+            delete nextMentionedChatIds[numericChatId];
+            updates.mentionedChatIds = nextMentionedChatIds;
+
+            const nextChatsByProject = { ...state.chatsByProject };
+            Object.keys(nextChatsByProject).forEach(projectIdStr => {
               const projectId = parseInt(projectIdStr);
-              newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
-                Number(chat.id) === numericChatId ? { ...chat, unread_count: 0 } : chat
+              nextChatsByProject[projectId] = nextChatsByProject[projectId].map(chat =>
+                Number(chat.id) === numericChatId ? { ...chat, mention_unread_count: 0 } : chat
               );
             });
-            updates.chatsByProject = newChatsByProject;
+            updates.chatsByProject = nextChatsByProject;
           }
           
           return updates;
@@ -205,12 +299,15 @@ export const useChatStore = create<ChatState>()(
       // ==================== Message Actions ====================
       
       setMessages: (chatId: number, messages: Message[]) => {
-        set(state => ({
-          messages: {
-            ...state.messages,
-            [chatId]: messages,
-          },
-        }));
+        set(state => {
+          return {
+            messages: {
+              ...state.messages,
+              [chatId]: messages,
+            },
+            presenceByUserId: presenceFromMessages(state.presenceByUserId, messages),
+          };
+        });
       },
 
       addMessage: (chatId: number, message: Message, currentUserId?: number) => {
@@ -219,7 +316,8 @@ export const useChatStore = create<ChatState>()(
         
         set(state => {
           const existingMessages = state.messages[numericChatId] || [];
-          
+          const nextPresenceByUserId = presenceFromMessages(state.presenceByUserId, [message]);
+
           // Check if message already exists (avoid duplicates)
           const messageExists = existingMessages.some(m => m.id === message.id);
           if (messageExists) {
@@ -239,6 +337,10 @@ export const useChatStore = create<ChatState>()(
           
           // Should NOT increment if: viewing this chat OR it's our own message
           const shouldIncrementUnread = !isViewingChat && !isOwnMessage;
+          const mentionedCurrentUser =
+            shouldIncrementUnread &&
+            userId !== null &&
+            (message.mentioned_user_ids ?? []).some(id => Number(id) === userId);
           
           const currentUnreadCount = state.unreadCounts[numericChatId] || 0;
           const newUnreadCount = shouldIncrementUnread 
@@ -251,7 +353,14 @@ export const useChatStore = create<ChatState>()(
             const projectId = parseInt(projectIdStr);
             newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
               Number(chat.id) === numericChatId 
-                ? { ...chat, last_message: message, unread_count: newUnreadCount } 
+                ? {
+                    ...chat,
+                    last_message: message,
+                    unread_count: newUnreadCount,
+                    mention_unread_count: mentionedCurrentUser
+                      ? (chat.mention_unread_count ?? 0) + 1
+                      : chat.mention_unread_count,
+                  }
                 : chat
             );
           });
@@ -267,6 +376,10 @@ export const useChatStore = create<ChatState>()(
             },
             chatsByProject: newChatsByProject,
             unreadCounts: newUnreadCounts,
+            presenceByUserId: nextPresenceByUserId,
+            ...(mentionedCurrentUser
+              ? { mentionedChatIds: { ...state.mentionedChatIds, [numericChatId]: true } }
+              : {}),
           };
         });
       },
@@ -285,6 +398,7 @@ export const useChatStore = create<ChatState>()(
               ...state.messages,
               [chatId]: [...newMessages, ...existingMessages],
             },
+            presenceByUserId: presenceFromMessages(state.presenceByUserId, newMessages),
           };
         });
       },
@@ -292,7 +406,7 @@ export const useChatStore = create<ChatState>()(
       updateMessage: (messageId: number, updates: Partial<Message>) => {
         set(state => {
           const newMessages = { ...state.messages };
-          
+
           // Find and update the message in the correct chat
           Object.keys(newMessages).forEach(chatIdStr => {
             const chatId = parseInt(chatIdStr);
@@ -300,8 +414,164 @@ export const useChatStore = create<ChatState>()(
               msg.id === messageId ? { ...msg, ...updates } : msg
             );
           });
-          
+
           return { messages: newMessages };
+        });
+      },
+
+      removeMessage: (messageId: number) => {
+        deletedMessageIds.add(messageId);
+        set(state => {
+          const newMessages = { ...state.messages };
+          Object.keys(newMessages).forEach(chatIdStr => {
+            const chatId = parseInt(chatIdStr);
+            newMessages[chatId] = newMessages[chatId].filter(msg => msg.id !== messageId);
+          });
+          return { messages: newMessages };
+        });
+      },
+
+      applyReactionUpdate: (messageId, emoji, action, user, currentUserId) => {
+        set(state => {
+          const newMessages = { ...state.messages };
+          const actorId = Number(user.id);
+          const currentId = currentUserId !== null ? Number(currentUserId) : null;
+
+          const applyToMessage = (msg: Message): Message => {
+            if (msg.id !== messageId) return msg;
+            const existing = msg.reactions ?? [];
+            if (action === 'added') {
+              const idx = existing.findIndex(r => r.emoji === emoji);
+              if (idx >= 0) {
+                if (existing[idx].users.some(u => Number(u.id) === actorId)) return msg;
+                const updated = existing.map((r, i) => i !== idx ? r : {
+                  ...r,
+                  count: r.count + 1,
+                  users: [...r.users, user],
+                  reacted_by_me: r.reacted_by_me || actorId === currentId,
+                });
+                return { ...msg, reactions: updated };
+              } else {
+                return {
+                  ...msg,
+                  reactions: [
+                    ...existing,
+                    {
+                      emoji,
+                      count: 1,
+                      users: [user],
+                      reacted_by_me: actorId === currentId,
+                    },
+                  ],
+                };
+              }
+            }
+
+            const reaction = existing.find(r => r.emoji === emoji);
+            if (!reaction || !reaction.users.some(u => Number(u.id) === actorId)) {
+              return msg;
+            }
+
+            const updated = existing
+              .map(r => {
+                if (r.emoji !== emoji) return r;
+                const users = r.users.filter(u => Number(u.id) !== actorId);
+                return {
+                  ...r,
+                  count: users.length,
+                  users,
+                  reacted_by_me: actorId === currentId ? false : r.reacted_by_me,
+                };
+              })
+              .filter(r => r.count > 0);
+
+            return { ...msg, reactions: updated };
+          };
+
+          // Update main timeline messages
+          Object.keys(newMessages).forEach(chatIdStr => {
+            const chatId = parseInt(chatIdStr);
+            newMessages[chatId] = newMessages[chatId].map(applyToMessage);
+          });
+
+          // Update thread replies so reaction updates propagate there too
+          const newThreadReplies = { ...state.threadReplies };
+          Object.keys(newThreadReplies).forEach(rootIdStr => {
+            const rootId = parseInt(rootIdStr);
+            const replies = newThreadReplies[rootId];
+            if (replies.some(r => r.id === messageId)) {
+              newThreadReplies[rootId] = replies.map(applyToMessage);
+            }
+          });
+
+          // Seed presence from the reactor — no-op while ReactionUser carries no
+          // is_online, but keeps the "observe a user → seed presence" invariant honest.
+          const nextPresenceByUserId = { ...state.presenceByUserId };
+          collectUserPresence(user, nextPresenceByUserId);
+
+          return {
+            messages: newMessages,
+            threadReplies: newThreadReplies,
+            presenceByUserId: nextPresenceByUserId,
+          };
+        });
+      },
+
+      updateUserPresence: (userId: number, isOnline: boolean, version: number | null = null) => {
+        const numericUserId = Number(userId);
+        if (!Number.isFinite(numericUserId)) return;
+        const numericVersion = typeof version === 'number' && Number.isFinite(version) ? version : null;
+
+        set(state => {
+          const currentVersion = state.presenceVersionByUserId[numericUserId] ?? -1;
+          if (numericVersion !== null && numericVersion < currentVersion) return state;
+          if (
+            state.presenceByUserId[numericUserId] === isOnline &&
+            (numericVersion === null || numericVersion === currentVersion)
+          ) {
+            return state;
+          }
+          return {
+            presenceByUserId: {
+              ...state.presenceByUserId,
+              [numericUserId]: isOnline,
+            },
+            presenceVersionByUserId: numericVersion !== null
+              ? {
+                  ...state.presenceVersionByUserId,
+                  [numericUserId]: numericVersion,
+                }
+              : state.presenceVersionByUserId,
+          };
+        });
+      },
+
+      setPresenceSnapshot: (users) => {
+        set((state) => {
+          const nextPresenceByUserId: Record<number, boolean> = {};
+          const nextPresenceVersionByUserId: Record<number, number> = {};
+          for (const user of users) {
+            const userId = Number(user.user_id);
+            if (Number.isFinite(userId) && typeof user.is_online === 'boolean') {
+              const snapshotVersion = typeof user.version === 'number' && Number.isFinite(user.version)
+                ? user.version
+                : null;
+              const currentVersion = state.presenceVersionByUserId[userId] ?? -1;
+              if (snapshotVersion !== null && snapshotVersion < currentVersion) {
+                if (typeof state.presenceByUserId[userId] === 'boolean') {
+                  nextPresenceByUserId[userId] = state.presenceByUserId[userId];
+                  nextPresenceVersionByUserId[userId] = currentVersion;
+                }
+                continue;
+              }
+              nextPresenceByUserId[userId] = user.is_online;
+              if (snapshotVersion !== null) nextPresenceVersionByUserId[userId] = snapshotVersion;
+            }
+          }
+          return {
+            presenceByUserId: nextPresenceByUserId,
+            presenceVersionByUserId: nextPresenceVersionByUserId,
+          };
         });
       },
 
@@ -317,9 +587,20 @@ export const useChatStore = create<ChatState>()(
           Object.keys(newChatsByProject).forEach(projectIdStr => {
             const projectId = parseInt(projectIdStr);
             newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
-              chat.id === chatId ? { ...chat, unread_count: safeCount } : chat
+              chat.id === chatId
+                ? {
+                    ...chat,
+                    unread_count: safeCount,
+                    mention_unread_count: safeCount === 0 ? 0 : chat.mention_unread_count,
+                  }
+                : chat
             );
           });
+
+          const nextMentionedChatIds = { ...state.mentionedChatIds };
+          if (safeCount === 0) {
+            delete nextMentionedChatIds[chatId];
+          }
           
           return {
             unreadCounts: {
@@ -327,6 +608,7 @@ export const useChatStore = create<ChatState>()(
               [chatId]: safeCount,
             },
             chatsByProject: newChatsByProject,
+            mentionedChatIds: nextMentionedChatIds,
           };
         });
       },
@@ -334,6 +616,40 @@ export const useChatStore = create<ChatState>()(
       decrementUnreadCount: (chatId: number) => {
         const current = get().unreadCounts[chatId] || 0;
         get().updateUnreadCount(chatId, current - 1);
+      },
+
+      // ==================== Typing Indicator Actions ====================
+
+      setTypingUser: (chatId: number, userId: number) => {
+        set((state) => {
+          const current = state.typingUsersByChat[chatId] ?? [];
+          if (current.includes(userId)) return state;
+          return {
+            typingUsersByChat: {
+              ...state.typingUsersByChat,
+              [chatId]: [...current, userId],
+            },
+          };
+        });
+      },
+
+      clearTypingUser: (chatId: number, userId: number) => {
+        set((state) => {
+          const current = state.typingUsersByChat[chatId];
+          if (!current || !current.includes(userId)) return state;
+          const next = current.filter((id) => id !== userId);
+          const updated = { ...state.typingUsersByChat };
+          if (next.length === 0) {
+            delete updated[chatId];
+          } else {
+            updated[chatId] = next;
+          }
+          return { typingUsersByChat: updated };
+        });
+      },
+
+      getTypingUsers: (chatId: number) => {
+        return get().typingUsersByChat[chatId] ?? [];
       },
 
       // ==================== UI State Actions ====================
@@ -352,9 +668,46 @@ export const useChatStore = create<ChatState>()(
 
       // Widget-specific actions
       setWidgetChat: (chatId: number | null) => {
-        set({
-          widgetChatId: chatId,
-          widgetView: chatId !== null ? 'chat' : 'list',
+        const numericChatId = chatId !== null ? Number(chatId) : null;
+        set(state => {
+          const updates: Partial<ChatState> = {
+            widgetChatId: numericChatId,
+            widgetView: numericChatId !== null ? 'chat' : 'list',
+          };
+
+          // Mirror the same unread-count snapshot logic as setCurrentChat so the
+          // "New messages" divider works in the widget for both DMs and channels.
+          if (numericChatId !== null) {
+            let capturedCount = 0;
+            Object.values(state.chatsByProject).forEach(chats => {
+              const found = chats.find(c => Number(c.id) === numericChatId);
+              if (found) capturedCount = found.unread_count ?? 0;
+            });
+
+            const newUnreadCounts = { ...state.unreadCounts };
+            newUnreadCounts[numericChatId] = 0;
+            updates.unreadCounts = newUnreadCounts;
+
+            updates.capturedUnreadCounts = {
+              ...state.capturedUnreadCounts,
+              [numericChatId]: capturedCount,
+            };
+
+            const nextMentionedChatIds = { ...state.mentionedChatIds };
+            delete nextMentionedChatIds[numericChatId];
+            updates.mentionedChatIds = nextMentionedChatIds;
+
+            const nextChatsByProject = { ...state.chatsByProject };
+            Object.keys(nextChatsByProject).forEach(projectIdStr => {
+              const projectId = parseInt(projectIdStr);
+              nextChatsByProject[projectId] = nextChatsByProject[projectId].map(chat =>
+                Number(chat.id) === numericChatId ? { ...chat, mention_unread_count: 0 } : chat
+              );
+            });
+            updates.chatsByProject = nextChatsByProject;
+          }
+
+          return updates;
         });
       },
 
@@ -433,9 +786,88 @@ export const useChatStore = create<ChatState>()(
         set(state => ({ globalUnreadCount: Math.max(0, state.globalUnreadCount - amount) }));
       },
 
+      // Reset all per-user in-memory state so the next login always picks up
+      // fresh counts from the backend. Called by authStore.clearAuth().
+      // This prevents the "preserve local 0" logic in setChatsForProject from
+      // hiding unread counts that arrived while the user was logged out.
+      clearUserState: () => {
+        set({
+          chatsByProject: {},
+          messages: {},
+          unreadCounts: {},
+          capturedUnreadCounts: {},
+          globalUnreadCount: 0,
+          typingUsersByChat: {},
+          presenceByUserId: {},
+          presenceVersionByUserId: {},
+          mentionedChatIds: {},
+          activeThreadMessageId: null,
+          threadReplies: {},
+        });
+      },
+
       // ── SSE-driven chat activity signal ──────────────────────────────
       lastChatActivity: 0,
       triggerChatActivity: () => set({ lastChatActivity: Date.now() }),
+
+      // ── Files tab refresh signal ─────────────────────────────────────
+      // Bumped when a message is deleted or revoked so FilesSidebarView refetches.
+      filesRefreshAt: 0,
+      triggerFilesRefresh: () => set({ filesRefreshAt: Date.now() }),
+
+      // ── Mention badges ───────────────────────────────────────────────
+      addMentionedChat: (chatId) =>
+        set((state) => ({
+          mentionedChatIds: { ...state.mentionedChatIds, [chatId]: true },
+        })),
+      clearMentionedChat: (chatId) =>
+        set((state) => {
+          const next = { ...state.mentionedChatIds };
+          delete next[chatId];
+          const newChatsByProject = { ...state.chatsByProject };
+          Object.keys(newChatsByProject).forEach(projectIdStr => {
+            const projectId = parseInt(projectIdStr);
+            newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
+              Number(chat.id) === Number(chatId) ? { ...chat, mention_unread_count: 0 } : chat
+            );
+          });
+          return { mentionedChatIds: next, chatsByProject: newChatsByProject };
+        }),
+
+      // ── Thread panel ─────────────────────────────────────────────────
+      setActiveThreadMessageId: (id) => set({ activeThreadMessageId: id }),
+
+      setThreadReplies: (rootId, replies) =>
+        set((state) => ({
+          threadReplies: { ...state.threadReplies, [rootId]: replies },
+          presenceByUserId: presenceFromMessages(state.presenceByUserId, replies),
+        })),
+
+      addThreadReply: (rootId, reply) =>
+        set((state) => {
+          const existing = state.threadReplies[rootId] ?? [];
+          // Avoid duplicates
+          if (existing.some((r) => r.id === reply.id)) return state;
+          return {
+            threadReplies: { ...state.threadReplies, [rootId]: [...existing, reply] },
+            presenceByUserId: presenceFromMessages(state.presenceByUserId, [reply]),
+          };
+        }),
+
+      updateThreadReply: (replyId, updates) =>
+        set((state) => {
+          const next = { ...state.threadReplies };
+          for (const rootId of Object.keys(next)) {
+            const replies = next[Number(rootId)];
+            if (replies.some((r) => r.id === replyId)) {
+              next[Number(rootId)] = replies.map((r) =>
+                r.id === replyId ? { ...r, ...updates } : r,
+              );
+              break;
+            }
+          }
+          return { threadReplies: next };
+        }),
     }),
     {
       name: 'chat-storage',

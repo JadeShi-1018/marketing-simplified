@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
 import { useAuthStore } from '@/lib/authStore';
 
-function GoogleCallbackPage() {
+function GoogleCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const {
@@ -121,7 +121,15 @@ function GoogleCallbackPage() {
     };
 
     handleCallback();
-  }, [searchParams, router]);
+  }, [
+    searchParams,
+    router,
+    getUserTeams,
+    setOrganizationAccessToken,
+    setRefreshToken,
+    setToken,
+    setUser,
+  ]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-cyan-50">
@@ -197,4 +205,10 @@ function GoogleCallbackPage() {
   );
 }
 
-export default GoogleCallbackPage;
+export default function GoogleCallbackPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-cyan-50" />}>
+      <GoogleCallbackContent />
+    </Suspense>
+  );
+}

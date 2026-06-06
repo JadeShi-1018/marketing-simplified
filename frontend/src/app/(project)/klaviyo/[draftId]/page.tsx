@@ -57,6 +57,10 @@ import {
   canvasBlocksToContentBlocks,
   createDefaultCanvasBlocks,
 } from '@/lib/utils/klaviyoTransform';
+import {
+  UnsavedChangesGuardProvider,
+} from '@/contexts/UnsavedChangesGuardContext';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 
 type EmailBuilderSnapshot = {
   canvasBlocks: CanvasBlocks;
@@ -73,10 +77,18 @@ export default function KlaviyoDetailV2Page() {
   const hasInvalidDraftId = Boolean(draftIdParam) && draftId == null;
   const returnTo = searchParams?.get('returnTo');
 
-  const safeReturnTo =
-    returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')
-      ? returnTo
-      : '/klaviyo';
+  const safeReturnTo = (() => {
+    if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+      return '/klaviyo';
+    }
+    const pathname = (returnTo.split('?')[0] ?? '').replace(/\/+$/, '') || '/';
+    // Never treat a draft detail URL as "return" — it breaks "Back to templates"
+    // (router.push to the current page is a no-op) and is never the templates list.
+    if (/^\/klaviyo\/\d+$/.test(pathname)) {
+      return '/klaviyo';
+    }
+    return returnTo;
+  })();
 
   // Save state
   const [isSaving, setIsSaving] = useState(false);
@@ -84,7 +96,7 @@ export default function KlaviyoDetailV2Page() {
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Load state
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>('Untitled template');
   const [draftSubject, setDraftSubject] = useState<string>('Untitled template');
@@ -101,6 +113,7 @@ export default function KlaviyoDetailV2Page() {
     setDeviceMode,
     isPreviewOpen,
     setIsPreviewOpen,
+    openPreview,
     previewTab,
     setPreviewTab,
     showMoreBlocks,
@@ -150,7 +163,7 @@ export default function KlaviyoDetailV2Page() {
   const selectedBlockType = selectedBlockData?.type;
   const isTextBlockSelected =
     !!selectedBlockType &&
-    (selectedBlockType === 'Text' || selectedBlockType === 'Paragraph');
+    ['Text', 'Paragraph', 'Heading'].includes(selectedBlockType);
   const isSpacerBlockSelected =
     !!selectedBlockType && selectedBlockType === 'Spacer';
   const isSocialBlockSelected =
@@ -158,7 +171,8 @@ export default function KlaviyoDetailV2Page() {
   const isButtonBlockSelected =
     !!selectedBlockType && selectedBlockType === 'Button';
   const isImageBlockSelected =
-    !!selectedBlockType && selectedBlockType === 'Image';
+    !!selectedBlockType &&
+    (selectedBlockType === 'Image' || selectedBlockType === 'Logo');
   const isHeaderBarBlockSelected =
     !!selectedBlockType && selectedBlockType === 'HeaderBar';
   const isVideoBlockSelected =
@@ -405,7 +419,7 @@ export default function KlaviyoDetailV2Page() {
     [canvasBlocks],
   );
 
-  const { saveSnapshot, undo, redo, canUndo, canRedo } =
+  const { saveSnapshot, undo, redo, reset, canUndo, canRedo } =
     useUndoRedo<EmailBuilderSnapshot>({
       initialState: getCurrentSnapshot(),
     });
@@ -413,6 +427,22 @@ export default function KlaviyoDetailV2Page() {
   const isRestoringRef = useRef(false);
   const hasRecordedInitialRef = useRef(false);
   const lastRecordedSnapshotRef = useRef(JSON.stringify(getCurrentSnapshot()));
+  const wasLoadingRef = useRef(isLoading);
+
+  // Baseline undo history when a load finishes (isLoading: true → false), not on edits.
+  useEffect(() => {
+    const loadingJustFinished = wasLoadingRef.current && !isLoading;
+    wasLoadingRef.current = isLoading;
+
+    if (!loadingJustFinished || loadError || !draftId) {
+      return;
+    }
+
+    const snapshot = getCurrentSnapshot();
+    reset(snapshot);
+    hasRecordedInitialRef.current = true;
+    lastRecordedSnapshotRef.current = JSON.stringify(snapshot);
+  }, [isLoading, loadError, draftId, reset, getCurrentSnapshot]);
 
   useEffect(() => {
     const snapshot = getCurrentSnapshot();
@@ -431,6 +461,28 @@ export default function KlaviyoDetailV2Page() {
     lastRecordedSnapshotRef.current = serialized;
     saveSnapshot(snapshot);
   }, [canvasBlocks, saveSnapshot, getCurrentSnapshot]);
+
+  const unsavedGuardSnapshot = React.useMemo(
+    () => ({
+      canvasBlocks,
+      draftName: isEditingName ? tempDraftName.trim() : draftName,
+    }),
+    [canvasBlocks, isEditingName, tempDraftName, draftName],
+  );
+
+  const {
+    markSaved: markUnsavedGuardSaved,
+    confirmNavigation,
+    unsavedChangesDialog,
+  } = useUnsavedChangesGuard(unsavedGuardSnapshot, {
+    enabled: !isLoading && draftId != null && !loadError,
+  });
+
+  useEffect(() => {
+    if (!isLoading && draftId != null && !loadError) {
+      markUnsavedGuardSaved();
+    }
+  }, [isLoading, draftId, loadError, markUnsavedGuardSaved]);
 
   const contentBlocks = [
     { icon: Type, label: 'Text', color: 'text-[#3CCED7]', type: 'Text' },
@@ -506,7 +558,10 @@ export default function KlaviyoDetailV2Page() {
   // Load draft
   useEffect(() => {
     const loadDraft = async () => {
-      if (!draftId) return;
+      if (!draftId) {
+        setIsLoading(false);
+        return;
+      }
       setIsLoading(true);
       setLoadError(null);
       try {
@@ -517,11 +572,20 @@ export default function KlaviyoDetailV2Page() {
         setDraftSubject(draft.subject || resolvedName);
         setDraftStatus(draft.status || 'draft');
         setTempDraftName(resolvedName);
-        if (draft.blocks && draft.blocks.length > 0) {
-          const convertedBlocks = contentBlocksToCanvasBlocks(draft.blocks);
-          setCanvasBlocks(convertedBlocks);
-        } else {
-          setCanvasBlocks(createDefaultCanvasBlocks());
+        const hasPersistedBlocks =
+          Array.isArray(draft.blocks) && draft.blocks.length > 0;
+        const blocksForCanvas = hasPersistedBlocks
+          ? contentBlocksToCanvasBlocks(draft.blocks)
+          : createDefaultCanvasBlocks();
+        setCanvasBlocks(blocksForCanvas);
+
+        // New drafts are created without blocks — persist the default template
+        // before the editor becomes interactive so Exit goes straight to the list.
+        if (!hasPersistedBlocks) {
+          await klaviyoApi.patchEmailDraft(draftId, {
+            subject: draft.subject || resolvedName,
+            blocks: canvasBlocksToContentBlocks(blocksForCanvas),
+          });
         }
       } catch (err: any) {
         console.error('Failed to load draft:', err);
@@ -572,6 +636,7 @@ export default function KlaviyoDetailV2Page() {
         subject: subjectForSave,
         blocks: serializedBlocks,
       });
+      markUnsavedGuardSaved();
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err: any) {
@@ -594,6 +659,7 @@ export default function KlaviyoDetailV2Page() {
     draftName,
     draftSubject,
     canvasBlocks,
+    markUnsavedGuardSaved,
   ]);
 
   const handleNameSave = useCallback(async () => {
@@ -617,45 +683,64 @@ export default function KlaviyoDetailV2Page() {
       setDraftSubject(nextName);
       setTempDraftName(nextName);
       setIsEditingName(false);
+      markUnsavedGuardSaved();
     } catch (err) {
       console.error('Failed to update draft name:', err);
       toast.error('Failed to update draft name');
       setTempDraftName(draftName);
       setIsEditingName(false);
     }
-  }, [draftId, tempDraftName, draftName]);
+  }, [draftId, tempDraftName, draftName, markUnsavedGuardSaved]);
 
   const handleUndo = useCallback(() => {
     const prevSnapshot = undo();
-    if (prevSnapshot) {
-      isRestoringRef.current = true;
-      setCanvasBlocks(prevSnapshot.canvasBlocks);
-    }
-  }, [undo, setCanvasBlocks]);
+    if (!prevSnapshot) return;
+    isRestoringRef.current = true;
+    setCanvasBlocks(prevSnapshot.canvasBlocks);
+    setSelectedBlock(null);
+    setSelectedSection(null);
+  }, [undo, setCanvasBlocks, setSelectedBlock, setSelectedSection]);
 
   const handleRedo = useCallback(() => {
     const nextSnapshot = redo();
-    if (nextSnapshot) {
-      isRestoringRef.current = true;
-      setCanvasBlocks(nextSnapshot.canvasBlocks);
-    }
-  }, [redo, setCanvasBlocks]);
+    if (!nextSnapshot) return;
+    isRestoringRef.current = true;
+    setCanvasBlocks(nextSnapshot.canvasBlocks);
+    setSelectedBlock(null);
+    setSelectedSection(null);
+  }, [redo, setCanvasBlocks, setSelectedBlock, setSelectedSection]);
 
-  const handleExit = () => {
-    router.push(safeReturnTo);
-  };
+  const handleExit = useCallback(() => {
+    confirmNavigation(() => {
+      if (typeof window !== 'undefined') {
+        window.location.assign(safeReturnTo);
+      } else {
+        router.push(safeReturnTo);
+      }
+    });
+  }, [confirmNavigation, router, safeReturnTo]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      if (!(e.metaKey || e.ctrlKey)) return;
+
+      const key = e.key.toLowerCase();
+      if (key === 's') {
         e.preventDefault();
         handleSave();
+        return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+      if (key === 'z' && !e.shiftKey) {
         e.preventDefault();
         if (canUndo) handleUndo();
+        return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'z') {
+      if (key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        if (canRedo) handleRedo();
+        return;
+      }
+      if (key === 'y') {
         e.preventDefault();
         if (canRedo) handleRedo();
       }
@@ -731,9 +816,11 @@ export default function KlaviyoDetailV2Page() {
   }
 
   return (
-    <DashboardLayout>
+    <>
+      <UnsavedChangesGuardProvider confirmNavigation={confirmNavigation}>
+        <DashboardLayout>
       <div
-        className="-m-5 flex flex-col bg-white"
+        className="relative -m-5 flex flex-col bg-white"
         style={{ height: 'calc(100vh - 3rem)' }}
       >
         {/* Top header */}
@@ -753,6 +840,7 @@ export default function KlaviyoDetailV2Page() {
             {isEditingName ? (
               <input
                 type="text"
+                data-testid="klaviyo-draft-rename-input"
                 value={tempDraftName}
                 onChange={(e) => setTempDraftName(e.target.value)}
                 onBlur={handleNameSave}
@@ -769,6 +857,7 @@ export default function KlaviyoDetailV2Page() {
             ) : (
               <button
                 type="button"
+                data-testid="klaviyo-draft-rename-trigger"
                 onClick={() => setIsEditingName(true)}
                 className="min-w-0 max-w-[360px] truncate rounded-md px-2 py-1 text-left text-sm font-medium text-gray-900 transition hover:bg-gray-100"
                 title="Click to rename"
@@ -804,6 +893,7 @@ export default function KlaviyoDetailV2Page() {
             </button>
             <button
               type="button"
+              data-testid="klaviyo-draft-save"
               onClick={handleSave}
               disabled={isSaving}
               title={isSaving ? 'Saving' : 'Save (Cmd+S)'}
@@ -1120,7 +1210,18 @@ export default function KlaviyoDetailV2Page() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsPreviewOpen(true)}
+                  data-testid="email-draft-open-preview"
+                  aria-haspopup="dialog"
+                  aria-expanded={isPreviewOpen}
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openPreview();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openPreview();
+                  }}
                   className="inline-flex h-8 items-center rounded-md bg-white px-3 text-xs font-medium text-gray-700 ring-1 ring-gray-200 transition hover:ring-[#3CCED7]/50"
                 >
                   Preview & test
@@ -1131,6 +1232,7 @@ export default function KlaviyoDetailV2Page() {
             {/* Canvas */}
             <div className="flex-1 overflow-y-auto p-6">
               <div
+                data-testid="email-draft-canvas"
                 className={`mx-auto bg-white shadow-lg ${
                   deviceMode === 'desktop' ? 'max-w-3xl' : 'max-w-md'
                 }`}
@@ -1213,6 +1315,9 @@ export default function KlaviyoDetailV2Page() {
           previewContainerRef={previewContainerRef}
         />
       </div>
-    </DashboardLayout>
+        </DashboardLayout>
+      </UnsavedChangesGuardProvider>
+      {unsavedChangesDialog}
+    </>
   );
 }

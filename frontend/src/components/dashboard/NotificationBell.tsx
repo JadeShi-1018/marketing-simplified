@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Link from 'next/link';
-import { Bell, CheckCheck, ChevronDown, ChevronUp, Settings, Trash2 } from 'lucide-react';
+import { Bell, CheckCheck, ChevronDown, ChevronUp, Settings, Trash2, CheckCircle, XCircle, Building2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import AlertCard from './AlertCard';
 import { notificationsApi } from '@/lib/api/notificationsApi';
@@ -12,6 +12,8 @@ import { formatRelativeTime } from '@/lib/formatRelativeTime';
 import type { NotificationItem, NotificationTab } from '@/types/notifications';
 import { NOTIFICATION_EVENT } from '@/types/notifications';
 import type { AlertData, AlertStatus } from '@/lib/mock/dashboardMock';
+import CsmAPI from '@/lib/api/csmApi';
+import type { CsmNotification } from '@/types/csm';
 import {
   getDecisionPublishedSVODescription,
   getDecisionReviewSVODescription,
@@ -27,10 +29,11 @@ import {
 
 // ── Tab config ────────────────────────────────────────────────────────────────
 
-type TabKey = NotificationTab;
+type TabKey = NotificationTab | 'csm';
 
 const TABS: { value: TabKey; label: string }[] = [
   { value: 'all', label: 'All' },
+  { value: 'csm', label: 'CSM' },
   { value: 'unread', label: 'Unread' },
   { value: 'mentions', label: 'Mentions' },
   { value: 'deadlines', label: 'Deadlines' },
@@ -228,6 +231,10 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
 
+  // CSM notifications
+  const [csmNotifications, setCsmNotifications] = useState<CsmNotification[]>([]);
+  const [csmUnread, setCsmUnread] = useState(0);
+
   // AI alerts state (Plan B — collapsible section at the bottom)
   const [localAlerts, setLocalAlerts] = useState<AlertData[]>(alerts);
   const [alertsExpanded, setAlertsExpanded] = useState(false);
@@ -241,8 +248,27 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
     setLocalAlerts(alerts);
   }, [alerts]);
 
+  // Fetch CSM notifications
+  const fetchCsmNotifications = useCallback(async () => {
+    try {
+      const [notifs, count] = await Promise.all([
+        CsmAPI.getNotifications(),
+        CsmAPI.getUnreadCount(),
+      ]);
+      setCsmNotifications(notifs);
+      setCsmUnread(count);
+    } catch {
+      // Silently fail — user may not have CSM access
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchCsmNotifications();
+  }, [fetchCsmNotifications]);
+
   // Fetch notifications from real API
   const fetchNotifications = useCallback(async (activeTab: TabKey) => {
+    if (activeTab === 'csm') return; // CSM tab handled separately
     setLoading(true);
     try {
       const { data } = await notificationsApi.list({
@@ -263,8 +289,9 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
   useEffect(() => {
     if (open) {
       void fetchNotifications(tab);
+      fetchCsmNotifications();
     }
-  }, [open, tab, lastRefresh, fetchNotifications]);
+  }, [open, tab, lastRefresh, fetchNotifications, fetchCsmNotifications]);
 
   // Also keep the badge count fresh (even when panel is closed)
   useEffect(() => {
@@ -329,10 +356,28 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
     openDrawer(item);
   };
 
+  const handleCsmAccept = async (id: number) => {
+    try {
+      await CsmAPI.acceptNotification(id);
+      fetchCsmNotifications();
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleCsmDecline = async (id: number) => {
+    try {
+      await CsmAPI.declineNotification(id);
+      fetchCsmNotifications();
+    } catch {
+      // ignore
+    }
+  };
+
   const openAlerts = localAlerts.filter((a) => a.status === 'open');
-  // Badge only reflects real unread notifications; AI system alerts are shown
-  // in their own collapsible section and should not inflate the bell count.
-  const totalBadge = unreadCount;
+  const totalBadge = unreadCount + csmUnread;
+
+  const visibleCsm = csmNotifications.filter((n) => !n.is_read || n.action_status === 'pending');
 
   return (
     <div ref={containerRef} className="relative">
@@ -365,9 +410,9 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
           <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold text-gray-900">Notifications</span>
-              {unreadCount > 0 && (
+              {totalBadge > 0 && (
                 <span className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded font-medium">
-                  {unreadCount} new
+                  {totalBadge} new
                 </span>
               )}
             </div>
@@ -419,9 +464,64 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
             })}
           </div>
 
-          {/* ── Real notification list ── */}
+          {/* ── Notification list ── */}
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
-            {loading ? (
+            {tab === 'csm' ? (
+              /* CSM Notifications */
+              visibleCsm.length === 0 ? (
+                <div className="py-10 text-center text-xs text-gray-400">
+                  <Building2 className="w-6 h-6 mx-auto mb-2 text-gray-300" />
+                  No CSM notifications.
+                </div>
+              ) : (
+                visibleCsm.map((n) => (
+                  <div key={`csm-${n.id}`} className="p-3 rounded-lg border border-gray-100 bg-white hover:bg-gray-50">
+                    <div className="flex items-start gap-2">
+                      <Building2 className="w-4 h-4 text-indigo-500 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">{n.title}</p>
+                        {n.message && (
+                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>
+                        )}
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          {n.sender_name || n.sender_email} &middot; {new Date(n.created_at).toLocaleDateString()}
+                        </p>
+
+                        {n.action_status === 'pending' && (
+                          <div className="flex gap-2 mt-2">
+                            <button
+                              onClick={() => handleCsmAccept(n.id)}
+                              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-green-700 bg-green-50 rounded hover:bg-green-100"
+                            >
+                              <CheckCircle className="w-3 h-3" />
+                              Accept
+                            </button>
+                            <button
+                              onClick={() => handleCsmDecline(n.id)}
+                              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-red-700 bg-red-50 rounded hover:bg-red-100"
+                            >
+                              <XCircle className="w-3 h-3" />
+                              Decline
+                            </button>
+                          </div>
+                        )}
+
+                        {n.action_status === 'accepted' && (
+                          <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] text-green-600">
+                            <CheckCircle className="w-3 h-3" /> Accepted
+                          </span>
+                        )}
+                        {n.action_status === 'declined' && (
+                          <span className="inline-flex items-center gap-1 mt-1.5 text-[11px] text-red-500">
+                            <XCircle className="w-3 h-3" /> Declined
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )
+            ) : loading ? (
               <p className="py-10 text-center text-xs text-gray-400">Loading…</p>
             ) : items.length === 0 ? (
               <div className="py-10 text-center text-xs text-gray-400">
@@ -435,7 +535,7 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
             )}
 
             {/* ── Plan B: Collapsible AI System Alerts section ── */}
-            {openAlerts.length > 0 && (
+            {tab !== 'csm' && openAlerts.length > 0 && (
               <div className="mt-3 border-t border-gray-100 pt-2">
                 <button
                   onClick={() => setAlertsExpanded((v) => !v)}

@@ -10,6 +10,7 @@ class Migration(migrations.Migration):
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
         ('chat', '0006_add_reply_to_message'),
+        ('chat', '0006_message_is_edited'),
     ]
 
     operations = [

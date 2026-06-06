@@ -3,16 +3,21 @@
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
 import {
+  Bell,
+  Bookmark,
+  CheckSquare,
+  Copy,
+  Edit2,
+  Forward,
+  Link,
+  MessageSquare,
+  MoreHorizontal,
+  Pin,
   Smile,
   TextQuote,
-  MoreHorizontal,
-  Forward,
-  Bell,
-  CheckSquare,
-  Undo2,
   Trash2,
+  Undo2,
 } from 'lucide-react';
-import type { Message } from '@/types/chat';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,46 +25,53 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
-// Dynamic import emoji picker to avoid SSR issues
 const EmojiPicker = dynamic(() => import('emoji-picker-react'), {
   ssr: false,
   loading: () => (
-    <div className="w-72 h-80 bg-white border border-gray-200 rounded-lg flex items-center justify-center">
-      <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[#3CCED7]" />
+    <div className="flex h-80 w-72 items-center justify-center rounded-lg border border-gray-200 bg-white">
+      <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-[#3CCED7]" />
     </div>
   ),
 });
 
 interface MessageHoverActionsProps {
-  message: Message;
   isOwnMessage: boolean;
   onEmojiReaction: (emoji: string) => void;
-  onQuoteReply: () => void;
+  onQuoteReply?: () => void;
+  onCopy: () => void;
+  onCopyLink: () => void;
+  onEdit?: () => void;         // own messages only
   onForward: () => void;
+  onPin?: () => void;
+  onSave: () => void;
   onRemind: () => void;
   onMultiSelect: () => void;
-  onRevoke: () => void;
-  onDelete: () => void;
+  onReplyInThread?: () => void;
+  onRevoke?: () => void;       // own messages only, placeholder
+  onDelete?: () => void;       // own messages only
   onMenuOpenChange?: (isOpen: boolean) => void;
+  isPinned?: boolean;
 }
 
 export default function MessageHoverActions({
-  message,
   isOwnMessage,
   onEmojiReaction,
   onQuoteReply,
+  onCopy,
+  onCopyLink,
+  onEdit,
   onForward,
+  onPin,
+  onSave,
   onRemind,
   onMultiSelect,
+  onReplyInThread,
   onRevoke,
   onDelete,
   onMenuOpenChange,
+  isPinned = false,
 }: MessageHoverActionsProps) {
   const [isEmojiOpen, setIsEmojiOpen] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -80,104 +92,130 @@ export default function MessageHoverActions({
     onMenuOpenChange?.(false);
   };
 
-  // Position the toolbar close to the bubble
-  // Own messages (bubble on right, max-w-88%): toolbar at ~10% from left
-  // Others' messages (bubble on left): toolbar at ~10% from right
-  const positionClass = isOwnMessage
-    ? 'left-[10%]' // Near where the right-aligned bubble starts
-    : 'right-[10%]'; // Near where the left-aligned bubble ends
-
   return (
-    <div
-      className={`
-        absolute top-0
-        ${positionClass}
-        flex items-center gap-0.5
-        bg-white/95 backdrop-blur-sm
-        rounded-lg shadow-md border border-gray-200
-        px-1 py-0.5
-        z-[10000]
-      `}
-    >
-      {/* Emoji Reaction Button */}
+    <div className="absolute -top-5 right-2 z-[10000] flex items-center gap-0.5 rounded-lg border border-gray-200 bg-white/95 px-1 py-0.5 shadow-md backdrop-blur-sm">
+      {/* React */}
       <Popover open={isEmojiOpen} onOpenChange={handleEmojiOpenChange}>
         <PopoverTrigger asChild>
           <button
-            className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+            className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+            aria-label="Add reaction"
             title="Add reaction"
           >
-            <Smile className="w-4 h-4 text-gray-500" />
+            <Smile className="h-4 w-4" />
           </button>
         </PopoverTrigger>
         <PopoverContent
           align="end"
           side="top"
           sideOffset={8}
-          className="w-auto p-0 border-0 bg-transparent shadow-none z-[10001]"
+          className="z-[10001] w-auto border-0 bg-transparent p-0 shadow-none"
         >
           <EmojiPicker
             onEmojiClick={handleEmojiClick}
             width={280}
             height={320}
-            searchPlaceHolder="Search emoji..."
+            searchPlaceHolder="Search emoji…"
             previewConfig={{ showPreview: false }}
           />
         </PopoverContent>
       </Popover>
 
-      {/* Quote Reply Button */}
-      <button
-        onClick={onQuoteReply}
-        className="p-1.5 hover:bg-gray-100 rounded transition-colors"
-        title="Quote reply"
-      >
-        <TextQuote className="w-4 h-4 text-gray-500" />
-      </button>
+      {/* Reply in thread */}
+      {onReplyInThread && (
+        <button
+          onClick={onReplyInThread}
+          className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+          aria-label="Reply in thread"
+          title="Reply in thread"
+        >
+          <MessageSquare className="h-4 w-4" />
+        </button>
+      )}
 
-      {/* More Actions Dropdown */}
+      {/* Quote reply */}
+      {onQuoteReply && (
+        <button
+          onClick={onQuoteReply}
+          className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+          aria-label="Reply"
+          title="Reply"
+        >
+          <TextQuote className="h-4 w-4" />
+        </button>
+      )}
+
+      {/* More actions */}
       <DropdownMenu open={isDropdownOpen} onOpenChange={handleDropdownOpenChange}>
         <DropdownMenuTrigger asChild>
           <button
-            className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+            className="rounded p-1.5 text-gray-500 transition-colors hover:bg-gray-100"
+            aria-label="More actions"
             title="More actions"
           >
-            <MoreHorizontal className="w-4 h-4 text-gray-500" />
+            <MoreHorizontal className="h-4 w-4" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" sideOffset={4} className="w-40 z-[10001]">
-          <DropdownMenuItem onClick={onForward}>
-            <Forward className="w-4 h-4 mr-2" />
+        <DropdownMenuContent align="end" sideOffset={4} className="z-[10001] w-44">
+          <DropdownMenuItem onSelect={onCopy}>
+            <Copy className="mr-2 h-4 w-4" />
+            Copy text
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={onCopyLink}>
+            <Link className="mr-2 h-4 w-4" />
+            Copy link
+          </DropdownMenuItem>
+          {isOwnMessage && onEdit && (
+            <DropdownMenuItem onSelect={onEdit}>
+              <Edit2 className="mr-2 h-4 w-4" />
+              Edit
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={onForward}>
+            <Forward className="mr-2 h-4 w-4" />
             Forward
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={onRemind}>
-            <Bell className="w-4 h-4 mr-2" />
-            Remind
+          <DropdownMenuSeparator />
+          {onPin && (
+            <DropdownMenuItem onSelect={onPin}>
+              <Pin className="mr-2 h-4 w-4 shrink-0" />
+              <div className="flex flex-col">
+                <span>{isPinned ? 'Unpin from channel' : 'Pin to channel'}</span>
+                <span className="text-[11px] font-normal text-gray-400">
+                  {isPinned ? 'Remove from channel highlights' : 'Highlights for all members'}
+                </span>
+              </div>
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={onSave}>
+            <Bookmark className="mr-2 h-4 w-4 shrink-0" />
+            <div className="flex flex-col">
+              <span>Save for later</span>
+              <span className="text-[11px] font-normal text-gray-400">Private bookmark, only you can see it</span>
+            </div>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={onMultiSelect}>
-            <CheckSquare className="w-4 h-4 mr-2" />
+          <DropdownMenuItem onSelect={onRemind}>
+            <Bell className="mr-2 h-4 w-4" />
+            Remind me
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={onMultiSelect}>
+            <CheckSquare className="mr-2 h-4 w-4" />
             Select
           </DropdownMenuItem>
-
-          <DropdownMenuSeparator />
-
-          {/* Revoke - only for own messages */}
-          {isOwnMessage && (
-            <DropdownMenuItem
-              onClick={onRevoke}
-              className="text-amber-600 focus:text-amber-600"
-            >
-              <Undo2 className="w-4 h-4 mr-2" />
+          {isOwnMessage && (onRevoke || onDelete) && <DropdownMenuSeparator />}
+          {isOwnMessage && onRevoke && (
+            <DropdownMenuItem onSelect={onRevoke} className="text-amber-600 focus:text-amber-600">
+              <Undo2 className="mr-2 h-4 w-4" />
               Revoke
             </DropdownMenuItem>
           )}
-
-          <DropdownMenuItem
-            onClick={onDelete}
-            className="text-red-600 focus:text-red-600"
-          >
-            <Trash2 className="w-4 h-4 mr-2" />
-            Delete
-          </DropdownMenuItem>
+          {isOwnMessage && onDelete && (
+            <DropdownMenuItem onSelect={onDelete} className="text-red-600 focus:text-red-600">
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

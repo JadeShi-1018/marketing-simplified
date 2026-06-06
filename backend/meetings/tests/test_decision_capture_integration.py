@@ -273,4 +273,3 @@ class TestDecisionCaptureIntegration(TestCase):
         self.assertIn("Source meeting decision", titles)
         self.assertNotIn("Other meeting decision", titles)
         self.assertNotIn("Unlinked decision", titles)
-

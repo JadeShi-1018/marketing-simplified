@@ -83,6 +83,8 @@ function getActivityDescription(
       return <>This task is now overdue. Please take action.</>;
     case "task_comment_mention":
       return <>{actor} mentioned you in a comment.</>;
+    case "chat_mention":
+      return <>{actor} mentioned you in a message.</>;
     case "task_anomaly":
       return <>An anomaly was detected in this task.</>;
 
@@ -198,7 +200,11 @@ function getActivityDescription(
 function renderChatBubble(notification: NotificationItem) {
   const { event_type, metadata } = notification;
 
-  if (event_type !== "chat_new_message" && event_type !== "task_comment_mention") {
+  if (
+    event_type !== "chat_new_message" &&
+    event_type !== "task_comment_mention" &&
+    event_type !== "chat_mention"
+  ) {
     return null;
   }
 

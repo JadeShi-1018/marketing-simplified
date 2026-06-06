@@ -279,7 +279,7 @@ export default function MessageActionsMenu({
           </DropdownMenuItem>
         )}
 
-        {/* Delete - for all messages (own = hard delete, others = hide) */}
+        {/* Delete - own messages become tombstones; others are hidden locally. */}
         <DropdownMenuItem
           onSelect={() => handleAction(onDelete)}
           className="text-red-600 focus:text-red-600"

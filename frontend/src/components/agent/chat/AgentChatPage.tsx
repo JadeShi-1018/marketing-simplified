@@ -786,7 +786,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   }, [])
 
   /** Handle file upload — calls upload-analyze SSE endpoint */
-  const handleFileUpload = useCallback(async (file: File) => {
+  const handleFileUpload = useCallback(async (file: File, userContext?: string) => {
     setHasStarted(true)
     // Reset workflow state so a new upload always starts from analysis
     setStepState({ analysisComplete: false, tasksCreated: false })
@@ -845,6 +845,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     abortRef.current = AgentAPI.uploadAndAnalyze(
       file,
       sid,
+      userContext || null,
       (event: SSEEvent) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
@@ -1196,7 +1197,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   }, [setSessionId])
 
   /** Handle text message send */
-  const handleSendMessage = useCallback(async (text: string, calendarContext?: Record<string, unknown>) => {
+  const handleSendMessage = useCallback(async (
+    text: string,
+    calendarContext?: Record<string, unknown>,
+    userContext?: string,
+  ) => {
     setHasStarted(true)
     // Use provided context or fall back to the session-level calendar context
     const effectiveCalendarContext = calendarContext ?? sessionCalendarContext ?? undefined
@@ -1242,6 +1247,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       {
         message: text,
         ...(effectiveCalendarContext ? { calendar_context: effectiveCalendarContext as any } : {}),
+        user_context: userContext || undefined,
       },
       (event: SSEEvent) => {
         if (activeStreamTokenRef.current !== streamToken) return
@@ -1872,7 +1878,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       )}
       <ActionBar stepState={stepState} onReupload={handleReupload} disabled={isStreaming} />
       <ChatInput
-        onSend={handleSendMessage}
+        onSend={(msg, ctx) => handleSendMessage(msg, undefined, ctx)}
         onFileUpload={handleFileUpload}
         disabled={isStreaming}
         placeholder={inputPlaceholder}

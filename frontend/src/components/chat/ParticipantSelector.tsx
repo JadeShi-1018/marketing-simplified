@@ -92,7 +92,7 @@ export default function ParticipantSelector({
       </div>
 
       {/* Member List */}
-      <div className="border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
+      <div className="task-tab-scrollbar border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#3CCED7]"></div>

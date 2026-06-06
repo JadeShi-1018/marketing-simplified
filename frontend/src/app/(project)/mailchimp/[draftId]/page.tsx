@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { useParams, useSearchParams } from "next/navigation";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
@@ -27,6 +27,7 @@ import {
   Check,
   X,
   XCircle,
+  AlertTriangle,
   ChevronLeft,
   Sparkles,
   ListChecks,
@@ -96,12 +97,15 @@ import { getBlockLabel } from "@/components/mailchimp/email-builder/utils/helper
 import { useUndoRedo } from "@/components/mailchimp/email-builder/hooks/useUndoRedo";
 import { generateSectionsHTML } from "@/components/mailchimp/email-builder/utils/htmlGenerator";
 import { parseHTMLToBlocks } from "@/components/mailchimp/email-builder/utils/htmlParser";
+import { extractMailchimpDraftSections } from "@/lib/api/mailchimpDraftSections";
 import { captureTemplateThumbnail } from "@/components/mailchimp/email-builder/utils/thumbnail";
 import {
   mailchimpApi,
   MailchimpDraftComment,
   MailchimpTemplate,
 } from "@/lib/api/mailchimpApi";
+import { UnsavedChangesGuardProvider } from "@/contexts/UnsavedChangesGuardContext";
+import { useUnsavedChangesGuard } from "@/hooks/useUnsavedChangesGuard";
 
 type EmailBuilderSnapshot = {
   canvasBlocks: CanvasBlocks;
@@ -114,7 +118,13 @@ type EmailBuilderSnapshot = {
 const isEditableElement = (target: EventTarget | null): boolean => {
   if (!target || !(target instanceof HTMLElement)) return false;
   const tagName = target.tagName.toLowerCase();
-  if (target.isContentEditable) return true;
+  if (target.isContentEditable) {
+    // Canvas inline editors use the global undo stack (same as Klaviyo toolbar shortcuts).
+    if (target.closest('[data-testid="email-draft-canvas"]')) {
+      return false;
+    }
+    return true;
+  }
   return ["input", "textarea", "select"].includes(tagName);
 };
 
@@ -122,10 +132,16 @@ export default function MailchimpDetailV2Page() {
   const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
-  const draftId = params?.draftId
-    ? parseInt(params.draftId as string, 10)
-    : null;
+  const draftIdParam = params?.draftId as string | undefined;
+  const parsedDraftId = draftIdParam ? Number.parseInt(draftIdParam, 10) : Number.NaN;
+  const draftId =
+    Number.isInteger(parsedDraftId) && parsedDraftId > 0 ? parsedDraftId : null;
+  const hasInvalidDraftId = Boolean(draftIdParam) && draftId == null;
   const returnTo = searchParams.get('returnTo');
+  const safeReturnTo =
+    returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')
+      ? returnTo
+      : '/mailchimp';
 
   // Save state management
   const [isSaving, setIsSaving] = useState(false);
@@ -133,7 +149,7 @@ export default function MailchimpDetailV2Page() {
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Load state management
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(() => draftId != null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draftName, setDraftName] = useState<string>("Untitled Email");
   const [draftStatus, setDraftStatus] = useState<string | null>(null);
@@ -173,6 +189,7 @@ export default function MailchimpDetailV2Page() {
     setActiveCommentsTab,
     isPreviewOpen,
     setIsPreviewOpen,
+    openPreview,
     previewTab,
     setPreviewTab,
     showMoreBlocks,
@@ -315,6 +332,8 @@ export default function MailchimpDetailV2Page() {
     setEmailBodyColor(snapshot.emailBodyColor);
     setEmailMobilePaddingLeft(snapshot.emailMobilePaddingLeft);
     setEmailMobilePaddingRight(snapshot.emailMobilePaddingRight);
+    setSelectedBlock(null);
+    setSelectedSection(null);
   }, [
     undo,
     setCanvasBlocks,
@@ -322,6 +341,8 @@ export default function MailchimpDetailV2Page() {
     setEmailBodyColor,
     setEmailMobilePaddingLeft,
     setEmailMobilePaddingRight,
+    setSelectedBlock,
+    setSelectedSection,
   ]);
 
   const handleRedo = useCallback(() => {
@@ -333,6 +354,8 @@ export default function MailchimpDetailV2Page() {
     setEmailBodyColor(snapshot.emailBodyColor);
     setEmailMobilePaddingLeft(snapshot.emailMobilePaddingLeft);
     setEmailMobilePaddingRight(snapshot.emailMobilePaddingRight);
+    setSelectedBlock(null);
+    setSelectedSection(null);
   }, [
     redo,
     setCanvasBlocks,
@@ -340,7 +363,31 @@ export default function MailchimpDetailV2Page() {
     setEmailBodyColor,
     setEmailMobilePaddingLeft,
     setEmailMobilePaddingRight,
+    setSelectedBlock,
+    setSelectedSection,
   ]);
+
+  const unsavedGuardSnapshot = useMemo(
+    () => ({
+      ...getCurrentSnapshot(),
+      draftName: isEditingName ? tempDraftName.trim() : draftName,
+    }),
+    [getCurrentSnapshot, isEditingName, tempDraftName, draftName],
+  );
+
+  const {
+    markSaved: markUnsavedGuardSaved,
+    confirmNavigation,
+    unsavedChangesDialog,
+  } = useUnsavedChangesGuard(unsavedGuardSnapshot, {
+    enabled: !isLoading && draftId != null && !loadError,
+  });
+
+  useEffect(() => {
+    if (!isLoading && draftId != null && !loadError) {
+      markUnsavedGuardSaved();
+    }
+  }, [isLoading, draftId, loadError, markUnsavedGuardSaved]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1728,6 +1775,7 @@ export default function MailchimpDetailV2Page() {
       // Update the template content (not campaign settings)
       await mailchimpApi.updateEmailDraftTemplateContent(draftId, templateData);
 
+      markUnsavedGuardSaved();
       setSaveSuccess(true);
 
       // Clear success message after 2 seconds and navigate
@@ -1749,7 +1797,14 @@ export default function MailchimpDetailV2Page() {
     } finally {
       setIsSaving(false);
     }
-  }, [draftId, canvasBlocks, router, previewContainerRef]);
+  }, [
+    draftId,
+    canvasBlocks,
+    router,
+    previewContainerRef,
+    returnTo,
+    markUnsavedGuardSaved,
+  ]);
 
   // Handle name editing
   const handleNameEdit = useCallback(() => {
@@ -1772,11 +1827,12 @@ export default function MailchimpDetailV2Page() {
       });
       setDraftName(newName);
       setIsEditingName(false);
+      markUnsavedGuardSaved();
     } catch (error) {
       // Revert to original name on error
       setTempDraftName(draftName);
     }
-  }, [draftId, draftName, tempDraftName]);
+  }, [draftId, draftName, tempDraftName, markUnsavedGuardSaved]);
 
   const handleNameCancel = useCallback(() => {
     setTempDraftName(draftName);
@@ -1814,30 +1870,8 @@ export default function MailchimpDetailV2Page() {
         setDraftName(name);
         setDraftStatus(draft.status || "draft");
 
-        // Extract sections from template_data or settings.template.default_content
-        let sections: { [blockId: string]: string } | undefined;
-
-        if (draft.template_data?.default_content?.sections) {
-          const sectionsData = draft.template_data.default_content.sections;
-          // Check if it's already an object format
-          if (
-            typeof sectionsData === "object" &&
-            !Array.isArray(sectionsData)
-          ) {
-            sections = sectionsData as { [blockId: string]: string };
-          }
-        } else if (draft.settings?.template?.default_content?.sections) {
-          const sectionsData = draft.settings.template.default_content.sections;
-          if (
-            typeof sectionsData === "object" &&
-            !Array.isArray(sectionsData)
-          ) {
-            sections = sectionsData as { [blockId: string]: string };
-          }
-        }
-
-        // If sections exist, parse them back to canvasBlocks
-        if (sections && Object.keys(sections).length > 0) {
+        const sections = extractMailchimpDraftSections(draft);
+        if (sections) {
           const parsedBlocks = parseHTMLToBlocks(sections);
           setCanvasBlocks(parsedBlocks);
         }
@@ -2445,15 +2479,39 @@ export default function MailchimpDetailV2Page() {
     );
   }
 
+  if (hasInvalidDraftId) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center rounded-xl bg-white py-24 ring-1 ring-rose-200">
+          <AlertTriangle className="h-5 w-5 text-rose-500" />
+          <div className="ml-3">
+            <p className="text-sm font-medium text-rose-700">Invalid draft link</p>
+            <p className="mt-1 text-xs text-gray-500">
+              Please open a draft from the Mailchimp list.
+            </p>
+            <button
+              type="button"
+              onClick={() => router.push(safeReturnTo)}
+              className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
+            >
+              Back to drafts
+            </button>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <>
-      <DashboardLayout>
+      <UnsavedChangesGuardProvider confirmNavigation={confirmNavigation}>
+        <DashboardLayout>
         <div className="relative -m-5 flex flex-col bg-white" style={{ height: 'calc(100vh - 3rem)' }}>
           {/* Top Header Bar */}
-          <div className="flex items-center justify-between px-6 py-3 border-b border-gray-200 bg-white">
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-6 py-3">
             {/* Logo and Project Name */}
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
+            <div className="flex min-w-0 flex-1 items-center space-x-4 overflow-hidden">
+              <div className="flex min-w-0 items-center space-x-2 overflow-hidden">
                 {/* <button onClick={() => router.push("/mailchimp")}>
                   <ChevronLeft />
                 </button> */}
@@ -2464,23 +2522,28 @@ export default function MailchimpDetailV2Page() {
                     onChange={(e) => setTempDraftName(e.target.value)}
                     onBlur={handleNameSave}
                     onKeyDown={handleNameKeyDown}
-                    className="text-2xl font-semibold text-gray-900 bg-transparent border-b-2 border-[#3CCED7] focus:outline-none px-1 min-w-[200px]"
+                    className="min-w-0 max-w-[min(100%,28rem)] flex-1 truncate border-b-2 border-[#3CCED7] bg-transparent px-1 text-2xl font-semibold text-gray-900 focus:outline-none"
                     autoFocus
                   />
                 ) : (
                   <span
-                    className="text-2xl font-semibold text-gray-900 cursor-pointer hover:text-[#3CCED7] transition-colors"
+                    className="min-w-0 max-w-[min(100%,28rem)] cursor-pointer truncate text-2xl font-semibold text-gray-900 transition-colors hover:text-[#3CCED7]"
                     onClick={handleNameEdit}
-                    title="Click to edit name"
+                    title={draftName}
                   >
                     {draftName}
                   </span>
                 )}
-                <EmailDraftStatusPill platform="mailchimp" status={draftStatus} />
+                <span className="shrink-0">
+                  <EmailDraftStatusPill
+                    platform="mailchimp"
+                    status={draftStatus}
+                  />
+                </span>
               </div>
             </div>
             {/* save bar */}
-            <div className="flex items-center space-x-4">
+            <div className="flex shrink-0 items-center space-x-4">
               {saveSuccess ? (
                 <span className="text-sm text-[#3CCED7]">
                   Saved successfully!
@@ -2717,17 +2780,29 @@ export default function MailchimpDetailV2Page() {
                   </button>
                 </div>
                 <button
+                  type="button"
+                  data-testid="email-draft-open-preview"
+                  aria-haspopup="dialog"
+                  aria-expanded={isPreviewOpen}
                   className="px-4 py-2 text-sm text-gray bg-gray-200 rounded-md hover:bg-gray-300"
-                  onClick={() => {
-                    setIsPreviewOpen(true);
-                    setPreviewTab("Desktop");
+                  onPointerDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    openPreview();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    openPreview();
                   }}
                 >
                   Preview
                 </button>
               </div>
               {/* Email Canvas */}
-              <div className="flex-1 overflow-auto bg-gray-100 rounded-tl-md border">
+              <div
+                data-testid="email-draft-canvas"
+                className="flex-1 overflow-auto bg-gray-100 rounded-tl-md border"
+              >
                 <div
                   className="relative"
                   style={{ backgroundColor: emailBackgroundColor }}
@@ -2971,7 +3046,9 @@ export default function MailchimpDetailV2Page() {
         {renderImportUrlModal()}
         {renderSaveTemplateModal()}
         {renderChangeTemplateModal()}
-      </DashboardLayout>
+        </DashboardLayout>
+      </UnsavedChangesGuardProvider>
+      {unsavedChangesDialog}
     </>
   );
 }
