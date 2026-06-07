@@ -98,8 +98,9 @@ def _extract_spreadsheet_data(spreadsheet):
     return data
 
 
-def _call_llm(client, spreadsheet_data):
+def _call_llm(client, spreadsheet_data, agent_session=None):
     """Call Claude API to analyze spreadsheet data."""
+    from .llm_client import call_llm as _call_llm_unified
     system_prompt = (
         "You are a media buying analyst AI. Analyze spreadsheet data and identify "
         "anomalies in campaign performance metrics like ROAS, CPA, CTR, conversion "
@@ -112,19 +113,15 @@ def _call_llm(client, spreadsheet_data):
         '"summary": "...", "priority": "HIGH|MEDIUM|LOW"}]}\n\n'
         "Only return valid JSON, no markdown code fences."
     )
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=2000,
-        system=system_prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": f"Analyze this spreadsheet data:\n{json.dumps(spreadsheet_data, default=str)}",
-            }
-        ],
+    result = _call_llm_unified(
+        agent_session=agent_session,
+        provider='anthropic',
+        model='claude-sonnet-4-20250514',
+        system_prompt=system_prompt,
+        user_prompt=f"Analyze this spreadsheet data:\n{json.dumps(spreadsheet_data, default=str)}",
+        max_output_tokens=2000,
     )
-    text = response.content[0].text
-    return json.loads(text)
+    return json.loads(result['text'])
 
 
 _ANALYSIS_SYSTEM_PROMPT = """\
@@ -236,9 +233,9 @@ def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
     return column_summary, json.dumps(limited, default=str), criteria_text
 
 
-def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None):
+def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None, agent_session=None):
     """Call Gemini to analyze spreadsheet data."""
-    from .gemini_client import call_gemini_json
+    from .llm_client import call_llm as _call_llm_unified
 
     column_summary, cleaned_data, criteria_text = _preprocess_spreadsheet(
         spreadsheet_data, success_criteria
@@ -258,19 +255,27 @@ def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None,
     )
 
     logger.info("Calling Gemini for spreadsheet analysis user_id=%s", user_id)
-    return call_gemini_json(
+    result = _call_llm_unified(
+        agent_session=agent_session,
+        provider='gemini',
+        model='gemini-2.5-flash-lite',
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=0.3,
-        timeout=300,
+        max_output_tokens=4096,
+        response_mime_type='application/json',
     )
+    return json.loads(result['text'])
 
 
-def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None):
+def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None, agent_session=None):
     """Run analysis using Gemini, with Claude as fallback.
 
     Raises RuntimeError if no provider is configured or all providers fail.
+    QuotaError propagates immediately — do not swallow it in either branch.
     """
+    from stripe_meta.exceptions import QuotaError
+
     # 1. Try Gemini (primary)
     from .gemini_client import _get_api_key as _gemini_key
     if _gemini_key():
@@ -279,7 +284,10 @@ def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_co
                 spreadsheet_data, user_id,
                 success_criteria=success_criteria,
                 user_context=user_context,
+                agent_session=agent_session,
             )
+        except QuotaError:
+            raise
         except Exception as e:
             logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
 
@@ -287,7 +295,9 @@ def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_co
     client = _get_llm_client()
     if client:
         try:
-            return _call_llm(client, spreadsheet_data)
+            return _call_llm(client, spreadsheet_data, agent_session=agent_session)
+        except QuotaError:
+            raise
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
 
@@ -441,9 +451,10 @@ def _call_gemini_chat(
     analysis_result=None,
     project_members=None,
     current_username='',
+    agent_session=None,
 ):
     """Call Gemini for post-analysis follow-up. Replaces _call_dify_chat."""
-    from .gemini_client import call_gemini_json
+    from .llm_client import call_llm as _call_llm_unified
 
     user_prompt = (
         f"Chat history:\n  {chat_messages}\n\n"
@@ -454,12 +465,17 @@ def _call_gemini_chat(
     )
 
     try:
-        parsed = call_gemini_json(
+        result = _call_llm_unified(
+            agent_session=agent_session,
+            provider='gemini',
+            model='gemini-2.5-flash-lite',
             system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             temperature=0.5,
-            timeout=120,
+            max_output_tokens=4096,
+            response_mime_type='application/json',
         )
+        parsed = json.loads(result['text'])
     except Exception as e:
         logger.error("Gemini chat call failed: %s", e)
         raise RuntimeError(f"Gemini chat failed: {e}") from e
@@ -487,6 +503,7 @@ def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
     snapshot = call_gemini_miro_generator(
         context,
         user_id=str(orchestrator.user.id),
+        agent_session=orchestrator.session,
     )
 
     # If approval isn't required for the session, persist immediately without gating.
@@ -1032,7 +1049,8 @@ class AgentOrchestrator:
         calendar_data_str = json.dumps(calendar_payload, ensure_ascii=False)
 
         # Call Gemini Calendar Assistant
-        from .gemini_client import call_gemini, _get_api_key as _gemini_key
+        from .gemini_client import _get_api_key as _gemini_key
+        from .llm_client import call_llm as _call_llm_unified
         if not _gemini_key():
             yield {"type": "error", "content": "Calendar AI is not configured. Please set GEMINI_API_KEY."}
             return
@@ -1063,7 +1081,10 @@ class AgentOrchestrator:
         )
 
         try:
-            raw_answer = call_gemini(
+            _llm_result = _call_llm_unified(
+                agent_session=self.session,
+                provider='gemini',
+                model='gemini-2.5-flash-lite',
                 system_prompt=_calendar_system_prompt,
                 user_prompt=(
                     f"Calendar data:\n{calendar_data_str}\n\n"
@@ -1071,8 +1092,10 @@ class AgentOrchestrator:
                     f"Return JSON only."
                 ),
                 temperature=0.3,
-                timeout=90,
+                max_output_tokens=4096,
+                response_mime_type='application/json',
             )
+            raw_answer = _llm_result['text']
         except Exception as e:
             logger.error(f"Gemini calendar workflow error: {e}")
             yield {"type": "error", "content": "Failed to get AI response. Please try again."}
@@ -1196,7 +1219,7 @@ class AgentOrchestrator:
         )
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id, agent_session=self.session)
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1242,7 +1265,7 @@ class AgentOrchestrator:
         spreadsheet_data = _extract_spreadsheet_data(spreadsheet)
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id, agent_session=self.session)
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1307,7 +1330,7 @@ class AgentOrchestrator:
         }
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id, agent_session=self.session)
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1829,6 +1852,7 @@ class AgentOrchestrator:
                         analysis_result=latest_run.analysis_result,
                         project_members=project_members,
                         current_username=self.user.username or '',
+                        agent_session=self.session,
                     )
                     follow_up_status = result.get("status", "completed")
                     reply = result.get("text") or result.get("reply", "")
