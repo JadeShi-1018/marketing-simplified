@@ -185,6 +185,26 @@ class ChatView(EnglishResponseMixin, APIView):
             session=session,
         )
 
+        # Pre-flight quota check — reject before SSE headers are committed so the
+        # client receives a proper HTTP status code rather than a mid-stream abort.
+        try:
+            from stripe_meta.exceptions import QuotaError
+            from stripe_meta.services import resolve_charging_org, check_quota_or_402
+            _org = resolve_charging_org(session)
+            _allowed, _err_payload = check_quota_or_402(_org, 1)
+            if not _allowed:
+                return Response(_err_payload, status=status.HTTP_402_PAYMENT_REQUIRED)
+        except QuotaError as _qe:
+            _http_status = (
+                status.HTTP_409_CONFLICT
+                if _qe.code == 'PROJECT_HAS_NO_ORG'
+                else status.HTTP_402_PAYMENT_REQUIRED
+            )
+            return Response(
+                {'code': _qe.code, 'message': _qe.message, **_qe.payload},
+                status=_http_status,
+            )
+
         def event_stream():
             assistant_content_parts = []
             assistant_metadata = {}
@@ -276,6 +296,11 @@ class ChatView(EnglishResponseMixin, APIView):
 
                     if chunk_type == 'done':
                         _flush_message()
+            except QuotaError as e:
+                _flush_message()
+                error_data = json.dumps({'code': e.code, **e.payload})
+                yield f"event: error\ndata: {error_data}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
             except Exception:
                 logger.exception("Error during agent SSE stream")
                 _flush_message()
