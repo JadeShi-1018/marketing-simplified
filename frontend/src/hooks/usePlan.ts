@@ -7,13 +7,17 @@ interface Plan {
   id: number;
   name: string;
   desc: string | null;
-  max_team_members: number;
-  max_previews_per_day: number;
-  max_tasks_per_day: number;
   stripe_price_id: string;
-  price: number | null;
-  price_currency: string | null;
-  price_id: string;
+  // Token-billing schema
+  base_price_cents: number;
+  monthly_token_quota: number | null;  // null = unlimited
+  included_seats: number;
+  extra_seat_price_cents: number | null;
+  is_archived: boolean;
+  // Legacy (kept for existing callers)
+  max_team_members: number | null;
+  max_previews_per_day: number | null;
+  max_tasks_per_day: number | null;
 }
 
 interface SwitchPlanResponse {
@@ -25,10 +29,10 @@ interface UsePlanReturn {
   loading: boolean;
   error: string | null;
   fetchPlans: () => Promise<void>;
-  createCheckoutSession: (planId: number) => Promise<void>;
+  createCheckoutSession: (planId: number, seatCount?: number) => Promise<void>;
   cancelSubscription: () => Promise<void>;
   switchPlan: (planId: number) => Promise<SwitchPlanResponse>;
-  handleSubscribe: (planId: number) => Promise<void>;
+  handleSubscribe: (planId: number, seatCount?: number) => Promise<void>;
 }
 
 export default function usePlan(enabled = true): UsePlanReturn {
@@ -83,11 +87,12 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
-  const createCheckoutSession = async (planId: number) => {
+  const createCheckoutSession = async (planId: number, seatCount = 1) => {
     try {
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
       const response = await api.post('/api/stripe/checkout/', {
         plan_id: planId,
+        seat_count: seatCount,
         success_url: `${baseUrl}/plans`,
         cancel_url: `${baseUrl}/plans`
       });
@@ -126,7 +131,7 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
-  const handleSubscribe = async (planId: number) => {
+  const handleSubscribe = async (planId: number, seatCount = 1) => {
     const user = useAuthStore.getState().user;
     const currentPlanId = user?.organization?.plan_id;
 
@@ -184,7 +189,7 @@ export default function usePlan(enabled = true): UsePlanReturn {
       }
     } else {
       // No subscription - use normal checkout
-      await createCheckoutSession(planId);
+      await createCheckoutSession(planId, seatCount);
     }
   };
 

@@ -21,8 +21,9 @@ urlpatterns = [
     path('checkout/', views.create_checkout_session, name='create_checkout_session'),
 
     # Usage endpoints
-    # GET /usage
     path('usage/', views.get_usage, name='get_usage'),
+    # GET /quota-preview/?project_id=<id>
+    path('quota-preview/', views.quota_preview, name='quota_preview'),
     
     # Organization endpoints
     # POST /organization

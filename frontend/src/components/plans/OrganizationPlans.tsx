@@ -102,28 +102,26 @@ export default function OrganizationPlans({ loading = false }: { loading?: boole
             ) : plans.length === 0 ? (
               <div className="p-8 text-center text-gray-600">No plans available</div>
             ) : (
-              plans.map((plan, index) => (
-                <PlanCard
-                  key={plan.id}
-                  name={plan.name}
-                  price={plan.price}
-                  priceLabel={plan.price !== null ? `$${plan.price}` : 'Free'}
-                  priceSubtext={plan.price !== null && plan.price !== 0 ? 'billed monthly' : undefined}
-                  description={plan.desc || `Professional ${plan.name.toLowerCase()} plan for your organization.`}
-                  features={[
-                    { category: 'TEAM', label: 'Team members', value: plan.max_team_members.toString(), tooltip: `Maximum number of team members allowed in your organization on the ${plan.name} plan.` },
-                    { category: 'USAGE', label: 'Previews/day', value: plan.max_previews_per_day.toString(), tooltip: `Maximum number of previews you can generate per day on the ${plan.name} plan.` },
-                    { category: 'USAGE', label: 'Tasks/day', value: plan.max_tasks_per_day.toString(), tooltip: `Maximum number of tasks you can run per day on the ${plan.name} plan.` },
-                  ]}
-                  ctaText={currentPlanId ? (currentPlanId === plan.id ? "Current plan" : "Switch plan") : "Subscribe now"}
-                  badge={index === plans.length - 2 ? 'Popular' : undefined}
-                  planId={plan.id}
-                  stripePriceId={plan.stripe_price_id}
-                  onSubscribe={handleSubscribe}
-                  isCurrentPlan={currentPlanId === plan.id}
-                  canManagePlans={isOrgAdmin}
-                />
-              ))
+              plans
+                .filter((plan) => !plan.is_archived)
+                .map((plan, index, arr) => (
+                  <PlanCard
+                    key={plan.id}
+                    name={plan.name}
+                    description={plan.desc ?? `Professional ${plan.name.toLowerCase()} plan for your organization.`}
+                    basePriceCents={plan.base_price_cents}
+                    monthlyTokenQuota={plan.monthly_token_quota}
+                    includedSeats={plan.included_seats}
+                    extraSeatPriceCents={plan.extra_seat_price_cents ?? 0}
+                    ctaText={currentPlanId ? (currentPlanId === plan.id ? 'Current plan' : 'Switch plan') : 'Subscribe now'}
+                    badge={index === arr.length - 2 ? 'Popular' : undefined}
+                    planId={plan.id}
+                    stripePriceId={plan.stripe_price_id}
+                    onSubscribe={handleSubscribe}
+                    isCurrentPlan={currentPlanId === plan.id}
+                    canManagePlans={isOrgAdmin}
+                  />
+                ))
             )}
           </div>
         </div>

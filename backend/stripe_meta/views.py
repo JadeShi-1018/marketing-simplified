@@ -13,14 +13,14 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .permissions import HasValidOrganizationToken, IsOrganizationAdmin
 from .services import sync_seat_count
-from .models import Plan, Subscription, UsageDaily, Payment, StripeWebhookEvent
+from .models import Plan, Subscription, UsageDaily, UsageMonthly, Payment, StripeWebhookEvent
 from .serializers import (
     PlanSerializer, SubscriptionSerializer, UsageDailySerializer, CheckoutSessionSerializer, 
     OrganizationSerializer, CreateOrganizationSerializer, OrganizationUserSerializer
 )
 from rest_framework.pagination import PageNumberPagination
 from django.db import transaction
-from core.models import Organization, CustomUser
+from core.models import Organization, CustomUser, Project
 
 # Configure Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -471,6 +471,64 @@ def get_usage(request):
             {'error': str(e), 'code': 'USAGE_RETRIEVAL_ERROR'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, HasValidOrganizationToken])
+def quota_preview(request):
+    """
+    Return current-month token usage + plan quota for a project's organization.
+
+    Query param: project_id (required)
+    Response:
+      {
+        "tokens_used": int,
+        "tokens_reserved": int,
+        "overage_tokens": int,
+        "monthly_token_quota": int | null,   // null = unlimited
+        "year_month": "YYYY-MM"
+      }
+    """
+    project_id = request.query_params.get('project_id')
+    if not project_id:
+        return Response(
+            {'error': 'project_id is required', 'code': 'MISSING_PROJECT_ID'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        project = Project.objects.select_related('organization').get(id=project_id)
+    except Project.DoesNotExist:
+        return Response(
+            {'error': 'Project not found', 'code': 'PROJECT_NOT_FOUND'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    org = project.organization
+    if not org:
+        return Response(
+            {'error': 'Project has no linked organization', 'code': 'NO_ORG'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    ym = timezone.now().strftime('%Y-%m')
+    usage = UsageMonthly.objects.filter(organization=org, year_month=ym).first()
+
+    sub = (
+        Subscription.objects.filter(organization=org, is_active=True)
+        .select_related('plan')
+        .order_by('is_internal')
+        .first()
+    )
+    quota = sub.plan.monthly_token_quota if sub and sub.plan else None
+
+    return Response({
+        'tokens_used': usage.tokens_used if usage else 0,
+        'tokens_reserved': usage.tokens_reserved if usage else 0,
+        'overage_tokens': usage.overage_tokens if usage else 0,
+        'monthly_token_quota': quota,
+        'year_month': ym,
+    })
+
 
 @csrf_exempt
 @require_http_methods(["POST"])
