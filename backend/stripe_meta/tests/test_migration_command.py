@@ -149,6 +149,17 @@ class MigrateLegacyCommandTests(MigrationTestBase):
 
     @patch(NOTIFY_PATH)
     @patch(MODIFY_PATH)
+    def test_migrate_legacy_coupon_applied(self, mock_modify, mock_notify):
+        """stripe.Subscription.modify is invoked with the grandfather coupon id."""
+        call_command('migrate_legacy_subscribers')
+
+        mock_modify.assert_called_once()
+        _, call_kwargs = mock_modify.call_args
+        self.assertEqual(call_kwargs['coupon'], TEST_COUPON)
+        self.assertEqual(call_kwargs['proration_behavior'], 'none')
+
+    @patch(NOTIFY_PATH)
+    @patch(MODIFY_PATH)
     def test_migrate_legacy_archives_old_plans(self, mock_modify, mock_notify):
         """After successful run, Pro and Ultimate plans are archived; Team is not."""
         call_command('migrate_legacy_subscribers')
