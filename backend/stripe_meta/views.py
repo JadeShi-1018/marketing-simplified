@@ -520,12 +520,15 @@ def quota_preview(request):
         .first()
     )
     quota = sub.plan.monthly_token_quota if sub and sub.plan else None
+    overage_price = sub.plan.overage_price_cents_per_1m if sub and sub.plan else None
 
     return Response({
+        'project_name': project.name,
         'tokens_used': usage.tokens_used if usage else 0,
         'tokens_reserved': usage.tokens_reserved if usage else 0,
         'overage_tokens': usage.overage_tokens if usage else 0,
         'monthly_token_quota': quota,
+        'overage_price_cents_per_1m': overage_price,
         'year_month': ym,
     })
 
