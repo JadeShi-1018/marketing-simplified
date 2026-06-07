@@ -7,13 +7,18 @@ Covers:
   - Handler exception → 500, error_message saved, processed_at NOT set (enables Stripe retry)
 """
 import json
-from unittest.mock import patch, MagicMock
+import logging
+from unittest.mock import patch, Mock
 
 import stripe
+from django.contrib.auth import get_user_model
 from django.test import TestCase, Client
 
-from stripe_meta.models import Plan, Subscription, StripeWebhookEvent
+from stripe_meta.models import Plan, Subscription, StripeWebhookEvent, Payment
+from stripe_meta.views import handle_payment_succeeded, handle_subscription_created
 from core.models import Organization
+
+User = get_user_model()
 
 
 def _make_event(event_id, event_type='checkout.session.completed', obj=None):
@@ -134,3 +139,73 @@ class WebhookTests(TestCase):
         self.assertEqual(json.loads(response.content).get('status'), 'ignored')
         evt = StripeWebhookEvent.objects.get(stripe_event_id='evt_unknown_001')
         self.assertIsNotNone(evt.processed_at)
+
+
+# ---------------------------------------------------------------------------
+# Handler-level regression tests — call handler functions directly
+# ---------------------------------------------------------------------------
+
+class WebhookHandlerRegressionTests(TestCase):
+    """
+    Regression tests for real-payload bugs found during live webhook testing.
+    Call handler functions directly so the failure mode is isolated from the
+    dispatch machinery.
+    Plans deleted first so the org signal is a no-op.
+    """
+
+    def setUp(self):
+        Plan.objects.all().delete()
+        self.org = Organization.objects.create(name='RegressionOrg', slug='regression-org')
+
+    def test_payment_succeeded_null_parent(self):
+        """
+        Stripe sends parent=null on one-off invoices (no subscription).
+        handle_payment_succeeded must not raise AttributeError and must skip
+        Payment creation when there is no subscription_id.
+
+        Regression: `parent.get(...)` on None was AttributeError → 500.
+        Fix: `parent = invoice_data.get('parent') or {}`
+        """
+        invoice = {
+            'id': 'in_null_parent_regression',
+            'customer': 'cus_regression_abc',
+            'parent': None,
+            'lines': {'data': []},
+        }
+        mock_customer = Mock()
+        mock_customer.metadata = {'user_id': '99999', 'organization_id': str(self.org.id)}
+
+        before = Payment.objects.count()
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
+            handle_payment_succeeded(invoice)   # must not raise
+
+        self.assertEqual(Payment.objects.count(), before)
+
+    def test_subscription_created_missing_org_id(self):
+        """
+        customer.subscription.created where customer metadata has no organization_id
+        (stripe trigger / manually-created customers) must:
+          - not raise ValueError
+          - log a warning
+          - not create any Subscription row
+          - return normally so the webhook view returns 200 (stops Stripe retrying)
+
+        Regression: previously raised ValueError → 500 → Stripe retried indefinitely.
+        Fix: logger.warning + return (no raise).
+        """
+        payload = {
+            'id': 'sub_no_org_regression',
+            'status': 'active',
+            'customer': 'cus_no_org_regression',
+            'start_date': 1700000000,
+            'items': {'data': []},
+        }
+        mock_customer = Mock()
+        mock_customer.metadata = {}   # no organization_id
+
+        before = Subscription.objects.count()
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
+            with self.assertLogs('stripe_meta.views', level=logging.WARNING):
+                handle_subscription_created(payload)   # must not raise
+
+        self.assertEqual(Subscription.objects.count(), before)
