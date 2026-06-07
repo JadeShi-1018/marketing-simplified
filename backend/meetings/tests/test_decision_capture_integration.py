@@ -138,7 +138,7 @@ class TestDecisionCaptureIntegration(TestCase):
         self.assertEqual(response.data["originMeeting"]["id"], meeting.id)
         self.assertEqual(response.data["originMeeting"]["title"], meeting.title)
 
-    def test_meeting_delete_is_protected_when_decision_origin_exists(self):
+    def test_meeting_delete_cascades_decision_origins(self):
         """Test that deleting a meeting also deletes its decision origins (CASCADE)."""
         meeting = self._meeting()
         decision = Decision.objects.create(

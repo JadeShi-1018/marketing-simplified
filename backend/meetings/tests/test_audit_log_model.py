@@ -225,7 +225,7 @@ class TestMeetingAuditLogImmutability(TestCase):
 
         self.assertIn("immutable", str(context.exception).lower())
 
-    def test_delete_via_orm_raises_program_error(self):
+    def test_delete_via_orm_succeeds(self):
         """Test that DELETE via ORM succeeds (trigger allows delete, only blocks update)."""
         audit_log_id = self.audit_log.id
         self.audit_log.delete()
@@ -253,7 +253,7 @@ class TestMeetingAuditLogImmutability(TestCase):
 
         self.assertIn("immutable", str(context.exception).lower())
 
-    def test_delete_via_raw_sql_raises_program_error(self):
+    def test_delete_via_raw_sql_succeeds(self):
         """Test that DELETE via raw SQL succeeds (trigger allows delete, only blocks update)."""
         audit_log_id = self.audit_log.id
         with connection.cursor() as cursor:
@@ -609,14 +609,13 @@ class TestMeetingAuditLogRelationships(TestCase):
             username="actor"
         )
 
-    def test_meeting_protected_on_delete(self):
+    def test_meeting_delete_cascades_audit_logs(self):
         """Test that deleting a meeting also deletes its audit logs (CASCADE)."""
         audit_log = MeetingAuditLog.objects.create(
             meeting=self.meeting,
             actor=self.actor,
             event_type=MeetingAuditLog.EVENT_STATUS_CHANGED,
         )
-        meeting_id = self.meeting.id
         self.meeting.delete()
         self.assertFalse(MeetingAuditLog.objects.filter(id=audit_log.id).exists())
 
