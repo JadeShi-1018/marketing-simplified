@@ -3,9 +3,11 @@ import logging
 import stripe
 from celery import shared_task
 from django.conf import settings
+from django.core.mail import mail_admins
+from django.db.models import Sum
 from django.utils import timezone
 
-from .models import UsageDaily, UsageMonthly, Subscription
+from .models import UsageDaily, UsageMonthly, Subscription, LLMCallLog, OrgMonthlyCost
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,121 @@ def report_overage_to_stripe():
                 'report_overage_to_stripe: overage report failed for org %s',
                 sub.organization_id,
             )
+
+
+def _send_alert_email(org, tier: str, cost_cents: int, revenue_cents: int) -> None:
+    """Send a fair-use alert email to site admins and log a WARNING."""
+    ym = timezone.now().strftime('%Y-%m')
+    if tier == 'free':
+        subject = f'[Fair-Use Alert] Free org {org.name} (id={org.id}) cost ${cost_cents/100:.2f} in {ym}'
+        message = (
+            f'Organization: {org.name} (id={org.id})\n'
+            f'Month: {ym}\n'
+            f'LLM cost: ${cost_cents/100:.2f}\n'
+            f'Threshold: ${getattr(settings, "FREE_USER_MAX_COST_CENTS", 500)/100:.2f}\n'
+        )
+    else:
+        ratio = cost_cents / revenue_cents
+        subject = f'[Fair-Use Alert] Paid org {org.name} (id={org.id}) ratio={ratio:.2f} in {ym}'
+        message = (
+            f'Organization: {org.name} (id={org.id})\n'
+            f'Month: {ym}\n'
+            f'LLM cost: ${cost_cents/100:.2f}\n'
+            f'Plan revenue: ${revenue_cents/100:.2f}\n'
+            f'Ratio: {ratio:.2f} (threshold={getattr(settings, "FAIR_USE_THRESHOLD_RATIO", 0.8)})\n'
+        )
+    logger.warning(
+        'fair_use_alert org=%s tier=%s cost_cents=%d revenue_cents=%d',
+        org.id, tier, cost_cents, revenue_cents,
+    )
+    try:
+        mail_admins(subject, message, fail_silently=True)
+    except Exception:
+        logger.exception('_send_alert_email mail_admins failed for org %s', org.id)
+
+
+@shared_task
+def aggregate_monthly_llm_cost():
+    """
+    Aggregate LLMCallLog(success=True) into OrgMonthlyCost for the current month.
+    Runs daily at 02:00 UTC; idempotent — update_or_create overwrites previous aggregation.
+    """
+    ym = timezone.now().strftime('%Y-%m')
+    year = int(ym[:4])
+    month = int(ym[5:7])
+
+    rows = (
+        LLMCallLog.objects.filter(
+            success=True,
+            created_at__year=year,
+            created_at__month=month,
+        )
+        .values('organization_id')
+        .annotate(
+            agg_cost=Sum('total_cost_cents'),
+            agg_tokens=Sum('normalized_tokens'),
+        )
+    )
+
+    updated = 0
+    for row in rows:
+        OrgMonthlyCost.objects.update_or_create(
+            organization_id=row['organization_id'],
+            year_month=ym,
+            defaults={
+                'llm_cost_cents': row['agg_cost'] or 0,
+                'total_tokens': row['agg_tokens'] or 0,
+            },
+        )
+        updated += 1
+
+    logger.info('aggregate_monthly_llm_cost done ym=%s orgs_updated=%d', ym, updated)
+
+
+@shared_task
+def check_fair_use_alerts():
+    """
+    Check OrgMonthlyCost against fair-use thresholds and alert admins when exceeded.
+
+    Free orgs (no real is_internal=False subscription):
+      cost > FREE_USER_MAX_COST_CENTS → alert
+
+    Paid orgs:
+      cost / monthly_revenue_cents > FAIR_USE_THRESHOLD_RATIO → alert
+
+    v1: warning log + email to ADMINS. No automatic blocking.
+    """
+    ym = timezone.now().strftime('%Y-%m')
+    free_max = getattr(settings, 'FREE_USER_MAX_COST_CENTS', 500)
+    ratio_threshold = getattr(settings, 'FAIR_USE_THRESHOLD_RATIO', 0.8)
+
+    alerts = 0
+    for cost_row in OrgMonthlyCost.objects.filter(year_month=ym).select_related('organization'):
+        org = cost_row.organization
+        cost = cost_row.llm_cost_cents
+
+        sub = (
+            Subscription.objects.filter(organization=org, is_active=True, is_internal=False)
+            .first()
+        )
+
+        if not sub:
+            if cost > free_max:
+                _send_alert_email(org, 'free', cost, 0)
+                alerts += 1
+        else:
+            revenue = sub.monthly_revenue_cents or 0
+            if revenue == 0:
+                if cost > free_max:
+                    _send_alert_email(org, 'free', cost, 0)
+                    alerts += 1
+            else:
+                ratio = cost / revenue
+                if ratio > ratio_threshold:
+                    _send_alert_email(org, 'paid', cost, revenue)
+                    alerts += 1
+
+    logger.info('check_fair_use_alerts done ym=%s alerts_sent=%d', ym, alerts)
 
 
 @shared_task

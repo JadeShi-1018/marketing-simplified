@@ -388,10 +388,25 @@ broker_connection_retry_on_startup = True
 
 # Celery Beat Configuration for Periodic Tasks
 CELERY_BEAT_SCHEDULE = {
-    'reset-daily-usage': {
-        'task': 'stripe_meta.tasks.reset_daily_usage',
-        'schedule': crontab(hour=0, minute=0),  # Run at midnight (00:00) every day
-        'options': {'timezone': 'UTC'}
+    # 'reset-daily-usage': {   # disabled — UsageDaily replaced by token-based billing
+    #     'task': 'stripe_meta.tasks.reset_daily_usage',
+    #     'schedule': crontab(hour=0, minute=0),
+    #     'options': {'timezone': 'UTC'},
+    # },
+    'aggregate-monthly-llm-cost': {
+        'task': 'stripe_meta.tasks.aggregate_monthly_llm_cost',
+        'schedule': crontab(hour=2, minute=0),   # daily 02:00 UTC
+        'options': {'timezone': 'UTC'},
+    },
+    'check-fair-use-alerts': {
+        'task': 'stripe_meta.tasks.check_fair_use_alerts',
+        'schedule': crontab(hour=3, minute=0),   # daily 03:00 UTC
+        'options': {'timezone': 'UTC'},
+    },
+    'report-overage-to-stripe': {
+        'task': 'stripe_meta.tasks.report_overage_to_stripe',
+        'schedule': crontab(hour=23, minute=0, day_of_month=28),  # monthly near month-end
+        'options': {'timezone': 'UTC'},
     },
     'cleanup-expired-tiktok-previews': {
         'task': 'tiktok.tasks.cleanup_expired_previews',
