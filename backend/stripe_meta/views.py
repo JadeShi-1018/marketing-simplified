@@ -509,6 +509,8 @@ def stripe_webhook(request):
         'customer.subscription.deleted': handle_subscription_deleted,
         'invoice.payment_succeeded': handle_payment_succeeded,
         'invoice.payment_failed': handle_payment_failed,
+        'invoice.created': handle_invoice_created,
+        'invoice.finalized': handle_invoice_finalized,
     }
 
     handler = handlers.get(event_type)
@@ -630,6 +632,14 @@ def handle_subscription_created(subscription_data, event_id=None):
     start_date = subscription_data.get('start_date')
     end_date = items[0].get('current_period_end') if items else None
 
+    # Locate the overage line item for later reference (Meter Events use customer_id,
+    # but store it here for reconciliation).
+    overage_price_id = plan.stripe_overage_price_id if plan else None
+    overage_item = next(
+        (item for item in items if item.get('price', {}).get('id') == overage_price_id),
+        None,
+    ) if overage_price_id else None
+
     subscription, created = Subscription.objects.update_or_create(
         stripe_subscription_id=subscription_id,
         defaults={
@@ -638,6 +648,7 @@ def handle_subscription_created(subscription_data, event_id=None):
             'start_date': datetime.fromtimestamp(start_date) if start_date else None,
             'end_date': datetime.fromtimestamp(end_date) if end_date else None,
             'is_active': subscription_data.get('status') == 'active',
+            'stripe_overage_item_id': overage_item['id'] if overage_item else None,
         },
     )
 
@@ -742,3 +753,90 @@ def handle_subscription_deleted(subscription_data, event_id=None):
     subscription.is_active = False
     subscription.save()
     logger.info("handle_subscription_deleted exit event_id=%s org_id=%s", event_id, org_id)
+
+
+def handle_invoice_created(data, event_id=None):
+    """
+    Log invoice creation for awareness.
+    No DB write — invoice.finalized is the reconciliation checkpoint.
+    Exceptions bubble up to the webhook dispatcher (matches commit-1 design).
+    """
+    invoice_id = data.get('id')
+    customer_id = data.get('customer')
+    logger.info(
+        "handle_invoice_created event_id=%s invoice_id=%s customer_id=%s",
+        event_id, invoice_id, customer_id,
+    )
+
+
+def handle_invoice_finalized(data, event_id=None):
+    """
+    Reconcile Stripe's computed overage amount against the local UsageMonthly record.
+    Mismatch → warning log for ops review; no automatic data correction.
+    Exceptions bubble up to the webhook dispatcher.
+    """
+    from .models import UsageMonthly
+
+    invoice_id = data.get('id')
+    customer_id = data.get('customer')
+    logger.info(
+        "handle_invoice_finalized enter event_id=%s invoice_id=%s customer_id=%s",
+        event_id, invoice_id, customer_id,
+    )
+
+    # Locate the org via the Stripe customer record.
+    if not customer_id:
+        logger.warning("handle_invoice_finalized: no customer_id on invoice %s", invoice_id)
+        return
+
+    customer = stripe.Customer.retrieve(customer_id)
+    org_id = customer.metadata.get('organization_id') if customer else None
+    if not org_id:
+        logger.warning("handle_invoice_finalized: no organization_id in customer %s metadata", customer_id)
+        return
+
+    # Sum the overage line amounts from the invoice (in cents).
+    lines = data.get('lines', {}).get('data', [])
+    stripe_overage_cents = sum(
+        line.get('amount', 0)
+        for line in lines
+        if line.get('pricing', {}).get('price_details', {}).get('price')
+        in {
+            sub.plan.stripe_overage_price_id
+            for sub in Subscription.objects.filter(
+                organization_id=org_id, is_active=True, is_internal=False,
+            ).select_related('plan')
+            if sub.plan and sub.plan.stripe_overage_price_id
+        }
+    )
+
+    ym = timezone.now().strftime('%Y-%m')
+    usage = UsageMonthly.objects.filter(organization_id=org_id, year_month=ym).first()
+    if not usage:
+        logger.info(
+            "handle_invoice_finalized: no UsageMonthly for org %s ym=%s — skipping reconciliation",
+            org_id, ym,
+        )
+        return
+
+    # Derive expected overage cents from local token count.
+    sub = (
+        Subscription.objects.filter(organization_id=org_id, is_active=True, is_internal=False)
+        .select_related('plan')
+        .first()
+    )
+    plan = sub.plan if sub else None
+    rate = plan.overage_price_cents_per_1m if plan else None
+    if rate is not None:
+        local_overage_cents = (usage.overage_tokens // 1_000_000) * rate
+        if stripe_overage_cents != local_overage_cents:
+            logger.warning(
+                "handle_invoice_finalized MISMATCH org=%s ym=%s "
+                "stripe_overage_cents=%d local_overage_cents=%d — manual review required",
+                org_id, ym, stripe_overage_cents, local_overage_cents,
+            )
+
+    logger.info(
+        "handle_invoice_finalized exit event_id=%s org_id=%s stripe_overage_cents=%d",
+        event_id, org_id, stripe_overage_cents,
+    )
