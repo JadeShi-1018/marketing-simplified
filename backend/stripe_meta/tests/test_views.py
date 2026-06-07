@@ -746,33 +746,35 @@ class WebhookViewsTest(StripeViewsTestCase):
             stripe_price_id='price_free'
         )
         
-        # Mock successful Stripe API calls
+        # Mock successful Stripe API calls — item must include 'price' so the
+        # price_id match in switch_plan can locate the base-plan item.
         mock_subscription = {
             'id': 'sub_test_123',
             'status': 'active',
             'items': {
-                'data': [{'id': 'si_test_123'}]
+                'data': [{'id': 'si_test_123', 'price': {'id': 'price_basic_123'}}]
             }
         }
-        
+
         # Mock Price objects (current price is $10, new price is $0, so it's a downgrade)
         mock_current_price = Mock()
         mock_current_price.unit_amount = 1000  # $10 in cents
-        
+
         mock_new_price = Mock()
         mock_new_price.unit_amount = 0  # $0 in cents
-        
+
         with patch('stripe_meta.views.stripe') as mock_stripe:
+            mock_stripe.StripeError = stripe.StripeError
             mock_stripe.Subscription.retrieve.return_value = mock_subscription
             mock_stripe.Subscription.modify.return_value = mock_subscription
             mock_stripe.Price.retrieve.side_effect = [mock_current_price, mock_new_price]
-            
+
             response = self.client.post(
                 reverse('stripe_meta:switch_plan'),
                 data={'plan_id': free_plan.id},
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             # Should succeed with mocked Stripe API
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -824,33 +826,35 @@ class WebhookViewsTest(StripeViewsTestCase):
             stripe_price_id='price_premium'
         )
         
-        # Mock successful Stripe API calls
+        # Mock successful Stripe API calls — item must include 'price' so the
+        # price_id match in switch_plan can locate the base-plan item.
         mock_subscription = {
             'id': 'sub_test_123',
             'status': 'active',
             'items': {
-                'data': [{'id': 'si_test_123'}]
+                'data': [{'id': 'si_test_123', 'price': {'id': 'price_basic_123'}}]
             }
         }
-        
+
         # Mock Price objects (current price is $10, new price is $20, so it's an upgrade)
         mock_current_price = Mock()
         mock_current_price.unit_amount = 1000  # $10 in cents
-        
+
         mock_new_price = Mock()
         mock_new_price.unit_amount = 2000  # $20 in cents
-        
+
         with patch('stripe_meta.views.stripe') as mock_stripe:
+            mock_stripe.StripeError = stripe.StripeError
             mock_stripe.Subscription.retrieve.return_value = mock_subscription
             mock_stripe.Subscription.modify.return_value = mock_subscription
             mock_stripe.Price.retrieve.side_effect = [mock_current_price, mock_new_price]
-            
+
             response = self.client.post(
                 reverse('stripe_meta:switch_plan'),
                 data={'plan_id': premium_plan.id},
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             # Should succeed with mocked Stripe API
             self.assertEqual(response.status_code, 200)
             data = response.json()

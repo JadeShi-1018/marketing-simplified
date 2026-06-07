@@ -12,6 +12,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .permissions import HasValidOrganizationToken, IsOrganizationAdmin
+from .services import sync_seat_count
 from .models import Plan, Subscription, UsageDaily, Payment, StripeWebhookEvent
 from .serializers import (
     PlanSerializer, SubscriptionSerializer, UsageDailySerializer, CheckoutSessionSerializer, 
@@ -64,28 +65,49 @@ def switch_plan(request):
                 status=status.HTTP_404_NOT_FOUND
             )
         
-        # Get current subscription
-        current_subscription = Subscription.objects.filter(
-            organization=user.organization,
-            is_active=True
-        ).first()
-        
+        # Get current subscription — prefer real (is_internal=False) over sentinel.
+        # order_by('is_internal') puts False(0) before True(1).
+        current_subscription = (
+            Subscription.objects.filter(organization=user.organization, is_active=True)
+            .order_by('is_internal')
+            .first()
+        )
+
         if not current_subscription:
             return Response(
                 {'error': 'No active subscription found', 'code': 'NO_SUBSCRIPTION'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        # Free sentinel (is_internal=True) has no Stripe subscription to modify —
+        # direct the client to the checkout flow instead.
+        if current_subscription.is_internal:
+            return Response({'redirect_to': 'checkout'}, status=status.HTTP_200_OK)
+
         # Check if already on the same plan
         if current_subscription.plan.id == new_plan.id:
             return Response(
                 {'error': 'Already subscribed to this plan', 'code': 'SAME_PLAN'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Get current subscription item ID and price from Stripe
+
+        # Retrieve subscription from Stripe and locate the base-price item by price_id.
+        # Using price_id match rather than items.data[0] because multi-item subscriptions
+        # (base + seat + overage) can have the base item at any index.
         stripe_subscription = stripe.Subscription.retrieve(current_subscription.stripe_subscription_id)
-        current_item_id = stripe_subscription['items']['data'][0]['id']
+        current_item = next(
+            (
+                item for item in stripe_subscription['items']['data']
+                if item['price']['id'] == current_subscription.plan.stripe_price_id
+            ),
+            None,
+        )
+        if not current_item:
+            return Response(
+                {'error': 'Base plan item not found in Stripe subscription', 'code': 'ITEM_NOT_FOUND'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        current_item_id = current_item['id']
         
         # Get prices to determine if upgrade or downgrade
         current_price_data = stripe.Price.retrieve(current_subscription.plan.stripe_price_id)
@@ -274,7 +296,12 @@ def invite_users_to_organization(request):
                     {'error': str(e), 'code': 'INVITE_USERS_ERROR'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
-        
+
+        try:
+            sync_seat_count(organization)
+        except Exception:
+            logger.exception("sync_seat_count failed after invite org=%s", organization.id)
+
         return Response({
             'success': True
         })
@@ -291,14 +318,20 @@ def leave_organization(request):
     """Remove current user from their organization"""
     try:
         user = request.user
-        # Remove user from organization
+        org = user.organization
         user.organization = None
         user.save()
-        
+
+        try:
+            if org:
+                sync_seat_count(org)
+        except Exception:
+            logger.exception("sync_seat_count failed after leave org=%s", getattr(org, 'id', None))
+
         return Response({
             'success': True
         })
-        
+
     except Exception as e:
         return Response(
             {'error': str(e), 'code': 'LEAVE_ORGANIZATION_ERROR'},
@@ -531,13 +564,14 @@ def list_organization_users(request):
 def remove_organization_user(request, user_id: int):
     """Remove a user from the authenticated user's organization by user_id"""
     try:
-        if not request.user.organization:
+        org = request.user.organization
+        if not org:
             return Response(
                 {'error': 'No organization found for user', 'code': 'NO_ORGANIZATION'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        target = CustomUser.objects.filter(id=user_id, organization=request.user.organization).first()
+        target = CustomUser.objects.filter(id=user_id, organization=org).first()
         if not target:
             return Response(
                 {'error': 'User not found in organization', 'code': 'USER_NOT_IN_ORG'},
@@ -547,6 +581,11 @@ def remove_organization_user(request, user_id: int):
         # Allow anyone in org to remove any user for now (no roles yet)
         target.organization = None
         target.save()
+
+        try:
+            sync_seat_count(org)
+        except Exception:
+            logger.exception("sync_seat_count failed after remove org=%s", org.id)
 
         return Response({'success': True})
     except Exception as e:

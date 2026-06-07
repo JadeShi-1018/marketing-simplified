@@ -1,9 +1,11 @@
 import logging
 
+import stripe
 from django.db import transaction
 from django.db.models import F
 from django.utils import timezone
 
+from core.models import CustomUser
 from stripe_meta.exceptions import QuotaError
 from stripe_meta.models import UsageMonthly, Subscription
 
@@ -151,3 +153,65 @@ def check_quota_or_402(organization, requested_tokens: int):
         }
 
     return True, None
+
+
+def sync_seat_count(organization) -> None:
+    """
+    Sync the extra-seat line-item quantity on the org's active Stripe subscription
+    to match the current user count.
+
+    Free orgs (no real subscription, or plan without stripe_extra_seat_price_id)
+    are skipped silently — Stripe is not involved.
+
+    The select_for_update row-lock prevents concurrent syncs racing each other
+    (e.g. bulk invite + simultaneous remove).
+    """
+    sub = (
+        Subscription.objects.filter(
+            organization=organization,
+            is_active=True,
+            is_internal=False,
+        )
+        .select_related('plan')
+        .first()
+    )
+    if not sub or not sub.plan.stripe_extra_seat_price_id:
+        return
+
+    plan = sub.plan
+    seat_count = CustomUser.objects.filter(organization=organization).count()
+    extra_seats = max(0, seat_count - (plan.included_seats or 1))
+
+    with transaction.atomic():
+        locked_sub = Subscription.objects.select_for_update().get(pk=sub.pk)
+
+        stripe_sub = stripe.Subscription.retrieve(locked_sub.stripe_subscription_id)
+        extra_item = next(
+            (
+                item for item in stripe_sub['items']['data']
+                if item['price']['id'] == plan.stripe_extra_seat_price_id
+            ),
+            None,
+        )
+        if not extra_item:
+            logger.warning(
+                "sync_seat_count: no extra-seat item found sub=%s price=%s",
+                locked_sub.stripe_subscription_id,
+                plan.stripe_extra_seat_price_id,
+            )
+            return
+
+        stripe.Subscription.modify(
+            locked_sub.stripe_subscription_id,
+            items=[{'id': extra_item['id'], 'quantity': extra_seats}],
+            proration_behavior='create_prorations',
+        )
+        Subscription.objects.filter(pk=locked_sub.pk).update(seat_count=seat_count)
+
+    logger.info(
+        "sync_seat_count org=%s sub=%s seat_count=%d extra_seats=%d",
+        organization.id,
+        locked_sub.stripe_subscription_id,
+        seat_count,
+        extra_seats,
+    )
