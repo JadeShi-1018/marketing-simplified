@@ -454,6 +454,9 @@ def stripe_webhook(request):
         return JsonResponse({'error': 'Invalid payload'}, status=400)
     except stripe.SignatureVerificationError:
         return JsonResponse({'error': 'Invalid signature'}, status=400)
+    except Exception:
+        logger.exception("stripe_webhook construct_event failed")
+        return JsonResponse({'error': 'Webhook processing error', 'code': 'WEBHOOK_ERROR'}, status=500)
 
     event_id = event['id']
     event_type = event['type']
