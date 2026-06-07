@@ -1900,36 +1900,38 @@ class WebhookViewsErrorTest(StripeViewsTestCase):
                 handle_subscription_created(event_data)
     
     def test_handle_subscription_created_no_org_in_metadata(self):
-        """handle_subscription_created raises ValueError when org_id absent — caller handles it"""
+        """handle_subscription_created logs warning and returns when org_id absent (no ValueError)."""
         event_data = {
             'id': 'sub_test123',
-            'customer': 'cus_test123'
+            'customer': 'cus_test123',
+            'items': {'data': []},
         }
 
         mock_customer = Mock()
         mock_customer.metadata = {}  # No organization_id
 
+        before = Subscription.objects.count()
         with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
-            with self.assertRaises(ValueError) as cm:
-                handle_subscription_created(event_data)
+            handle_subscription_created(event_data)   # must not raise
 
-        self.assertIn('Organization ID not found', str(cm.exception))
-    
+        self.assertEqual(Subscription.objects.count(), before)
+
     def test_handle_subscription_created_org_not_found(self):
-        """handle_subscription_created raises ValueError when org doesn't exist — caller handles it"""
+        """handle_subscription_created logs warning and returns when org doesn't exist (no ValueError)."""
         event_data = {
             'id': 'sub_test123',
-            'customer': 'cus_test123'
+            'customer': 'cus_test123',
+            'items': {'data': []},
         }
 
         mock_customer = Mock()
         mock_customer.metadata = {'organization_id': '99999'}  # Non-existent org
 
+        before = Subscription.objects.count()
         with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
-            with self.assertRaises(ValueError) as cm:
-                handle_subscription_created(event_data)
+            handle_subscription_created(event_data)   # must not raise
 
-        self.assertIn('99999', str(cm.exception))
+        self.assertEqual(Subscription.objects.count(), before)
 
 class WebhookHandlerUnitTests(TestCase):
     """Unit tests for webhook handler helper functions"""
@@ -2024,3 +2026,42 @@ class WebhookHandlerUnitTests(TestCase):
         handle_subscription_deleted(payload)
         self.subscription.refresh_from_db()
         self.assertFalse(self.subscription.is_active)
+
+    def test_payment_succeeded_null_parent(self):
+        """
+        invoice.payment_succeeded with parent=None (one-off invoice, no subscription)
+        must not raise AttributeError and must silently skip Payment creation.
+        Regression: parent.get() on None was an AttributeError → 500.
+        """
+        invoice = {
+            'id': 'in_null_parent',
+            'customer': 'cus_abc',
+            'parent': None,
+            'lines': {'data': []},
+        }
+        mock_customer = Mock()
+        mock_customer.metadata = {'user_id': str(self.user.id), 'organization_id': str(self.organization.id)}
+        before = Payment.objects.count()
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
+            handle_payment_succeeded(invoice)
+        self.assertEqual(Payment.objects.count(), before)
+
+    def test_subscription_created_missing_org_id(self):
+        """
+        customer.subscription.created where customer metadata has no organization_id
+        must not raise and must not create a Subscription row.
+        Regression: previously raised ValueError → 500 → infinite Stripe retries.
+        """
+        payload = {
+            'id': 'sub_no_org',
+            'status': 'active',
+            'customer': 'cus_no_org',
+            'start_date': int(timezone.now().timestamp()),
+            'items': {'data': []},
+        }
+        mock_customer = Mock()
+        mock_customer.metadata = {}
+        before = Subscription.objects.count()
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
+            handle_subscription_created(payload)
+        self.assertEqual(Subscription.objects.count(), before)

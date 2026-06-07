@@ -619,11 +619,20 @@ def handle_subscription_created(subscription_data, event_id=None):
     )
 
     if not org_id:
-        raise ValueError("Organization ID not found in subscription or customer metadata")
+        logger.warning(
+            "handle_subscription_created: no org_id in customer metadata "
+            "subscription_id=%s customer_id=%s event_id=%s — skipping",
+            subscription_id, customer_id, event_id,
+        )
+        return
 
     organization = Organization.objects.filter(id=org_id).first()
     if not organization:
-        raise ValueError(f"Organization {org_id} not found")
+        logger.warning(
+            "handle_subscription_created: org %s not found subscription_id=%s event_id=%s — skipping",
+            org_id, subscription_id, event_id,
+        )
+        return
 
     items = subscription_data.get('items', {}).get('data', [])
     price_id = items[0]['price']['id'] if items else None
@@ -663,7 +672,7 @@ def handle_payment_succeeded(invoice_data, event_id=None):
     customer_id = invoice_data.get('customer')
     logger.info("handle_payment_succeeded enter event_id=%s customer_id=%s", event_id, customer_id)
 
-    parent = invoice_data.get('parent', {})
+    parent = invoice_data.get('parent') or {}
     subscription_details = parent.get('subscription_details', {})
     stripe_subscription_id = subscription_details.get('subscription')
 
