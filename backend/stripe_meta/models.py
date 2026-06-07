@@ -1,4 +1,5 @@
 import logging
+from django.conf import settings
 from django.db import models
 
 logger = logging.getLogger(__name__)
@@ -73,3 +74,49 @@ class StripeWebhookEvent(models.Model):
     received_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(null=True, blank=True)
     error_message = models.TextField(blank=True)
+
+
+class UsageMonthly(models.Model):
+    """Monthly token usage per Org — reserve/commit/release tracked here."""
+    organization = models.ForeignKey('core.Organization', on_delete=models.CASCADE)
+    year_month = models.CharField(max_length=7)          # e.g. '2026-06'
+    tokens_used = models.BigIntegerField(default=0)      # committed actual usage
+    tokens_reserved = models.BigIntegerField(default=0)  # in-flight pre-reservations
+    overage_tokens = models.BigIntegerField(default=0)   # tokens beyond quota (reported to Stripe at month-end)
+    overage_reported_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('organization', 'year_month')
+
+
+class LLMCallLog(models.Model):
+    """One row per LLM call — used for cost accounting and fair-use alerting."""
+    organization = models.ForeignKey('core.Organization', on_delete=models.CASCADE)
+    agent_session = models.ForeignKey('agent.AgentSession', null=True, on_delete=models.SET_NULL)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
+    provider = models.CharField(max_length=20)    # 'anthropic' or 'gemini'
+    model_name = models.CharField(max_length=80)
+    input_tokens = models.IntegerField()
+    output_tokens = models.IntegerField()
+    normalized_tokens = models.BigIntegerField()  # after per-model multiplier, used for quota
+    input_cost_cents = models.IntegerField()
+    output_cost_cents = models.IntegerField()
+    total_cost_cents = models.IntegerField()
+    success = models.BooleanField(default=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=['organization', 'created_at'])]
+
+
+class OrgMonthlyCost(models.Model):
+    """Monthly cost rollup per Org — used for fair-use alerting."""
+    organization = models.ForeignKey('core.Organization', on_delete=models.CASCADE)
+    year_month = models.CharField(max_length=7)
+    llm_cost_cents = models.IntegerField(default=0)
+    total_tokens = models.BigIntegerField(default=0)
+
+    class Meta:
+        unique_together = ('organization', 'year_month')
