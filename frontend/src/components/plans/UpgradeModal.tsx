@@ -26,7 +26,7 @@ function getConfig(code: QuotaErrorCode): ModalConfig {
       return {
         icon: <AlertTriangle className="h-8 w-8 text-yellow-500" />,
         title: 'Request too large',
-        body: 'This request exceeds the per-call token limit on your current plan. Upgrade for higher single-call limits.',
+        body: 'This request is too large for your current plan. Please shorten your input and try again, or upgrade your plan for higher per-call limits.',
         cta: 'Upgrade plan',
       };
     case 'PROJECT_HAS_NO_ORG':

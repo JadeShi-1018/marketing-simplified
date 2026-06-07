@@ -7,6 +7,7 @@ import { WelcomeScreen } from "./WelcomeScreen"
 import { MessageList, type ChatMessage } from "./MessageList"
 import { ChatInput } from "./ChatInput"
 import { ActionBar } from "./ActionBar"
+import OnboardingTokenIntro from "./OnboardingTokenIntro"
 import { ApprovalToggle } from "./ApprovalToggle"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import { AgentAPI } from "@/lib/api/agentApi"
@@ -1794,6 +1795,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   return (
     <div className="flex h-full flex-col">
+      <OnboardingTokenIntro />
       {!embeddedInFloating && (
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 shrink-0 bg-background">
           <h2 className="text-sm font-semibold truncate text-foreground">{sessionTitle}</h2>
