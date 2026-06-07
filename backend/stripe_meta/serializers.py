@@ -3,30 +3,29 @@ from stripe_meta.models import Plan, Subscription, UsageDaily, Payment
 from core.models import Organization, CustomUser
 
 class PlanSerializer(serializers.ModelSerializer):
-    """Serializer for Plan model"""
+    """Serializer for Plan model. Zero Stripe API calls — all pricing from local DB."""
     price = serializers.SerializerMethodField()
     price_currency = serializers.SerializerMethodField()
-    price_id = serializers.CharField(source='stripe_price_id', read_only=True)
-    
+
     class Meta:
         model = Plan
         fields = [
-            'id', 'name', 'desc', 'max_team_members', 
-            'max_previews_per_day', 'max_tasks_per_day', 'stripe_price_id',
-            'price', 'price_currency', 'price_id'
+            'id', 'name', 'desc',
+            'base_price_cents', 'included_seats', 'extra_seat_price_cents',
+            'monthly_token_quota', 'overage_price_cents_per_1m', 'max_tokens_per_call',
+            'stripe_price_id', 'stripe_extra_seat_price_id', 'stripe_overage_price_id',
+            'is_archived',
+            # Legacy caps kept for backward compatibility
+            'max_team_members', 'max_previews_per_day', 'max_tasks_per_day',
+            # Derived convenience fields
+            'price', 'price_currency',
         ]
-    
+
     def get_price(self, obj):
-        """Get price from Stripe if stripe_price_id exists"""
-        if hasattr(obj, '_price'):
-            return obj._price
-        return None
-    
+        return round(obj.base_price_cents / 100, 2)
+
     def get_price_currency(self, obj):
-        """Get currency from Stripe if stripe_price_id exists"""
-        if hasattr(obj, '_currency'):
-            return obj._currency
-        return None
+        return 'USD'
 
 class SubscriptionSerializer(serializers.ModelSerializer):
     """Serializer for Subscription model"""

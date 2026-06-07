@@ -24,46 +24,17 @@ from core.models import Organization, CustomUser
 # Configure Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
 logger = logging.getLogger(__name__)
-from .stripe_utils import initialize_default_plans
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated, HasValidOrganizationToken])
 def list_plans(request):
-    """List all available subscription plans"""
+    """List non-archived subscription plans. Zero Stripe API calls."""
     try:
-        # Lazy initialization: If no plans exist, create defaults
-        if Plan.objects.count() == 0:
-            initialize_default_plans()
-
-        plans = Plan.objects.all()
-        
-        # Fetch prices from Stripe and attach to plans
-        plans_with_prices = []
-        for plan in plans:
-            if plan.stripe_price_id:
-                try:
-                    stripe_price = stripe.Price.retrieve(plan.stripe_price_id)
-                    # Attach price info to plan object
-                    plan._price = stripe_price.unit_amount / 100  # Convert from cents to dollars
-                    plan._currency = stripe_price.currency.upper()
-                except stripe.StripeError as e:
-                    # If Stripe price doesn't exist, set price to None
-                    plan._price = None
-                    plan._currency = None
-            else:
-                # If no stripe_price_id, assume free plan
-                plan._price = 0
-                plan._currency = 'USD'
-            
-            plans_with_prices.append(plan)
-        
-        # Sort plans by price (lowest to highest)
-        plans_sorted = sorted(plans_with_prices, key=lambda p: p._price if p._price is not None else float('inf'))
-        
-        serializer = PlanSerializer(plans_sorted, many=True)
+        plans = Plan.objects.filter(is_archived=False).order_by('base_price_cents')
+        serializer = PlanSerializer(plans, many=True)
         return Response({
-            'count': len(serializer.data),
-            'results': serializer.data
+            'count': plans.count(),
+            'results': serializer.data,
         })
     except Exception as e:
         return Response(

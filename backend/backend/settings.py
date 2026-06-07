@@ -565,6 +565,28 @@ INTERNAL_WEBHOOK_ENABLED = config('INTERNAL_WEBHOOK_ENABLED', default=True, cast
 STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY', default='sk')
 STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='pk')
 STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET', default='wh')
+# Token-billing Stripe price IDs (env-driven, no hardcoded IDs)
+STRIPE_TEAM_BASE_PRICE_ID = os.environ.get('STRIPE_TEAM_BASE_PRICE_ID', '')
+STRIPE_TEAM_EXTRA_SEAT_PRICE_ID = os.environ.get('STRIPE_TEAM_EXTRA_SEAT_PRICE_ID', '')
+STRIPE_TEAM_OVERAGE_PRICE_ID = os.environ.get('STRIPE_TEAM_OVERAGE_PRICE_ID', '')
+# Per-model token multipliers (relative to sonnet baseline = 1.0)
+MODEL_TOKEN_MULTIPLIER = {
+    'claude-sonnet-4-20250514': 1.0,
+    'claude-sonnet-4-5': 1.0,
+    'claude-haiku-4-5': 0.2,
+    'claude-opus-4-6': 5.0,
+    'gemini-2.5-flash-lite': 0.15,
+}
+# Actual API cost table in cents per 1M tokens (for LLMCallLog cost_cents)
+LLM_PRICE_TABLE = {
+    'claude-sonnet-4-20250514': {'input': 300, 'output': 1500},
+    'claude-sonnet-4-5': {'input': 300, 'output': 1500},
+    'claude-haiku-4-5': {'input': 80, 'output': 400},
+    'claude-opus-4-6': {'input': 1500, 'output': 7500},
+    'gemini-2.5-flash-lite': {'input': 10, 'output': 40},
+}
+FAIR_USE_THRESHOLD_RATIO = 0.30   # alert when user > 30% of org quota
+FREE_USER_MAX_COST_CENTS = 200    # safety cap for fair-use alert on Free tier
 
 # Organization Access Token Configuration
 ORGANIZATION_ACCESS_TOKEN_SECRET_KEY = config('ORGANIZATION_ACCESS_TOKEN_SECRET_KEY', default='52r(=liv3ro&zsuau-doa(wekq-(x^&y8(b$5h@k(g(c9&jlmp')
