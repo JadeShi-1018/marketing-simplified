@@ -9,13 +9,15 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RunSQL(
             sql="""
-            CREATE OR REPLACE TRIGGER meeting_audit_log_immutable
+            DROP TRIGGER IF EXISTS meeting_audit_log_immutable ON meetings_meetingauditlog;
+            CREATE TRIGGER meeting_audit_log_immutable
             BEFORE UPDATE ON meetings_meetingauditlog
             FOR EACH ROW
             EXECUTE FUNCTION raise_audit_immutable_error();
             """,
             reverse_sql="""
-            CREATE OR REPLACE TRIGGER meeting_audit_log_immutable
+            DROP TRIGGER IF EXISTS meeting_audit_log_immutable ON meetings_meetingauditlog;
+            CREATE TRIGGER meeting_audit_log_immutable
             BEFORE UPDATE OR DELETE ON meetings_meetingauditlog
             FOR EACH ROW
             EXECUTE FUNCTION raise_audit_immutable_error();
