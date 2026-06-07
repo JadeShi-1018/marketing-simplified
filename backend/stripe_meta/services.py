@@ -1,0 +1,153 @@
+import logging
+
+from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
+
+from stripe_meta.exceptions import QuotaError
+from stripe_meta.models import UsageMonthly, Subscription
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_charging_org(agent_session):
+    """
+    PM decision Q18: AI quota is charged to the Project's Organization, not the user's.
+    Fail-closed: if the project has no linked Org (SET_NULL orphan), raise QuotaError.
+    Rationale: metering must never silently charge the wrong account.
+    """
+    if agent_session and agent_session.project_id:
+        org = agent_session.project.organization
+        if org is not None:
+            return org
+
+    logger.warning(
+        "Cannot resolve charging org for session %s — project has no organization (orphan)",
+        getattr(agent_session, 'id', '<none>'),
+    )
+    raise QuotaError(
+        code='PROJECT_HAS_NO_ORG',
+        message='This project is not linked to an organization. Please contact your admin.',
+    )
+
+
+def estimate_input_tokens(text: str, model: str) -> int:
+    """
+    V1 rough estimate: English ~1 word = 1.3 tokens; CJK ~1 char = 2 tokens.
+    Replace with provider tokenizer in v2.
+    """
+    word_count = len(text.split())
+    cjk_count = sum(1 for c in text if '一' <= c <= '鿿')
+    return int(word_count * 1.3 + cjk_count * 2)
+
+
+def _get_or_create_usage(organization, ym: str) -> UsageMonthly:
+    obj, _ = UsageMonthly.objects.get_or_create(
+        organization=organization,
+        year_month=ym,
+        defaults={'tokens_used': 0, 'tokens_reserved': 0},
+    )
+    return obj
+
+
+def reserve_quota(organization, tokens: int) -> None:
+    """Atomically pre-reserve tokens before an LLM call starts."""
+    ym = timezone.now().strftime('%Y-%m')
+    _get_or_create_usage(organization, ym)
+    UsageMonthly.objects.filter(organization=organization, year_month=ym).update(
+        tokens_reserved=F('tokens_reserved') + tokens,
+    )
+
+
+def commit_quota(organization, actual_tokens: int, reserved_tokens: int) -> None:
+    """
+    Reconcile after a successful LLM call:
+      tokens_reserved -= reserved_tokens
+      tokens_used     += actual_tokens
+      overage_tokens  += delta (Team metered billing accumulator)
+    Uses select_for_update to prevent lost-update races.
+    """
+    ym = timezone.now().strftime('%Y-%m')
+    sub = (
+        Subscription.objects.filter(organization=organization, is_active=True)
+        .select_related('plan')
+        .first()
+    )
+    quota = sub.plan.monthly_token_quota if sub and sub.plan else None
+
+    with transaction.atomic():
+        row = UsageMonthly.objects.select_for_update().get(
+            organization=organization, year_month=ym,
+        )
+        before_used = row.tokens_used
+        new_used = before_used + actual_tokens
+        overage_delta = 0
+        if quota is not None and new_used > quota:
+            overage_delta = max(0, new_used - max(before_used, quota))
+        UsageMonthly.objects.filter(pk=row.pk).update(
+            tokens_reserved=F('tokens_reserved') - reserved_tokens,
+            tokens_used=F('tokens_used') + actual_tokens,
+            overage_tokens=F('overage_tokens') + overage_delta,
+        )
+
+
+def release_quota(organization, tokens: int) -> None:
+    """Return reserved tokens when an LLM call fails (failed calls are not billed)."""
+    ym = timezone.now().strftime('%Y-%m')
+    UsageMonthly.objects.filter(organization=organization, year_month=ym).update(
+        tokens_reserved=F('tokens_reserved') - tokens,
+    )
+
+
+def check_quota_or_402(organization, requested_tokens: int):
+    """
+    Return (allowed: bool, error_payload: dict | None).
+
+    Checks in order:
+      1. Per-call cap (SINGLE_CALL_TOO_LARGE) — applies to all plans.
+      2. Monthly quota (TOKEN_QUOTA_EXCEEDED) — only blocks Free (no overage);
+         Team always passes and accumulates overage for Stripe metered billing.
+
+    All arithmetic is integer-only.
+    """
+    sub = (
+        Subscription.objects.filter(organization=organization, is_active=True)
+        .select_related('plan')
+        .first()
+    )
+    if not sub:
+        return True, None   # no subscription found — do not block
+
+    plan = sub.plan
+
+    # 1. Per-call cap
+    if plan.max_tokens_per_call and requested_tokens > plan.max_tokens_per_call:
+        return False, {
+            'code': 'SINGLE_CALL_TOO_LARGE',
+            'message': 'Single call exceeds the per-call token limit for your plan',
+            'requested': requested_tokens,
+            'limit': plan.max_tokens_per_call,
+            'upgrade_url': '/plans',
+        }
+
+    # 2. Monthly quota
+    quota = plan.monthly_token_quota
+    if quota is None:
+        return True, None   # unlimited
+
+    ym = timezone.now().strftime('%Y-%m')
+    row = UsageMonthly.objects.filter(organization=organization, year_month=ym).first()
+    used = (row.tokens_used + row.tokens_reserved) if row else 0
+
+    overage_allowed = plan.overage_price_cents_per_1m is not None
+    if used + requested_tokens > quota and not overage_allowed:
+        return False, {
+            'code': 'TOKEN_QUOTA_EXCEEDED',
+            'message': 'Free plan monthly token quota exceeded',
+            'current_usage': used,
+            'limit': quota,
+            'year_month': ym,
+            'upgrade_url': '/plans',
+        }
+
+    return True, None
