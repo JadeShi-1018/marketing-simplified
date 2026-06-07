@@ -308,82 +308,98 @@ def leave_organization(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, HasValidOrganizationToken])
 def create_checkout_session(request):
-    """Create Stripe checkout session for subscription"""
+    """Create Stripe checkout session for token-based subscription."""
     try:
         serializer = CheckoutSessionSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+
         plan_id = serializer.validated_data['plan_id']
         success_url = serializer.validated_data['success_url']
         cancel_url = serializer.validated_data['cancel_url']
-        
+        seat_count = serializer.validated_data.get('seat_count', 1)
+
         plan = Plan.objects.get(id=plan_id)
         user = request.user
-        
-        # Check if organization already has an active subscription
-        existing_subscription = Subscription.objects.filter(
-            organization=user.organization,
-            is_active=True
+        org = user.organization
+
+        # Free sentinel subscriptions are is_internal=True — do not treat them as
+        # "already subscribed". Only block on a real paid active subscription.
+        existing = Subscription.objects.filter(
+            organization=org,
+            is_active=True,
+            is_internal=False,
         ).first()
-        
-        if existing_subscription:
+        if existing:
             return Response(
-                {'error': 'Organization already has an active subscription. Use switch plan to change your plan.', 'code': 'SUBSCRIPTION_EXISTS'},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    'error': 'Organization already has an active subscription. Use switch plan to change your plan.',
+                    'code': 'SUBSCRIPTION_EXISTS',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        # Create or get Stripe customer and update metadata if needed
-        customer_email = user.email
-        customers = stripe.Customer.list(email=customer_email, limit=1)
-        
-        if customers.data and len(customers.data) > 0:
-            customer = customers.data[0]
-            # Update customer metadata to ensure it has the latest info
-            stripe.Customer.modify(
-                customer.id,
-                metadata={'user_id': user.id, 'organization_id': user.organization.id}
-            )
-        else:
-            customer = stripe.Customer.create(
-                name=user.username,
-                email=customer_email,
-                metadata={'user_id': user.id, 'organization_id': user.organization.id}
-            )
-        
-        # Create checkout session
+
+        # Customer caching — select_for_update prevents duplicate Customer.create
+        # calls under concurrent checkout clicks (concurrency bug fix).
+        with transaction.atomic():
+            org_locked = Organization.objects.select_for_update().get(pk=org.pk)
+            if org_locked.stripe_customer_id:
+                customer_id = org_locked.stripe_customer_id
+            else:
+                customer = stripe.Customer.create(
+                    name=org_locked.name,
+                    email=user.email,
+                    metadata={
+                        'user_id': str(user.id),
+                        'organization_id': str(org_locked.id),
+                    },
+                )
+                org_locked.stripe_customer_id = customer.id
+                org_locked.save(update_fields=['stripe_customer_id'])
+                customer_id = customer.id
+
+        # Three-tier line items: base + extra seats + metered overage
+        line_items = [{'price': plan.stripe_price_id, 'quantity': 1}]
+        extra_seats = seat_count - (plan.included_seats or 1)
+        if extra_seats > 0 and plan.stripe_extra_seat_price_id:
+            line_items.append({
+                'price': plan.stripe_extra_seat_price_id,
+                'quantity': extra_seats,
+            })
+        if plan.stripe_overage_price_id:
+            line_items.append({'price': plan.stripe_overage_price_id})
+
         session = stripe.checkout.Session.create(
-            customer=customer.id,
+            customer=customer_id,
             payment_method_types=['card'],
-            line_items=[{
-                'price': plan.stripe_price_id,
-                'quantity': 1,
-            }],
+            line_items=line_items,
             mode='subscription',
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={'user_id': user.id, 'organization_id': user.organization.id}
+            metadata={
+                'user_id': str(user.id),
+                'organization_id': str(org.id),
+                'seat_count': str(seat_count),
+            },
         )
-        
-        # Return JSON with checkout URL instead of 303 redirect to avoid CORS issues
-        return Response({
-            'checkout_url': session.url
-        }, status=status.HTTP_200_OK)
-        
+
+        return Response({'checkout_url': session.url}, status=status.HTTP_200_OK)
+
     except Plan.DoesNotExist:
         return Response(
             {'error': 'Plan not found', 'code': 'PLAN_NOT_FOUND'},
-            status=status.HTTP_404_NOT_FOUND
+            status=status.HTTP_404_NOT_FOUND,
         )
     except stripe.StripeError as e:
         return Response(
             {'error': str(e), 'code': 'STRIPE_ERROR'},
-            status=status.HTTP_400_BAD_REQUEST
+            status=status.HTTP_400_BAD_REQUEST,
         )
     except Exception as e:
+        logger.exception("create_checkout_session unexpected error")
         return Response(
             {'error': str(e), 'code': 'CHECKOUT_SESSION_ERROR'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 

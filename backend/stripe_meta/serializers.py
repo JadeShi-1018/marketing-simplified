@@ -50,7 +50,8 @@ class CheckoutSessionSerializer(serializers.Serializer):
     plan_id = serializers.IntegerField(required=True)
     success_url = serializers.URLField(required=True)
     cancel_url = serializers.URLField(required=True)
-    
+    seat_count = serializers.IntegerField(required=False, default=1, min_value=1)
+
     def validate_plan_id(self, value):
         """Validate that plan exists"""
         try:
