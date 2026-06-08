@@ -200,16 +200,18 @@ def sync_seat_count(organization) -> None:
             None,
         )
         if not extra_item:
-            logger.warning(
-                "sync_seat_count: no extra-seat item found sub=%s price=%s",
-                locked_sub.stripe_subscription_id,
-                plan.stripe_extra_seat_price_id,
-            )
-            return
+            if extra_seats == 0:
+                # No extra-seat item exists and none needed — sync local count only
+                Subscription.objects.filter(pk=locked_sub.pk).update(seat_count=seat_count)
+                return
+            # Add the extra-seat item for the first time (e.g. 5-seat-start team adds 6th member)
+            item_patch = {'price': plan.stripe_extra_seat_price_id, 'quantity': extra_seats}
+        else:
+            item_patch = {'id': extra_item['id'], 'quantity': extra_seats}
 
         stripe.Subscription.modify(
             locked_sub.stripe_subscription_id,
-            items=[{'id': extra_item['id'], 'quantity': extra_seats}],
+            items=[item_patch],
             proration_behavior='create_prorations',
         )
         Subscription.objects.filter(pk=locked_sub.pk).update(seat_count=seat_count)
