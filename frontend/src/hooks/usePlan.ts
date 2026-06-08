@@ -22,6 +22,7 @@ interface Plan {
 
 interface SwitchPlanResponse {
   requested: boolean;
+  redirect_to?: 'checkout' | null;
 }
 
 interface UsePlanReturn {
@@ -147,7 +148,14 @@ export default function usePlan(enabled = true): UsePlanReturn {
       }
 
       try {
-        await switchPlan(planId);
+        const result = await switchPlan(planId);
+
+        // Free-sentinel org: backend cannot modify a non-existent Stripe subscription.
+        // Redirect to checkout so the user creates a real one instead.
+        if (result.redirect_to === 'checkout') {
+          await createCheckoutSession(planId, seatCount);
+          return;
+        }
 
         // Poll for plan update (webhook will have processed it)
         await new Promise<void>((resolve, reject) => {
