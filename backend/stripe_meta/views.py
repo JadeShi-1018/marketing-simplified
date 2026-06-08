@@ -231,23 +231,42 @@ def create_organization(request):
         serializer = CreateOrganizationSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+
         validated_data = serializer.validated_data
-        
+
         organization = Organization.objects.create(
             name=validated_data['name'],
             desc=validated_data.get('description', ''),
             email_domain=validated_data.get('email_domain', '')
         )
-        
+
         # Assign user to organization
         user = request.user
         user.organization = organization
         user.save()
-        
+
+        # Align with all other org-creation paths: CSM records + billing admin
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser
+        from core.admin_utils import assign_org_admin
+        cust_org, _ = CustomerOrganisation.objects.get_or_create(
+            organization=organization,
+            defaults={'name': organization.name},
+        )
+        CustomerUser.objects.get_or_create(
+            user=user,
+            organisation=cust_org,
+            defaults={
+                'user_type': 'admin',
+                'is_active': True,
+                'is_creator': True,
+            },
+        )
+        assign_org_admin(user, organization)
+
         serializer = OrganizationSerializer(organization)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
+
     except Exception as e:
         return Response(
             {'error': str(e), 'code': 'ORGANIZATION_CREATION_ERROR'},

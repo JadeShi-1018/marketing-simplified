@@ -406,6 +406,46 @@ class OrganizationCreationViewsTest(TestCase):
             self.assertEqual(resp.status_code, 500)
             self.assertEqual(resp.json().get('code'), 'ORGANIZATION_CREATION_ERROR')
 
+    def test_create_organization_grants_admin_and_creates_customer_user(self):
+        """
+        create_organization must align with all other org-creation paths:
+        assign Organization Admin (level=2) and create CustomerUser.is_creator=True.
+
+        Regression: previously the endpoint created only the Organization row —
+        no CustomerOrganisation, no CustomerUser, no admin role — leaving the
+        creator locked out of switch_plan / cancel_subscription.
+        """
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser
+        from access_control.models import UserRole
+
+        response = self.client.post(
+            reverse('stripe_meta:create_organization'),
+            data={'name': 'Admin Test Org'},
+        )
+        self.assertEqual(response.status_code, 201)
+
+        self.user.refresh_from_db()
+        org = self.user.organization
+        self.assertIsNotNone(org)
+
+        # CustomerOrganisation created
+        cust_org = CustomerOrganisation.objects.filter(organization=org).first()
+        self.assertIsNotNone(cust_org, "CustomerOrganisation must be created")
+
+        # CustomerUser.is_creator=True created
+        cu = CustomerUser.objects.filter(user=self.user, organisation=cust_org, is_creator=True).first()
+        self.assertIsNotNone(cu, "CustomerUser.is_creator=True must be created")
+
+        # Organization Admin role assigned
+        is_admin = UserRole.objects.filter(
+            user=self.user,
+            role__name='Organization Admin',
+            role__level=2,
+            role__organization=org,
+        ).exists()
+        self.assertTrue(is_admin, "Organization Admin must be assigned to org creator")
+
     
 
 class OrganizationViewsTest(StripeViewsTestCase):
