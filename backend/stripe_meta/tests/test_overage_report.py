@@ -8,6 +8,7 @@ import logging
 from datetime import timedelta
 from unittest.mock import patch, MagicMock
 
+import stripe
 from django.test import TestCase
 from django.utils import timezone
 
@@ -153,6 +154,50 @@ class ReportOverageFailureTest(OverageReportTestBase):
         """
         with patch(METER_EVENT_PATH, side_effect=Exception('stripe down')):
             report_overage_to_stripe()   # must not raise
+
+        self.usage.refresh_from_db()
+        self.assertIsNone(self.usage.overage_reported_at)
+
+
+class ReportOverageIdempotentConflictTest(OverageReportTestBase):
+
+    def test_report_overage_idempotent_stripe_conflict(self):
+        """
+        MeterEvent.create raises InvalidRequestError with "already exists" (Stripe
+        identifier deduplication) → treat as idempotent success: set
+        overage_reported_at so reruns stop, log at INFO, do not re-raise.
+
+        Regression: bare `except Exception` logged the 400 as a failure and left
+        overage_reported_at=None, causing the task to hammer Stripe every rerun.
+        """
+        exc = stripe.InvalidRequestError(
+            "An event already exists with identifier 6-2026-06-overage.",
+            "identifier",
+        )
+        with patch(METER_EVENT_PATH, side_effect=exc):
+            with self.assertLogs('stripe_meta.tasks', level=logging.INFO) as cm:
+                report_overage_to_stripe()   # must not raise
+
+        self.usage.refresh_from_db()
+        self.assertIsNotNone(self.usage.overage_reported_at, "idempotent hit must set overage_reported_at")
+        # Must log at INFO, not ERROR
+        info_msgs = [m for m in cm.output if 'idempotent hit' in m]
+        self.assertTrue(info_msgs, "expected INFO log for idempotent hit, got none")
+        error_msgs = [m for m in cm.output if 'ERROR' in m]
+        self.assertFalse(error_msgs, f"unexpected ERROR log on idempotent hit: {error_msgs}")
+
+    def test_report_overage_invalid_request_non_conflict_still_fails(self):
+        """
+        InvalidRequestError whose message does NOT contain "already exists" (e.g. bad
+        payload) must NOT set overage_reported_at and must log at ERROR/EXCEPTION level.
+        """
+        exc = stripe.InvalidRequestError(
+            "Invalid value for payload.value: must be a positive integer.",
+            "payload[value]",
+        )
+        with patch(METER_EVENT_PATH, side_effect=exc):
+            with self.assertLogs('stripe_meta.tasks', level=logging.ERROR):
+                report_overage_to_stripe()   # must not raise
 
         self.usage.refresh_from_db()
         self.assertIsNone(self.usage.overage_reported_at)

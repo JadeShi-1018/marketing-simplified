@@ -62,6 +62,21 @@ def report_overage_to_stripe():
             )
             usage.overage_reported_at = timezone.now()
             usage.save(update_fields=['overage_reported_at'])
+        except stripe.InvalidRequestError as e:
+            if 'already exists' in str(e):
+                # Stripe idempotency hit: the event was already received on a prior run.
+                # Treat as success so the local guard is set and reruns stop hammering Stripe.
+                usage.overage_reported_at = timezone.now()
+                usage.save(update_fields=['overage_reported_at'])
+                logger.info(
+                    'report_overage_to_stripe: idempotent hit for org %s — marking reported',
+                    sub.organization_id,
+                )
+            else:
+                logger.exception(
+                    'report_overage_to_stripe: overage report failed for org %s',
+                    sub.organization_id,
+                )
         except Exception:
             logger.exception(
                 'report_overage_to_stripe: overage report failed for org %s',
