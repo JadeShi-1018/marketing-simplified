@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from access_control.models import UserRole
+from core.admin_utils import assign_org_admin
 from core.models import Organization, Project, ProjectInvitation, ProjectMember, Role
 from core.permissions import (
     CanManageProjectMembers,
@@ -237,6 +237,7 @@ class ProjectOnboardingView(APIView):
                 'is_creator': True,
             },
         )
+        assign_org_admin(user, organization)
 
         return organization
 
@@ -387,14 +388,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 'is_creator': True,
             },
         )
-
-        # Grant org-level Organization Admin so billing endpoints are accessible
-        admin_role, _ = Role.objects.get_or_create(
-            organization=organization,
-            name='Organization Admin',
-            defaults={'level': 2},
-        )
-        UserRole.objects.get_or_create(user=user, role=admin_role)
+        assign_org_admin(user, organization)
 
         return organization
 

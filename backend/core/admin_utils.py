@@ -1,6 +1,21 @@
 """Centralized helpers for admin role checks."""
 
 
+def assign_org_admin(user, org):
+    """Grant Organization Admin (level=2) to *user* for *org*.
+
+    Idempotent — safe to call on every org-creation path.
+    """
+    from core.models import Role
+    from access_control.models import UserRole
+    admin_role, _ = Role.objects.get_or_create(
+        organization=org,
+        name='Organization Admin',
+        defaults={'level': 2},
+    )
+    UserRole.objects.get_or_create(user=user, role=admin_role)
+
+
 def is_org_admin(user):
     """Return True if the user holds an Organization Admin role (level 2) in their org."""
     if not user or not getattr(user, 'is_authenticated', False):
