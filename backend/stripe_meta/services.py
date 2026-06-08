@@ -52,6 +52,20 @@ def _get_or_create_usage(organization, ym: str) -> UsageMonthly:
     return obj
 
 
+def get_active_real_subscription(organization):
+    """
+    Return the active subscription, preferring real (is_internal=False) over the
+    Free sentinel (is_internal=True). order_by('is_internal') sorts False(0) before
+    True(1), so a real sub always wins when both are active.
+    """
+    return (
+        Subscription.objects.filter(organization=organization, is_active=True)
+        .order_by('is_internal')
+        .select_related('plan')
+        .first()
+    )
+
+
 def reserve_quota(organization, tokens: int) -> None:
     """Atomically pre-reserve tokens before an LLM call starts."""
     ym = timezone.now().strftime('%Y-%m')
@@ -70,11 +84,7 @@ def commit_quota(organization, actual_tokens: int, reserved_tokens: int) -> None
     Uses select_for_update to prevent lost-update races.
     """
     ym = timezone.now().strftime('%Y-%m')
-    sub = (
-        Subscription.objects.filter(organization=organization, is_active=True)
-        .select_related('plan')
-        .first()
-    )
+    sub = get_active_real_subscription(organization)
     quota = sub.plan.monthly_token_quota if sub and sub.plan else None
 
     with transaction.atomic():
@@ -112,11 +122,7 @@ def check_quota_or_402(organization, requested_tokens: int):
 
     All arithmetic is integer-only.
     """
-    sub = (
-        Subscription.objects.filter(organization=organization, is_active=True)
-        .select_related('plan')
-        .first()
-    )
+    sub = get_active_real_subscription(organization)
     if not sub:
         return True, None   # no subscription found — do not block
 

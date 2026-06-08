@@ -12,7 +12,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .permissions import HasValidOrganizationToken, IsOrganizationAdmin
-from .services import sync_seat_count
+from .services import get_active_real_subscription, sync_seat_count
 from .models import Plan, Subscription, UsageDaily, UsageMonthly, Payment, StripeWebhookEvent
 from .serializers import (
     PlanSerializer, SubscriptionSerializer, UsageDailySerializer, CheckoutSessionSerializer, 
@@ -169,11 +169,8 @@ def get_subscription(request):
     """Get current user's subscription"""
     try:
         user = request.user
-        subscription = Subscription.objects.filter(
-            organization=user.organization,
-            is_active=True
-        ).first()
-        
+        subscription = get_active_real_subscription(user.organization)
+
         if not subscription:
             return Response(
                 {'error': 'No active subscription found', 'code': 'NO_SUBSCRIPTION'},
@@ -194,11 +191,8 @@ def cancel_subscription(request):
     """Cancel user's active subscription"""
     try:
         user = request.user
-        subscription = Subscription.objects.filter(
-            organization=user.organization,
-            is_active=True
-        ).first()
-        
+        subscription = get_active_real_subscription(user.organization)
+
         if not subscription:
             return Response(
                 {'error': 'No active subscription found', 'code': 'NO_SUBSCRIPTION'},
@@ -721,6 +715,18 @@ def handle_subscription_created(subscription_data, event_id=None):
             'stripe_overage_item_id': overage_item['id'] if overage_item else None,
         },
     )
+
+    if subscription.is_active and not subscription.is_internal:
+        deactivated = Subscription.objects.filter(
+            organization=organization,
+            is_internal=True,
+            is_active=True,
+        ).update(is_active=False)
+        if deactivated:
+            logger.info(
+                "handle_subscription_created deactivated %d Free sentinel(s) for org %s",
+                deactivated, org_id,
+            )
 
     logger.info(
         "handle_subscription_created exit event_id=%s org_id=%s created=%s",

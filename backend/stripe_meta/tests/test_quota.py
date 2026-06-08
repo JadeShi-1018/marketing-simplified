@@ -285,3 +285,43 @@ class QuotaEnforcementTests(TestCase):
 
         self.assertTrue(allowed)
         self.assertIsNone(payload)
+
+    # ── Sentinel vs. real subscription ─────────────────────────────────────
+
+    def test_paid_org_not_limited_as_free(self):
+        """
+        Paid org has both an active Free sentinel (is_internal=True) and an active
+        real Team subscription (is_internal=False). check_quota_or_402 must read the
+        Team plan (overage allowed), NOT the Free sentinel (hard block).
+
+        Regression: .first() without order_by returned the Free sentinel (lowest PK)
+        so paid orgs were blocked at the 500-token Free quota.
+        Fix: get_active_real_subscription orders by is_internal so False wins.
+        """
+        # Create sentinel first so it gets a lower PK (simulates post-upgrade state
+        # before Bug 1 Layer A fix runs; both subs are active simultaneously).
+        Subscription.objects.create(
+            organization=self.org,
+            plan=self.free_plan,
+            stripe_subscription_id='sub_sentinel_coexist',
+            start_date=timezone.now(),
+            end_date=timezone.now().replace(year=2099),
+            is_active=True,
+            is_internal=True,
+        )
+        Subscription.objects.create(
+            organization=self.org,
+            plan=self.team_plan,
+            stripe_subscription_id='sub_real_coexist',
+            start_date=timezone.now(),
+            end_date=timezone.now().replace(year=2099),
+            is_active=True,
+            is_internal=False,
+        )
+        # Push usage past the Free quota but within Team overage territory
+        self._set_used(tokens_used=600_000)
+
+        allowed, payload = check_quota_or_402(self.org, 1_000)
+
+        self.assertTrue(allowed, "Paid org should not be blocked by Free sentinel quota")
+        self.assertIsNone(payload)

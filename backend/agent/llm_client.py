@@ -12,11 +12,12 @@ from typing import Any
 from django.conf import settings
 
 from stripe_meta.exceptions import QuotaError
-from stripe_meta.models import LLMCallLog, Subscription
+from stripe_meta.models import LLMCallLog
 from stripe_meta.services import (
     check_quota_or_402,
     commit_quota,
     estimate_input_tokens,
+    get_active_real_subscription,
     release_quota,
     reserve_quota,
     resolve_charging_org,
@@ -54,11 +55,7 @@ def call_llm(
     estimated_total = int((input_estimate + max_output_tokens) * multiplier)
 
     # 1. Explicit per-call cap check (before touching quota counters)
-    sub = (
-        Subscription.objects.filter(organization=org, is_active=True)
-        .select_related('plan')
-        .first()
-    )
+    sub = get_active_real_subscription(org)
     if sub and sub.plan.max_tokens_per_call and estimated_total > sub.plan.max_tokens_per_call:
         raise QuotaError(
             code='SINGLE_CALL_TOO_LARGE',

@@ -209,3 +209,64 @@ class WebhookHandlerRegressionTests(TestCase):
                 handle_subscription_created(payload)   # must not raise
 
         self.assertEqual(Subscription.objects.count(), before)
+
+
+class SubscriptionCreatedTests(TestCase):
+    """
+    handle_subscription_created: sentinel deactivation (Bug 1 Layer A)
+    and seat_count initialisation (Bug 2).
+    Plans deleted first so org-creation signal is a no-op.
+    """
+
+    def setUp(self):
+        Plan.objects.all().delete()
+        self.org = Organization.objects.create(name='SubCreatedOrg', slug='sub-created-org')
+        self.team_plan = Plan.objects.create(
+            name='Team',
+            stripe_price_id='price_team_test',
+            monthly_token_quota=5_000_000,
+            base_price_cents=4900,
+            included_seats=5,
+        )
+        self.mock_customer = Mock()
+        self.mock_customer.metadata = {'organization_id': str(self.org.id)}
+
+    def _make_payload(self, status='active'):
+        return {
+            'id': 'sub_created_test_001',
+            'status': status,
+            'customer': 'cus_test_001',
+            'start_date': 1700000000,
+            'items': {
+                'data': [{
+                    'price': {'id': 'price_team_test'},
+                    'current_period_end': 1702678400,
+                }]
+            },
+        }
+
+    def test_subscription_created_deactivates_free_sentinel(self):
+        """
+        When a real subscription (is_internal=False) is created for an org that
+        already has an active Free sentinel (is_internal=True), the sentinel must
+        be deactivated.
+
+        Regression: sentinel was left active, causing get_active_real_subscription
+        to return Free plan for paid orgs (Bug 1).
+        """
+        sentinel = Subscription.objects.create(
+            organization=self.org,
+            plan=self.team_plan,  # plan doesn't matter for this assertion
+            stripe_subscription_id='sub_sentinel_free_001',
+            start_date='2024-01-01',
+            end_date='2099-01-01',
+            is_active=True,
+            is_internal=True,
+        )
+
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=self.mock_customer):
+            handle_subscription_created(self._make_payload())
+
+        sentinel.refresh_from_db()
+        self.assertFalse(sentinel.is_active, "Free sentinel must be deactivated after real sub is created")
+
