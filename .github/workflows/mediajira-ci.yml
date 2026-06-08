@@ -388,6 +388,19 @@ jobs:
             pytest -v
            "
 
+      # Run tests that are excluded from the parallel run above.
+      # These file-upload integration tests and asset scan Celery tasks share
+      # resources (file storage, scanner state) and are not safe under xdist,
+      # so the parallel run --ignores them (see backend/pytest.ini). They were
+      # part of the suite before SMP-555 (executed by `manage.py test`), so we
+      # run them serially here to avoid a coverage regression.
+      - name: Run serial backend tests (excluded from parallel run)
+        run: |
+          docker compose exec backend sh -c "
+            echo 'Running serial backend tests...' &&
+            pytest -v -o addopts='' --ds=backend.settings --timeout=300 metric_upload/tests/integration asset/tests/test_tasks.py
+           "
+
       # Run frontend tests in container
       - name: Run frontend tests in container
         continue-on-error: true
