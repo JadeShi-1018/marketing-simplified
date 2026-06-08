@@ -270,3 +270,18 @@ class SubscriptionCreatedTests(TestCase):
         sentinel.refresh_from_db()
         self.assertFalse(sentinel.is_active, "Free sentinel must be deactivated after real sub is created")
 
+    def test_subscription_created_sets_seat_count(self):
+        """
+        handle_subscription_created must default seat_count to plan.included_seats
+        (Team=5), not the Subscription model default of 1.
+
+        Regression: seat_count was left at 1 because it was missing from the
+        update_or_create defaults (Bug 2).
+        """
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=self.mock_customer):
+            handle_subscription_created(self._make_payload())
+
+        sub = Subscription.objects.get(stripe_subscription_id='sub_created_test_001')
+        self.assertEqual(sub.seat_count, self.team_plan.included_seats)
+        self.assertEqual(sub.seat_count, 5)
+

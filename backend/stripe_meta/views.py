@@ -713,6 +713,7 @@ def handle_subscription_created(subscription_data, event_id=None):
             'end_date': datetime.fromtimestamp(end_date) if end_date else None,
             'is_active': subscription_data.get('status') == 'active',
             'stripe_overage_item_id': overage_item['id'] if overage_item else None,
+            'seat_count': plan.included_seats if plan and plan.included_seats else 1,
         },
     )
 
