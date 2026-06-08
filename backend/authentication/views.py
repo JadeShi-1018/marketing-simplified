@@ -107,6 +107,15 @@ class RegisterView(APIView):
             )
             UserRole.objects.get_or_create(user=user, role=default_role)
 
+            # Org creator (no organization_id supplied) gets Organization Admin
+            if not organization_id:
+                admin_role, _ = Role.objects.get_or_create(
+                    organization=organization,
+                    name='Organization Admin',
+                    defaults={'level': 2},
+                )
+                UserRole.objects.get_or_create(user=user, role=admin_role)
+
             # Create CustomerOrganisation + admin CustomerUser so CSM features work
             from customer.models import CustomerOrganisation
             from csm.models import CustomerUser
@@ -746,9 +755,17 @@ class GoogleOAuthCallbackView(APIView):
                     )
 
                     user.save()
-                    
+
+                    # Org creator gets Organization Admin so billing endpoints work
+                    admin_role, _ = Role.objects.get_or_create(
+                        organization=organization,
+                        name='Organization Admin',
+                        defaults={'level': 2},
+                    )
+                    UserRole.objects.get_or_create(user=user, role=admin_role)
+
                     print(f"[GOOGLE OAUTH] New user created: {email}, username: {username}")
-                    
+
                     # HTTP redirect to frontend set-password page
                     redirect_url = f"{settings.FRONTEND_URL}/set-password?token={temp_token}"
                     return redirect(redirect_url)
