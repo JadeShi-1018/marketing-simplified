@@ -881,12 +881,11 @@ class AnomalyConfirmationTests(TestCase):
 
     def test_zero_anomalies_preserves_task_creation(self):
         from task.models import Task
-        # Clean dataset: no anomalies, auto-confirmed, tasks still flow.
+        # Clean dataset: no anomalies key at all and no confirmation flag — the
+        # gate must NOT block; tasks still flow (existing behaviour preserved).
         run = AgentWorkflowRun.objects.create(
             session=self.session, status='awaiting_confirmation',
             analysis_result={
-                "anomalies": [],
-                "anomalies_confirmed": True,
                 "recommended_tasks": [
                     {"type": "optimization", "summary": "Monitor", "priority": "LOW"},
                 ],

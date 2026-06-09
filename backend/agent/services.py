@@ -1601,8 +1601,10 @@ class AgentOrchestrator:
 
         analysis = self._workflow_run_analysis(workflow_run)
 
-        # Gate: anomalies must be reviewed and confirmed before tasks are created.
-        if not analysis.get('anomalies_confirmed'):
+        # Gate only applies when anomalies were actually detected: they must be
+        # reviewed + confirmed first. Zero-anomaly analyses proceed unchanged.
+        had_anomalies = bool(analysis.get('anomalies'))
+        if had_anomalies and not analysis.get('anomalies_confirmed'):
             yield {
                 "type": "error",
                 "content": "Anomalies must be confirmed before creating tasks.",
@@ -1611,7 +1613,6 @@ class AgentOrchestrator:
 
         # All-excluded: anomalies were detected but the user included none ->
         # skip task creation. Zero-detected-anomaly runs are NOT skipped.
-        had_anomalies = bool(analysis.get('anomalies'))
         reviewed = analysis.get('reviewed_anomalies') or []
         included_anomalies = [a for a in reviewed if a.get('included', True)]
         if had_anomalies and not included_anomalies:
