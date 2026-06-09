@@ -1,7 +1,12 @@
 "use client";
 
-import { X } from "lucide-react";
-import { TriggerConfigPanel, TriggerTimeline } from "../triggers";
+import { useRef, useState } from "react";
+import { X, Save } from "lucide-react";
+import {
+  TriggerConfigPanel,
+  TriggerTimeline,
+  type TriggerConfigPanelHandle,
+} from "../triggers";
 import type { WorkflowTriggerConfig } from "@/types/agent";
 
 interface TriggerDrawerProps {
@@ -23,7 +28,20 @@ export default function TriggerDrawer({
   onClose,
   onSave,
 }: TriggerDrawerProps) {
+  const panelRef = useRef<TriggerConfigPanelHandle>(null);
+  const [saving, setSaving] = useState(false);
+
   if (!isOpen) return null;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await panelRef.current?.save();
+      onSave();
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <>
@@ -34,11 +52,13 @@ export default function TriggerDrawer({
       />
 
       {/* Drawer */}
-      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-2xl flex-col bg-gray-50 shadow-2xl">
+      <div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-2xl flex-col bg-white shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-4">
+        <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Workflow Triggers</h2>
+            <h2 className="text-lg font-semibold text-gray-900">
+              Workflow Triggers
+            </h2>
             <p className="mt-0.5 text-sm text-gray-500">
               Configure how this workflow should be triggered
             </p>
@@ -54,45 +74,40 @@ export default function TriggerDrawer({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="space-y-6">
-            {/* Trigger Configuration */}
-            <TriggerConfigPanel
-              workflowId={workflowId}
-              initialEnabled={initialEnabled}
-              initialConfig={initialConfig}
-              isSystem={isSystem}
-              onSave={() => {
-                onSave();
-                // Don't close drawer automatically so user can see the result
-              }}
-            />
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {/* Trigger configuration — flat, no card wrapper */}
+          <TriggerConfigPanel
+            ref={panelRef}
+            workflowId={workflowId}
+            initialEnabled={initialEnabled}
+            initialConfig={initialConfig}
+            isSystem={isSystem}
+            onSave={onSave}
+          />
 
-            {/* Trigger History */}
-            <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
-              <div className="border-b border-gray-100 px-4 py-3">
-                <h3 className="text-sm font-semibold text-gray-900">Trigger History</h3>
-                <p className="mt-0.5 text-xs text-gray-500">
-                  Recent workflow trigger events
-                </p>
-              </div>
-              <div className="p-4">
-                <TriggerTimeline workflowId={workflowId} limit={20} />
-              </div>
-            </div>
+          {/* Trigger History — thin separator, no card */}
+          <div className="mt-8 border-t border-gray-100 pt-6">
+            <h3 className="mb-4 text-sm font-semibold text-gray-900">
+              Trigger History
+            </h3>
+            <TriggerTimeline workflowId={workflowId} limit={20} />
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="border-t border-gray-200 bg-white px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-full rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
-          >
-            Close
-          </button>
-        </div>
+        {/* Footer — Save only */}
+        {!isSystem && (
+          <div className="border-t border-gray-100 bg-white px-6 py-4">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#3CCED7] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#35b8c0] disabled:opacity-50 transition-colors"
+            >
+              <Save className="h-4 w-4" />
+              {saving ? "Saving…" : "Save Configuration"}
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, SquarePlus, RefreshCw, FileSpreadsheet, BadgeCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface InstantConfigProps {
@@ -18,26 +18,45 @@ interface InstantConfigProps {
   }) => void;
 }
 
-const EVENT_OPTIONS = [
+const EVENT_OPTIONS: Array<{
+  value: string;
+  label: string;
+  description: string;
+  icon: typeof SquarePlus;
+  iconColor: string;
+  activeBorder: string;
+}> = [
   {
     value: "task.created",
     label: "Task Created",
     description: "Triggered when a new task is created",
+    icon: SquarePlus,
+    iconColor: "text-amber-600 bg-amber-50",
+    activeBorder: "border-amber-300",
   },
   {
     value: "task.status_changed",
     label: "Task Status Changed",
     description: "Triggered when a task status changes",
+    icon: RefreshCw,
+    iconColor: "text-amber-600 bg-amber-50",
+    activeBorder: "border-amber-300",
   },
   {
     value: "spreadsheet.uploaded",
     label: "Spreadsheet Uploaded",
     description: "Triggered when a new spreadsheet is uploaded",
+    icon: FileSpreadsheet,
+    iconColor: "text-green-600 bg-green-50",
+    activeBorder: "border-green-300",
   },
   {
     value: "decision.approved",
     label: "Decision Approved",
     description: "Triggered when a decision is approved",
+    icon: BadgeCheck,
+    iconColor: "text-indigo-600 bg-indigo-50",
+    activeBorder: "border-indigo-300",
   },
 ];
 
@@ -89,31 +108,39 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
       {/* Event Types Section */}
       <div>
         <h4 className="text-sm font-medium text-gray-900 mb-3">Listen to Events</h4>
-        <div className="space-y-2">
+        <div className="grid grid-cols-1 gap-2">
           {EVENT_OPTIONS.map((event) => {
+            const Icon = event.icon;
             const isSelected = config?.event_types?.includes(event.value);
 
             return (
-              <label
+              <button
                 key={event.value}
+                type="button"
+                onClick={() => handleEventToggle(event.value)}
                 className={cn(
-                  "flex items-start gap-3 rounded-lg border-2 p-3 cursor-pointer transition-all",
+                  "flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all",
                   isSelected
-                    ? "border-amber-400 bg-amber-50 dark:bg-amber-950/20"
-                    : "border-gray-200 hover:border-gray-300 bg-white"
+                    ? `${event.activeBorder} bg-white shadow-sm`
+                    : "border-gray-100 bg-gray-50 hover:border-gray-200"
                 )}
               >
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => handleEventToggle(event.value)}
-                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-amber-500 focus:ring-amber-500"
-                />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-gray-900">{event.label}</p>
-                  <p className="mt-0.5 text-xs text-gray-500">{event.description}</p>
+                <div className={cn("rounded-lg p-1.5 shrink-0", event.iconColor)}>
+                  <Icon className="h-4 w-4" />
                 </div>
-              </label>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900">{event.label}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{event.description}</p>
+                </div>
+                <div
+                  className={cn(
+                    "h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    isSelected
+                      ? "border-[#3CCED7] bg-[#3CCED7]"
+                      : "border-gray-300 bg-white"
+                  )}
+                />
+              </button>
             );
           })}
         </div>
