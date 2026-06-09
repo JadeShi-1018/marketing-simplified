@@ -13,6 +13,8 @@ import {
   AgentWorkflowTemplate,
   CreateTemplateRequest,
   UpdateTemplateRequest,
+  WorkflowTriggerLog,
+  WorkflowTriggerConfig,
 } from '@/types/agent';
 
 /** Build auth headers for SSE fetch requests (mirrors Axios interceptor logic). */
@@ -459,6 +461,62 @@ export const AgentAPI = {
     );
     const data = response.data;
     return Array.isArray(data) ? data : (data as { results?: AgentWorkflowRun[] }).results || [];
+  },
+
+  // ==================== Workflow Triggers ====================
+
+  /**
+   * Update trigger configuration for a workflow
+   */
+  updateTriggerConfig: async (
+    workflowId: string,
+    config: {
+      trigger_enabled?: boolean;
+      trigger_config?: WorkflowTriggerConfig;
+    },
+    params?: { project_id?: string | number }
+  ): Promise<AgentWorkflowDefinition> => {
+    const response = await api.patch<AgentWorkflowDefinition>(
+      `/api/agent/workflows/${workflowId}/update_trigger_config/`,
+      config,
+      { params }
+    );
+    return response.data;
+  },
+
+  /**
+   * Manually trigger a workflow
+   */
+  triggerManual: async (
+    workflowId: string,
+    params?: { project_id?: string | number }
+  ): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(
+      `/api/agent/workflows/${workflowId}/trigger_manual/`,
+      {},
+      { params }
+    );
+    return response.data;
+  },
+
+  /**
+   * Get trigger logs for a workflow
+   */
+  getTriggerLogs: async (
+    workflowId: string,
+    limit = 50
+  ): Promise<WorkflowTriggerLog[]> => {
+    const response = await api.get<WorkflowTriggerLog[]>(
+      `/api/agent/trigger-logs/`,
+      {
+        params: {
+          workflow_id: workflowId,
+          limit: Math.min(limit, 100), // Clamp to max 100
+        },
+      }
+    );
+    const data = response.data;
+    return Array.isArray(data) ? data : (data as { results?: WorkflowTriggerLog[] }).results || [];
   },
 
   // ==================== Template CRUD ====================

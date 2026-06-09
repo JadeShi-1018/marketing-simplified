@@ -32,7 +32,7 @@ from spreadsheet.models import Spreadsheet
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowDefinition,
     AgentWorkflowStep, AgentWorkflowRun, AgentStepExecution,
-    AgentWorkflowTemplate,
+    AgentWorkflowTemplate, WorkflowTriggerLog,
 )
 from .serializers import (
     AgentSessionListSerializer,
@@ -45,6 +45,8 @@ from .serializers import (
     AgentWorkflowRunSerializer,
     StepReorderSerializer,
     AgentWorkflowTemplateSerializer,
+    WorkflowTriggerLogSerializer,
+    TriggerConfigUpdateSerializer,
 )
 from .services import AgentOrchestrator
 from . import data_service
@@ -682,6 +684,51 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
         serializer = AgentWorkflowDefinitionDetailSerializer(new_workflow)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'])
+    def trigger_manual(self, request, pk=None):
+        """POST /api/agent/workflows/{id}/trigger_manual/ - Manually trigger a workflow."""
+        from .trigger_handlers import ManualHandler
+
+        workflow = self.get_object()
+        project = _get_user_project(request)
+
+        success = ManualHandler.trigger_manual(
+            workflow_id=str(workflow.id),
+            user=request.user,
+            project=project,
+        )
+
+        if success:
+            return Response({'message': 'Workflow triggered successfully.'})
+        else:
+            return Response(
+                {'detail': 'Failed to trigger workflow.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=['patch'])
+    def update_trigger_config(self, request, pk=None):
+        """PATCH /api/agent/workflows/{id}/update_trigger_config/ - Update trigger configuration."""
+        workflow = self.get_object()
+
+        if workflow.is_system:
+            return Response(
+                {'detail': 'Cannot modify system workflow triggers.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = TriggerConfigUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if 'trigger_enabled' in serializer.validated_data:
+            workflow.trigger_enabled = serializer.validated_data['trigger_enabled']
+        if 'trigger_config' in serializer.validated_data:
+            workflow.trigger_config = serializer.validated_data['trigger_config']
+
+        workflow.save()
+
+        return Response(AgentWorkflowDefinitionDetailSerializer(workflow).data)
+
 
 def _get_workflow_or_404(request, workflow_id):
     """Fetch workflow with project-level access check. Returns (workflow, error_response)."""
@@ -1068,3 +1115,70 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
         # Soft delete
         instance.is_deleted = True
         instance.save()
+
+
+class WorkflowTriggerLogViewSet(EnglishResponseMixin, viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only ViewSet for workflow trigger logs.
+    GET /api/agent/trigger-logs/?workflow_id={id}&limit=50
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = WorkflowTriggerLogSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        workflow_id = self.request.query_params.get('workflow_id')
+        limit = int(self.request.query_params.get('limit', 50))
+        limit = max(1, min(limit, 100))  # Clamp between 1-100
+
+        # Base queryset: user can only see logs for workflows they have access to
+        qs = WorkflowTriggerLog.objects.select_related('workflow', 'workflow_run')
+
+        # Filter by workflow ownership
+        project = _get_user_project(self.request)
+        if project:
+            # User can see logs for workflows in their project or system workflows
+            qs = qs.filter(
+                Q(workflow__is_system=True) |
+                Q(workflow__project=project, workflow__created_by=self.request.user)
+            )
+        else:
+            # Only system workflows if no project
+            qs = qs.filter(workflow__is_system=True)
+
+        # Filter by specific workflow if provided
+        if workflow_id:
+            qs = qs.filter(workflow_id=workflow_id)
+
+        return qs.order_by('-created_at')[:limit]
+
+
+class WebhookReceiverView(APIView):
+    """
+    Webhook receiver for external triggers.
+    POST /api/agent/webhooks/{workflow_id}/
+
+    Validates signature and triggers the workflow.
+    """
+    permission_classes = []  # Use signature-based authentication
+
+    def post(self, request, workflow_id):
+        """Handle incoming webhook."""
+        from .trigger_handlers import InstantHandler
+
+        payload = request.data
+        signature = request.headers.get('X-Webhook-Signature', '')
+
+        success = InstantHandler.handle_webhook(
+            workflow_id=workflow_id,
+            payload=payload,
+            signature=signature
+        )
+
+        if success:
+            return Response({'message': 'Webhook processed successfully'})
+        else:
+            return Response(
+                {'detail': 'Webhook validation failed'},
+                status=status.HTTP_400_BAD_REQUEST
+            )

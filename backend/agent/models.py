@@ -422,6 +422,42 @@ class AgentWorkflowDefinition(TimeStampedModel):
         related_name='created_workflow_definitions',
     )
 
+    # Trigger configuration fields
+    trigger_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable automatic triggering for this workflow"
+    )
+    trigger_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="""
+        Trigger configuration JSON structure:
+        {
+            "trigger_type": "polling" | "instant" | "scheduled" | "manual",
+            "polling": {
+                "interval_minutes": 5 | 15 | 30 | 60,
+                "data_sources": ["spreadsheet", "task", "decision"],
+                "conditions": [{"type": "spreadsheet_upload", "project_id": 123}, ...]
+            },
+            "instant": {
+                "event_types": ["task.created", "task.status_changed", ...],
+                "webhook_enabled": true,
+                "webhook_secret": "auto_generated_uuid",
+                "filters": {"project_id": 123, "task_priority": ["HIGH", "CRITICAL"]}
+            },
+            "scheduled": {
+                "cron_expression": "0 9 * * 1",
+                "timezone": "UTC",
+                "enabled": true
+            },
+            "manual": {
+                "require_confirmation": true,
+                "allowed_users": [user_id_list] or "all"
+            }
+        }
+        """
+    )
+
     class Meta:
         ordering = ['-created_at']
 
@@ -712,3 +748,122 @@ class AgentWorkflowTemplate(TimeStampedModel):
 
     def __str__(self):
         return f"{self.name} ({self.get_category_display()})"
+
+
+class WorkflowTriggerLog(TimeStampedModel):
+    """
+    Records every trigger attempt (successful or failed) for audit and debugging.
+    Used for the trigger history timeline and monitoring dashboard.
+    """
+
+    TRIGGER_TYPE_CHOICES = [
+        ('polling', 'Polling'),
+        ('instant', 'Instant'),
+        ('scheduled', 'Scheduled'),
+        ('manual', 'Manual'),
+    ]
+
+    STATUS_CHOICES = [
+        ('triggered', 'Triggered'),
+        ('skipped', 'Skipped'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    workflow = models.ForeignKey(
+        AgentWorkflowDefinition,
+        on_delete=models.CASCADE,
+        related_name='trigger_logs',
+    )
+
+    trigger_type = models.CharField(max_length=20, choices=TRIGGER_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+
+    # Context about what caused the trigger
+    trigger_context = models.JSONField(
+        default=dict,
+        help_text="""
+        Context about what caused the trigger:
+        {
+            "event_type": "task.status_changed",
+            "task_id": 456,
+            "old_status": "TODO",
+            "new_status": "DONE",
+            "spreadsheet_id": 789,
+            "webhook_source": "zapier",
+            "manual_user_id": 123
+        }
+        """
+    )
+
+    # Generated workflow run (if successfully triggered)
+    workflow_run = models.ForeignKey(
+        'AgentWorkflowRun',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='trigger_log',
+    )
+
+    # Error message (if failed)
+    error_message = models.TextField(null=True, blank=True)
+
+    # Execution time in milliseconds
+    execution_time_ms = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['workflow', '-created_at']),
+            models.Index(fields=['trigger_type', 'status']),
+            models.Index(fields=['created_at']),  # For cleanup
+        ]
+
+    def __str__(self):
+        return f"{self.trigger_type} trigger for {self.workflow.name} - {self.status}"
+
+
+class WorkflowTriggerState(TimeStampedModel):
+    """
+    Maintains state for each workflow's trigger mechanism to enable:
+    - Idempotency: prevent duplicate triggers for the same event
+    - Deduplication: track last checked data hash for polling
+    - Scheduling: track next scheduled run time
+    """
+
+    workflow = models.OneToOneField(
+        AgentWorkflowDefinition,
+        on_delete=models.CASCADE,
+        related_name='trigger_state',
+        primary_key=True,
+    )
+
+    # Polling state
+    last_polling_check = models.DateTimeField(null=True, blank=True)
+    last_checked_data_hash = models.TextField(
+        blank=True,
+        default='',
+        help_text="Hash of the data checked in last polling cycle (for deduplication)"
+    )
+
+    # Scheduling state
+    next_scheduled_run = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Next scheduled execution time (computed from cron expression)"
+    )
+
+    # Last successful trigger
+    last_successful_trigger = models.DateTimeField(null=True, blank=True)
+    last_trigger_type = models.CharField(max_length=20, blank=True, default='')
+
+    # Rate limiting (prevent trigger spam)
+    trigger_count_last_hour = models.IntegerField(default=0)
+    trigger_count_reset_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'agent_workflow_trigger_state'
+
+    def __str__(self):
+        return f"TriggerState for {self.workflow.name}"

@@ -1,11 +1,12 @@
 "use client"
 
 import { useState } from "react"
-import { Bookmark, Pencil, PlusCircle, Trash2 } from "lucide-react"
+import { Bookmark, Pencil, Play, PlusCircle, Trash2 } from "lucide-react"
 import { getStepMeta } from "../canvas/canvasStepMeta"
 import { brandBtnSm } from "../workflowBrandClasses"
 import { Building2, FolderKanban, Lock } from "lucide-react"
-import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory, TemplateProjectInfo } from "@/types/agent"
+import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory, TemplateProjectInfo, WorkflowTriggerConfig } from "@/types/agent"
+import toast from "react-hot-toast"
 
 const MAX_FLOW_NODES = 6
 
@@ -105,6 +106,8 @@ interface WorkflowHoverContentProps {
   stepTypes: WorkflowStepType[]
   workflowId: string
   currentStatus: AgentWorkflowDefinition["status"]
+  triggerEnabled?: boolean
+  triggerConfig?: WorkflowTriggerConfig
   onStatusChange: (id: string, newStatus: string) => void
   onSaveAsTemplate?: () => void
   onDelete?: () => void
@@ -116,12 +119,15 @@ export function WorkflowHoverContent({
   stepTypes,
   workflowId,
   currentStatus,
+  triggerEnabled,
+  triggerConfig,
   onStatusChange,
   onSaveAsTemplate,
   onDelete,
 }: WorkflowHoverContentProps) {
   const [localStatus, setLocalStatus] = useState(currentStatus)
   const [toggling, setToggling] = useState(false)
+  const [running, setRunning] = useState(false)
   const status = STATUS_CONFIG[localStatus]
 
   const handleToggle = async (nextChecked: boolean) => {
@@ -140,6 +146,26 @@ export function WorkflowHoverContent({
     }
   }
 
+  const handleRun = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRunning(true)
+    try {
+      const { AgentAPI } = await import("@/lib/api/agentApi")
+      await AgentAPI.triggerManual(workflowId)
+      toast.success("Workflow started successfully")
+    } catch (error) {
+      toast.error("Failed to start workflow")
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  // Show Run button only for manual triggers in active status
+  const showRunButton =
+    triggerEnabled &&
+    triggerConfig?.trigger_type === "manual" &&
+    localStatus === "active"
+
   return (
     <>
       <FlowDiagram stepTypes={stepTypes} />
@@ -150,6 +176,7 @@ export function WorkflowHoverContent({
         ) : (
           <p className="text-xs italic text-slate-400">No description</p>
         )}
+
         <div className="mt-auto flex items-center gap-2 border-t border-slate-100 pt-2">
           {/* Status + toggle — tightly grouped */}
           <div className="flex items-center gap-2">
@@ -175,6 +202,22 @@ export function WorkflowHoverContent({
               >
                 <Bookmark className="h-3 w-3" />
                 Template
+              </button>
+            </>
+          )}
+
+          {/* Divider + Run Workflow (Manual trigger only) */}
+          {showRunButton && (
+            <>
+              <div className="mx-1 h-4 w-px shrink-0 bg-slate-200" />
+              <button
+                type="button"
+                onClick={handleRun}
+                disabled={running}
+                className="flex shrink-0 items-center gap-1 rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-600 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Play className={`h-3 w-3 ${running ? "animate-pulse" : ""}`} />
+                {running ? "Running..." : "Run"}
               </button>
             </>
           )}

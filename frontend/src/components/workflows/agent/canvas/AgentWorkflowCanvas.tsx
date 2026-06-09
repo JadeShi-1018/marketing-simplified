@@ -25,6 +25,7 @@ import StepPickerPanel from "./panels/StepPickerPanel"
 import StepConfigPanel from "./panels/StepConfigPanel"
 import CanvasToolbar from "./CanvasToolbar"
 import { CreateTemplateModal } from "@/components/agent/templates/CreateTemplateModal"
+import TriggerDrawer from "./TriggerDrawer"
 
 // ── Unsaved-changes guard dialog ──────────────────────────────────────────────
 interface UnsavedChangesDialogProps {
@@ -185,6 +186,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
   const [showUnsavedDialog, setShowUnsavedDialog] = useState(false)
   const [isSavingAndLeaving, setIsSavingAndLeaving] = useState(false)
   const [showTemplateModal, setShowTemplateModal] = useState(false)
+  const [showTriggerDrawer, setShowTriggerDrawer] = useState(false)
   // picker state: insertion index + viewport anchor coordinates
   const [pickerState, setPickerState] = useState<{
     insertAfter: number
@@ -462,6 +464,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
         onSave={handleSave}
         onStatusChange={onStatusChange}
         onSaveAsTemplate={() => setShowTemplateModal(true)}
+        onOpenTriggers={() => setShowTriggerDrawer(true)}
       />
 
       {/* Save as Template modal */}
@@ -476,6 +479,28 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
         defaultName={nameValue || workflow.name}
         defaultDescription={workflow.description}
         lockSourceWorkflow
+      />
+
+      {/* Trigger Drawer */}
+      <TriggerDrawer
+        isOpen={showTriggerDrawer}
+        workflowId={workflowId}
+        initialEnabled={workflow.trigger_enabled}
+        initialConfig={workflow.trigger_config}
+        isSystem={workflow.is_system}
+        onClose={() => setShowTriggerDrawer(false)}
+        onSave={() => {
+          // Reload workflow to get updated trigger config
+          AgentAPI.getWorkflow(workflowId, projectParams)
+            .then((wf) => {
+              // Update the workflow state in parent component would be ideal
+              // For now, just show success message
+              toast.success("Trigger configuration saved")
+            })
+            .catch(() => {
+              // Error already handled by TriggerConfigPanel
+            })
+        }}
       />
     </div>
   )

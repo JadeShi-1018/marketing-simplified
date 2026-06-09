@@ -9,6 +9,7 @@ import { useHoverCard } from "./useHoverCard"
 import HoverCardPortal from "./HoverCardPortal"
 import { WorkflowHoverContent } from "./WorkflowHoverPreview"
 import { CreateTemplateModal } from "@/components/agent/templates/CreateTemplateModal"
+import { TriggerBadge, TriggerVisualizer } from "../triggers"
 
 const STATUS_CONFIG: Record<
   AgentWorkflowDefinition["status"],
@@ -71,6 +72,8 @@ export default function WorkflowCard({
           stepTypes={workflow.step_types ?? []}
           workflowId={workflow.id}
           currentStatus={localStatus}
+          triggerEnabled={workflow.trigger_enabled}
+          triggerConfig={workflow.trigger_config}
           onStatusChange={handleStatusChange}
           onSaveAsTemplate={() => { hide(); setShowTemplateModal(true) }}
           onDelete={!workflow.is_system && onDelete ? () => { hide(); onDelete() } : undefined}
@@ -163,10 +166,24 @@ export default function WorkflowCard({
           </div>
         </button>
 
-        {/* Footer: status only */}
-        <div className="mt-3 flex items-center gap-1.5 border-t border-gray-100 pt-3">
-          <span className={`h-2 w-2 rounded-full ${status.dot}`} />
-          <span className={`text-xs font-medium ${status.text}`}>{status.label}</span>
+        {/* Footer: status + trigger */}
+        <div className="mt-3 flex flex-col gap-2 border-t border-gray-100 pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${status.dot}`} />
+              <span className={`text-xs font-medium ${status.text}`}>{status.label}</span>
+            </div>
+            {workflow.trigger_enabled && workflow.trigger_config?.trigger_type && (
+              <TriggerBadge triggerType={workflow.trigger_config.trigger_type} size="sm" />
+            )}
+          </div>
+          {workflow.trigger_enabled && workflow.trigger_config?.trigger_type && (
+            <TriggerVisualizer
+              workflowId={workflow.id}
+              triggerType={workflow.trigger_config.trigger_type}
+              triggerState={workflow.trigger_state}
+            />
+          )}
         </div>
       </div>
 

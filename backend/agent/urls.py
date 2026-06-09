@@ -18,12 +18,15 @@ from .views import (
     WorkflowRunDetailView,
     WorkflowRunListView,
     AgentWorkflowTemplateViewSet,
+    WorkflowTriggerLogViewSet,
+    WebhookReceiverView,
 )
 
 router = DefaultRouter()
 router.register(r'sessions', AgentSessionViewSet, basename='agent-session')
 router.register(r'workflows', AgentWorkflowDefinitionViewSet, basename='agent-workflow')
 router.register(r'templates', AgentWorkflowTemplateViewSet, basename='agent-template')
+router.register(r'trigger-logs', WorkflowTriggerLogViewSet, basename='agent-trigger-log')
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -50,4 +53,7 @@ urlpatterns = [
     path('upload-analyze/', FileUploadAnalyzeView.as_view(), name='agent-upload-analyze'),
     path('anomalies/latest/', AnomalyLatestView.as_view(), name='agent-anomaly-latest'),
     path('config/status/', AgentConfigStatusView.as_view(), name='agent-config-status'),
+
+    # Webhook receiver
+    path('webhooks/<uuid:workflow_id>/', WebhookReceiverView.as_view(), name='agent-webhook-receiver'),
 ]

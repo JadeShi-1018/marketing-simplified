@@ -218,6 +218,63 @@ export interface WorkflowStepState {
 
 // ==================== Workflow Types ====================
 
+// Trigger Types
+export type TriggerType = 'polling' | 'instant' | 'scheduled' | 'manual';
+
+export type TriggerStatus = 'triggered' | 'skipped' | 'failed';
+
+export type PollingExternalService = 'zoom' | 'google_sheets' | 'linear' | 'notion';
+
+export interface WorkflowTriggerConfig {
+  trigger_type: TriggerType;
+  polling?: {
+    interval_minutes: 5 | 15 | 30 | 60;
+    /** External services to monitor. Requires the service to be connected in Integrations. */
+    external_services: PollingExternalService[];
+  };
+  instant?: {
+    event_types: string[];
+    webhook_enabled: boolean;
+    webhook_secret?: string;
+    webhook_url?: string;
+    filters?: Record<string, unknown>;
+  };
+  scheduled?: {
+    cron_expression: string;
+    timezone: string;
+    enabled: boolean;
+  };
+  manual?: {
+    require_confirmation: boolean;
+  };
+}
+
+export interface WorkflowTriggerLog {
+  id: string;
+  workflow: string;
+  trigger_type: TriggerType;
+  status: TriggerStatus;
+  trigger_context: Record<string, unknown>;
+  workflow_run?: string;
+  error_message?: string;
+  execution_time_ms?: number;
+  created_at: string;
+}
+
+export interface WorkflowTriggerState {
+  id: string;
+  workflow: string;
+  last_successful_trigger?: string;
+  last_polling_check?: string;
+  next_scheduled_run?: string;
+  last_trigger_type?: TriggerType;
+  trigger_count_last_hour?: number;
+  trigger_count_reset_at?: string;
+  last_checked_data_hash?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type WorkflowStepType =
   | 'analyze_data'
   | 'call_dify'
@@ -258,6 +315,9 @@ export interface AgentWorkflowDefinition {
   /** Ordered list of step_type strings for each active step (list endpoint only). */
   step_types?: WorkflowStepType[];
   steps?: AgentWorkflowStep[];
+  trigger_enabled?: boolean;
+  trigger_config?: WorkflowTriggerConfig;
+  trigger_state?: WorkflowTriggerState;
   created_at: string;
   updated_at?: string;
 }

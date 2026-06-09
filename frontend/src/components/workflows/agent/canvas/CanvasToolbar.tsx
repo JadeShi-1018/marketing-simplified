@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Bookmark, Check, ChevronDown, Loader2, Redo2, Save, Undo2 } from "lucide-react"
+import { Bookmark, Check, ChevronDown, Loader2, Redo2, Save, Undo2, Zap } from "lucide-react"
 import { brandBtnToolbar } from "../workflowBrandClasses"
 
 type WorkflowStatus = "active" | "draft" | "archived"
@@ -35,6 +35,7 @@ interface CanvasToolbarProps {
   onSave: () => void
   onStatusChange: (status: WorkflowStatus) => void
   onSaveAsTemplate?: () => void
+  onOpenTriggers?: () => void
 }
 
 export default function CanvasToolbar({
@@ -49,6 +50,7 @@ export default function CanvasToolbar({
   onSave,
   onStatusChange,
   onSaveAsTemplate,
+  onOpenTriggers,
 }: CanvasToolbarProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -125,6 +127,19 @@ export default function CanvasToolbar({
           >
             <Bookmark className="h-4 w-4" />
             Template
+          </button>
+        )}
+
+        {/* Triggers */}
+        {onOpenTriggers && (
+          <button
+            type="button"
+            onClick={onOpenTriggers}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+            title="Configure workflow triggers"
+          >
+            <Zap className="h-4 w-4" />
+            Triggers
           </button>
         )}
 

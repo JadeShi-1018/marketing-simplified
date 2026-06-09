@@ -4,6 +4,7 @@ from .models import (
     AgentSession, AgentMessage, AgentWorkflowRun, ImportedCSVFile,
     AgentWorkflowDefinition, AgentWorkflowStep, AgentStepExecution,
     AgentPendingExternalApproval, AgentWorkflowTemplate,
+    WorkflowTriggerLog, WorkflowTriggerState,
 )
 
 
@@ -175,12 +176,14 @@ class AgentWorkflowStepSerializer(serializers.ModelSerializer):
 class AgentWorkflowDefinitionListSerializer(serializers.ModelSerializer):
     step_count = serializers.SerializerMethodField()
     step_types = serializers.SerializerMethodField()
+    trigger_state = serializers.SerializerMethodField()
 
     class Meta:
         model = AgentWorkflowDefinition
         fields = [
             'id', 'name', 'description', 'is_default', 'is_system',
             'status', 'step_count', 'step_types', 'created_at',
+            'trigger_enabled', 'trigger_config', 'trigger_state',
         ]
         read_only_fields = ['id', 'is_system', 'created_at']
 
@@ -194,6 +197,16 @@ class AgentWorkflowDefinitionListSerializer(serializers.ModelSerializer):
             .values_list('step_type', flat=True)
         )
 
+    def get_trigger_state(self, obj):
+        """Return trigger state if exists."""
+        try:
+            state = obj.trigger_state
+            if state:
+                return WorkflowTriggerStateSerializer(state).data
+        except WorkflowTriggerState.DoesNotExist:
+            pass
+        return None
+
 
 class AgentWorkflowDefinitionDetailSerializer(serializers.ModelSerializer):
     steps = serializers.SerializerMethodField()
@@ -202,9 +215,14 @@ class AgentWorkflowDefinitionDetailSerializer(serializers.ModelSerializer):
         model = AgentWorkflowDefinition
         fields = [
             'id', 'name', 'description', 'is_default', 'is_system',
-            'status', 'steps', 'created_at', 'updated_at',
+            'status', 'steps', 'trigger_enabled', 'trigger_config',
+            'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'is_system', 'created_at', 'updated_at']
+        extra_kwargs = {
+            'trigger_enabled': {'required': False},
+            'trigger_config': {'required': False},
+        }
 
     def get_steps(self, obj):
         active_steps = obj.steps.filter(is_deleted=False).order_by('order')
@@ -367,3 +385,35 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         if project_objs is not None:
             instance.projects.set(project_objs)
         return instance
+
+
+class WorkflowTriggerStateSerializer(serializers.ModelSerializer):
+    """Serializer for workflow trigger state."""
+
+    class Meta:
+        model = WorkflowTriggerState
+        fields = [
+            'workflow', 'last_successful_trigger', 'last_polling_check',
+            'next_scheduled_run', 'last_trigger_type', 'trigger_count_last_hour',
+            'trigger_count_reset_at', 'last_checked_data_hash', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
+
+
+class WorkflowTriggerLogSerializer(serializers.ModelSerializer):
+    """Serializer for workflow trigger logs."""
+
+    class Meta:
+        model = WorkflowTriggerLog
+        fields = [
+            'id', 'workflow', 'trigger_type', 'status',
+            'trigger_context', 'workflow_run', 'error_message',
+            'execution_time_ms', 'created_at',
+        ]
+        read_only_fields = fields
+
+
+class TriggerConfigUpdateSerializer(serializers.Serializer):
+    """Serializer for updating trigger configuration."""
+    trigger_enabled = serializers.BooleanField(required=False)
+    trigger_config = serializers.JSONField(required=False)
