@@ -12,7 +12,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .permissions import HasValidOrganizationToken, IsOrganizationAdmin
-from .services import get_active_real_subscription, sync_seat_count
+from .services import get_active_real_subscription, get_seat_availability
 from .models import Plan, Subscription, UsageDaily, UsageMonthly, Payment, StripeWebhookEvent
 from .serializers import (
     PlanSerializer, SubscriptionSerializer, UsageDailySerializer, CheckoutSessionSerializer, 
@@ -329,15 +329,10 @@ def invite_users_to_organization(request):
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
-        try:
-            sync_seat_count(organization)
-        except Exception:
-            logger.exception("sync_seat_count failed after invite org=%s", organization.id)
-
         return Response({
             'success': True
         })
-    
+
     except Exception as e:
         return Response(
             {'error': str(e), 'code': 'INVITE_USERS_ERROR'},
@@ -353,12 +348,6 @@ def leave_organization(request):
         org = user.organization
         user.organization = None
         user.save()
-
-        try:
-            if org:
-                sync_seat_count(org)
-        except Exception:
-            logger.exception("sync_seat_count failed after leave org=%s", getattr(org, 'id', None))
 
         return Response({
             'success': True
@@ -676,11 +665,6 @@ def remove_organization_user(request, user_id: int):
         # Allow anyone in org to remove any user for now (no roles yet)
         target.organization = None
         target.save()
-
-        try:
-            sync_seat_count(org)
-        except Exception:
-            logger.exception("sync_seat_count failed after remove org=%s", org.id)
 
         return Response({'success': True})
     except Exception as e:

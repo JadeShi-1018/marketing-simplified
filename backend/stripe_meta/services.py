@@ -161,16 +161,13 @@ def check_quota_or_402(organization, requested_tokens: int):
     return True, None
 
 
-def sync_seat_count(organization) -> None:
+def get_seat_availability(organization) -> tuple:
     """
-    Sync the extra-seat line-item quantity on the org's active Stripe subscription
-    to match the current user count.
+    Return (purchased_seats, current_member_count) for the org.
 
-    Free orgs (no real subscription, or plan without stripe_extra_seat_price_id)
-    are skipped silently — Stripe is not involved.
-
-    The select_for_update row-lock prevents concurrent syncs racing each other
-    (e.g. bulk invite + simultaneous remove).
+    purchased_seats is None for Free-sentinel orgs (no seat cap applies).
+    current_member_count is always the live DB count.
+    Does not touch Stripe.
     """
     sub = (
         Subscription.objects.filter(
@@ -181,45 +178,6 @@ def sync_seat_count(organization) -> None:
         .select_related('plan')
         .first()
     )
-    if not sub or not sub.plan.stripe_extra_seat_price_id:
-        return
-
-    plan = sub.plan
-    seat_count = CustomUser.objects.filter(organization=organization).count()
-    extra_seats = max(0, seat_count - (plan.included_seats or 1))
-
-    with transaction.atomic():
-        locked_sub = Subscription.objects.select_for_update().get(pk=sub.pk)
-
-        stripe_sub = stripe.Subscription.retrieve(locked_sub.stripe_subscription_id)
-        extra_item = next(
-            (
-                item for item in stripe_sub['items']['data']
-                if item['price']['id'] == plan.stripe_extra_seat_price_id
-            ),
-            None,
-        )
-        if not extra_item:
-            if extra_seats == 0:
-                # No extra-seat item exists and none needed — sync local count only
-                Subscription.objects.filter(pk=locked_sub.pk).update(seat_count=seat_count)
-                return
-            # Add the extra-seat item for the first time (e.g. 5-seat-start team adds 6th member)
-            item_patch = {'price': plan.stripe_extra_seat_price_id, 'quantity': extra_seats}
-        else:
-            item_patch = {'id': extra_item['id'], 'quantity': extra_seats}
-
-        stripe.Subscription.modify(
-            locked_sub.stripe_subscription_id,
-            items=[item_patch],
-            proration_behavior='create_prorations',
-        )
-        Subscription.objects.filter(pk=locked_sub.pk).update(seat_count=seat_count)
-
-    logger.info(
-        "sync_seat_count org=%s sub=%s seat_count=%d extra_seats=%d",
-        organization.id,
-        locked_sub.stripe_subscription_id,
-        seat_count,
-        extra_seats,
-    )
+    purchased = sub.seat_count if sub else None
+    members = CustomUser.objects.filter(organization=organization).count()
+    return purchased, members
