@@ -23,6 +23,8 @@ interface Plan {
 interface SwitchPlanResponse {
   requested: boolean;
   redirect_to?: 'checkout' | null;
+  status?: 'scheduled_downgrade';
+  effective_at?: number | null;  // Unix timestamp
 }
 
 interface UsePlanReturn {
@@ -157,8 +159,20 @@ export default function usePlan(enabled = true): UsePlanReturn {
           return;
         }
 
+        // Downgrade to Free: cancel_at_period_end was set — user keeps paid benefits
+        // until the billing period ends, then the subscription.deleted webhook fires.
+        if (result.status === 'scheduled_downgrade') {
+          const dateStr = result.effective_at
+            ? new Date(result.effective_at * 1000).toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric',
+              })
+            : 'the end of your billing period';
+          toast.success(`Your plan will downgrade to Free on ${dateStr}. You keep your current benefits until then.`);
+          return;
+        }
+
         // Poll for plan update (webhook will have processed it)
-        await new Promise<void>((resolve, reject) => {
+        await new Promise<void>((resolve) => {
           let pollCount = 0;
           const maxPolls = 10; // Max 5 seconds (10 * 500ms)
 

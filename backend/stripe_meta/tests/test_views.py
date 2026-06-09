@@ -775,50 +775,48 @@ class WebhookViewsTest(StripeViewsTestCase):
         
         self.assertEqual(response.status_code, 403)
 
-    def test_switch_plan_free_plan_allowed(self):
-        """Test switch_plan when trying to switch to free plan"""
-        # Create a free plan
+    def test_switch_team_to_free_schedules_cancel(self):
+        """Switching to Free (no stripe_price_id) must schedule a period-end cancellation,
+        not attempt a Stripe price swap."""
         free_plan = Plan.objects.create(
             name='Free',
             max_team_members=1,
             max_previews_per_day=5,
             max_tasks_per_day=3,
-            stripe_price_id='price_free'
+            stripe_price_id=None,  # Free plan has no Stripe price
         )
-        
-        # Mock successful Stripe API calls — item must include 'price' so the
-        # price_id match in switch_plan can locate the base-plan item.
+
+        fake_period_end = 1800000000  # arbitrary future Unix timestamp
         mock_subscription = {
-            'id': 'sub_test_123',
+            'id': 'sub_123456789',
             'status': 'active',
-            'items': {
-                'data': [{'id': 'si_test_123', 'price': {'id': 'price_basic_123'}}]
-            }
+            'current_period_end': fake_period_end,
+            'items': {'data': [{'id': 'si_test_123', 'price': {'id': 'price_basic_123'}}]},
         }
 
-        # Mock Price objects (current price is $10, new price is $0, so it's a downgrade)
-        mock_current_price = Mock()
-        mock_current_price.unit_amount = 1000  # $10 in cents
-
-        mock_new_price = Mock()
-        mock_new_price.unit_amount = 0  # $0 in cents
-
-        with patch('stripe_meta.views.stripe') as mock_stripe:
+        with patch('stripe_meta.views.stripe') as mock_stripe, \
+             patch('tracking.middleware.emit_tracking_event') as _mock_track:
             mock_stripe.StripeError = stripe.StripeError
             mock_stripe.Subscription.retrieve.return_value = mock_subscription
             mock_stripe.Subscription.modify.return_value = mock_subscription
-            mock_stripe.Price.retrieve.side_effect = [mock_current_price, mock_new_price]
 
             response = self.client.post(
                 reverse('stripe_meta:switch_plan'),
                 data={'plan_id': free_plan.id},
-                HTTP_X_ORGANIZATION_TOKEN=self.org_token
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
             )
 
-            # Should succeed with mocked Stripe API
-            self.assertEqual(response.status_code, 200)
-            data = response.json()
-            self.assertTrue(data['requested'])
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['status'], 'scheduled_downgrade')
+        self.assertEqual(data['effective_at'], fake_period_end)
+
+        # Must set cancel_at_period_end, NOT swap price items
+        mock_stripe.Subscription.modify.assert_called_once_with(
+            'sub_123456789',
+            cancel_at_period_end=True,
+        )
+        mock_stripe.Price.retrieve.assert_not_called()
 
     def test_switch_plan_no_active_subscription(self):
         """Test switch_plan when no active subscription exists"""
@@ -2066,6 +2064,34 @@ class WebhookHandlerUnitTests(TestCase):
         handle_subscription_deleted(payload)
         self.subscription.refresh_from_db()
         self.assertFalse(self.subscription.is_active)
+
+    def test_subscription_deleted_reactivates_free_sentinel(self):
+        """When the paid subscription is deleted, the Free sentinel must be re-enabled
+        so the org falls back to the Free tier instead of having zero active subscriptions."""
+        free_plan = Plan.objects.create(
+            name='Free',
+            base_price_cents=0,
+            stripe_price_id=None,
+        )
+        sentinel = Subscription.objects.create(
+            organization=self.organization,
+            plan=free_plan,
+            stripe_subscription_id=f'sub_free_internal_{self.organization.id}',
+            start_date=timezone.now(),
+            end_date=timezone.now() + timedelta(days=365 * 100),
+            is_active=False,  # deactivated when the paid subscription was created
+            is_internal=True,
+        )
+
+        handle_subscription_deleted({'id': self.subscription.stripe_subscription_id})
+
+        # Paid subscription must be deactivated
+        self.subscription.refresh_from_db()
+        self.assertFalse(self.subscription.is_active)
+
+        # Free sentinel must be reactivated so the org has basic access
+        sentinel.refresh_from_db()
+        self.assertTrue(sentinel.is_active)
 
     def test_payment_succeeded_null_parent(self):
         """

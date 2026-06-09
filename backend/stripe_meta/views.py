@@ -1,7 +1,7 @@
 import logging
 import traceback
 import stripe
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.conf import settings
 from django.utils import timezone
 from django.http import JsonResponse, HttpResponseRedirect, HttpResponse
@@ -89,6 +89,25 @@ def switch_plan(request):
             return Response(
                 {'error': 'Already subscribed to this plan', 'code': 'SAME_PLAN'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Downgrade to a plan with no Stripe price (i.e. the Free plan).
+        # We cannot swap Stripe subscription items to a plan with no price_id.
+        # Instead, schedule cancellation at the end of the current billing period:
+        # the user keeps paid benefits until then, and the subscription.deleted
+        # webhook will reactivate the Free sentinel when the period actually ends.
+        if not new_plan.stripe_price_id:
+            stripe_subscription = stripe.Subscription.retrieve(
+                current_subscription.stripe_subscription_id
+            )
+            period_end = stripe_subscription.get('current_period_end')
+            stripe.Subscription.modify(
+                current_subscription.stripe_subscription_id,
+                cancel_at_period_end=True,
+            )
+            return Response(
+                {'status': 'scheduled_downgrade', 'effective_at': period_end},
+                status=status.HTTP_200_OK,
             )
 
         # Retrieve subscription from Stripe and locate the base-price item by price_id.
@@ -835,7 +854,11 @@ def handle_payment_failed(invoice_data, event_id=None):
     logger.info("handle_payment_failed exit event_id=%s customer_id=%s", event_id, customer_id)
 
 def handle_subscription_deleted(subscription_data, event_id=None):
-    """Handle subscription cancellation."""
+    """Handle subscription cancellation / period-end deletion.
+
+    When a paid subscription is deleted (either immediately or after cancel_at_period_end),
+    mark it inactive and reactivate the org's Free sentinel so the org retains basic access.
+    """
     subscription_id = subscription_data['id']
     logger.info("handle_subscription_deleted enter event_id=%s subscription_id=%s", event_id, subscription_id)
 
@@ -845,9 +868,45 @@ def handle_subscription_deleted(subscription_data, event_id=None):
         logger.warning("handle_subscription_deleted: subscription %s not found, ignoring", subscription_id)
         return
 
+    org = subscription.organization
     org_id = subscription.organization_id
     subscription.is_active = False
     subscription.save()
+
+    # Reactivate the Free sentinel so the org falls back to the Free tier.
+    # The sentinel was deactivated by handle_subscription_created when the paid sub started.
+    reactivated = Subscription.objects.filter(
+        organization=org,
+        is_internal=True,
+    ).update(is_active=True)
+
+    if reactivated:
+        logger.info(
+            "handle_subscription_deleted reactivated %d Free sentinel(s) for org %s",
+            reactivated, org_id,
+        )
+    else:
+        # Sentinel was somehow missing — recreate it from scratch.
+        free_plan = Plan.objects.filter(name='Free', is_archived=False).first()
+        if free_plan:
+            Subscription.objects.create(
+                organization=org,
+                plan=free_plan,
+                stripe_subscription_id=f'sub_free_internal_{org_id}',
+                start_date=timezone.now(),
+                end_date=timezone.now() + timedelta(days=365 * 100),
+                is_active=True,
+                is_internal=True,
+            )
+            logger.info(
+                "handle_subscription_deleted recreated Free sentinel for org %s", org_id,
+            )
+        else:
+            logger.error(
+                "handle_subscription_deleted: Free plan not found, cannot reactivate sentinel for org %s",
+                org_id,
+            )
+
     logger.info("handle_subscription_deleted exit event_id=%s org_id=%s", event_id, org_id)
 
 
