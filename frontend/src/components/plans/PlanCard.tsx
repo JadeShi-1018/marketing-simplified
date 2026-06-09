@@ -119,8 +119,8 @@ export default function PlanCard({
         </p>
       </div>
 
-      {/* Seat calculator (paid plans only) */}
-      {!isFree && extraSeatPriceCents !== null && extraSeatPriceCents > 0 && (
+      {/* Seat calculator (paid plans only, not shown on current plan) */}
+      {!isFree && !isCurrentPlan && extraSeatPriceCents !== null && extraSeatPriceCents > 0 && (
         <div className="px-[clamp(1.25*1rem,((1.25-((1.5-1.25)/(90-20)*20))*1rem+((1.5-1.25)/(90-20))*100vw),1.5*1rem)]">
           <SeatCalculator
             basePriceCents={basePriceCents}
