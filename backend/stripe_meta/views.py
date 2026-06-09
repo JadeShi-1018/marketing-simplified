@@ -311,7 +311,31 @@ def invite_users_to_organization(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
         organization = user.organization
-        
+
+        # Seat cap check (Model B): enforce purchased seat limit before touching DB.
+        # Covers both paid plans and Free orgs (sentinel seat_count=1).
+        # sub=None (org has no subscription at all) is treated as uncapped — don't block.
+        sub = get_active_real_subscription(organization)
+        if sub:
+            current_count = CustomUser.objects.filter(organization=organization).count()
+            available = sub.seat_count - current_count
+            if len(emails) > available:
+                is_free = sub.is_internal  # sentinel ↔ Free tier; paid sub ↔ Team/higher
+                return Response(
+                    {
+                        'error': (
+                            'Free plan is limited to 1 seat. Upgrade to Team to add more members.'
+                            if is_free
+                            else 'Seat limit reached. Purchase more seats to add more members.'
+                        ),
+                        'code': 'SEAT_LIMIT_REACHED',
+                        'seats_available': max(0, available),
+                        'seats_purchased': sub.seat_count,
+                        'upgrade_required': is_free,
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         with transaction.atomic():
             try:
                 for email in emails:

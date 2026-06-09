@@ -287,3 +287,155 @@ class HandleSubscriptionCreatedSeatTest(TestCase):
 
         sub = Subscription.objects.get(stripe_subscription_id='sub_hsc_1')
         self.assertEqual(sub.seat_count, 5)
+
+
+# ---------------------------------------------------------------------------
+# invite — seat-cap enforcement (Team: block / allow; Free: upgrade prompt)
+# ---------------------------------------------------------------------------
+
+class SeatCapEnforcementTest(SeatSyncTestBase):
+    """
+    Invite endpoint must enforce seat_count purchased limit (Model B).
+    SeatSyncTestBase provides a Team plan, 1 admin member, and a real
+    (is_internal=False) subscription.
+    """
+
+    def test_invite_blocked_at_seat_limit(self):
+        """
+        Org at capacity (members == seat_count) → 403 SEAT_LIMIT_REACHED.
+        Response must include seats_available=0, seats_purchased, upgrade_required=False.
+        """
+        self.subscription.seat_count = 2
+        self.subscription.save()
+
+        # Fill to capacity: admin (1) + 1 extra = 2 members = seat_count
+        extra = User.objects.create_user(email='filler@test.com', username='filler', password='pw')
+        extra.organization = self.org
+        extra.save()
+
+        invitee = User.objects.create_user(email='blocked@test.com', username='blocked', password='pw')
+
+        response = self.client.post(
+            INVITE_URL,
+            {'emails': ['blocked@test.com']},
+            format='json',
+            HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        data = response.json()
+        self.assertEqual(data['code'], 'SEAT_LIMIT_REACHED')
+        self.assertEqual(data['seats_available'], 0)
+        self.assertEqual(data['seats_purchased'], 2)
+        self.assertFalse(data['upgrade_required'])
+        # Invitee must NOT have been added to org
+        invitee.refresh_from_db()
+        self.assertIsNone(invitee.organization)
+
+    def test_invite_allowed_within_seat_limit(self):
+        """
+        Org has available seats → 200 and member is added.
+        """
+        self.subscription.seat_count = 5
+        self.subscription.save()
+
+        # admin is 1 member; 4 seats available
+        invitee = User.objects.create_user(email='welcome@test.com', username='welcome', password='pw')
+
+        response = self.client.post(
+            INVITE_URL,
+            {'emails': ['welcome@test.com']},
+            format='json',
+            HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        invitee.refresh_from_db()
+        self.assertEqual(invitee.organization, self.org)
+
+
+class FreeSeatCapTest(TestCase):
+    """
+    Free orgs use a sentinel subscription (is_internal=True, seat_count=1).
+    Inviting a 2nd member must return 403 with upgrade_required=True,
+    guiding the admin to upgrade to Team rather than buy extra seats.
+    """
+
+    def setUp(self):
+        # Use get_or_create so migration-0004-seeded Free plan doesn't produce a duplicate
+        # that makes Plan.objects.get(name="Free") raise MultipleObjectsReturned in the signal.
+        self.free_plan, _ = Plan.objects.get_or_create(
+            name='Free',
+            defaults={
+                'base_price_cents': 0,
+                'included_seats': 1,
+                'stripe_price_id': None,
+                'stripe_extra_seat_price_id': None,
+            },
+        )
+        # Guarantee included_seats=1 in case the seeded plan diverged.
+        if self.free_plan.included_seats != 1:
+            self.free_plan.included_seats = 1
+            self.free_plan.save(update_fields=['included_seats'])
+
+        self.org = Organization.objects.create(name='Free Org', slug='free-org-seatcap')
+        # Signal has fired: sentinel subscription created with seat_count=1 (model default).
+        # Guard: if signal silently failed (e.g. plan lookup race), create sentinel manually.
+        self.sentinel, _ = Subscription.objects.get_or_create(
+            organization=self.org,
+            is_internal=True,
+            defaults={
+                'plan': self.free_plan,
+                'stripe_subscription_id': f'sub_free_internal_{self.org.id}',
+                'start_date': timezone.now(),
+                'end_date': timezone.now() + timedelta(days=365 * 100),
+                'is_active': True,
+                'seat_count': 1,
+            },
+        )
+        # Ensure active and at correct seat_count regardless of pre-existing state.
+        if not self.sentinel.is_active or self.sentinel.seat_count != 1:
+            self.sentinel.is_active = True
+            self.sentinel.seat_count = 1
+            self.sentinel.save(update_fields=['is_active', 'seat_count'])
+
+        self.admin = User.objects.create_user(
+            email='free_admin@test.com', username='free_admin', password='pw',
+        )
+        self.admin.organization = self.org
+        self.admin.save()
+
+        admin_role = Role.objects.create(organization=self.org, name='Organization Admin', level=2)
+        UserRole.objects.create(user=self.admin, role=admin_role)
+
+        self.org_token = generate_organization_access_token(self.admin)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.admin)
+
+    def test_free_org_invite_second_member_blocked(self):
+        """
+        Free org has 1 seat (sentinel seat_count=1). Admin already occupies it.
+        Inviting a 2nd member must return 403 SEAT_LIMIT_REACHED with
+        upgrade_required=True, pointing toward a plan upgrade (not seat purchase).
+        """
+        invitee = User.objects.create_user(
+            email='second@test.com', username='second', password='pw',
+        )
+
+        response = self.client.post(
+            INVITE_URL,
+            {'emails': ['second@test.com']},
+            format='json',
+            HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        data = response.json()
+        self.assertEqual(data['code'], 'SEAT_LIMIT_REACHED')
+        self.assertEqual(data['seats_available'], 0)
+        self.assertEqual(data['seats_purchased'], 1)
+        self.assertTrue(data['upgrade_required'])
+        self.assertIn('Upgrade to Team', data['error'])
+        # Invitee must NOT have been added
+        invitee.refresh_from_db()
+        self.assertIsNone(invitee.organization)

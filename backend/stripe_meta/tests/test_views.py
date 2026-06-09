@@ -56,7 +56,8 @@ class StripeViewsTestCase(TestCase):
             stripe_subscription_id="sub_123456789",
             start_date=timezone.now(),
             end_date=timezone.now() + timedelta(days=30),
-            is_active=True
+            is_active=True,
+            seat_count=10,  # generous default so invite tests aren't blocked by seat cap
         )
         
         # Ensure the user has Organization Admin role (level 2)
