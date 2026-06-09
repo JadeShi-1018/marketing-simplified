@@ -113,10 +113,11 @@ export default function OrganizationPlans({ loading = false }: { loading?: boole
                     monthlyTokenQuota={plan.monthly_token_quota}
                     includedSeats={plan.included_seats}
                     extraSeatPriceCents={plan.extra_seat_price_cents ?? 0}
+                    overagePriceCentsPer1m={plan.overage_price_cents_per_1m}
                     ctaText={currentPlanId ? (currentPlanId === plan.id ? 'Current plan' : 'Switch plan') : 'Subscribe now'}
                     badge={index === arr.length - 2 ? 'Popular' : undefined}
                     planId={plan.id}
-                    stripePriceId={plan.stripe_price_id}
+                    stripePriceId={plan.stripe_price_id ?? undefined}
                     onSubscribe={handleSubscribe}
                     isCurrentPlan={currentPlanId === plan.id}
                     canManagePlans={isOrgAdmin}

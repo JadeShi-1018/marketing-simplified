@@ -19,7 +19,8 @@ interface PlanCardProps {
   monthlyTokenQuota: number | null;  // null = unlimited
   includedSeats: number;
   extraSeatPriceCents: number | null;
-  // Legacy feature list (optional — used when no token fields available)
+  overagePriceCentsPer1m?: number | null;  // null = hard block
+  // Legacy feature list (optional)
   features?: PlanFeature[];
   badge?: string;
   ctaText: string;
@@ -44,11 +45,11 @@ export default function PlanCard({
   monthlyTokenQuota,
   includedSeats,
   extraSeatPriceCents,
+  overagePriceCentsPer1m,
   features,
   badge,
   ctaText,
   planId,
-  stripePriceId,
   onSubscribe,
   isCurrentPlan,
   canManagePlans = true,
@@ -60,7 +61,7 @@ export default function PlanCard({
   const displayPrice = isFree ? 'Free' : `$${(basePriceCents / 100).toFixed(0)}`;
 
   const handleSubscribe = async () => {
-    if (!stripePriceId || !planId || !onSubscribe || isLoading) return;
+    if (!planId || !onSubscribe || isLoading) return;
     setIsLoading(true);
     try {
       await onSubscribe(planId, seatCount);
@@ -180,6 +181,19 @@ export default function PlanCard({
                   </div>
                 </li>
               )}
+              <li className="flex items-center justify-between">
+                <div className="flex items-center">
+                  <Check className="w-5 h-5 text-green-600 mr-2" />
+                  <span className="text-base text-gray-900">
+                    Overage:{' '}
+                    <span className="font-medium">
+                      {overagePriceCentsPer1m
+                        ? `$${(overagePriceCentsPer1m / 100).toFixed(0)}/1M tokens`
+                        : 'Hard block'}
+                    </span>
+                  </span>
+                </div>
+              </li>
             </ul>
           </div>
 

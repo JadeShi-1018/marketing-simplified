@@ -7,17 +7,18 @@ interface Plan {
   id: number;
   name: string;
   desc: string | null;
-  stripe_price_id: string;
+  stripe_price_id: string | null;
   // Token-billing schema
   base_price_cents: number;
   monthly_token_quota: number | null;  // null = unlimited
   included_seats: number;
   extra_seat_price_cents: number | null;
+  overage_price_cents_per_1m: number | null;  // null = hard block
   is_archived: boolean;
-  // Legacy (kept for existing callers)
-  max_team_members: number | null;
-  max_previews_per_day: number | null;
-  max_tasks_per_day: number | null;
+  // Legacy (deprecated — do not use for rendering)
+  max_team_members?: number | null;
+  max_previews_per_day?: number | null;
+  max_tasks_per_day?: number | null;
 }
 
 interface SwitchPlanResponse {
@@ -210,7 +211,9 @@ export default function usePlan(enabled = true): UsePlanReturn {
         throw error;
       }
     } else {
-      // No subscription - use normal checkout
+      // No subscription — only paid plans can be checked out this way
+      const targetPlan = plans.find((p) => p.id === planId);
+      if (!targetPlan?.stripe_price_id) return;
       await createCheckoutSession(planId, seatCount);
     }
   };
