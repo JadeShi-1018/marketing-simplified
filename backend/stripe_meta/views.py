@@ -197,7 +197,8 @@ def get_subscription(request):
             )
         
         serializer = SubscriptionSerializer(subscription)
-        return Response(serializer.data)
+        member_count = CustomUser.objects.filter(organization=user.organization).count()
+        return Response({**serializer.data, 'member_count': member_count})
     except Exception as e:
         return Response(
             {'error': str(e), 'code': 'SUBSCRIPTION_RETRIEVAL_ERROR'},
@@ -232,6 +233,133 @@ def cancel_subscription(request):
         return Response(
             {'error': str(e), 'code': 'CANCEL_ERROR'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, HasValidOrganizationToken, IsOrganizationAdmin])
+def purchase_seats(request):
+    """
+    Purchase additional seats (Model B).
+    Increases seat_count on the Stripe extra-seat line item with immediate proration.
+    Only available on paid plans; Free orgs must upgrade to Team first.
+    """
+    try:
+        org = request.user.organization
+        if not org:
+            return Response(
+                {'error': 'No organization found', 'code': 'NO_ORGANIZATION'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        new_seat_count = request.data.get('seat_count')
+        if not isinstance(new_seat_count, int) or new_seat_count < 1:
+            return Response(
+                {'error': 'seat_count must be a positive integer', 'code': 'INVALID_SEAT_COUNT'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sub = get_active_real_subscription(org)
+
+        if not sub or sub.is_internal:
+            return Response(
+                {
+                    'error': 'Seat purchase is not available on the Free plan. Upgrade to Team first.',
+                    'code': 'FREE_PLAN_CANNOT_PURCHASE_SEATS',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        plan = sub.plan
+        if not plan.stripe_extra_seat_price_id:
+            return Response(
+                {'error': 'Current plan does not support extra seats.', 'code': 'NO_EXTRA_SEAT_PRICE'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        current_seat_count = sub.seat_count
+        member_count = CustomUser.objects.filter(organization=org).count()
+
+        if new_seat_count <= current_seat_count:
+            return Response(
+                {
+                    'error': (
+                        f'New seat count ({new_seat_count}) must be greater than current '
+                        f'({current_seat_count}). To reduce seats, contact support.'
+                    ),
+                    'code': 'SEAT_COUNT_NOT_INCREASED',
+                    'current_seat_count': current_seat_count,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_seat_count < member_count:
+            return Response(
+                {
+                    'error': (
+                        f'Cannot set seat count below current member count ({member_count}). '
+                        'Remove members first or choose a higher seat count.'
+                    ),
+                    'code': 'SEAT_COUNT_BELOW_MEMBERS',
+                    'member_count': member_count,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Locate extra-seat item by price_id (not by array index — multi-item subs vary).
+        stripe_sub = stripe.Subscription.retrieve(sub.stripe_subscription_id)
+        extra_seat_item = next(
+            (
+                item for item in stripe_sub['items']['data']
+                if item['price']['id'] == plan.stripe_extra_seat_price_id
+            ),
+            None,
+        )
+
+        new_extra_qty = max(0, new_seat_count - (plan.included_seats or 1))
+
+        if extra_seat_item:
+            item_patch = {'id': extra_seat_item['id'], 'quantity': new_extra_qty}
+            stripe.Subscription.modify(
+                sub.stripe_subscription_id,
+                items=[item_patch],
+                proration_behavior='create_prorations',
+            )
+        elif new_extra_qty > 0:
+            # No extra-seat item yet (org was at exactly included_seats); add the item.
+            item_patch = {'price': plan.stripe_extra_seat_price_id, 'quantity': new_extra_qty}
+            stripe.Subscription.modify(
+                sub.stripe_subscription_id,
+                items=[item_patch],
+                proration_behavior='create_prorations',
+            )
+        # else: new_seat_count <= included_seats — no Stripe change needed, just update DB.
+
+        Subscription.objects.filter(pk=sub.pk).update(seat_count=new_seat_count)
+
+        extra_seats = max(0, new_seat_count - (plan.included_seats or 1))
+        monthly_total_cents = (plan.base_price_cents or 0) + extra_seats * (plan.extra_seat_price_cents or 0)
+
+        logger.info(
+            "purchase_seats org=%s sub=%s seat_count %d→%d",
+            org.id, sub.stripe_subscription_id, current_seat_count, new_seat_count,
+        )
+
+        return Response(
+            {'seat_count': new_seat_count, 'monthly_total_cents': monthly_total_cents},
+            status=status.HTTP_200_OK,
+        )
+
+    except stripe.StripeError as e:
+        return Response(
+            {'error': str(e), 'code': 'STRIPE_ERROR'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except Exception as e:
+        logger.exception("purchase_seats unexpected error")
+        return Response(
+            {'error': str(e), 'code': 'PURCHASE_SEATS_ERROR'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 

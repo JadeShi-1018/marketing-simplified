@@ -56,6 +56,7 @@ class SeatSyncTestBase(TestCase):
             stripe_overage_price_id='price_team_overage',
             included_seats=5,
             base_price_cents=4900,
+            extra_seat_price_cents=900,
         )
         self.target_plan = Plan.objects.create(
             name='Team Pro',
@@ -237,6 +238,7 @@ class HandleSubscriptionCreatedSeatTest(TestCase):
             stripe_overage_price_id='price_team_overage',
             included_seats=5,
             base_price_cents=4900,
+            extra_seat_price_cents=900,
         )
         self.mock_customer = Mock()
         self.mock_customer.metadata = {'organization_id': str(self.org.id)}
@@ -439,3 +441,168 @@ class FreeSeatCapTest(TestCase):
         # Invitee must NOT have been added
         invitee.refresh_from_db()
         self.assertIsNone(invitee.organization)
+
+
+# ---------------------------------------------------------------------------
+# purchase_seats endpoint (POST /api/stripe/plans/seats/)
+# ---------------------------------------------------------------------------
+
+PURCHASE_SEATS_URL = reverse('stripe_meta:purchase_seats')
+
+
+class PurchaseSeatsTest(SeatSyncTestBase):
+    """
+    Tests for the purchase_seats endpoint.
+    SeatSyncTestBase provides Team plan (included_seats=5,
+    stripe_extra_seat_price_id='price_team_seat'), 1 admin member,
+    and an active real subscription.
+    """
+
+    def _mock_stripe_sub(self, with_seat_item=True, seat_item_id='si_seat'):
+        """Return a minimal Stripe subscription payload."""
+        items = [{'id': 'si_base', 'price': {'id': 'price_team_base'}}]
+        if with_seat_item:
+            items.append({'id': seat_item_id, 'quantity': 0, 'price': {'id': 'price_team_seat'}})
+        return {'id': 'sub_team_real', 'items': {'data': items}}
+
+    def test_purchase_seats_success(self):
+        """
+        N=8 > current seat_count=5, extra-seat item exists.
+        Stripe.modify must receive quantity=3 (8-5) with proration.
+        DB seat_count must be updated to 8.
+        Response: seat_count=8, monthly_total_cents = 4900 + 3*900 = 7600.
+        """
+        self.subscription.seat_count = 5
+        self.subscription.save()
+
+        with patch('stripe_meta.views.stripe') as mock_stripe, \
+             patch('tracking.middleware.emit_tracking_event'):
+            mock_stripe.StripeError = stripe.StripeError
+            mock_stripe.Subscription.retrieve.return_value = self._mock_stripe_sub(with_seat_item=True)
+            mock_stripe.Subscription.modify.return_value = {}
+
+            response = self.client.post(
+                PURCHASE_SEATS_URL,
+                {'seat_count': 8},
+                format='json',
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data['seat_count'], 8)
+        self.assertEqual(data['monthly_total_cents'], 4900 + 3 * 900)
+
+        mock_stripe.Subscription.modify.assert_called_once_with(
+            'sub_team_real',
+            items=[{'id': 'si_seat', 'quantity': 3}],
+            proration_behavior='create_prorations',
+        )
+        self.subscription.refresh_from_db()
+        self.assertEqual(self.subscription.seat_count, 8)
+
+    def test_purchase_seats_add_item_when_none(self):
+        """
+        N=8 > seat_count=5, but no extra-seat item exists in Stripe yet
+        (org was exactly at included_seats). Must ADD the item via
+        {'price': price_id, 'quantity': 3}, not error out.
+        """
+        self.subscription.seat_count = 5
+        self.subscription.save()
+
+        with patch('stripe_meta.views.stripe') as mock_stripe, \
+             patch('tracking.middleware.emit_tracking_event'):
+            mock_stripe.StripeError = stripe.StripeError
+            mock_stripe.Subscription.retrieve.return_value = self._mock_stripe_sub(with_seat_item=False)
+            mock_stripe.Subscription.modify.return_value = {}
+
+            response = self.client.post(
+                PURCHASE_SEATS_URL,
+                {'seat_count': 8},
+                format='json',
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_stripe.Subscription.modify.assert_called_once_with(
+            'sub_team_real',
+            items=[{'price': 'price_team_seat', 'quantity': 3}],
+            proration_behavior='create_prorations',
+        )
+        self.subscription.refresh_from_db()
+        self.assertEqual(self.subscription.seat_count, 8)
+
+    def test_purchase_seats_blocked_below_members(self):
+        """
+        SEAT_COUNT_BELOW_MEMBERS fires when N > seat_count (passes the "not increased"
+        check) but N < member_count. Scenario: seat_count=3, members=8, N=5.
+        5 > 3 (passes first check), 5 < 8 (fails below-members check).
+        """
+        self.subscription.seat_count = 3
+        self.subscription.save()
+
+        for i in range(7):
+            u = User.objects.create_user(
+                email=f'member{i}@below.test', username=f'below{i}', password='pw',
+            )
+            u.organization = self.org
+            u.save()
+        # 1 admin + 7 = 8 members total
+
+        with patch('tracking.middleware.emit_tracking_event'):
+            response = self.client.post(
+                PURCHASE_SEATS_URL,
+                {'seat_count': 5},
+                format='json',
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()['code'], 'SEAT_COUNT_BELOW_MEMBERS')
+
+    def test_purchase_seats_blocked_reduce(self):
+        """
+        N=3 < current seat_count=5 → 400 SEAT_COUNT_NOT_INCREASED.
+        """
+        self.subscription.seat_count = 5
+        self.subscription.save()
+
+        with patch('tracking.middleware.emit_tracking_event'):
+            response = self.client.post(
+                PURCHASE_SEATS_URL,
+                {'seat_count': 3},
+                format='json',
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()['code'], 'SEAT_COUNT_NOT_INCREASED')
+
+    def test_purchase_seats_free_plan_rejected(self):
+        """
+        Free sentinel org cannot purchase seats — must upgrade to Team first.
+        Returns 400 FREE_PLAN_CANNOT_PURCHASE_SEATS.
+        """
+        # Replace paid subscription with a Free sentinel
+        self.subscription.delete()
+        Subscription.objects.create(
+            organization=self.org,
+            plan=self.plan,
+            stripe_subscription_id=f'sub_sentinel_{self.org.id}',
+            start_date=timezone.now(),
+            end_date=timezone.now() + timedelta(days=365 * 100),
+            is_active=True,
+            is_internal=True,
+            seat_count=1,
+        )
+
+        with patch('tracking.middleware.emit_tracking_event'):
+            response = self.client.post(
+                PURCHASE_SEATS_URL,
+                {'seat_count': 5},
+                format='json',
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()['code'], 'FREE_PLAN_CANNOT_PURCHASE_SEATS')

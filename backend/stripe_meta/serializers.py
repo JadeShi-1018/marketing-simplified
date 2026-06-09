@@ -35,7 +35,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         model = Subscription
         fields = [
             'id', 'plan', 'stripe_subscription_id',
-            'start_date', 'end_date', 'is_active'
+            'start_date', 'end_date', 'is_active', 'seat_count',
         ]
 
 class UsageDailySerializer(serializers.ModelSerializer):

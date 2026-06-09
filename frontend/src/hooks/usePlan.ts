@@ -28,21 +28,38 @@ interface SwitchPlanResponse {
   effective_at?: number | null;  // Unix timestamp
 }
 
+export interface ActiveSubscription {
+  id: number;
+  seat_count: number;
+  member_count: number;
+  is_active: boolean;
+  plan: Plan;
+}
+
+interface PurchaseSeatsResponse {
+  seat_count: number;
+  monthly_total_cents: number;
+}
+
 interface UsePlanReturn {
   plans: Plan[];
   loading: boolean;
   error: string | null;
+  subscription: ActiveSubscription | null;
   fetchPlans: () => Promise<void>;
+  fetchSubscription: () => Promise<void>;
   createCheckoutSession: (planId: number, seatCount?: number) => Promise<void>;
   cancelSubscription: () => Promise<void>;
   switchPlan: (planId: number) => Promise<SwitchPlanResponse>;
   handleSubscribe: (planId: number, seatCount?: number) => Promise<void>;
+  purchaseSeats: (newSeatCount: number) => Promise<PurchaseSeatsResponse>;
 }
 
 export default function usePlan(enabled = true): UsePlanReturn {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState<ActiveSubscription | null>(null);
 
   const fetchPlans = async () => {
     setLoading(true);
@@ -218,19 +235,48 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
+  const fetchSubscription = async () => {
+    try {
+      const response = await api.get('/api/stripe/subscription/');
+      setSubscription(response.data);
+    } catch (err: any) {
+      if (err?.response?.status !== 404) {
+        console.error('Error fetching subscription:', err);
+      }
+      setSubscription(null);
+    }
+  };
+
+  const purchaseSeats = async (newSeatCount: number): Promise<PurchaseSeatsResponse> => {
+    try {
+      const response = await api.post('/api/stripe/plans/seats/', { seat_count: newSeatCount });
+      setSubscription((prev) =>
+        prev ? { ...prev, seat_count: response.data.seat_count } : null,
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Error purchasing seats:', error);
+      throw error;
+    }
+  };
+
   useEffect(() => {
     if (!enabled) return;
     fetchPlans();
+    fetchSubscription();
   }, [enabled]);
 
   return {
     plans,
     loading,
     error,
+    subscription,
     fetchPlans,
+    fetchSubscription,
     createCheckoutSession,
     cancelSubscription,
     switchPlan,
-    handleSubscribe
+    handleSubscribe,
+    purchaseSeats,
   };
 }

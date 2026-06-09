@@ -1,12 +1,13 @@
 'use client';
 
-import { Suspense } from 'react';
+import { Suspense, useState } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Skeleton } from '@/components/ui/skeleton';
 import PlanCard from '@/components/plans/PlanCard';
 import usePlan from '@/hooks/usePlan';
 import { useAuthStore } from '@/lib/authStore';
+import toast from 'react-hot-toast';
 
 function SubscriptionSkeleton() {
   return (
@@ -28,8 +29,108 @@ function SubscriptionSkeleton() {
   );
 }
 
+function ManageSeatsBlock({
+  subscription,
+  isOrgAdmin,
+  purchaseSeats,
+}: {
+  subscription: NonNullable<ReturnType<typeof usePlan>['subscription']>;
+  isOrgAdmin: boolean;
+  purchaseSeats: ReturnType<typeof usePlan>['purchaseSeats'];
+}) {
+  const isFree = subscription.plan.base_price_cents === 0;
+  const [inputValue, setInputValue] = useState(String(subscription.seat_count));
+  const [saving, setSaving] = useState(false);
+
+  if (isFree) {
+    return (
+      <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 text-sm text-gray-600">
+        Upgrade to Team to manage seats.
+      </div>
+    );
+  }
+
+  const handleSave = async () => {
+    const n = parseInt(inputValue, 10);
+    if (isNaN(n) || n < 1) {
+      toast.error('Enter a valid seat count.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await purchaseSeats(n);
+      toast.success(`Seats updated to ${result.seat_count}.`);
+    } catch (err: any) {
+      const code = err?.response?.data?.code;
+      if (code === 'SEAT_COUNT_NOT_INCREASED') {
+        toast.error(`Seat count must be greater than current (${subscription.seat_count}).`);
+      } else if (code === 'SEAT_COUNT_BELOW_MEMBERS') {
+        toast.error(`Seat count cannot be less than current member count (${subscription.member_count}).`);
+      } else {
+        toast.error(err?.response?.data?.error || 'Failed to update seats.');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const extraSeatCents = subscription.plan.extra_seat_price_cents ?? 0;
+  const baseCents = subscription.plan.base_price_cents ?? 0;
+  const includedSeats = subscription.plan.included_seats ?? 1;
+  const n = parseInt(inputValue, 10);
+  const previewExtra = !isNaN(n) && n > subscription.seat_count ? n - includedSeats : null;
+  const previewTotal =
+    previewExtra !== null ? baseCents + previewExtra * extraSeatCents : null;
+
+  return (
+    <div className="mb-6 rounded-xl border border-[#3CCED7]/30 bg-white px-5 py-4">
+      <div className="mb-3 text-sm font-semibold text-gray-800">Manage Seats</div>
+      <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600">
+        <div>
+          <span className="font-medium text-gray-900">{subscription.member_count}</span>{' '}
+          member{subscription.member_count !== 1 ? 's' : ''}
+        </div>
+        <div>
+          <span className="font-medium text-gray-900">{subscription.seat_count}</span>{' '}
+          purchased seat{subscription.seat_count !== 1 ? 's' : ''}
+        </div>
+        <div>
+          <span className="font-medium text-gray-900">
+            {subscription.seat_count - subscription.member_count}
+          </span>{' '}
+          available
+        </div>
+      </div>
+      {isOrgAdmin && (
+        <div className="mt-4 flex items-center gap-3">
+          <label className="text-sm text-gray-600">New seat count:</label>
+          <input
+            type="number"
+            min={subscription.seat_count + 1}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            className="w-24 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#3CCED7] focus:outline-none"
+          />
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2bb8c1] disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Purchase seats'}
+          </button>
+          {previewTotal !== null && (
+            <span className="text-xs text-gray-400">
+              ≈ ${(previewTotal / 100).toFixed(2)}/mo
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SubscriptionV2Content() {
-  const { plans, loading, error, handleSubscribe } = usePlan();
+  const { plans, loading, error, handleSubscribe, subscription, purchaseSeats } = usePlan();
   const user = useAuthStore((s) => s.user);
   const currentPlanId = user?.organization?.plan_id ?? null;
   const isOrgAdmin = !!user?.roles?.includes('Organization Admin');
@@ -78,6 +179,15 @@ function SubscriptionV2Content() {
               </div>
             </div>
           ) : null}
+
+          {/* Manage Seats */}
+          {subscription && (
+            <ManageSeatsBlock
+              subscription={subscription}
+              isOrgAdmin={isOrgAdmin}
+              purchaseSeats={purchaseSeats}
+            />
+          )}
 
           {/* Error */}
           {error && (
