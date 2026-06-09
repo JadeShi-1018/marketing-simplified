@@ -14,25 +14,42 @@ from .models import (
 from .services import AgentOrchestrator, _forward_to_users
 
 
-def _test_analysis_data():
-    """Minimal valid analysis structure for tests."""
-    return {
-        "anomalies": [
-            {
-                "metric": "ROAS",
-                "movement": "SHARP_DECREASE",
-                "scope_type": "CAMPAIGN",
-                "scope_value": "Test Campaign",
-                "delta_value": -20.0,
-                "delta_unit": "PERCENT",
-                "period": "LAST_7_DAYS",
-                "description": "Test Campaign ROAS dropped 20%",
-            },
-        ],
+def _test_anomaly(**overrides):
+    """A single anomaly dict (with a stable id) for tests."""
+    anomaly = {
+        "id": "anom_0",
+        "metric": "ROAS",
+        "movement": "SHARP_DECREASE",
+        "scope_type": "CAMPAIGN",
+        "scope_value": "Test Campaign",
+        "delta_value": -20.0,
+        "delta_unit": "PERCENT",
+        "period": "LAST_7_DAYS",
+        "severity": "critical",
+        "description": "Test Campaign ROAS dropped 20%",
+    }
+    anomaly.update(overrides)
+    return anomaly
+
+
+def _test_analysis_data(confirmed=True):
+    """Minimal valid analysis structure for tests.
+
+    Defaults to an already-confirmed analysis (anomalies reviewed and included)
+    so the existing task-creation tests exercise the post-confirmation path.
+    Pass ``confirmed=False`` for tests that need the pre-confirmation state.
+    """
+    anomaly = _test_anomaly()
+    analysis = {
+        "anomalies": [dict(anomaly)],
         "recommended_tasks": [
             {"type": "optimization", "summary": "Test task", "priority": "MEDIUM"},
         ],
     }
+    if confirmed:
+        analysis["reviewed_anomalies"] = [dict(anomaly, included=True)]
+        analysis["anomalies_confirmed"] = True
+    return analysis
 
 
 class AgentModelTests(TestCase):
@@ -669,6 +686,238 @@ class OrchestratorTests(TestCase):
         self.assertTrue(participant.is_active)
         self.assertEqual(results[0]['status'], 'sent')
         mock_notify_delay.assert_called_once()
+
+
+class AnomalyIdAssignmentTests(TestCase):
+    """_assign_anomaly_ids: stable ids + zero-anomaly auto-confirm."""
+
+    def test_assigns_sequential_ids(self):
+        from agent.services import _assign_anomaly_ids
+        analysis = {"anomalies": [{"metric": "ROAS"}, {"metric": "CPA"}]}
+        result = _assign_anomaly_ids(analysis)
+        self.assertEqual(result["anomalies"][0]["id"], "anom_0")
+        self.assertEqual(result["anomalies"][1]["id"], "anom_1")
+
+    def test_idempotent_existing_ids_untouched(self):
+        from agent.services import _assign_anomaly_ids
+        analysis = {"anomalies": [{"id": "keep_me", "metric": "ROAS"}]}
+        result = _assign_anomaly_ids(analysis)
+        self.assertEqual(result["anomalies"][0]["id"], "keep_me")
+
+    def test_zero_anomalies_auto_confirmed(self):
+        from agent.services import _assign_anomaly_ids
+        analysis = {"anomalies": [], "recommended_tasks": [{"summary": "x"}]}
+        result = _assign_anomaly_ids(analysis)
+        self.assertTrue(result["anomalies_confirmed"])
+
+    def test_nonempty_anomalies_not_auto_confirmed(self):
+        from agent.services import _assign_anomaly_ids
+        analysis = {"anomalies": [{"metric": "ROAS"}]}
+        result = _assign_anomaly_ids(analysis)
+        self.assertNotIn("anomalies_confirmed", result)
+
+
+class AnomalyConfirmationTests(TestCase):
+    """confirm_anomalies action + task-creation gate."""
+
+    def setUp(self):
+        self.org = Organization.objects.create(name='Org Anom', slug='org-anom')
+        self.user = CustomUser.objects.create_user(
+            email='anom@test.com', username='anomuser', password='testpass123',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Project Anom', organization=self.org, owner=self.user,
+        )
+        ProjectMember.objects.create(
+            user=self.user, project=self.project, role='owner', is_active=True,
+        )
+        self.session = AgentSession.objects.create(user=self.user, project=self.project)
+        self.orch = AgentOrchestrator(self.user, self.project, self.session)
+
+    def _unconfirmed_run(self):
+        return AgentWorkflowRun.objects.create(
+            session=self.session,
+            status='awaiting_confirmation',
+            analysis_result=_test_analysis_data(confirmed=False),
+        )
+
+    def _full_payload(self, included=True, **overrides):
+        entry = {"id": "anom_0", "included": included,
+                 "severity": "critical", "description": "edited desc"}
+        entry.update(overrides)
+        return [entry]
+
+    # --- confirm_anomalies ------------------------------------------------
+
+    def test_confirm_persists_reviewed_list_full_objects(self):
+        run = self._unconfirmed_run()
+        chunks = list(self.orch.confirm_anomalies(run, self._full_payload()))
+        types = [c['type'] for c in chunks]
+        self.assertIn('anomalies_confirmed', types)
+        run.refresh_from_db()
+        ar = run.analysis_result
+        self.assertTrue(ar['anomalies_confirmed'])
+        reviewed = ar['reviewed_anomalies']
+        self.assertEqual(len(reviewed), 1)
+        # full merged object retains original display fields
+        self.assertEqual(reviewed[0]['metric'], 'ROAS')
+        self.assertEqual(reviewed[0]['period'], 'LAST_7_DAYS')
+        self.assertTrue(reviewed[0]['included'])
+        # original anomalies untouched
+        self.assertNotIn('included', ar['anomalies'][0])
+
+    def test_confirm_merges_severity_and_description_edits(self):
+        run = self._unconfirmed_run()
+        list(self.orch.confirm_anomalies(
+            run, self._full_payload(severity='info', description='new text')))
+        run.refresh_from_db()
+        reviewed = run.analysis_result['reviewed_anomalies'][0]
+        self.assertEqual(reviewed['severity'], 'info')
+        self.assertEqual(reviewed['description'], 'new text')
+
+    def test_confirm_unknown_id_rejected_atomically(self):
+        run = self._unconfirmed_run()
+        payload = [{"id": "anom_0", "included": True},
+                   {"id": "ghost", "included": True}]
+        chunks = list(self.orch.confirm_anomalies(run, payload))
+        self.assertEqual(chunks[0]['type'], 'error')
+        run.refresh_from_db()
+        self.assertNotIn('anomalies_confirmed', run.analysis_result)
+
+    def test_confirm_missing_id_rejected_atomically(self):
+        run = AgentWorkflowRun.objects.create(
+            session=self.session, status='awaiting_confirmation',
+            analysis_result={
+                "anomalies": [_test_anomaly(id="anom_0"), _test_anomaly(id="anom_1")],
+                "recommended_tasks": [{"summary": "x"}],
+            },
+        )
+        payload = [{"id": "anom_0", "included": True}]  # missing anom_1
+        chunks = list(self.orch.confirm_anomalies(run, payload))
+        self.assertEqual(chunks[0]['type'], 'error')
+        run.refresh_from_db()
+        self.assertNotIn('anomalies_confirmed', run.analysis_result)
+
+    def test_confirm_duplicate_id_rejected_atomically(self):
+        run = self._unconfirmed_run()
+        payload = [{"id": "anom_0", "included": True},
+                   {"id": "anom_0", "included": False}]
+        chunks = list(self.orch.confirm_anomalies(run, payload))
+        self.assertEqual(chunks[0]['type'], 'error')
+        run.refresh_from_db()
+        self.assertNotIn('anomalies_confirmed', run.analysis_result)
+
+    def test_confirm_invalid_severity_rejected(self):
+        run = self._unconfirmed_run()
+        chunks = list(self.orch.confirm_anomalies(
+            run, self._full_payload(severity='nope')))
+        self.assertEqual(chunks[0]['type'], 'error')
+        run.refresh_from_db()
+        self.assertNotIn('anomalies_confirmed', run.analysis_result)
+
+    def test_already_confirmed_is_safe_noop_on_partial_payload(self):
+        run = AgentWorkflowRun.objects.create(
+            session=self.session, status='awaiting_confirmation',
+            analysis_result=_test_analysis_data(confirmed=True),
+        )
+        # Partial/stale payload (missing ids) must NOT error -> no-op.
+        chunks = list(self.orch.confirm_anomalies(run, []))
+        self.assertEqual(chunks[0]['type'], 'anomalies_confirmed')
+        self.assertTrue(chunks[0].get('already_confirmed'))
+
+    def test_confirm_no_run_errors(self):
+        chunks = list(self.orch.confirm_anomalies(None, self._full_payload()))
+        self.assertEqual(chunks[0]['type'], 'error')
+
+    def test_confirm_updates_stored_analysis_message_for_restore(self):
+        run = self._unconfirmed_run()
+        # Simulate the persisted analysis message the SSE stream would have saved.
+        msg = AgentMessage.objects.create(
+            session=self.session,
+            role='assistant',
+            content='Found 1 anomalies.',
+            message_type='analysis',
+            metadata={'anomalies': [_test_anomaly()]},
+        )
+        list(self.orch.confirm_anomalies(run, self._full_payload(included=False)))
+        msg.refresh_from_db()
+        self.assertTrue(msg.metadata['anomalies_confirmed'])
+        self.assertEqual(len(msg.metadata['reviewed_anomalies']), 1)
+        self.assertFalse(msg.metadata['reviewed_anomalies'][0]['included'])
+
+    # --- task-creation gate ----------------------------------------------
+
+    def test_create_tasks_blocked_before_confirmation(self):
+        from task.models import Task
+        run = self._unconfirmed_run()
+        chunks = list(self.orch.create_tasks_from_analysis(run))
+        types = [c['type'] for c in chunks]
+        self.assertIn('error', types)
+        self.assertNotIn('task_created', types)
+        self.assertFalse(Task.objects.filter(project=self.project).exists())
+
+    def test_create_tasks_allowed_after_confirmation(self):
+        from task.models import Task
+        run = self._unconfirmed_run()
+        list(self.orch.confirm_anomalies(run, self._full_payload(included=True)))
+        run.refresh_from_db()
+        chunks = list(self.orch.create_tasks_from_analysis(run))
+        types = [c['type'] for c in chunks]
+        self.assertIn('task_created', types)
+        self.assertTrue(Task.objects.filter(project=self.project).exists())
+
+    def test_all_excluded_confirms_but_creates_no_tasks(self):
+        from task.models import Task
+        run = self._unconfirmed_run()
+        list(self.orch.confirm_anomalies(run, self._full_payload(included=False)))
+        run.refresh_from_db()
+        self.assertTrue(run.analysis_result['anomalies_confirmed'])
+        chunks = list(self.orch.create_tasks_from_analysis(run))
+        types = [c['type'] for c in chunks]
+        self.assertNotIn('task_created', types)
+        self.assertFalse(Task.objects.filter(project=self.project).exists())
+
+    def test_zero_anomalies_preserves_task_creation(self):
+        from task.models import Task
+        # Clean dataset: no anomalies, auto-confirmed, tasks still flow.
+        run = AgentWorkflowRun.objects.create(
+            session=self.session, status='awaiting_confirmation',
+            analysis_result={
+                "anomalies": [],
+                "anomalies_confirmed": True,
+                "recommended_tasks": [
+                    {"type": "optimization", "summary": "Monitor", "priority": "LOW"},
+                ],
+            },
+        )
+        chunks = list(self.orch.create_tasks_from_analysis(run))
+        types = [c['type'] for c in chunks]
+        self.assertIn('task_created', types)
+        self.assertTrue(Task.objects.filter(project=self.project).exists())
+
+    def test_included_anomalies_attached_to_commit_context(self):
+        captured = {}
+        run = self._unconfirmed_run()
+        list(self.orch.confirm_anomalies(run, self._full_payload(included=True)))
+        run.refresh_from_db()
+
+        from agent import approval_gate
+
+        real = approval_gate.request_external_commit
+
+        def _spy(*args, **kwargs):
+            captured['commit_context'] = kwargs.get('commit_context')
+            return real(*args, **kwargs)
+
+        with patch('agent.approval_gate.request_external_commit', side_effect=_spy):
+            list(self.orch.create_tasks_from_analysis(run))
+
+        self.assertIn('commit_context', captured)
+        included = captured['commit_context'].get('included_anomalies')
+        self.assertEqual(len(included), 1)
+        self.assertEqual(included[0]['id'], 'anom_0')
 
 
 class CalendarAgentTests(TestCase):

@@ -154,11 +154,12 @@ class ChatView(EnglishResponseMixin, APIView):
         approval_id = serializer.validated_data.get('approval_id')
         approval_decision = serializer.validated_data.get('approval_decision')
         approval_draft = serializer.validated_data.get('approval_draft')
+        reviewed_anomalies = serializer.validated_data.get('reviewed_anomalies')
 
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
             'create_tasks', 'generate_miro',
-            'distribute_message', 'confirm_columns',
+            'distribute_message', 'confirm_columns', 'confirm_anomalies',
             'resolve_external_approval',
         }
 
@@ -220,6 +221,7 @@ class ChatView(EnglishResponseMixin, APIView):
                     approval_decision=approval_decision,
                     approval_draft=approval_draft,
                     user_context=user_context,
+                    reviewed_anomalies=reviewed_anomalies,
                 ):
                     chunk_type = chunk.get('type', 'text')
                     content = chunk.get('content', '')
@@ -263,8 +265,11 @@ class ChatView(EnglishResponseMixin, APIView):
                         yield f"data: {sse_data}\n\n"
                         continue
 
-                    # Skip internal signalling events from content accumulation
-                    if chunk_type not in ('done', 'calendar_updated'):
+                    # Skip internal signalling events from content accumulation.
+                    # 'anomalies_confirmed' updates the existing analysis message
+                    # in-place (see confirm_anomalies), so it must not be persisted
+                    # as a second anomaly card here.
+                    if chunk_type not in ('done', 'calendar_updated', 'anomalies_confirmed'):
                         if content:
                             assistant_content_parts.append(content)
                         last_message_type = chunk_type
