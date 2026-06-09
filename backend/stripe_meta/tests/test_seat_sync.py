@@ -21,6 +21,7 @@ from access_control.models import UserRole
 from stripe_meta.models import Plan, Subscription
 from stripe_meta.permissions import generate_organization_access_token
 from stripe_meta.services import sync_seat_count
+from stripe_meta.views import handle_subscription_created
 
 User = get_user_model()
 
@@ -356,3 +357,75 @@ class InviteTriggersSyncTest(SeatSyncTestBase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         mock_sync.assert_called_once_with(self.org)
+
+
+# ---------------------------------------------------------------------------
+# handle_subscription_created — seat_count derived from Stripe items (Model B)
+# ---------------------------------------------------------------------------
+
+class HandleSubscriptionCreatedSeatTest(TestCase):
+    """
+    Verify that handle_subscription_created derives seat_count from the
+    extra-seat line item quantity rather than hardcoding plan.included_seats.
+    """
+
+    def setUp(self):
+        Plan.objects.all().delete()
+        self.org = Organization.objects.create(name='HSC Seat Org', slug='hsc-seat-org')
+        self.plan = Plan.objects.create(
+            name='Team',
+            stripe_price_id='price_team_base',
+            stripe_extra_seat_price_id='price_team_seat',
+            stripe_overage_price_id='price_team_overage',
+            included_seats=5,
+            base_price_cents=4900,
+        )
+        self.mock_customer = Mock()
+        self.mock_customer.metadata = {'organization_id': str(self.org.id)}
+
+    def _make_event(self, extra_seat_qty=None):
+        """Build a minimal subscription.created payload. Pass extra_seat_qty to include the seat item."""
+        items_data = [
+            {
+                'id': 'si_base',
+                'current_period_end': int((timezone.now() + timedelta(days=30)).timestamp()),
+                'price': {'id': 'price_team_base'},
+            },
+        ]
+        if extra_seat_qty is not None:
+            items_data.append({
+                'id': 'si_seat',
+                'quantity': extra_seat_qty,
+                'price': {'id': 'price_team_seat'},
+            })
+        return {
+            'id': 'sub_hsc_1',
+            'status': 'active',
+            'customer': 'cus_hsc',
+            'start_date': int((timezone.now() - timedelta(days=1)).timestamp()),
+            'items': {'data': items_data},
+        }
+
+    def test_handle_subscription_created_reads_seats_from_items(self):
+        """
+        Checkout with 8 seats (3 extra beyond included_seats=5): extra-seat item qty=3.
+        handle_subscription_created must write seat_count=8, not 5.
+        """
+        event_obj = self._make_event(extra_seat_qty=3)
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=self.mock_customer):
+            handle_subscription_created(event_obj)
+
+        sub = Subscription.objects.get(stripe_subscription_id='sub_hsc_1')
+        self.assertEqual(sub.seat_count, 8)
+
+    def test_handle_subscription_created_no_extra_item(self):
+        """
+        Checkout at base price only (no extra-seat item) means the user bought
+        exactly included_seats=5. seat_count must be 5.
+        """
+        event_obj = self._make_event(extra_seat_qty=None)
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=self.mock_customer):
+            handle_subscription_created(event_obj)
+
+        sub = Subscription.objects.get(stripe_subscription_id='sub_hsc_1')
+        self.assertEqual(sub.seat_count, 5)

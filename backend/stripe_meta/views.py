@@ -742,6 +742,17 @@ def handle_subscription_created(subscription_data, event_id=None):
         None,
     ) if overage_price_id else None
 
+    # Derive purchased seat_count from the extra-seat line item quantity.
+    # extra-seat qty + included_seats = total seats the user bought at checkout.
+    # Authoritative source: Stripe items reflect the actual purchase; session metadata is not read here.
+    extra_seat_price_id = plan.stripe_extra_seat_price_id if plan else None
+    extra_seat_item = next(
+        (item for item in items if item.get('price', {}).get('id') == extra_seat_price_id),
+        None,
+    ) if extra_seat_price_id else None
+    extra_seat_qty = extra_seat_item['quantity'] if extra_seat_item else 0
+    seat_count_purchased = (plan.included_seats or 1) + extra_seat_qty
+
     subscription, created = Subscription.objects.update_or_create(
         stripe_subscription_id=subscription_id,
         defaults={
@@ -751,7 +762,7 @@ def handle_subscription_created(subscription_data, event_id=None):
             'end_date': datetime.fromtimestamp(end_date) if end_date else None,
             'is_active': subscription_data.get('status') == 'active',
             'stripe_overage_item_id': overage_item['id'] if overage_item else None,
-            'seat_count': plan.included_seats if plan and plan.included_seats else 1,
+            'seat_count': seat_count_purchased,
         },
     )
 
