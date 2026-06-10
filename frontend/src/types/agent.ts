@@ -53,6 +53,8 @@ export interface AgentMessage {
 
 export interface AgentMessageData {
   anomalies?: AnomalyItem[];
+  reviewed_anomalies?: AnomalyItem[];
+  anomalies_confirmed?: boolean;
   decision_id?: number;
   task_ids?: number[];
   created_tasks?: Array<{ index: number; task_id: number; summary: string }>;
@@ -92,6 +94,7 @@ export type SSEEventType =
   | 'calendar_updated'
   | 'step_progress'
   | 'column_mapping'
+  | 'anomalies_confirmed'
   | 'done'
   | 'error';
 
@@ -111,6 +114,7 @@ export type AgentAction =
   | 'start_follow_up'
   | 'cancel_follow_up'
   | 'confirm_columns'
+  | 'confirm_anomalies'
   | 'resolve_external_approval';
 
 export interface CalendarContextPayload {
@@ -139,6 +143,7 @@ export interface AgentChatRequest {
   approval_decision?: 'approve' | 'reject';
   approval_draft?: Record<string, unknown>;
   user_context?: string;
+  reviewed_anomalies?: ReviewedAnomaly[];
 }
 
 // ==================== Analysis Types ====================
@@ -146,6 +151,7 @@ export interface AgentChatRequest {
 export type AnomalySeverity = 'critical' | 'warning' | 'info';
 
 export interface AnomalyItem {
+  id: string;
   metric: string;
   movement: string;
   severity: AnomalySeverity;
@@ -154,6 +160,16 @@ export interface AnomalyItem {
   change_percent: number;
   campaign?: string | null;
   ad_set?: string | null;
+  description: string;
+  /** Present on reviewed anomalies after confirmation. */
+  included?: boolean;
+}
+
+/** Per-anomaly review decision sent to the backend on confirm_anomalies. */
+export interface ReviewedAnomaly {
+  id: string;
+  included: boolean;
+  severity: AnomalySeverity;
   description: string;
 }
 
@@ -198,6 +214,8 @@ export interface ImportedCSVFile {
 
 export interface AnalysisResult {
   anomalies: AnomalyItem[];
+  reviewed_anomalies?: AnomalyItem[];
+  anomalies_confirmed?: boolean;
   recommended_tasks?: RecommendedTask[];
 }
 
@@ -212,6 +230,7 @@ export interface RecommendedTask {
 
 export interface WorkflowStepState {
   analysisComplete: boolean;
+  anomaliesConfirmed: boolean;
   tasksCreated: boolean;
 }
 
