@@ -33,7 +33,13 @@ export interface ActiveSubscription {
   seat_count: number;
   member_count: number;
   is_active: boolean;
+  end_date: string | null;
   plan: Plan;
+}
+
+interface CancelSubscriptionResponse {
+  success: boolean;
+  cancel_at: number | null;
 }
 
 interface PurchaseSeatsResponse {
@@ -55,7 +61,7 @@ interface UsePlanReturn {
   fetchPlans: () => Promise<void>;
   fetchSubscription: () => Promise<void>;
   createCheckoutSession: (planId: number, seatCount?: number) => Promise<void>;
-  cancelSubscription: () => Promise<void>;
+  cancelSubscription: () => Promise<CancelSubscriptionResponse>;
   switchPlan: (planId: number) => Promise<SwitchPlanResponse>;
   handleSubscribe: (planId: number, seatCount?: number) => Promise<void>;
   previewSeatPurchase: (newSeatCount: number) => Promise<PreviewSeatsResponse>;
@@ -138,9 +144,10 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
-  const cancelSubscription = async () => {
+  const cancelSubscription = async (): Promise<CancelSubscriptionResponse> => {
     try {
-      await api.post('/api/stripe/subscription/cancel/');
+      const response = await api.post('/api/stripe/subscription/cancel/');
+      return response.data;
     } catch (error: any) {
       console.error('Error canceling subscription:', error);
       throw error;

@@ -5,6 +5,7 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Skeleton } from '@/components/ui/skeleton';
 import PlanCard from '@/components/plans/PlanCard';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 import usePlan from '@/hooks/usePlan';
 import { useAuthStore } from '@/lib/authStore';
 import toast from 'react-hot-toast';
@@ -201,12 +202,17 @@ function ManageSeatsBlock({
 }
 
 function SubscriptionV2Content() {
-  const { plans, loading, error, handleSubscribe, subscription, previewSeatPurchase, purchaseSeats } = usePlan();
+  const { plans, loading, error, handleSubscribe, subscription, previewSeatPurchase, purchaseSeats, cancelSubscription } = usePlan();
   const user = useAuthStore((s) => s.user);
   const currentPlanId = user?.organization?.plan_id ?? null;
   const isOrgAdmin = !!user?.roles?.includes('Organization Admin');
 
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelScheduledDate, setCancelScheduledDate] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+
   const currentPlan = plans.find((p) => p.id === currentPlanId) ?? null;
+  const isPaidPlan = currentPlan ? currentPlan.base_price_cents > 0 : false;
 
   const currentPlanPrice = currentPlan
     ? currentPlan.base_price_cents === 0
@@ -215,6 +221,30 @@ function SubscriptionV2Content() {
     : null;
 
   const activePlans = plans.filter((p) => !p.is_archived);
+
+  const periodEndDate = subscription?.end_date
+    ? new Date(subscription.end_date).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+      })
+    : 'the end of your billing period';
+
+  const handleCancelConfirm = async () => {
+    setCancelling(true);
+    try {
+      const result = await cancelSubscription();
+      const dateStr = result.cancel_at
+        ? new Date(result.cancel_at * 1000).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric',
+          })
+        : periodEndDate;
+      setCancelScheduledDate(dateStr);
+      toast.success(`Subscription will cancel on ${dateStr}. You'll keep Team until then.`);
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || 'Failed to cancel subscription.');
+    } finally {
+      setCancelling(false);
+    }
+  };
 
   return (
     <DashboardLayout>
@@ -230,18 +260,41 @@ function SubscriptionV2Content() {
 
           {/* Current plan banner */}
           {currentPlan ? (
-            <div className="mb-6 flex items-center justify-between rounded-xl border border-[#3CCED7]/30 bg-gradient-to-r from-[#3CCED7]/5 to-[#A6E661]/5 px-5 py-4">
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wider text-[#3CCED7]">
-                  Current Plan
+            <div className="mb-6 rounded-xl border border-[#3CCED7]/30 bg-gradient-to-r from-[#3CCED7]/5 to-[#A6E661]/5 px-5 py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-[#3CCED7]">
+                    Current Plan
+                  </div>
+                  <div className="mt-0.5 text-base font-semibold text-gray-900">
+                    {currentPlan.name}
+                  </div>
                 </div>
-                <div className="mt-0.5 text-base font-semibold text-gray-900">
-                  {currentPlan.name}
+                <div className="text-right">
+                  <div className="text-sm text-gray-500">{currentPlanPrice}</div>
                 </div>
               </div>
-              <div className="text-right text-sm text-gray-500">
-                {currentPlanPrice}
-              </div>
+              {isPaidPlan && (
+                <div className="mt-3 flex items-center justify-between border-t border-[#3CCED7]/20 pt-3">
+                  {cancelScheduledDate ? (
+                    <p className="text-xs text-amber-600">
+                      Scheduled to cancel on {cancelScheduledDate}. You keep Team until then.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-400">
+                      Your plan renews automatically each month. Cancel anytime.
+                    </p>
+                  )}
+                  {isOrgAdmin && !cancelScheduledDate && (
+                    <button
+                      onClick={() => setShowCancelConfirm(true)}
+                      className="ml-4 text-xs text-red-500 hover:text-red-700 hover:underline whitespace-nowrap"
+                    >
+                      Cancel subscription
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ) : !loading && !error && activePlans.length > 0 ? (
             <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4">
@@ -250,6 +303,18 @@ function SubscriptionV2Content() {
               </div>
             </div>
           ) : null}
+
+          <ConfirmModal
+            isOpen={showCancelConfirm}
+            onClose={() => setShowCancelConfirm(false)}
+            onConfirm={handleCancelConfirm}
+            title="Cancel subscription?"
+            message={`You'll keep ${currentPlan?.name ?? 'Team'} access until ${periodEndDate}, then move to Free. This cannot be undone.`}
+            confirmText="Yes, cancel"
+            cancelText="Keep subscription"
+            type="danger"
+            loading={cancelling}
+          />
 
           {/* Manage Seats */}
           {subscription && (

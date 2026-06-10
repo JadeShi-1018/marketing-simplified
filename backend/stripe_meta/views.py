@@ -209,7 +209,7 @@ def get_subscription(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, HasValidOrganizationToken, IsOrganizationAdmin])
 def cancel_subscription(request):
-    """Cancel user's active subscription"""
+    """Schedule subscription cancellation at the end of the current billing period."""
     try:
         user = request.user
         subscription = get_active_real_subscription(user.organization)
@@ -219,12 +219,17 @@ def cancel_subscription(request):
                 {'error': 'No active subscription found', 'code': 'NO_SUBSCRIPTION'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Cancel subscription in Stripe
-        stripe.Subscription.cancel(subscription.stripe_subscription_id)
-        
-        return Response({'success': True})
-        
+
+        stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+        period_end = stripe_sub.get('current_period_end')
+
+        stripe.Subscription.modify(
+            subscription.stripe_subscription_id,
+            cancel_at_period_end=True,
+        )
+
+        return Response({'success': True, 'cancel_at': period_end})
+
     except stripe.StripeError as e:
         return Response(
             {'error': str(e), 'code': 'STRIPE_ERROR'},

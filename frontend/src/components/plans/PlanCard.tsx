@@ -115,7 +115,7 @@ export default function PlanCard({
           )}
         </p>
         <p className="leading-[1.6] text-sm text-gray-500">
-          {isFree ? 'No credit card required' : 'billed monthly'}
+          {isFree ? 'No credit card required' : 'Auto-renews monthly · cancel anytime'}
         </p>
       </div>
 

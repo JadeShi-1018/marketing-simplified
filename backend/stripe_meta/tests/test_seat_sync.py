@@ -726,3 +726,45 @@ class PreviewSeatPurchaseTest(SeatSyncTestBase):
             proration_behavior='create_prorations',
             subscription_proration_date=1700000000,
         )
+
+
+# ---------------------------------------------------------------------------
+# cancel_subscription endpoint (POST /api/stripe/subscription/cancel/)
+# ---------------------------------------------------------------------------
+
+CANCEL_URL = reverse('stripe_meta:cancel_subscription')
+
+
+class CancelSubscriptionTest(SeatSyncTestBase):
+    """Tests for the cancel_subscription endpoint."""
+
+    def test_cancel_subscription_at_period_end(self):
+        """
+        cancel_subscription must use cancel_at_period_end=True (not immediate cancel).
+        Must retrieve the subscription to get current_period_end, then modify it.
+        Response: {success: True, cancel_at: <unix timestamp>}.
+        """
+        with patch('stripe_meta.views.stripe') as mock_stripe, \
+             patch('tracking.middleware.emit_tracking_event'):
+            mock_stripe.StripeError = stripe.StripeError
+            mock_stripe.Subscription.retrieve.return_value = {
+                'id': 'sub_team_real',
+                'current_period_end': 1700000000,
+            }
+            mock_stripe.Subscription.modify.return_value = {}
+
+            response = self.client.post(
+                CANCEL_URL,
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertTrue(data['success'])
+        self.assertEqual(data['cancel_at'], 1700000000)
+
+        mock_stripe.Subscription.modify.assert_called_once_with(
+            'sub_team_real',
+            cancel_at_period_end=True,
+        )
+        mock_stripe.Subscription.cancel.assert_not_called()

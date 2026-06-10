@@ -925,30 +925,38 @@ class WebhookViewsTest(StripeViewsTestCase):
             self.assertEqual(data['code'], 'STRIPE_ERROR')
 
     def test_cancel_subscription_stripe_api_success(self):
-        """Test cancel_subscription with successful Stripe API call"""
-        with patch('stripe_meta.views.stripe.Subscription.cancel') as mock_cancel:
-            mock_cancel.return_value = Mock()
-            
+        """cancel_subscription schedules at period end, returns cancel_at timestamp."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.return_value = {}
+
             response = self.client.post(
                 reverse('stripe_meta:cancel_subscription'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
-            # Should succeed with mocked Stripe API
+
             self.assertEqual(response.status_code, 200)
             data = response.json()
             self.assertTrue(data['success'])
+            self.assertEqual(data['cancel_at'], 1700000000)
+            mock_modify.assert_called_once_with(
+                self.subscription.stripe_subscription_id,
+                cancel_at_period_end=True,
+            )
 
     def test_cancel_subscription_stripe_error_handling(self):
-        """Test cancel_subscription Stripe error handling"""
-        with patch('stripe_meta.views.stripe.Subscription.cancel') as mock_cancel:
-            mock_cancel.side_effect = stripe.StripeError("Stripe API error")
-            
+        """StripeError from modify propagates as 400 STRIPE_ERROR."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.side_effect = stripe.StripeError("Stripe API error")
+
             response = self.client.post(
                 reverse('stripe_meta:cancel_subscription'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 400)
             data = response.json()
             self.assertEqual(data['code'], 'STRIPE_ERROR')
@@ -1107,18 +1115,21 @@ class CheckoutViewsExtended(StripeViewsTestCase):
             self.assertEqual(data['code'], 'STRIPE_ERROR')
     
     def test_cancel_subscription_stripe_success(self):
-        """Test cancel_subscription with successful Stripe API call"""
-        with patch('stripe_meta.views.stripe.Subscription.cancel') as mock_cancel:
-            mock_cancel.return_value = {'id': 'sub_test_123', 'status': 'canceled'}
-            
+        """cancel_subscription uses cancel_at_period_end, not immediate cancel."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1750000000}
+            mock_modify.return_value = {}
+
             response = self.client.post(
                 reverse('stripe_meta:cancel_subscription'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 200)
             data = response.json()
             self.assertTrue(data['success'])
+            self.assertEqual(data['cancel_at'], 1750000000)
     
     
     def test_get_usage_with_existing_data(self):
@@ -1401,15 +1412,16 @@ class SubscriptionCheckoutErrorTests(TestCase):
             is_active=True
         )
         
-        # Mock stripe.Subscription.delete to raise a StripeError
-        with patch("stripe_meta.views.stripe.Subscription.delete") as mock_delete:
-            mock_delete.side_effect = stripe.StripeError("Stripe API error")
-            
+        with patch("stripe_meta.views.stripe.Subscription.retrieve") as mock_retrieve, \
+             patch("stripe_meta.views.stripe.Subscription.modify") as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.side_effect = stripe.StripeError("Stripe API error")
+
             response = self.client.post(
                 reverse("stripe_meta:cancel_subscription"),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 400)
             data = response.json()
             self.assertEqual(data["code"], "STRIPE_ERROR")
