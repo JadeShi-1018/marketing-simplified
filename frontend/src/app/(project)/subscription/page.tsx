@@ -222,6 +222,12 @@ function SubscriptionV2Content() {
 
   const activePlans = plans.filter((p) => !p.is_archived);
 
+  const currentMonthlyCents = subscription
+    ? (subscription.plan.base_price_cents ?? 0) +
+      Math.max(0, subscription.seat_count - (subscription.plan.included_seats ?? 1)) *
+      (subscription.plan.extra_seat_price_cents ?? 0)
+    : 0;
+
   const periodEndDate = subscription?.end_date
     ? new Date(subscription.end_date).toLocaleDateString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric',
@@ -278,11 +284,13 @@ function SubscriptionV2Content() {
                 <div className="mt-3 flex items-center justify-between border-t border-[#3CCED7]/20 pt-3">
                   {cancelScheduledDate ? (
                     <p className="text-xs text-amber-600">
-                      Scheduled to cancel on {cancelScheduledDate}. You keep Team until then.
+                      Cancels on {cancelScheduledDate}, then moves to Free.
                     </p>
                   ) : (
-                    <p className="text-xs text-gray-400">
-                      Your plan renews automatically each month. Cancel anytime.
+                    <p className="text-xs text-gray-500">
+                      {subscription?.end_date
+                        ? `Renews on ${periodEndDate} · $${(currentMonthlyCents / 100).toFixed(2)} ${currentPlan?.currency ?? 'AUD'}/mo`
+                        : 'Auto-renews monthly · cancel anytime'}
                     </p>
                   )}
                   {isOrgAdmin && !cancelScheduledDate && (
