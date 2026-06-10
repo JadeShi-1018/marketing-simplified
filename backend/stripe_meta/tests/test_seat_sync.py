@@ -695,7 +695,7 @@ class PreviewSeatPurchaseTest(SeatSyncTestBase):
     def test_seat_purchase_uses_proration_date(self):
         """
         purchase_seats must forward the caller-supplied proration_date to
-        stripe.Subscription.modify as subscription_proration_date.
+        stripe.Subscription.modify as proration_date.
         """
         self.subscription.seat_count = 5
         self.subscription.save()
@@ -724,7 +724,7 @@ class PreviewSeatPurchaseTest(SeatSyncTestBase):
             'sub_team_real',
             items=[{'id': 'si_seat', 'quantity': 3}],
             proration_behavior='create_prorations',
-            subscription_proration_date=1700000000,
+            proration_date=1700000000,
         )
 
 

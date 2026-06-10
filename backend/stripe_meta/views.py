@@ -455,7 +455,7 @@ def purchase_seats(request):
 
         modify_kwargs = {'proration_behavior': 'create_prorations'}
         if isinstance(proration_date, int):
-            modify_kwargs['subscription_proration_date'] = proration_date
+            modify_kwargs['proration_date'] = proration_date
 
         if extra_seat_item:
             item_patch = {'id': extra_seat_item['id'], 'quantity': new_extra_qty}
