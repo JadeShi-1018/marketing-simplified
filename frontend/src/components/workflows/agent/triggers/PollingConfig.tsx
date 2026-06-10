@@ -1,6 +1,6 @@
 "use client";
 
-import { Video, Table2, Layers, FileText } from "lucide-react";
+import { Video, Table2, Layers, FileText, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PollingExternalService } from "@/types/agent";
 
@@ -83,7 +83,7 @@ export function PollingConfig({ config, onChange }: PollingConfigProps) {
     <div className="space-y-5">
       {/* Check Interval */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
+        <label className="block text-sm font-semibold text-gray-700 mb-2">
           Check Interval
         </label>
         <div className="flex flex-wrap gap-2">
@@ -95,7 +95,7 @@ export function PollingConfig({ config, onChange }: PollingConfigProps) {
               className={cn(
                 "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                 config.interval_minutes === value
-                  ? "border-[#3CCED7] bg-[#3CCED7]/10 text-[#2ba8af]"
+                  ? "border-transparent bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white"
                   : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
               )}
             >
@@ -107,7 +107,7 @@ export function PollingConfig({ config, onChange }: PollingConfigProps) {
 
       {/* External Services */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-semibold text-gray-700 mb-1">
           Monitor External Services
         </label>
         <p className="text-xs text-gray-500 mb-3">
@@ -139,12 +139,14 @@ export function PollingConfig({ config, onChange }: PollingConfigProps) {
                 {/* Selection indicator */}
                 <div
                   className={cn(
-                    "h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    "h-4 w-4 rounded-full shrink-0 transition-colors flex items-center justify-center",
                     selected
-                      ? "border-[#3CCED7] bg-[#3CCED7]"
-                      : "border-gray-300 bg-white"
+                      ? "bg-gradient-to-r from-[#3CCED7] to-[#A6E661]"
+                      : "border-2 border-gray-300 bg-white"
                   )}
-                />
+                >
+                  {selected && <Check className="h-2.5 w-2.5 text-white" />}
+                </div>
               </button>
             );
           })}

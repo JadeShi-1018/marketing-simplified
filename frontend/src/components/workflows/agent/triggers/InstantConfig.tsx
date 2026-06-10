@@ -107,7 +107,7 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
     <div className="space-y-6">
       {/* Event Types Section */}
       <div>
-        <h4 className="text-sm font-medium text-gray-900 mb-3">Listen to Events</h4>
+        <h4 className="text-sm font-semibold text-gray-900 mb-3">Listen to Events</h4>
         <div className="grid grid-cols-1 gap-2">
           {EVENT_OPTIONS.map((event) => {
             const Icon = event.icon;
@@ -134,12 +134,14 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
                 </div>
                 <div
                   className={cn(
-                    "h-4 w-4 rounded-full border-2 shrink-0 transition-colors",
+                    "h-4 w-4 rounded-full shrink-0 transition-colors flex items-center justify-center",
                     isSelected
-                      ? "border-[#3CCED7] bg-[#3CCED7]"
-                      : "border-gray-300 bg-white"
+                      ? "bg-gradient-to-r from-[#3CCED7] to-[#A6E661]"
+                      : "border-2 border-gray-300 bg-white"
                   )}
-                />
+                >
+                  {isSelected && <Check className="h-2.5 w-2.5 text-white" />}
+                </div>
               </button>
             );
           })}
@@ -149,7 +151,7 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
       {/* Webhook Section */}
       <div className="border-t border-gray-200 pt-6">
         <div className="flex items-center justify-between mb-3">
-          <h4 className="text-sm font-medium text-gray-900">Webhook Integration</h4>
+          <h4 className="text-sm font-semibold text-gray-900">Webhook Integration</h4>
           <label className="flex items-center gap-2">
             <span className="text-xs font-medium text-gray-600">Enable Webhook</span>
             <button

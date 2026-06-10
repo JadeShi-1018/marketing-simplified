@@ -150,7 +150,7 @@ export const TriggerConfigPanel = forwardRef<
     <div className="space-y-5">
       {/* Enable toggle */}
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-gray-700">Enable trigger</span>
+        <span className="text-sm font-semibold text-gray-700">Enable trigger</span>
         <button
           type="button"
           disabled={isSystem}
@@ -172,7 +172,7 @@ export const TriggerConfigPanel = forwardRef<
 
       {/* Trigger Type grid */}
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
+        <label className="block text-sm font-semibold text-gray-700">
           Trigger Type
         </label>
         <div className="grid grid-cols-2 gap-2">
@@ -189,10 +189,13 @@ export const TriggerConfigPanel = forwardRef<
                 className={cn(
                   "flex items-start gap-3 rounded-xl p-3 text-left transition-all",
                   isSelected
-                    ? "border-2 border-[#3CCED7] bg-[#3CCED7]/5"
+                    ? "border-2 bg-[#3CCED7]/5"
                     : "border-2 border-transparent bg-gray-50 hover:bg-gray-100",
                   disabled && "cursor-not-allowed opacity-50",
                 )}
+                style={isSelected ? {
+                  borderImage: 'linear-gradient(135deg, #3CCED7, #A6E661) 1'
+                } : undefined}
               >
                 <div
                   className={cn(

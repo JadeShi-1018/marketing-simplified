@@ -1,12 +1,28 @@
 "use client";
 
-import { useState } from "react";
-import { ChevronUp, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronDown, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type ScheduleMode = "interval" | "daily" | "weekly";
+
+interface TimeSlot {
+  id: string;
+  type: ScheduleMode;
+
+  // For interval
+  intervalHours?: number;
+  intervalMinutes?: number;
+
+  // For daily & weekly
+  hour?: number;
+  minute?: number;
+
+  // For weekly only
+  days?: number[];
+}
 
 interface ScheduledConfigProps {
   config?: {
@@ -18,14 +34,6 @@ interface ScheduledConfigProps {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const INTERVAL_OPTIONS: Array<{ value: number; label: string }> = [
-  { value: 15,  label: "15 min" },
-  { value: 30,  label: "30 min" },
-  { value: 60,  label: "1 hr"   },
-  { value: 120, label: "2 hr"   },
-  { value: 360, label: "6 hr"   },
-  { value: 720, label: "12 hr"  },
-];
 
 const WEEK_DAYS = [
   { value: 1, label: "M", full: "Monday"    },
@@ -37,32 +45,47 @@ const WEEK_DAYS = [
   { value: 0, label: "S", full: "Sunday"    },
 ];
 
-const MINUTE_OPTIONS = [0, 15, 30, 45];
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // ── Cron helpers ──────────────────────────────────────────────────────────────
 
-function parseCron(cron = "0 9 * * 1"): {
-  mode: ScheduleMode;
-  intervalMinutes: number;
-  hour: number;
-  minute: number;
-  days: number[];
-} {
+function parseCron(cron = "0 9 * * 1"): TimeSlot[] {
   const t = cron.trim();
 
-  // Interval: */N * * * *
+  // Interval: */N * * * * (every N minutes)
   const mIntMin = t.match(/^\*\/(\d+) \* \* \* \*$/);
-  if (mIntMin) return { mode: "interval", intervalMinutes: +mIntMin[1], hour: 9, minute: 0, days: [1] };
+  if (mIntMin) {
+    const totalMinutes = +mIntMin[1];
+    return [{
+      id: `slot-${Date.now()}`,
+      type: "interval",
+      intervalHours: Math.floor(totalMinutes / 60),
+      intervalMinutes: totalMinutes % 60,
+    }];
+  }
 
   // Interval: 0 * * * * (every hour)
-  if (t === "0 * * * *") return { mode: "interval", intervalMinutes: 60, hour: 9, minute: 0, days: [1] };
+  if (t === "0 * * * *") {
+    return [{
+      id: `slot-${Date.now()}`,
+      type: "interval",
+      intervalHours: 1,
+      intervalMinutes: 0,
+    }];
+  }
 
   // Interval: 0 */N * * * (every N hours)
   const mIntHr = t.match(/^0 \*\/(\d+) \* \* \*$/);
-  if (mIntHr) return { mode: "interval", intervalMinutes: +mIntHr[1] * 60, hour: 9, minute: 0, days: [1] };
+  if (mIntHr) {
+    return [{
+      id: `slot-${Date.now()}`,
+      type: "interval",
+      intervalHours: +mIntHr[1],
+      intervalMinutes: 0,
+    }];
+  }
 
-  // Weekly: M H * * DAYS (days = digits/commas/range)
+  // Weekly: M H * * DAYS
   const mWeekly = t.match(/^(\d+) (\d+) \* \* ([\d,\-]+)$/);
   if (mWeekly) {
     const raw = mWeekly[3];
@@ -73,124 +96,97 @@ function parseCron(cron = "0 9 * * 1"): {
     } else {
       days = raw.split(",").map(Number);
     }
-    return { mode: "weekly", intervalMinutes: 60, hour: +mWeekly[2], minute: +mWeekly[1], days };
+    return [{
+      id: `slot-${Date.now()}`,
+      type: "weekly",
+      days,
+      hour: +mWeekly[2],
+      minute: +mWeekly[1],
+    }];
   }
 
   // Daily: M H * * *
   const mDaily = t.match(/^(\d+) (\d+) \* \* \*$/);
-  if (mDaily) return { mode: "daily", intervalMinutes: 60, hour: +mDaily[2], minute: +mDaily[1], days: [1] };
-
-  // Default
-  return { mode: "daily", intervalMinutes: 60, hour: 9, minute: 0, days: [1] };
-}
-
-function buildCron(
-  mode: ScheduleMode,
-  intervalMinutes: number,
-  hour: number,
-  minute: number,
-  days: number[],
-): string {
-  if (mode === "interval") {
-    if (intervalMinutes < 60) return `*/${intervalMinutes} * * * *`;
-    if (intervalMinutes === 60) return `0 * * * *`;
-    return `0 */${intervalMinutes / 60} * * *`;
+  if (mDaily) {
+    return [{
+      id: `slot-${Date.now()}`,
+      type: "daily",
+      hour: +mDaily[2],
+      minute: +mDaily[1],
+    }];
   }
-  if (mode === "daily") return `${minute} ${hour} * * *`;
-  const sorted = [...days].sort((a, b) => a - b);
-  if (!sorted.length) return `${minute} ${hour} * * *`; // fallback when no day selected
-  return `${minute} ${hour} * * ${sorted.join(",")}`;
+
+  return [];
 }
 
-function buildSummary(
-  mode: ScheduleMode,
-  intervalMinutes: number,
-  hour: number,
-  minute: number,
-  days: number[],
-): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const time = `${pad(hour)}:${pad(minute)}`;
+function buildCron(timeSlots: TimeSlot[]): string {
+  if (timeSlots.length === 0) return "0 9 * * 1"; // fallback
 
-  if (mode === "interval") {
-    if (intervalMinutes < 60) return `Runs every ${intervalMinutes} minutes`;
-    const hrs = intervalMinutes / 60;
-    return hrs === 1 ? "Runs every hour" : `Runs every ${hrs} hours`;
+  const firstSlot = timeSlots[0];
+
+  if (firstSlot.type === "interval") {
+    const totalMinutes = (firstSlot.intervalHours || 0) * 60 + (firstSlot.intervalMinutes || 0);
+    if (totalMinutes === 0) return "0 * * * *"; // fallback
+    if (totalMinutes < 60) return `*/${totalMinutes} * * * *`;
+    if (totalMinutes === 60) return `0 * * * *`;
+    if (totalMinutes % 60 === 0) return `0 */${totalMinutes / 60} * * *`;
+    return `*/${totalMinutes} * * * *`;
   }
-  if (mode === "daily") return `Runs every day at ${time}`;
-  if (!days.length) return "Select at least one day";
-  const names = [...days].sort((a, b) => a - b).map((d) => DAY_NAMES[d]);
-  return `Runs every ${names.join(", ")} at ${time}`;
-}
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+  if (firstSlot.type === "daily") {
+    const h = firstSlot.hour ?? 9;
+    const m = firstSlot.minute ?? 0;
+    return `${m} ${h} * * *`;
+  }
 
-function Spinner({
-  value,
-  onUp,
-  onDown,
-}: {
-  value: string;
-  onUp: () => void;
-  onDown: () => void;
-}) {
-  return (
-    <div className="flex flex-col items-center rounded-lg border border-gray-200 overflow-hidden select-none">
-      <button
-        type="button"
-        onClick={onUp}
-        className="px-4 py-1 hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition-colors"
-      >
-        <ChevronUp className="h-3.5 w-3.5" />
-      </button>
-      <div className="px-5 py-1.5 text-xl font-mono font-semibold text-gray-800 border-y border-gray-100 min-w-[3rem] text-center">
-        {value}
-      </div>
-      <button
-        type="button"
-        onClick={onDown}
-        className="px-4 py-1 hover:bg-gray-50 text-gray-400 hover:text-gray-600 transition-colors"
-      >
-        <ChevronDown className="h-3.5 w-3.5" />
-      </button>
-    </div>
+  // Weekly: merge all slots with same time
+  const weeklySlots = timeSlots.filter((s) => s.type === "weekly");
+  if (weeklySlots.length === 0) return "0 9 * * 1"; // fallback
+
+  const allSameTime = weeklySlots.every(
+    (s) => s.hour === firstSlot.hour && s.minute === firstSlot.minute
   );
+
+  if (allSameTime) {
+    const allDays = Array.from(
+      new Set(weeklySlots.flatMap((s) => s.days || []))
+    ).sort((a, b) => a - b);
+    return `${firstSlot.minute} ${firstSlot.hour} * * ${allDays.join(",")}`;
+  }
+
+  // Different times - use first slot only
+  const sorted = [...(firstSlot.days || [])].sort((a, b) => a - b);
+  return `${firstSlot.minute} ${firstSlot.hour} * * ${sorted.join(",")}`;
 }
 
-function TimePicker({
-  hour,
-  minute,
-  onHourChange,
-  onMinuteChange,
-}: {
-  hour: number;
-  minute: number;
-  onHourChange: (h: number) => void;
-  onMinuteChange: (m: number) => void;
-}) {
+function buildSummary(timeSlots: TimeSlot[]): string {
+  if (timeSlots.length === 0) return "Add a time slot to get started";
+
   const pad = (n: number) => String(n).padStart(2, "0");
+  const firstSlot = timeSlots[0];
 
-  const incHour  = () => onHourChange((hour + 1) % 24);
-  const decHour  = () => onHourChange((hour + 23) % 24);
-  const incMin   = () => {
-    const idx = MINUTE_OPTIONS.indexOf(minute);
-    onMinuteChange(MINUTE_OPTIONS[(idx + 1) % MINUTE_OPTIONS.length]);
-  };
-  const decMin   = () => {
-    const idx = MINUTE_OPTIONS.indexOf(minute);
-    onMinuteChange(MINUTE_OPTIONS[(idx + MINUTE_OPTIONS.length - 1) % MINUTE_OPTIONS.length]);
-  };
+  if (firstSlot.type === "interval") {
+    const hrs = firstSlot.intervalHours || 0;
+    const mins = firstSlot.intervalMinutes || 0;
+    if (hrs === 0 && mins === 0) return "Set interval duration";
+    const parts = [];
+    if (hrs > 0) parts.push(`${hrs} hour${hrs > 1 ? "s" : ""}`);
+    if (mins > 0) parts.push(`${mins} minute${mins > 1 ? "s" : ""}`);
+    return `Runs every ${parts.join(" ")}`;
+  }
 
-  return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-2">At</label>
-      <div className="flex items-center gap-2">
-        <Spinner value={pad(hour)} onUp={incHour} onDown={decHour} />
-        <span className="text-2xl font-semibold text-gray-400 pb-0.5">:</span>
-        <Spinner value={pad(minute)} onUp={incMin} onDown={decMin} />
-      </div>
-    </div>
-  );
+  if (firstSlot.type === "daily") {
+    const time = `${pad(firstSlot.hour ?? 9)}:${pad(firstSlot.minute ?? 0)}`;
+    return `Runs every day at ${time}`;
+  }
+
+  // Weekly
+  if (timeSlots.length === 1) {
+    const time = `${pad(firstSlot.hour ?? 9)}:${pad(firstSlot.minute ?? 0)}`;
+    const names = [...(firstSlot.days || [])].sort((a, b) => a - b).map((d) => DAY_NAMES[d]);
+    return `Runs every ${names.join(", ")} at ${time}`;
+  }
+  return `${timeSlots.length} weekly slots configured`;
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -199,138 +195,332 @@ export function ScheduledConfig({ config, onChange }: ScheduledConfigProps) {
   const timezone = config?.timezone ?? "UTC";
   const initial  = parseCron(config?.cron_expression);
 
-  const [mode,            setMode           ] = useState<ScheduleMode>(initial.mode);
-  const [intervalMinutes, setIntervalMinutes] = useState(initial.intervalMinutes);
-  const [hour,            setHour           ] = useState(initial.hour);
-  const [minute,          setMinute         ] = useState(initial.minute);
-  const [days,            setDays           ] = useState<number[]>(initial.days);
+  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>(initial);
 
-  const emit = (
-    m  = mode,
-    iv = intervalMinutes,
-    h  = hour,
-    mn = minute,
-    d  = days,
-  ) => {
-    onChange?.({ cron_expression: buildCron(m, iv, h, mn, d), timezone });
+  // Popover state
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [popoverTab, setPopoverTab] = useState<ScheduleMode>("daily");
+
+  // Interval tab state
+  const [intervalHours, setIntervalHours] = useState(0);
+  const [intervalMinutes, setIntervalMinutes] = useState(30);
+
+  // Daily tab state
+  const [dailyTime, setDailyTime] = useState("09:00");
+
+  // Weekly tab state
+  const [weeklyDays, setWeeklyDays] = useState<number[]>([]);
+  const [weeklyTime, setWeeklyTime] = useState("09:00");
+
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setPopoverOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [popoverOpen]);
+
+  const emit = (slots: TimeSlot[]) => {
+    onChange?.({ cron_expression: buildCron(slots), timezone });
   };
 
-  const handleMode     = (m: ScheduleMode) => { setMode(m);            emit(m); };
-  const handleInterval = (v: number)       => { setIntervalMinutes(v); emit(mode, v); };
-  const handleHour     = (v: number)       => { setHour(v);            emit(mode, intervalMinutes, v); };
-  const handleMinute   = (v: number)       => { setMinute(v);          emit(mode, intervalMinutes, hour, v); };
-  const toggleDay      = (d: number)       => {
-    const next = days.includes(d) ? days.filter((x) => x !== d) : [...days, d];
-    setDays(next);
-    emit(mode, intervalMinutes, hour, minute, next);
+  // Get current locked type (null if no slots)
+  const lockedType = timeSlots.length > 0 ? timeSlots[0].type : null;
+
+  // Time slot handlers
+  const handleAddSlot = () => {
+    let newSlot: TimeSlot;
+
+    if (popoverTab === "interval") {
+      if (intervalHours === 0 && intervalMinutes === 0) return;
+      newSlot = {
+        id: `slot-${Date.now()}`,
+        type: "interval",
+        intervalHours,
+        intervalMinutes,
+      };
+      // Interval: replace existing slot
+      const newSlots = [newSlot];
+      setTimeSlots(newSlots);
+      setPopoverOpen(false);
+      emit(newSlots);
+    } else if (popoverTab === "daily") {
+      const [h, m] = dailyTime.split(":").map(Number);
+      newSlot = {
+        id: `slot-${Date.now()}`,
+        type: "daily",
+        hour: h,
+        minute: m,
+      };
+      // Daily: only one slot allowed
+      const newSlots = [newSlot];
+      setTimeSlots(newSlots);
+      setPopoverOpen(false);
+      setDailyTime("09:00");
+      emit(newSlots);
+    } else if (popoverTab === "weekly") {
+      if (weeklyDays.length === 0) return;
+      const [h, m] = weeklyTime.split(":").map(Number);
+      newSlot = {
+        id: `slot-${Date.now()}`,
+        type: "weekly",
+        days: weeklyDays,
+        hour: h,
+        minute: m,
+      };
+      // Weekly: allow multiple slots
+      const newSlots = [...timeSlots, newSlot];
+      setTimeSlots(newSlots);
+      setPopoverOpen(false);
+      setWeeklyDays([]);
+      setWeeklyTime("09:00");
+      emit(newSlots);
+    }
   };
 
-  const summary = buildSummary(mode, intervalMinutes, hour, minute, days);
-  const warnNoDay = mode === "weekly" && days.length === 0;
+  const handleRemoveSlot = (id: string) => {
+    const newSlots = timeSlots.filter((s) => s.id !== id);
+    setTimeSlots(newSlots);
+    emit(newSlots);
+  };
+
+  const toggleWeeklyDay = (day: number) => {
+    setWeeklyDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day]
+    );
+  };
+
+  const summary = buildSummary(timeSlots);
+  const warnNoSlots = timeSlots.length === 0;
+
+  // Format chip label based on slot type
+  const formatSlotLabel = (slot: TimeSlot): string => {
+    const pad = (n: number) => String(n).padStart(2, "0");
+
+    if (slot.type === "interval") {
+      const hrs = slot.intervalHours || 0;
+      const mins = slot.intervalMinutes || 0;
+      const parts = [];
+      if (hrs > 0) parts.push(`${hrs}h`);
+      if (mins > 0) parts.push(`${mins}m`);
+      return `Every ${parts.join(" ")}`;
+    }
+
+    if (slot.type === "daily") {
+      const time = `${pad(slot.hour ?? 9)}:${pad(slot.minute ?? 0)}`;
+      return `Every day at ${time}`;
+    }
+
+    // Weekly
+    const time = `${pad(slot.hour ?? 9)}:${pad(slot.minute ?? 0)}`;
+    const dayNames = (slot.days || [])
+      .sort((a, b) => a - b)
+      .map((d) => DAY_NAMES[d].slice(0, 3))
+      .join(", ");
+    return `${dayNames} at ${time}`;
+  };
 
   return (
     <div className="space-y-5">
-      {/* Schedule Type tabs */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Schedule Type
-        </label>
-        <div className="flex gap-2">
-          {(["interval", "daily", "weekly"] as ScheduleMode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => handleMode(m)}
-              className={cn(
-                "flex-1 rounded-lg border py-2 text-sm font-medium capitalize transition-colors",
-                mode === m
-                  ? "border-[#3CCED7] bg-[#3CCED7]/10 text-[#2ba8af]"
-                  : "border-gray-200 text-gray-600 hover:border-gray-300",
-              )}
-            >
-              {m.charAt(0).toUpperCase() + m.slice(1)}
-            </button>
-          ))}
-        </div>
-      </div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">At</label>
 
-      {/* Interval mode */}
-      {mode === "interval" && (
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Every</label>
-          <div className="flex flex-wrap gap-2">
-            {INTERVAL_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => handleInterval(opt.value)}
-                className={cn(
-                  "rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors",
-                  intervalMinutes === opt.value
-                    ? "border-[#3CCED7] bg-[#3CCED7]/10 text-[#2ba8af]"
-                    : "border-gray-200 text-gray-600 hover:border-gray-300",
-                )}
+        {/* Time slot chips (unified for all types) */}
+        {timeSlots.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-3">
+            {timeSlots.map((slot) => (
+              <div
+                key={slot.id}
+                className="inline-flex items-center gap-2 rounded-full border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-3 py-1.5 text-sm font-medium text-[#2ba8af]"
               >
-                {opt.label}
-              </button>
+                <span>{formatSlotLabel(slot)}</span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveSlot(slot.id)}
+                  className="flex h-4 w-4 items-center justify-center rounded-full text-[#2ba8af] transition-colors hover:bg-[#3CCED7]/20 hover:text-red-600"
+                  aria-label="Remove"
+                >
+                  <span className="text-xs">✕</span>
+                </button>
+              </div>
             ))}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Daily mode */}
-      {mode === "daily" && (
-        <TimePicker
-          hour={hour}
-          minute={minute}
-          onHourChange={handleHour}
-          onMinuteChange={handleMinute}
-        />
-      )}
+        {/* Add time slot button + popover */}
+        <div className="relative" ref={popoverRef}>
+          <button
+            type="button"
+            onClick={() => setPopoverOpen(!popoverOpen)}
+            className="inline-flex items-center gap-1.5 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:border-[#3CCED7] hover:text-[#2ba8af]"
+          >
+            <span className="text-base">+</span> Add time slot
+          </button>
 
-      {/* Weekly mode */}
-      {mode === "weekly" && (
-        <>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">On</label>
-            <div className="flex gap-1.5">
-              {WEEK_DAYS.map((day) => (
-                <button
-                  key={day.value}
-                  type="button"
-                  title={day.full}
-                  onClick={() => toggleDay(day.value)}
-                  className={cn(
-                    "h-9 w-9 rounded-full text-xs font-semibold transition-colors",
-                    days.includes(day.value)
-                      ? "bg-[#3CCED7] text-white shadow-sm"
-                      : "bg-gray-100 text-gray-500 hover:bg-gray-200",
-                  )}
-                >
-                  {day.label}
-                </button>
-              ))}
+          {/* Popover with 3 tabs */}
+          {popoverOpen && (
+            <div className="absolute left-0 top-full z-20 mt-2 w-96 rounded-xl border border-gray-200 bg-white shadow-xl">
+              {/* Tab headers */}
+              <div className="flex border-b border-gray-100">
+                {(["interval", "daily", "weekly"] as ScheduleMode[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setPopoverTab(tab)}
+                    disabled={lockedType !== null && lockedType !== tab}
+                    className={cn(
+                      "flex-1 py-2.5 text-xs font-semibold capitalize transition-colors",
+                      popoverTab === tab
+                        ? "border-b-2 text-[#2ba8af]"
+                        : "text-gray-500 hover:text-gray-700",
+                      lockedType !== null && lockedType !== tab && "cursor-not-allowed opacity-40"
+                    )}
+                    style={popoverTab === tab ? {
+                      borderImage: 'linear-gradient(90deg, #3CCED7, #A6E661) 1'
+                    } : undefined}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
+
+              {/* Tab content */}
+              <div className="p-4">
+                {/* Interval tab */}
+                {popoverTab === "interval" && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-xs font-medium text-gray-700">
+                        Runs every
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          value={intervalHours}
+                          onChange={(e) => setIntervalHours(Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-16 rounded-lg border border-gray-200 px-3 py-2 text-center text-sm text-gray-900 focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/20"
+                        />
+                        <span className="text-sm text-gray-600">hours</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="59"
+                          value={intervalMinutes}
+                          onChange={(e) => setIntervalMinutes(Math.max(0, Math.min(59, parseInt(e.target.value) || 0)))}
+                          className="w-16 rounded-lg border border-gray-200 px-3 py-2 text-center text-sm text-gray-900 focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/20"
+                        />
+                        <span className="text-sm text-gray-600">minutes</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Daily tab */}
+                {popoverTab === "daily" && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-xs font-medium text-gray-700">Time</label>
+                      <input
+                        type="time"
+                        value={dailyTime}
+                        onChange={(e) => setDailyTime(e.target.value)}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/20"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Weekly tab */}
+                {popoverTab === "weekly" && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-xs font-medium text-gray-700">Days</label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {WEEK_DAYS.map((day) => (
+                          <button
+                            key={day.value}
+                            type="button"
+                            onClick={() => toggleWeeklyDay(day.value)}
+                            className={cn(
+                              "rounded-lg px-3 py-1.5 text-xs font-medium transition-all",
+                              weeklyDays.includes(day.value)
+                                ? "bg-[#3CCED7] text-white shadow-sm"
+                                : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                            )}
+                          >
+                            {day.full}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-xs font-medium text-gray-700">Time</label>
+                      <input
+                        type="time"
+                        value={weeklyTime}
+                        onChange={(e) => setWeeklyTime(e.target.value)}
+                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900 focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7]/20"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAddSlot}
+                    disabled={
+                      (popoverTab === "interval" && intervalHours === 0 && intervalMinutes === 0) ||
+                      (popoverTab === "weekly" && weeklyDays.length === 0)
+                    }
+                    className={cn(
+                      "flex-1 rounded-lg px-4 py-2 text-sm font-semibold text-white transition-opacity",
+                      (popoverTab === "interval" && intervalHours === 0 && intervalMinutes === 0) ||
+                      (popoverTab === "weekly" && weeklyDays.length === 0)
+                        ? "cursor-not-allowed bg-gray-300"
+                        : "bg-gradient-to-r from-[#3CCED7] to-[#A6E661] hover:opacity-95"
+                    )}
+                  >
+                    Add
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPopoverOpen(false)}
+                    className="flex-1 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-          <TimePicker
-            hour={hour}
-            minute={minute}
-            onHourChange={handleHour}
-            onMinuteChange={handleMinute}
-          />
-        </>
-      )}
+          )}
+        </div>
+      </div>
 
       {/* Summary */}
       <div
         className={cn(
-          "rounded-lg px-3 py-2 text-sm font-medium",
-          warnNoDay
+          "rounded-lg px-3 py-2 text-sm font-medium flex items-center gap-2",
+          warnNoSlots
             ? "bg-amber-50 border border-amber-200 text-amber-700"
             : "bg-[#3CCED7]/5 border border-[#3CCED7]/20 text-[#2ba8af]",
         )}
       >
-        {warnNoDay ? "⚠ Select at least one day" : `✦ ${summary}`}
+        {warnNoSlots ? (
+          "⚠ Add a time slot to get started"
+        ) : (
+          <>
+            <Clock className="h-3.5 w-3.5 shrink-0" />
+            {summary}
+          </>
+        )}
       </div>
 
       {/* Timezone */}
