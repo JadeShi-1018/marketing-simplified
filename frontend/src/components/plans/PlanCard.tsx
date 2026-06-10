@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Info, Check, Loader2 } from 'lucide-react';
 import SeatCalculator from './SeatCalculator';
+import { formatTokens } from '@/lib/format';
 
 interface PlanFeature {
   category?: string;
@@ -32,12 +33,6 @@ interface PlanCardProps {
   canManagePlans?: boolean;
 }
 
-function formatTokens(n: number | null): string {
-  if (n === null) return 'Unlimited';
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return n.toString();
-}
 
 export default function PlanCard({
   name,
