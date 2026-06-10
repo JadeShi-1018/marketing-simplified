@@ -1885,7 +1885,7 @@ class AgentOrchestrator:
                         for ev in gate.sse_events:
                             yield ev
                 except Exception as e:
-                    logger.error(f"Dify chat call failed: {e}")
+                    logger.error(f"Agent follow-up chat call failed: {e}")
                     yield {"type": "error", "content": str(e)}
             else:
                 yield {
