@@ -606,3 +606,123 @@ class PurchaseSeatsTest(SeatSyncTestBase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.json()['code'], 'FREE_PLAN_CANNOT_PURCHASE_SEATS')
+
+
+# ---------------------------------------------------------------------------
+# preview_seat_purchase endpoint (GET /api/stripe/plans/seats/preview/)
+# ---------------------------------------------------------------------------
+
+PREVIEW_SEATS_URL = reverse('stripe_meta:preview_seat_purchase')
+
+
+class PreviewSeatPurchaseTest(SeatSyncTestBase):
+    """Tests for the preview_seat_purchase endpoint."""
+
+    def _mock_stripe_sub(self, with_seat_item=True, seat_item_id='si_seat'):
+        items = [{'id': 'si_base', 'price': {'id': 'price_team_base'}}]
+        if with_seat_item:
+            items.append({'id': seat_item_id, 'quantity': 0, 'price': {'id': 'price_team_seat'}})
+        return {
+            'id': 'sub_team_real',
+            'customer': 'cus_test',
+            'items': {'data': items},
+        }
+
+    def test_seat_preview_returns_proration(self):
+        """
+        Valid request: returns proration_now_cents (from invoice.amount_due),
+        monthly_total_cents, and proration_date (unix timestamp).
+        """
+        self.subscription.seat_count = 5
+        self.subscription.save()
+
+        mock_invoice = Mock()
+        mock_invoice.amount_due = 1350
+
+        with patch('stripe_meta.views.stripe') as mock_stripe, \
+             patch('stripe_meta.views.time') as mock_time, \
+             patch('tracking.middleware.emit_tracking_event'):
+            mock_stripe.StripeError = stripe.StripeError
+            mock_stripe.Subscription.retrieve.return_value = self._mock_stripe_sub(with_seat_item=True)
+            mock_stripe.Invoice.create_preview.return_value = mock_invoice
+            mock_time.time.return_value = 1700000000
+
+            response = self.client.get(
+                PREVIEW_SEATS_URL,
+                {'seat_count': 8},
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data['proration_now_cents'], 1350)
+        self.assertEqual(data['monthly_total_cents'], 4900 + 3 * 900)
+        self.assertEqual(data['proration_date'], 1700000000)
+
+        mock_stripe.Invoice.create_preview.assert_called_once_with(
+            customer='cus_test',
+            subscription='sub_team_real',
+            subscription_details={
+                'items': [{'id': 'si_seat', 'quantity': 3}],
+                'proration_date': 1700000000,
+            },
+        )
+
+    def test_seat_preview_free_rejected(self):
+        """Free sentinel org cannot preview — must return FREE_PLAN_CANNOT_PURCHASE_SEATS."""
+        self.subscription.delete()
+        Subscription.objects.create(
+            organization=self.org,
+            plan=self.plan,
+            stripe_subscription_id=f'sub_sentinel_{self.org.id}',
+            start_date=timezone.now(),
+            end_date=timezone.now() + timedelta(days=365 * 100),
+            is_active=True,
+            is_internal=True,
+            seat_count=1,
+        )
+
+        with patch('tracking.middleware.emit_tracking_event'):
+            response = self.client.get(
+                PREVIEW_SEATS_URL,
+                {'seat_count': 5},
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.json()['code'], 'FREE_PLAN_CANNOT_PURCHASE_SEATS')
+
+    def test_seat_purchase_uses_proration_date(self):
+        """
+        purchase_seats must forward the caller-supplied proration_date to
+        stripe.Subscription.modify as subscription_proration_date.
+        """
+        self.subscription.seat_count = 5
+        self.subscription.save()
+
+        with patch('stripe_meta.views.stripe') as mock_stripe, \
+             patch('tracking.middleware.emit_tracking_event'):
+            mock_stripe.StripeError = stripe.StripeError
+            mock_stripe.Subscription.retrieve.return_value = {
+                'id': 'sub_team_real',
+                'items': {'data': [
+                    {'id': 'si_base', 'price': {'id': 'price_team_base'}},
+                    {'id': 'si_seat', 'quantity': 0, 'price': {'id': 'price_team_seat'}},
+                ]},
+            }
+            mock_stripe.Subscription.modify.return_value = {}
+
+            response = self.client.post(
+                PURCHASE_SEATS_URL,
+                {'seat_count': 8, 'proration_date': 1700000000},
+                format='json',
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_stripe.Subscription.modify.assert_called_once_with(
+            'sub_team_real',
+            items=[{'id': 'si_seat', 'quantity': 3}],
+            proration_behavior='create_prorations',
+            subscription_proration_date=1700000000,
+        )

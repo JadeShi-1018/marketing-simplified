@@ -10,6 +10,7 @@ urlpatterns = [
     path('plans/', views.list_plans, name='list_plans'),
     path('plans/switch/', views.switch_plan, name='switch_plan'),
     path('plans/seats/', views.purchase_seats, name='purchase_seats'),
+    path('plans/seats/preview/', views.preview_seat_purchase, name='preview_seat_purchase'),
 
 
     # Subscription endpoints

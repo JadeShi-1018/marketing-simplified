@@ -1,4 +1,5 @@
 import logging
+import time
 import traceback
 import stripe
 from datetime import datetime, timedelta
@@ -236,6 +237,134 @@ def cancel_subscription(request):
         )
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, HasValidOrganizationToken, IsOrganizationAdmin])
+def preview_seat_purchase(request):
+    """
+    Preview the proration charge for increasing seat count.
+    Returns amount_due (what Stripe will charge immediately) and the proration_date
+    that must be passed back to purchase_seats so the amounts match exactly.
+    """
+    try:
+        org = request.user.organization
+        if not org:
+            return Response(
+                {'error': 'No organization found', 'code': 'NO_ORGANIZATION'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            new_seat_count = int(request.query_params.get('seat_count', ''))
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'seat_count query param must be a positive integer', 'code': 'INVALID_SEAT_COUNT'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_seat_count < 1:
+            return Response(
+                {'error': 'seat_count must be a positive integer', 'code': 'INVALID_SEAT_COUNT'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        sub = get_active_real_subscription(org)
+
+        if not sub or sub.is_internal:
+            return Response(
+                {
+                    'error': 'Seat purchase is not available on the Free plan. Upgrade to Team first.',
+                    'code': 'FREE_PLAN_CANNOT_PURCHASE_SEATS',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        plan = sub.plan
+        if not plan.stripe_extra_seat_price_id:
+            return Response(
+                {'error': 'Current plan does not support extra seats.', 'code': 'NO_EXTRA_SEAT_PRICE'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        current_seat_count = sub.seat_count
+        member_count = CustomUser.objects.filter(organization=org).count()
+
+        if new_seat_count <= current_seat_count:
+            return Response(
+                {
+                    'error': (
+                        f'New seat count ({new_seat_count}) must be greater than current '
+                        f'({current_seat_count}).'
+                    ),
+                    'code': 'SEAT_COUNT_NOT_INCREASED',
+                    'current_seat_count': current_seat_count,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_seat_count < member_count:
+            return Response(
+                {
+                    'error': (
+                        f'Cannot set seat count below current member count ({member_count}).'
+                    ),
+                    'code': 'SEAT_COUNT_BELOW_MEMBERS',
+                    'member_count': member_count,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        proration_date = int(time.time())
+
+        stripe_sub = stripe.Subscription.retrieve(sub.stripe_subscription_id)
+        extra_seat_item = next(
+            (
+                item for item in stripe_sub['items']['data']
+                if item['price']['id'] == plan.stripe_extra_seat_price_id
+            ),
+            None,
+        )
+
+        new_extra_qty = max(0, new_seat_count - (plan.included_seats or 1))
+
+        if extra_seat_item:
+            preview_items = [{'id': extra_seat_item['id'], 'quantity': new_extra_qty}]
+        else:
+            preview_items = [{'price': plan.stripe_extra_seat_price_id, 'quantity': new_extra_qty}]
+
+        invoice = stripe.Invoice.create_preview(
+            customer=stripe_sub['customer'],
+            subscription=sub.stripe_subscription_id,
+            subscription_details={
+                'items': preview_items,
+                'proration_date': proration_date,
+            },
+        )
+
+        extra_seats = max(0, new_seat_count - (plan.included_seats or 1))
+        monthly_total_cents = (plan.base_price_cents or 0) + extra_seats * (plan.extra_seat_price_cents or 0)
+
+        return Response(
+            {
+                'proration_now_cents': invoice.amount_due,
+                'monthly_total_cents': monthly_total_cents,
+                'proration_date': proration_date,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except stripe.StripeError as e:
+        return Response(
+            {'error': str(e), 'code': 'STRIPE_ERROR'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except Exception as e:
+        logger.exception("preview_seat_purchase unexpected error")
+        return Response(
+            {'error': str(e), 'code': 'PREVIEW_SEATS_ERROR'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, HasValidOrganizationToken, IsOrganizationAdmin])
 def purchase_seats(request):
@@ -253,6 +382,7 @@ def purchase_seats(request):
             )
 
         new_seat_count = request.data.get('seat_count')
+        proration_date = request.data.get('proration_date')
         if not isinstance(new_seat_count, int) or new_seat_count < 1:
             return Response(
                 {'error': 'seat_count must be a positive integer', 'code': 'INVALID_SEAT_COUNT'},
@@ -318,12 +448,16 @@ def purchase_seats(request):
 
         new_extra_qty = max(0, new_seat_count - (plan.included_seats or 1))
 
+        modify_kwargs = {'proration_behavior': 'create_prorations'}
+        if isinstance(proration_date, int):
+            modify_kwargs['subscription_proration_date'] = proration_date
+
         if extra_seat_item:
             item_patch = {'id': extra_seat_item['id'], 'quantity': new_extra_qty}
             stripe.Subscription.modify(
                 sub.stripe_subscription_id,
                 items=[item_patch],
-                proration_behavior='create_prorations',
+                **modify_kwargs,
             )
         elif new_extra_qty > 0:
             # No extra-seat item yet (org was at exactly included_seats); add the item.
@@ -331,7 +465,7 @@ def purchase_seats(request):
             stripe.Subscription.modify(
                 sub.stripe_subscription_id,
                 items=[item_patch],
-                proration_behavior='create_prorations',
+                **modify_kwargs,
             )
         # else: new_seat_count <= included_seats — no Stripe change needed, just update DB.
 

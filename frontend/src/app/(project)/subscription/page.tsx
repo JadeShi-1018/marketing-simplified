@@ -29,18 +29,29 @@ function SubscriptionSkeleton() {
   );
 }
 
+interface ConfirmState {
+  proration_now_cents: number;
+  monthly_total_cents: number;
+  proration_date: number;
+  seat_count: number;
+}
+
 function ManageSeatsBlock({
   subscription,
   isOrgAdmin,
+  previewSeatPurchase,
   purchaseSeats,
 }: {
   subscription: NonNullable<ReturnType<typeof usePlan>['subscription']>;
   isOrgAdmin: boolean;
+  previewSeatPurchase: ReturnType<typeof usePlan>['previewSeatPurchase'];
   purchaseSeats: ReturnType<typeof usePlan>['purchaseSeats'];
 }) {
   const isFree = subscription.plan.base_price_cents === 0;
   const [inputValue, setInputValue] = useState(String(subscription.seat_count));
-  const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
   if (isFree) {
     return (
@@ -50,17 +61,38 @@ function ManageSeatsBlock({
     );
   }
 
-  const handleSave = async () => {
+  const handlePreview = async () => {
     const n = parseInt(inputValue, 10);
     if (isNaN(n) || n < 1) {
       toast.error('Enter a valid seat count.');
       return;
     }
-    setSaving(true);
+    setPreviewing(true);
     try {
-      const result = await purchaseSeats(n);
+      const preview = await previewSeatPurchase(n);
+      setConfirmState({ ...preview, seat_count: n });
+    } catch (err: any) {
+      const code = err?.response?.data?.code;
+      if (code === 'SEAT_COUNT_NOT_INCREASED') {
+        toast.error(`Seat count must be greater than current (${subscription.seat_count}).`);
+      } else if (code === 'SEAT_COUNT_BELOW_MEMBERS') {
+        toast.error(`Seat count cannot be less than current member count (${subscription.member_count}).`);
+      } else {
+        toast.error(err?.response?.data?.error || 'Failed to preview seat purchase.');
+      }
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    if (!confirmState) return;
+    setConfirming(true);
+    try {
+      const result = await purchaseSeats(confirmState.seat_count, confirmState.proration_date);
       toast.success(`Seats updated to ${result.seat_count}.`);
       setInputValue(String(result.seat_count + 1));
+      setConfirmState(null);
     } catch (err: any) {
       const code = err?.response?.data?.code;
       if (code === 'SEAT_COUNT_NOT_INCREASED') {
@@ -70,14 +102,15 @@ function ManageSeatsBlock({
       } else {
         toast.error(err?.response?.data?.error || 'Failed to update seats.');
       }
+      setConfirmState(null);
     } finally {
-      setSaving(false);
+      setConfirming(false);
     }
   };
 
+  const includedSeats = subscription.plan.included_seats ?? 1;
   const extraSeatCents = subscription.plan.extra_seat_price_cents ?? 0;
   const baseCents = subscription.plan.base_price_cents ?? 0;
-  const includedSeats = subscription.plan.included_seats ?? 1;
   const n = parseInt(inputValue, 10);
   const previewExtra = !isNaN(n) && n > subscription.seat_count ? n - includedSeats : null;
   const previewTotal =
@@ -103,35 +136,72 @@ function ManageSeatsBlock({
         </div>
       </div>
       {isOrgAdmin && (
-        <div className="mt-4 flex items-center gap-3">
-          <label className="text-sm text-gray-600">New seat count:</label>
-          <input
-            type="number"
-            min={subscription.seat_count + 1}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            className="w-24 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#3CCED7] focus:outline-none"
-          />
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2bb8c1] disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Purchase seats'}
-          </button>
-          {previewTotal !== null && (
-            <span className="text-xs text-gray-400">
-              ≈ ${(previewTotal / 100).toFixed(2)}/mo
-            </span>
+        <>
+          <div className="mt-4 flex items-center gap-3">
+            <label className="text-sm text-gray-600">New seat count:</label>
+            <input
+              type="number"
+              min={subscription.seat_count + 1}
+              value={inputValue}
+              onChange={(e) => { setInputValue(e.target.value); setConfirmState(null); }}
+              disabled={confirming}
+              className="w-24 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#3CCED7] focus:outline-none disabled:opacity-50"
+            />
+            <button
+              onClick={handlePreview}
+              disabled={previewing || confirming}
+              className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2bb8c1] disabled:opacity-50"
+            >
+              {previewing ? 'Calculating…' : 'Purchase seats'}
+            </button>
+            {previewTotal !== null && !confirmState && (
+              <span className="text-xs text-gray-400">
+                ≈ ${(previewTotal / 100).toFixed(2)}/mo
+              </span>
+            )}
+          </div>
+          {confirmState && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+              <div className="font-medium text-gray-800 mb-1">
+                Confirm purchase — {confirmState.seat_count} seats
+              </div>
+              <p className="text-gray-600">
+                You&apos;ll be charged{' '}
+                <span className="font-semibold text-gray-900">
+                  ${(confirmState.proration_now_cents / 100).toFixed(2)}
+                </span>{' '}
+                now (prorated for the rest of this billing period), then{' '}
+                <span className="font-semibold text-gray-900">
+                  ${(confirmState.monthly_total_cents / 100).toFixed(2)}/mo
+                </span>{' '}
+                going forward.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={handleConfirm}
+                  disabled={confirming}
+                  className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2bb8c1] disabled:opacity-50"
+                >
+                  {confirming ? 'Processing…' : 'Confirm purchase'}
+                </button>
+                <button
+                  onClick={() => setConfirmState(null)}
+                  disabled={confirming}
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );
 }
 
 function SubscriptionV2Content() {
-  const { plans, loading, error, handleSubscribe, subscription, purchaseSeats } = usePlan();
+  const { plans, loading, error, handleSubscribe, subscription, previewSeatPurchase, purchaseSeats } = usePlan();
   const user = useAuthStore((s) => s.user);
   const currentPlanId = user?.organization?.plan_id ?? null;
   const isOrgAdmin = !!user?.roles?.includes('Organization Admin');
@@ -186,6 +256,7 @@ function SubscriptionV2Content() {
             <ManageSeatsBlock
               subscription={subscription}
               isOrgAdmin={isOrgAdmin}
+              previewSeatPurchase={previewSeatPurchase}
               purchaseSeats={purchaseSeats}
             />
           )}

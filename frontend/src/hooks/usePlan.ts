@@ -41,6 +41,12 @@ interface PurchaseSeatsResponse {
   monthly_total_cents: number;
 }
 
+export interface PreviewSeatsResponse {
+  proration_now_cents: number;
+  monthly_total_cents: number;
+  proration_date: number;
+}
+
 interface UsePlanReturn {
   plans: Plan[];
   loading: boolean;
@@ -52,7 +58,8 @@ interface UsePlanReturn {
   cancelSubscription: () => Promise<void>;
   switchPlan: (planId: number) => Promise<SwitchPlanResponse>;
   handleSubscribe: (planId: number, seatCount?: number) => Promise<void>;
-  purchaseSeats: (newSeatCount: number) => Promise<PurchaseSeatsResponse>;
+  previewSeatPurchase: (newSeatCount: number) => Promise<PreviewSeatsResponse>;
+  purchaseSeats: (newSeatCount: number, prorationDate?: number) => Promise<PurchaseSeatsResponse>;
 }
 
 export default function usePlan(enabled = true): UsePlanReturn {
@@ -247,9 +254,23 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
-  const purchaseSeats = async (newSeatCount: number): Promise<PurchaseSeatsResponse> => {
+  const previewSeatPurchase = async (newSeatCount: number): Promise<PreviewSeatsResponse> => {
     try {
-      const response = await api.post('/api/stripe/plans/seats/', { seat_count: newSeatCount });
+      const response = await api.get('/api/stripe/plans/seats/preview/', {
+        params: { seat_count: newSeatCount },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error previewing seat purchase:', error);
+      throw error;
+    }
+  };
+
+  const purchaseSeats = async (newSeatCount: number, prorationDate?: number): Promise<PurchaseSeatsResponse> => {
+    try {
+      const payload: Record<string, number> = { seat_count: newSeatCount };
+      if (prorationDate !== undefined) payload.proration_date = prorationDate;
+      const response = await api.post('/api/stripe/plans/seats/', payload);
       setSubscription((prev) =>
         prev ? { ...prev, seat_count: response.data.seat_count } : null,
       );
@@ -277,6 +298,7 @@ export default function usePlan(enabled = true): UsePlanReturn {
     cancelSubscription,
     switchPlan,
     handleSubscribe,
+    previewSeatPurchase,
     purchaseSeats,
   };
 }
