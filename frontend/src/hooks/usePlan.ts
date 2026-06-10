@@ -14,6 +14,7 @@ interface Plan {
   included_seats: number;
   extra_seat_price_cents: number | null;
   overage_price_cents_per_1m: number | null;  // null = hard block
+  currency: string;
   is_archived: boolean;
   // Legacy (deprecated — do not use for rendering)
   max_team_members?: number | null;

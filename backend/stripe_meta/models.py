@@ -23,6 +23,7 @@ class Plan(models.Model):
     max_tokens_per_call = models.BigIntegerField(null=True, blank=True)
     stripe_extra_seat_price_id = models.CharField(max_length=255, null=True, blank=True)
     stripe_overage_price_id = models.CharField(max_length=255, null=True, blank=True)
+    currency = models.CharField(max_length=3, default='AUD')
     is_archived = models.BooleanField(default=False)
 
     def __str__(self):

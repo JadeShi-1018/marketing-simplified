@@ -1921,7 +1921,7 @@ class PlanViewsErrorTest(StripeViewsTestCase):
         # Find the free plan in results
         free_plan_data = next(p for p in data['results'] if p['name'] == 'Free Plan')
         self.assertEqual(free_plan_data['price'], 0)
-        self.assertEqual(free_plan_data['price_currency'], 'USD')
+        self.assertEqual(free_plan_data['currency'], 'AUD')
 
 
 class WebhookViewsErrorTest(StripeViewsTestCase):

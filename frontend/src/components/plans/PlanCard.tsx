@@ -20,6 +20,7 @@ interface PlanCardProps {
   includedSeats: number;
   extraSeatPriceCents: number | null;
   overagePriceCentsPer1m?: number | null;  // null = hard block
+  currency?: string;
   // Legacy feature list (optional)
   features?: PlanFeature[];
   badge?: string;
@@ -46,6 +47,7 @@ export default function PlanCard({
   includedSeats,
   extraSeatPriceCents,
   overagePriceCentsPer1m,
+  currency = 'USD',
   features,
   badge,
   ctaText,
@@ -58,7 +60,7 @@ export default function PlanCard({
   const [seatCount, setSeatCount] = useState(includedSeats);
 
   const isFree = basePriceCents === 0;
-  const displayPrice = isFree ? 'Free' : `$${(basePriceCents / 100).toFixed(0)}`;
+  const displayPrice = isFree ? 'Free' : `$${(basePriceCents / 100).toFixed(0)} ${currency}`;
 
   const handleSubscribe = async () => {
     if (!planId || !onSubscribe || isLoading) return;

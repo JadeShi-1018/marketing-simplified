@@ -358,6 +358,7 @@ function SubscriptionV2Content() {
                     includedSeats={plan.included_seats}
                     extraSeatPriceCents={plan.extra_seat_price_cents ?? 0}
                     overagePriceCentsPer1m={plan.overage_price_cents_per_1m}
+                    currency={plan.currency}
                     badge={isPopular && !isCurrent ? 'Popular' : undefined}
                     ctaText={ctaText}
                     planId={plan.id}
@@ -372,7 +373,7 @@ function SubscriptionV2Content() {
           )}
 
           <p className="mt-6 text-xs text-gray-400">
-            All prices in USD. Billing is handled securely by Stripe.
+            All prices in {currentPlan?.currency ?? (activePlans[0]?.currency ?? 'USD')}. Billing is handled securely by Stripe.
           </p>
         </div>
       </div>
