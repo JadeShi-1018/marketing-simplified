@@ -60,6 +60,7 @@ function ManageSeatsBlock({
     try {
       const result = await purchaseSeats(n);
       toast.success(`Seats updated to ${result.seat_count}.`);
+      setInputValue(String(result.seat_count + 1));
     } catch (err: any) {
       const code = err?.response?.data?.code;
       if (code === 'SEAT_COUNT_NOT_INCREASED') {
