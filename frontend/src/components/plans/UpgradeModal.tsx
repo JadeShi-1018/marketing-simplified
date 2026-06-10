@@ -66,7 +66,7 @@ export default function UpgradeModal() {
 
   const handleUpgrade = () => {
     setCode(null);
-    router.push('/plans');
+    router.push('/subscription');
   };
 
   return (

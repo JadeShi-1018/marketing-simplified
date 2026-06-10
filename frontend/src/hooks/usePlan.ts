@@ -127,8 +127,8 @@ export default function usePlan(enabled = true): UsePlanReturn {
       const response = await api.post('/api/stripe/checkout/', {
         plan_id: planId,
         seat_count: seatCount,
-        success_url: `${baseUrl}/plans`,
-        cancel_url: `${baseUrl}/plans`
+        success_url: `${baseUrl}/subscription`,
+        cancel_url: `${baseUrl}/subscription`
       });
 
       // Backend now returns JSON with checkout_url instead of 303 redirect
