@@ -442,6 +442,8 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
     renderer_classes = [EventStreamRenderer, JSONRenderer]
 
     def post(self, request):
+        from stripe_meta.exceptions import QuotaError
+
         project = _get_user_project(request)
         if not project:
             return Response(
@@ -544,6 +546,9 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                         assistant_metadata.update(data)
 
                     yield f"data: {json.dumps(chunk, default=str)}\n\n"
+            except QuotaError as e:
+                quota_payload = json.dumps({'code': e.code, 'message': e.message, **e.payload})
+                yield f"data: {quota_payload}\n\n"
             except Exception:
                 logger.exception("FileUploadAnalyzeView workflow error")
                 yield f"data: {json.dumps({'type': 'error', 'content': 'An internal error occurred. Please try again.'})}\n\n"
