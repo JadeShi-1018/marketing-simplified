@@ -72,7 +72,6 @@ export default function WorkflowCard({
           stepTypes={workflow.step_types ?? []}
           workflowId={workflow.id}
           currentStatus={localStatus}
-          triggerEnabled={workflow.trigger_enabled}
           triggerConfig={workflow.trigger_config}
           onStatusChange={handleStatusChange}
           onSaveAsTemplate={() => { hide(); setShowTemplateModal(true) }}
@@ -173,11 +172,11 @@ export default function WorkflowCard({
               <span className={`h-2 w-2 rounded-full ${status.dot}`} />
               <span className={`text-xs font-medium ${status.text}`}>{status.label}</span>
             </div>
-            {workflow.trigger_enabled && workflow.trigger_config?.trigger_type && (
+            {localStatus === 'active' && workflow.trigger_config?.trigger_type && (
               <TriggerBadge triggerType={workflow.trigger_config.trigger_type} size="sm" />
             )}
           </div>
-          {workflow.trigger_enabled && workflow.trigger_config?.trigger_type && (
+          {localStatus === 'active' && workflow.trigger_config?.trigger_type && (
             <TriggerVisualizer
               workflowId={workflow.id}
               triggerType={workflow.trigger_config.trigger_type}

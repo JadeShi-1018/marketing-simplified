@@ -1,18 +1,18 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { X, Save } from "lucide-react";
+import { X, Save, AlertCircle } from "lucide-react";
 import {
   TriggerConfigPanel,
   TriggerTimeline,
   type TriggerConfigPanelHandle,
 } from "../triggers";
-import type { WorkflowTriggerConfig } from "@/types/agent";
+import type { WorkflowTriggerConfig, AgentWorkflowDefinition } from "@/types/agent";
 
 interface TriggerDrawerProps {
   isOpen: boolean;
   workflowId: string;
-  initialEnabled?: boolean;
+  workflowStatus: AgentWorkflowDefinition["status"];
   initialConfig?: WorkflowTriggerConfig;
   isSystem?: boolean;
   onClose: () => void;
@@ -22,7 +22,7 @@ interface TriggerDrawerProps {
 export default function TriggerDrawer({
   isOpen,
   workflowId,
-  initialEnabled,
+  workflowStatus,
   initialConfig,
   isSystem,
   onClose,
@@ -32,6 +32,9 @@ export default function TriggerDrawer({
   const [saving, setSaving] = useState(false);
 
   if (!isOpen) return null;
+
+  const isActive = workflowStatus === "active";
+  const isDisabled = !isActive || isSystem;
 
   const handleSave = async () => {
     setSaving(true);
@@ -73,15 +76,25 @@ export default function TriggerDrawer({
           </button>
         </div>
 
+        {/* Warning Banner - Only show when workflow is not active */}
+        {!isActive && (
+          <div className="mx-6 mt-4 flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p className="flex-1 text-sm text-amber-800">
+              Triggers can only be executed when workflow status is <span className="font-semibold">Active</span>.
+            </p>
+          </div>
+        )}
+
         {/* Content */}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {/* Trigger configuration — flat, no card wrapper */}
           <TriggerConfigPanel
             ref={panelRef}
             workflowId={workflowId}
-            initialEnabled={initialEnabled}
             initialConfig={initialConfig}
             isSystem={isSystem}
+            disabled={isDisabled}
             onSave={onSave}
           />
 
@@ -100,7 +113,7 @@ export default function TriggerDrawer({
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || !isActive}
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:opacity-95 disabled:opacity-50 transition-opacity"
             >
               <Save className="h-4 w-4" />

@@ -183,7 +183,7 @@ class AgentWorkflowDefinitionListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'description', 'is_default', 'is_system',
             'status', 'step_count', 'step_types', 'created_at',
-            'trigger_enabled', 'trigger_config', 'trigger_state',
+            'trigger_config', 'trigger_state',
         ]
         read_only_fields = ['id', 'is_system', 'created_at']
 
@@ -215,12 +215,11 @@ class AgentWorkflowDefinitionDetailSerializer(serializers.ModelSerializer):
         model = AgentWorkflowDefinition
         fields = [
             'id', 'name', 'description', 'is_default', 'is_system',
-            'status', 'steps', 'trigger_enabled', 'trigger_config',
+            'status', 'steps', 'trigger_config',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'is_system', 'created_at', 'updated_at']
         extra_kwargs = {
-            'trigger_enabled': {'required': False},
             'trigger_config': {'required': False},
         }
 
@@ -415,5 +414,4 @@ class WorkflowTriggerLogSerializer(serializers.ModelSerializer):
 
 class TriggerConfigUpdateSerializer(serializers.Serializer):
     """Serializer for updating trigger configuration."""
-    trigger_enabled = serializers.BooleanField(required=False)
     trigger_config = serializers.JSONField(required=False)

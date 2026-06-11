@@ -106,10 +106,11 @@ interface CanvasInnerProps {
   workflow: AgentWorkflowDefinition
   currentStatus: AgentWorkflowDefinition["status"]
   onStatusChange: (status: AgentWorkflowDefinition["status"]) => void
+  onWorkflowUpdate: (workflow: AgentWorkflowDefinition) => void
   isUpdatingStatus: boolean
 }
 
-function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUpdatingStatus }: CanvasInnerProps) {
+function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, onWorkflowUpdate, isUpdatingStatus }: CanvasInnerProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const isNew = searchParams.get("new") === "1"
@@ -504,7 +505,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
       <TriggerDrawer
         isOpen={showTriggerDrawer}
         workflowId={workflowId}
-        initialEnabled={workflow.trigger_enabled}
+        workflowStatus={workflow.status}
         initialConfig={workflow.trigger_config}
         isSystem={workflow.is_system}
         onClose={() => setShowTriggerDrawer(false)}
@@ -512,8 +513,8 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
           // Reload workflow to get updated trigger config
           AgentAPI.getWorkflow(workflowId, projectParams)
             .then((wf) => {
-              // Update the workflow state in parent component would be ideal
-              // For now, just show success message
+              // Update the workflow state to sync trigger changes
+              onWorkflowUpdate(wf)
               toast.success("Trigger configuration saved")
             })
             .catch(() => {
@@ -553,6 +554,8 @@ export default function AgentWorkflowCanvas({ workflowId }: AgentWorkflowCanvasP
       try {
         await AgentAPI.updateWorkflow(workflowId, { status }, projectParams)
         setCurrentStatus(status)
+        // Update workflow object to sync status change to all components
+        setWorkflow((prev) => prev ? { ...prev, status } : null)
         toast.success(`Workflow set to ${status}`)
       } catch {
         toast.error("Failed to update status")
@@ -586,6 +589,7 @@ export default function AgentWorkflowCanvas({ workflowId }: AgentWorkflowCanvasP
         workflow={workflow}
         currentStatus={currentStatus}
         onStatusChange={handleStatusChange}
+        onWorkflowUpdate={setWorkflow}
         isUpdatingStatus={isUpdatingStatus}
       />
     </ReactFlowProvider>

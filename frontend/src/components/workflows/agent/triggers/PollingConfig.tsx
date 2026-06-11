@@ -13,6 +13,7 @@ export interface PollingConfigState {
 
 interface PollingConfigProps {
   config: PollingConfigState;
+  disabled?: boolean;
   onChange: (config: PollingConfigState) => void;
 }
 
@@ -65,10 +66,12 @@ const INTERVAL_OPTIONS: Array<{ value: IntervalMinutes; label: string }> = [
   { value: 60, label: "Every hour" },
 ];
 
-export function PollingConfig({ config, onChange }: PollingConfigProps) {
+export function PollingConfig({ config, disabled = false, onChange }: PollingConfigProps) {
   const selectedServices = config.external_services ?? [];
 
   const toggleService = (serviceId: PollingExternalService) => {
+    if (disabled) return;
+
     const next = selectedServices.includes(serviceId)
       ? selectedServices.filter((s) => s !== serviceId)
       : [...selectedServices, serviceId];
@@ -76,6 +79,8 @@ export function PollingConfig({ config, onChange }: PollingConfigProps) {
   };
 
   const setInterval = (interval: IntervalMinutes) => {
+    if (disabled) return;
+
     onChange({ ...config, interval_minutes: interval });
   };
 
@@ -91,12 +96,14 @@ export function PollingConfig({ config, onChange }: PollingConfigProps) {
             <button
               key={value}
               type="button"
+              disabled={disabled}
               onClick={() => setInterval(value)}
               className={cn(
                 "rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
                 config.interval_minutes === value
                   ? "border-transparent bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white"
-                  : "border-gray-200 bg-white text-gray-600 hover:border-gray-300"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-gray-300",
+                disabled && "cursor-not-allowed opacity-50"
               )}
             >
               {label}
@@ -121,12 +128,14 @@ export function PollingConfig({ config, onChange }: PollingConfigProps) {
               <button
                 key={service.id}
                 type="button"
+                disabled={disabled}
                 onClick={() => toggleService(service.id)}
                 className={cn(
                   "flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all",
                   selected
                     ? `${service.activeBorder} bg-white shadow-sm`
-                    : "border-gray-100 bg-gray-50 hover:border-gray-200"
+                    : "border-gray-100 bg-gray-50 hover:border-gray-200",
+                  disabled && "cursor-not-allowed opacity-50"
                 )}
               >
                 <div className={cn("rounded-lg p-1.5 shrink-0", service.iconColor)}>

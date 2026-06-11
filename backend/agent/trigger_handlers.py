@@ -35,7 +35,7 @@ class PollingHandler:
 
         workflows = AgentWorkflowDefinition.objects.filter(
             is_deleted=False,
-            trigger_enabled=True,
+            status='active',
             trigger_config__trigger_type='polling',
         )
 
@@ -313,7 +313,7 @@ class InstantHandler:
         # Find workflows listening to this event type
         workflows = AgentWorkflowDefinition.objects.filter(
             is_deleted=False,
-            trigger_enabled=True,
+            status='active',
             trigger_config__trigger_type='instant',
             trigger_config__instant__event_types__contains=[event_type],
         )
@@ -343,7 +343,7 @@ class InstantHandler:
             workflow = AgentWorkflowDefinition.objects.get(
                 id=workflow_id,
                 is_deleted=False,
-                trigger_enabled=True,
+                status='active',
             )
 
             # Validate signature
@@ -411,7 +411,7 @@ class ScheduledHandler:
         # Find workflows whose next_scheduled_run is due
         workflows = AgentWorkflowDefinition.objects.filter(
             is_deleted=False,
-            trigger_enabled=True,
+            status='active',
             trigger_config__trigger_type='scheduled',
             trigger_state__next_scheduled_run__lte=now,
         ).select_related('trigger_state')

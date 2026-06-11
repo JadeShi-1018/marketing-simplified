@@ -315,7 +315,6 @@ export interface AgentWorkflowDefinition {
   /** Ordered list of step_type strings for each active step (list endpoint only). */
   step_types?: WorkflowStepType[];
   steps?: AgentWorkflowStep[];
-  trigger_enabled?: boolean;
   trigger_config?: WorkflowTriggerConfig;
   trigger_state?: WorkflowTriggerState;
   created_at: string;

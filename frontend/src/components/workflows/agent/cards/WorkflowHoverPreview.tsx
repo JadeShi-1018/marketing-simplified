@@ -135,7 +135,6 @@ interface WorkflowHoverContentProps {
   stepTypes: WorkflowStepType[]
   workflowId: string
   currentStatus: AgentWorkflowDefinition["status"]
-  triggerEnabled?: boolean
   triggerConfig?: WorkflowTriggerConfig
   onStatusChange: (id: string, newStatus: string) => void
   onSaveAsTemplate?: () => void
@@ -148,7 +147,6 @@ export function WorkflowHoverContent({
   stepTypes,
   workflowId,
   currentStatus,
-  triggerEnabled,
   triggerConfig,
   onStatusChange,
   onSaveAsTemplate,
@@ -192,9 +190,8 @@ export function WorkflowHoverContent({
 
   // Show Run button only for manual triggers in active status
   const showRunButton =
-    triggerEnabled &&
-    triggerConfig?.trigger_type === "manual" &&
-    localStatus === "active"
+    localStatus === "active" &&
+    triggerConfig?.trigger_type === "manual"
 
   return (
     <>
@@ -253,7 +250,7 @@ export function WorkflowHoverContent({
           )}
 
           {/* Divider + Trigger Settings (Non-manual triggers) */}
-          {triggerEnabled &&
+          {localStatus === "active" &&
             triggerConfig?.trigger_type &&
             triggerConfig.trigger_type !== "manual" && (
               <>

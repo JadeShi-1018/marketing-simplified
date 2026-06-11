@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useImperativeHandle, useState } from "react";
+import { forwardRef, useImperativeHandle, useState, useEffect } from "react";
 import { Clock, Zap, Calendar, Hand } from "lucide-react";
 import toast from "react-hot-toast";
 import { AgentAPI } from "@/lib/api/agentApi";
@@ -12,9 +12,9 @@ import { PollingConfig, type PollingConfigState } from "./PollingConfig";
 
 interface TriggerConfigPanelProps {
   workflowId: string;
-  initialEnabled?: boolean;
   initialConfig?: WorkflowTriggerConfig;
   isSystem?: boolean;
+  disabled?: boolean;
   onSave?: () => void;
 }
 
@@ -70,14 +70,13 @@ export const TriggerConfigPanel = forwardRef<
 >(function TriggerConfigPanel(
   {
     workflowId,
-    initialEnabled = false,
     initialConfig,
     isSystem = false,
+    disabled = false,
     onSave,
   },
   ref,
 ) {
-  const [enabled, setEnabled] = useState(initialEnabled);
   const [triggerType, setTriggerType] = useState<TriggerType>(
     initialConfig?.trigger_type || "manual",
   );
@@ -105,23 +104,43 @@ export const TriggerConfigPanel = forwardRef<
   );
   const [saving, setSaving] = useState(false);
 
+  // Sync state when initialConfig changes (e.g., after save)
+  useEffect(() => {
+    if (initialConfig?.trigger_type && initialConfig.trigger_type !== triggerType) {
+      setTriggerType(initialConfig.trigger_type);
+
+      // Sync corresponding config based on trigger type
+      if (initialConfig.trigger_type === "instant" && initialConfig.instant) {
+        setInstantConfig(initialConfig.instant);
+      } else if (initialConfig.trigger_type === "polling" && initialConfig.polling) {
+        setPollingConfig({
+          interval_minutes: initialConfig.polling.interval_minutes,
+          external_services: initialConfig.polling.external_services ?? [],
+        });
+      } else if (initialConfig.trigger_type === "scheduled" && initialConfig.scheduled) {
+        setScheduledConfig({
+          cron_expression: initialConfig.scheduled.cron_expression ?? "0 9 * * 1",
+          timezone: initialConfig.scheduled.timezone ?? "UTC",
+        });
+      }
+    }
+  }, [initialConfig]);
+
   const handleSave = async () => {
     if (isSystem) return;
 
     // Validate configuration before saving
-    if (enabled) {
-      if (triggerType === "polling" && pollingConfig.external_services.length === 0) {
-        toast.error("Please select at least one service to enable polling.");
-        return;
-      }
-      if (triggerType === "instant" && (!instantConfig?.event_types || instantConfig.event_types.length === 0)) {
-        toast.error("Please select at least one event to enable instant triggers.");
-        return;
-      }
-      if (triggerType === "scheduled" && (!scheduledConfig?.cron_expression || scheduledConfig.cron_expression === "")) {
-        toast.error("Please add at least one time slot for scheduled triggers.");
-        return;
-      }
+    if (triggerType === "polling" && pollingConfig.external_services.length === 0) {
+      toast.error("Please select at least one service to enable polling.");
+      return;
+    }
+    if (triggerType === "instant" && (!instantConfig?.event_types || instantConfig.event_types.length === 0)) {
+      toast.error("Please select at least one event to enable instant triggers.");
+      return;
+    }
+    if (triggerType === "scheduled" && (!scheduledConfig?.cron_expression || scheduledConfig.cron_expression === "")) {
+      toast.error("Please add at least one time slot for scheduled triggers.");
+      return;
     }
 
     setSaving(true);
@@ -144,7 +163,6 @@ export const TriggerConfigPanel = forwardRef<
       }
 
       await AgentAPI.updateTriggerConfig(workflowId, {
-        trigger_enabled: enabled,
         trigger_config: config,
       });
 
@@ -160,32 +178,10 @@ export const TriggerConfigPanel = forwardRef<
 
   useImperativeHandle(ref, () => ({ save: handleSave }));
 
-  const disabled = isSystem || !enabled;
+  const isDisabled = disabled || isSystem;
 
   return (
     <div className="space-y-5">
-      {/* Enable toggle */}
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-semibold text-gray-700">Enable trigger</span>
-        <button
-          type="button"
-          disabled={isSystem}
-          onClick={() => setEnabled(!enabled)}
-          className={cn(
-            "relative inline-flex h-6 w-11 items-center rounded-full transition-colors",
-            enabled ? "bg-emerald-500" : "bg-gray-300",
-            isSystem && "cursor-not-allowed opacity-50",
-          )}
-        >
-          <span
-            className={cn(
-              "inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform",
-              enabled ? "translate-x-6" : "translate-x-1",
-            )}
-          />
-        </button>
-      </div>
-
       {/* Trigger Type grid */}
       <div className="space-y-2">
         <label className="block text-sm font-semibold text-gray-700">
@@ -206,14 +202,14 @@ export const TriggerConfigPanel = forwardRef<
               >
                 <button
                   type="button"
-                  disabled={disabled}
+                  disabled={isDisabled}
                   onClick={() => setTriggerType(option.type)}
                   className={cn(
                     "flex w-full h-full items-start gap-3 p-3 text-left transition-all",
                     isSelected
                       ? "rounded-[10px] bg-white"
                       : "rounded-xl border-2 border-transparent bg-gray-50 hover:bg-gray-100",
-                    disabled && "cursor-not-allowed opacity-50",
+                    isDisabled && "cursor-not-allowed opacity-50",
                   )}
                 >
                 <div
@@ -240,35 +236,39 @@ export const TriggerConfigPanel = forwardRef<
       </div>
 
       {/* Type-specific config — rendered inline, no box wrapper */}
-      {enabled && (
-        <div className="pt-1">
-          {triggerType === "instant" && (
-            <InstantConfig
-              workflowId={workflowId}
-              config={instantConfig}
-              onChange={setInstantConfig}
-            />
-          )}
+      <div className="pt-1">
+        {triggerType === "instant" && (
+          <InstantConfig
+            workflowId={workflowId}
+            config={instantConfig}
+            disabled={isDisabled}
+            onChange={setInstantConfig}
+          />
+        )}
 
-          {triggerType === "scheduled" && (
-            <ScheduledConfig
-              config={scheduledConfig}
-              onChange={setScheduledConfig}
-            />
-          )}
+        {triggerType === "scheduled" && (
+          <ScheduledConfig
+            config={scheduledConfig}
+            disabled={isDisabled}
+            onChange={setScheduledConfig}
+          />
+        )}
 
-          {triggerType === "polling" && (
-            <PollingConfig config={pollingConfig} onChange={setPollingConfig} />
-          )}
+        {triggerType === "polling" && (
+          <PollingConfig
+            config={pollingConfig}
+            disabled={isDisabled}
+            onChange={setPollingConfig}
+          />
+        )}
 
-          {triggerType === "manual" && (
-            <p className="text-xs text-gray-500 leading-relaxed">
-              This workflow can be triggered manually from the workflow list or
-              editor.
-            </p>
-          )}
-        </div>
-      )}
+        {triggerType === "manual" && (
+          <p className="text-xs text-gray-500 leading-relaxed">
+            This workflow can be triggered manually from the workflow list or
+            editor.
+          </p>
+        )}
+      </div>
 
       {saving && (
         <p className="text-xs text-gray-400 text-right">Saving…</p>

@@ -37,9 +37,9 @@ export function TriggerDashboard({ className }: TriggerDashboardProps) {
   const loadDashboardData = async () => {
     setIsLoading(true);
     try {
-      // Load workflows with triggers enabled
+      // Load workflows with active status
       const workflowsData = await AgentAPI.listWorkflowDefinitions();
-      const activeWorkflows = workflowsData.filter((w) => w.trigger_enabled);
+      const activeWorkflows = workflowsData.filter((w) => w.status === 'active');
       setWorkflows(activeWorkflows);
 
       if (activeWorkflows.length > 0) {

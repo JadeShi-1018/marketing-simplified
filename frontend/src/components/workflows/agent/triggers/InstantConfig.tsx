@@ -11,6 +11,7 @@ interface InstantConfigProps {
     webhook_enabled?: boolean;
     webhook_secret?: string;
   };
+  disabled?: boolean;
   onChange?: (config: {
     event_types: string[];
     webhook_enabled: boolean;
@@ -60,7 +61,7 @@ const EVENT_OPTIONS: Array<{
   },
 ];
 
-export function InstantConfig({ workflowId, config, onChange }: InstantConfigProps) {
+export function InstantConfig({ workflowId, config, disabled = false, onChange }: InstantConfigProps) {
   const [copiedWebhook, setCopiedWebhook] = useState(false);
   const [copiedSecret, setCopiedSecret] = useState(false);
 
@@ -68,6 +69,8 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
   const webhookSecret = config?.webhook_secret || "your-webhook-secret-here";
 
   const handleEventToggle = (eventType: string) => {
+    if (disabled) return;
+
     const currentEvents = config?.event_types || [];
     const newEvents = currentEvents.includes(eventType)
       ? currentEvents.filter(e => e !== eventType)
@@ -81,6 +84,8 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
   };
 
   const handleWebhookToggle = () => {
+    if (disabled) return;
+
     onChange?.({
       event_types: config?.event_types || [],
       webhook_enabled: !config?.webhook_enabled,
@@ -117,12 +122,14 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
               <button
                 key={event.value}
                 type="button"
+                disabled={disabled}
                 onClick={() => handleEventToggle(event.value)}
                 className={cn(
                   "flex items-center gap-3 rounded-lg border-2 p-3 text-left transition-all",
                   isSelected
                     ? `${event.activeBorder} bg-white shadow-sm`
-                    : "border-gray-100 bg-gray-50 hover:border-gray-200"
+                    : "border-gray-100 bg-gray-50 hover:border-gray-200",
+                  disabled && "cursor-not-allowed opacity-50"
                 )}
               >
                 <div className={cn("rounded-lg p-1.5 shrink-0", event.iconColor)}>
@@ -161,10 +168,12 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
             <span className="text-xs font-medium text-gray-600">Enable Webhook</span>
             <button
               type="button"
+              disabled={disabled}
               onClick={handleWebhookToggle}
               className={cn(
                 "relative inline-flex h-5 w-9 items-center rounded-full transition-colors",
-                config?.webhook_enabled ? "bg-amber-500" : "bg-gray-300"
+                config?.webhook_enabled ? "bg-amber-500" : "bg-gray-300",
+                disabled && "cursor-not-allowed opacity-50"
               )}
             >
               <span

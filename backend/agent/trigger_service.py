@@ -65,9 +65,9 @@ class TriggerExecutionService:
                 is_deleted=False,
             )
 
-            # 2. Check if triggers are enabled
-            if not workflow.trigger_enabled and trigger_type != 'manual':
-                logger.info(f"Triggers disabled for workflow {workflow.name}")
+            # 2. Check if workflow is active
+            if workflow.status != 'active' and trigger_type != 'manual':
+                logger.info(f"Workflow {workflow.name} is not active (status: {workflow.status})")
                 status = 'skipped'
                 return None
 

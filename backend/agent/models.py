@@ -423,10 +423,6 @@ class AgentWorkflowDefinition(TimeStampedModel):
     )
 
     # Trigger configuration fields
-    trigger_enabled = models.BooleanField(
-        default=False,
-        help_text="Enable automatic triggering for this workflow"
-    )
     trigger_config = models.JSONField(
         default=dict,
         blank=True,

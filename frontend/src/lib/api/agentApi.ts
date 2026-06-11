@@ -471,7 +471,6 @@ export const AgentAPI = {
   updateTriggerConfig: async (
     workflowId: string,
     config: {
-      trigger_enabled?: boolean;
       trigger_config?: WorkflowTriggerConfig;
     },
     params?: { project_id?: string | number }

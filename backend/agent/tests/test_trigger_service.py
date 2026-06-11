@@ -49,7 +49,6 @@ class TriggerExecutionServiceTests(TestCase):
             project=self.project,
             created_by=self.user,
             status='active',
-            trigger_enabled=True,
             trigger_config={
                 'trigger_type': 'instant',
                 'instant': {
@@ -63,7 +62,7 @@ class TriggerExecutionServiceTests(TestCase):
         """Test that workflow and trigger models are created successfully."""
         self.assertIsNotNone(self.workflow.id)
         self.assertEqual(self.workflow.name, 'Test Workflow')
-        self.assertTrue(self.workflow.trigger_enabled)
+        self.assertEqual(self.workflow.status, 'active')
         self.assertEqual(self.workflow.trigger_config['trigger_type'], 'instant')
 
     def test_rate_limit_enforcement(self):
@@ -148,10 +147,10 @@ class TriggerExecutionServiceTests(TestCase):
         )
         self.assertIsNotNone(result2, "Different context should not be deduplicated")
 
-    def test_manual_trigger_bypasses_enabled_check(self):
-        """Test that manual triggers work even when trigger_enabled is False."""
-        # Disable triggers
-        self.workflow.trigger_enabled = False
+    def test_manual_trigger_bypasses_status_check(self):
+        """Test that manual triggers work even when workflow status is not active."""
+        # Set workflow to draft status
+        self.workflow.status = 'draft'
         self.workflow.save()
 
         # Manual trigger should still work
@@ -162,7 +161,7 @@ class TriggerExecutionServiceTests(TestCase):
             user=self.user,
             project=self.project,
         )
-        self.assertIsNotNone(result, "Manual trigger should bypass enabled check")
+        self.assertIsNotNone(result, "Manual trigger should bypass status check")
 
     def test_polling_condition_evaluation(self):
         """Test polling trigger condition evaluation."""

@@ -29,6 +29,7 @@ interface ScheduledConfigProps {
     cron_expression?: string;
     timezone?: string;
   };
+  disabled?: boolean;
   onChange?: (config: { cron_expression: string; timezone: string }) => void;
 }
 
@@ -191,7 +192,7 @@ function buildSummary(timeSlots: TimeSlot[]): string {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ScheduledConfig({ config, onChange }: ScheduledConfigProps) {
+export function ScheduledConfig({ config, disabled = false, onChange }: ScheduledConfigProps) {
   const timezone = config?.timezone ?? "UTC";
   const initial  = parseCron(config?.cron_expression);
 
@@ -234,6 +235,8 @@ export function ScheduledConfig({ config, onChange }: ScheduledConfigProps) {
 
   // Time slot handlers
   const handleAddSlot = () => {
+    if (disabled) return;
+
     let newSlot: TimeSlot;
 
     if (popoverTab === "interval") {
@@ -284,6 +287,8 @@ export function ScheduledConfig({ config, onChange }: ScheduledConfigProps) {
   };
 
   const handleRemoveSlot = (id: string) => {
+    if (disabled) return;
+
     const newSlots = timeSlots.filter((s) => s.id !== id);
     setTimeSlots(newSlots);
     emit(newSlots);
@@ -341,8 +346,12 @@ export function ScheduledConfig({ config, onChange }: ScheduledConfigProps) {
                 <span>{formatSlotLabel(slot)}</span>
                 <button
                   type="button"
+                  disabled={disabled}
                   onClick={() => handleRemoveSlot(slot.id)}
-                  className="flex h-4 w-4 items-center justify-center rounded-full text-[#2ba8af] transition-colors hover:bg-[#3CCED7]/20 hover:text-red-600"
+                  className={cn(
+                    "flex h-4 w-4 items-center justify-center rounded-full text-[#2ba8af] transition-colors hover:bg-[#3CCED7]/20 hover:text-red-600",
+                    disabled && "cursor-not-allowed opacity-50"
+                  )}
                   aria-label="Remove"
                 >
                   <span className="text-xs">✕</span>
@@ -356,14 +365,18 @@ export function ScheduledConfig({ config, onChange }: ScheduledConfigProps) {
         <div className="relative" ref={popoverRef}>
           <button
             type="button"
+            disabled={disabled}
             onClick={() => setPopoverOpen(!popoverOpen)}
-            className="inline-flex items-center gap-1.5 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:border-[#3CCED7] hover:text-[#2ba8af]"
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-lg border-2 border-dashed border-gray-300 px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:border-[#3CCED7] hover:text-[#2ba8af]",
+              disabled && "cursor-not-allowed opacity-50"
+            )}
           >
             <span className="text-base">+</span> Add time slot
           </button>
 
           {/* Popover with 3 tabs */}
-          {popoverOpen && (
+          {popoverOpen && !disabled && (
             <div className="absolute left-0 top-full z-20 mt-2 w-96 rounded-xl border border-gray-200 bg-white shadow-xl">
               {/* Tab headers */}
               <div className="flex border-b border-gray-100">

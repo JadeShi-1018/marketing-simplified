@@ -720,8 +720,6 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
         serializer = TriggerConfigUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        if 'trigger_enabled' in serializer.validated_data:
-            workflow.trigger_enabled = serializer.validated_data['trigger_enabled']
         if 'trigger_config' in serializer.validated_data:
             workflow.trigger_config = serializer.validated_data['trigger_config']
 
