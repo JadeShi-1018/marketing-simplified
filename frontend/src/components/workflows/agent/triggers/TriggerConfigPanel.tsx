@@ -197,22 +197,25 @@ export const TriggerConfigPanel = forwardRef<
             const isSelected = triggerType === option.type;
 
             return (
-              <button
+              <div
                 key={option.type}
-                type="button"
-                disabled={disabled}
-                onClick={() => setTriggerType(option.type)}
                 className={cn(
-                  "flex items-start gap-3 rounded-xl p-3 text-left transition-all",
-                  isSelected
-                    ? "border-2 bg-[#3CCED7]/5"
-                    : "border-2 border-transparent bg-gray-50 hover:bg-gray-100",
-                  disabled && "cursor-not-allowed opacity-50",
+                  "rounded-xl transition-all flex",
+                  isSelected ? "p-[2px] bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" : ""
                 )}
-                style={isSelected ? {
-                  borderImage: 'linear-gradient(135deg, #3CCED7, #A6E661) 1'
-                } : undefined}
               >
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => setTriggerType(option.type)}
+                  className={cn(
+                    "flex w-full h-full items-start gap-3 p-3 text-left transition-all",
+                    isSelected
+                      ? "rounded-[10px] bg-white"
+                      : "rounded-xl border-2 border-transparent bg-gray-50 hover:bg-gray-100",
+                    disabled && "cursor-not-allowed opacity-50",
+                  )}
+                >
                 <div
                   className={cn(
                     "rounded-lg p-2 shrink-0",
@@ -230,6 +233,7 @@ export const TriggerConfigPanel = forwardRef<
                   </p>
                 </div>
               </button>
+              </div>
             );
           })}
         </div>

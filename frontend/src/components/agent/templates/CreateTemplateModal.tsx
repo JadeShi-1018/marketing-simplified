@@ -289,17 +289,20 @@ export function CreateTemplateModal({
             </p>
             <div className="grid grid-cols-2 gap-3">
               {/* Organization card */}
-              <button
-                type="button"
-                disabled={!userOrg}
-                onClick={() => setShareOrg((v) => !v)}
-                className={cn(
-                  "relative flex flex-col items-start gap-2 rounded-2xl border-2 p-4 text-left transition-all",
-                  !userOrg && "cursor-not-allowed opacity-40",
-                  shareOrg ? "bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
-                )}
-                style={shareOrg ? { borderImage: 'linear-gradient(135deg, #3CCED7, #A6E661) 1' } : undefined}
-              >
+              <div className={cn(
+                "rounded-2xl transition-all flex",
+                shareOrg ? "p-[2px] bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" : ""
+              )}>
+                <button
+                  type="button"
+                  disabled={!userOrg}
+                  onClick={() => setShareOrg((v) => !v)}
+                  className={cn(
+                    "relative flex w-full h-full flex-col items-start gap-2 p-4 text-left transition-all",
+                    shareOrg ? "rounded-[14px] bg-indigo-50" : "rounded-2xl border-2 border-gray-200 bg-white hover:border-gray-300",
+                    !userOrg && "cursor-not-allowed opacity-40"
+                  )}
+                >
                 {shareOrg && (
                   <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500">
                     <Check className="h-3 w-3 text-white" />
@@ -319,21 +322,25 @@ export function CreateTemplateModal({
                   </p>
                 </div>
               </button>
+              </div>
 
               {/* Project card */}
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !shareProject
-                  setShareProject(next)
-                  if (!next) setSelectedProjectIds(new Set())
-                }}
-                className={cn(
-                  "relative flex flex-col items-start gap-2 rounded-2xl border-2 p-4 text-left transition-all",
-                  shareProject ? "bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
-                )}
-                style={shareProject ? { borderImage: 'linear-gradient(135deg, #3CCED7, #A6E661) 1' } : undefined}
-              >
+              <div className={cn(
+                "rounded-2xl transition-all flex",
+                shareProject ? "p-[2px] bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" : ""
+              )}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !shareProject
+                    setShareProject(next)
+                    if (!next) setSelectedProjectIds(new Set())
+                  }}
+                  className={cn(
+                    "relative flex w-full h-full flex-col items-start gap-2 p-4 text-left transition-all",
+                    shareProject ? "rounded-[14px] bg-indigo-50" : "rounded-2xl border-2 border-gray-200 bg-white hover:border-gray-300"
+                  )}
+                >
                 {shareProject && selectedProjectIds.size > 0 && (
                   <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500">
                     <span className="text-[10px] font-bold text-white">{selectedProjectIds.size}</span>
@@ -351,6 +358,7 @@ export function CreateTemplateModal({
                   </p>
                 </div>
               </button>
+              </div>
             </div>
 
             {/* Project multi-select checklist */}
