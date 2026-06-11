@@ -19,6 +19,11 @@ function dispatchQuotaError(payload: Record<string, unknown>): void {
   window.dispatchEvent(new CustomEvent('quota:error', { detail: payload }));
 }
 
+function dispatchQuotaRefresh(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('quota:refresh'));
+}
+
 /** Build auth headers for SSE fetch requests (mirrors Axios interceptor logic). */
 function getSSEAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -161,6 +166,7 @@ export const AgentAPI = {
                   const event = parsed as unknown as SSEEvent;
                   onEvent(event);
                   if (event.type === 'done') {
+                    dispatchQuotaRefresh();
                     onDone?.();
                     return;
                   }
@@ -173,6 +179,7 @@ export const AgentAPI = {
         }
 
         // Stream ended without 'done' event
+        dispatchQuotaRefresh();
         onDone?.();
       })
       .catch((err) => {
@@ -293,6 +300,7 @@ export const AgentAPI = {
                   const event = parsed as unknown as SSEEvent;
                   onEvent(event);
                   if (event.type === 'done') {
+                    dispatchQuotaRefresh();
                     onDone?.();
                     return;
                   }
@@ -304,6 +312,7 @@ export const AgentAPI = {
           }
         }
 
+        dispatchQuotaRefresh();
         onDone?.();
       })
       .catch((err) => {

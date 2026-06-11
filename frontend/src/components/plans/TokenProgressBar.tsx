@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { formatTokens } from '@/lib/format';
 
@@ -22,12 +22,21 @@ export default function TokenProgressBar({ projectId }: TokenProgressBarProps) {
   const [data, setData] = useState<QuotaPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchData = useCallback(() => {
     api
       .get<QuotaPreview>('/api/stripe/quota-preview/', { params: { project_id: projectId } })
       .then((res) => setData(res.data))
       .catch(() => setError('Failed to load usage'));
   }, [projectId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    window.addEventListener('quota:refresh', fetchData);
+    return () => window.removeEventListener('quota:refresh', fetchData);
+  }, [fetchData]);
 
   if (error) {
     return <p className="text-xs text-red-500">{error}</p>;

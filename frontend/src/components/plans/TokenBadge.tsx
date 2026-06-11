@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { formatTokens } from '@/lib/format';
 
@@ -17,12 +17,21 @@ interface TokenBadgeProps {
 export default function TokenBadge({ projectId }: TokenBadgeProps) {
   const [data, setData] = useState<QuotaPreview | null>(null);
 
-  useEffect(() => {
+  const fetchData = useCallback(() => {
     api
       .get<QuotaPreview>('/api/stripe/quota-preview/', { params: { project_id: projectId } })
       .then((res) => setData(res.data))
       .catch(() => {});
   }, [projectId]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useEffect(() => {
+    window.addEventListener('quota:refresh', fetchData);
+    return () => window.removeEventListener('quota:refresh', fetchData);
+  }, [fetchData]);
 
   if (!data) return null;
 
