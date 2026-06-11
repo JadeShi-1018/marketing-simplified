@@ -515,7 +515,6 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, onWo
             .then((wf) => {
               // Update the workflow state to sync trigger changes
               onWorkflowUpdate(wf)
-              toast.success("Trigger configuration saved")
             })
             .catch(() => {
               // Error already handled by TriggerConfigPanel

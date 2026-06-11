@@ -40,7 +40,7 @@ export default function TriggerDrawer({
     setSaving(true);
     try {
       await panelRef.current?.save();
-      onSave();
+      // onSave is called by TriggerConfigPanel after successful save
     } finally {
       setSaving(false);
     }

@@ -61,7 +61,8 @@ export default function WorkflowsTab({ onCreateClick, refreshKey }: WorkflowsTab
   }, [workflows, search])
 
   const systemWorkflows = filtered.filter((w) => w.is_system)
-  const myWorkflows = filtered.filter((w) => !w.is_system)
+  const activeWorkflows = filtered.filter((w) => !w.is_system && w.trigger_config?.trigger_type)
+  const allWorkflows = filtered.filter((w) => !w.is_system)
   const defaultSystemWorkflow = systemWorkflows.find((w) => w.is_default) ?? systemWorkflows[0]
 
   const handleDuplicate = async (workflow: AgentWorkflowDefinition) => {
@@ -193,14 +194,36 @@ export default function WorkflowsTab({ onCreateClick, refreshKey }: WorkflowsTab
             </section>
           )}
 
-          {/* My custom workflows section */}
-          {myWorkflows.length > 0 ? (
+          {/* Active workflows section */}
+          {activeWorkflows.length > 0 && (
             <section>
               <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
-                Custom workflows
+                Active workflows
               </h3>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                {myWorkflows.map((wf) => (
+                {activeWorkflows.map((wf) => (
+                  <WorkflowCard
+                    key={wf.id}
+                    workflow={wf}
+                    needsProject={needsProject}
+                    duplicating={duplicatingId === wf.id}
+                    onDuplicate={() => handleDuplicate(wf)}
+                    onDelete={() => setDeletingWorkflow(wf)}
+                    onStatusChange={handleStatusChange}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* All workflows section */}
+          {allWorkflows.length > 0 ? (
+            <section>
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-400">
+                All workflows
+              </h3>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {allWorkflows.map((wf) => (
                   <WorkflowCard
                     key={wf.id}
                     workflow={wf}
