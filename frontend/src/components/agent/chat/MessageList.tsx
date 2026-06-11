@@ -12,7 +12,7 @@ import { MiroGenerateCard } from "./MiroGenerateCard"
 import { DistributeMessageCard } from "./DistributeMessageCard"
 import { TaskListCard } from "./TaskListCard"
 import { RecommendedMiroBoardCard } from "./RecommendedMiroBoardCard"
-import type { AnomalyItem, RecommendedTask, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
+import type { AnomalyItem, RecommendedTask, ReviewedAnomaly, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
 import { StepProgress, type StepProgressItem } from "./StepProgress"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import type { TaskGenerationStatus } from "./TaskListCard"
@@ -45,6 +45,7 @@ export interface ChatMessage {
   type?: ChatMessageType
   isFollowUpPrompt?: boolean
   anomalies?: AnomalyItem[]
+  anomaliesConfirmed?: boolean
   recommendedTasks?: RecommendedTask[]
   columnMappingData?: ColumnDetectionData
   fileName?: string
@@ -63,6 +64,7 @@ export interface MessageListProps {
   onAction?: (action: string) => void
   onNavigate?: (view: string, message?: ChatMessage) => void
   onConfirmColumns?: (mapping: Record<string, string>) => void
+  onConfirmAnomalies?: (messageId: string, reviewed: ReviewedAnomaly[]) => void
   onReupload?: () => void
   sessionId?: string | null
   approvalDisabled?: boolean
@@ -96,6 +98,7 @@ export function MessageList({
   onAction,
   onNavigate,
   onConfirmColumns,
+  onConfirmAnomalies,
   onReupload,
   sessionId,
   approvalDisabled,
@@ -349,6 +352,13 @@ export function MessageList({
                     anomalies={message.anomalies}
                     messageId={message.id}
                     blockId={`${message.id}-anomalies`}
+                    confirmed={Boolean(message.anomaliesConfirmed)}
+                    disabled={isStreaming}
+                    onConfirm={
+                      onConfirmAnomalies
+                        ? (reviewed) => onConfirmAnomalies(message.id, reviewed)
+                        : undefined
+                    }
                   />
                 </AgentMessageBoardBlock>
               )}

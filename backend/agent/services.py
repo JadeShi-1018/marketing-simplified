@@ -268,6 +268,32 @@ def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None,
     return json.loads(result['text'])
 
 
+def _assign_anomaly_ids(analysis):
+    """Assign a stable id to every anomaly so the frontend can reference them
+    across the review/confirmation round-trip.
+
+    - Idempotent: anomalies that already carry an ``id`` are left untouched, so
+      re-analysis or session restore never reshuffles ids.
+    - Zero-anomaly datasets are marked ``anomalies_confirmed=True`` so they do
+      not block the workflow waiting for a confirmation that has no card. This
+      preserves the existing downstream behaviour (tasks still flow from
+      ``recommended_tasks``); task creation is only skipped when anomalies were
+      detected and the user excluded all of them.
+    """
+    if not isinstance(analysis, dict):
+        return analysis
+
+    anomalies = analysis.get('anomalies') or []
+    for i, anomaly in enumerate(anomalies):
+        if isinstance(anomaly, dict) and not anomaly.get('id'):
+            anomaly['id'] = f"anom_{i}"
+
+    if not anomalies:
+        analysis['anomalies_confirmed'] = True
+
+    return analysis
+
+
 def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None, agent_session=None):
     """Run analysis using Gemini, with Claude as fallback.
 
@@ -280,12 +306,12 @@ def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_co
     from .gemini_client import _get_api_key as _gemini_key
     if _gemini_key():
         try:
-            return _call_gemini_analysis(
+            return _assign_anomaly_ids(_call_gemini_analysis(
                 spreadsheet_data, user_id,
                 success_criteria=success_criteria,
                 user_context=user_context,
                 agent_session=agent_session,
-            )
+            ))
         except QuotaError:
             raise
         except Exception as e:
@@ -295,7 +321,7 @@ def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_co
     client = _get_llm_client()
     if client:
         try:
-            return _call_llm(client, spreadsheet_data, agent_session=agent_session)
+            return _assign_anomaly_ids(_call_llm(client, spreadsheet_data, agent_session=agent_session))
         except QuotaError:
             raise
         except Exception as e:
@@ -757,11 +783,20 @@ class AgentOrchestrator:
                        action=None, file_id=None, calendar_context=None,
                        workflow_id=None, column_mapping=None,
                        approval_id=None, approval_decision=None,
-                       approval_draft=None, user_context=None):
+                       approval_draft=None, user_context=None,
+                       reviewed_anomalies=None):
         """Main entry point. Routes calendar context first, then workflow engine or legacy logic.
 
         Yields SSE chunks as dicts.
         """
+        if action == 'confirm_anomalies':
+            latest_run = self.session.workflow_runs.filter(
+                is_deleted=False
+            ).order_by('-created_at').first()
+            yield from self.confirm_anomalies(latest_run, reviewed_anomalies)
+            yield {"type": "done"}
+            return
+
         if action == 'resolve_external_approval':
             if not approval_id or not approval_decision:
                 yield {'type': 'error', 'content': 'approval_id and approval_decision are required.'}
@@ -1466,6 +1501,110 @@ class AgentOrchestrator:
 
         return analysis if isinstance(analysis, dict) else {}
 
+    def confirm_anomalies(self, workflow_run, reviewed_anomalies):
+        """Persist the user's reviewed anomaly list and unlock task creation.
+
+        Guard order is deliberate: the already-confirmed no-op runs BEFORE any
+        payload validation so a reload/retry that sends a partial or stale
+        payload no-ops cleanly instead of raising a validation error.
+        """
+        # 1. Missing run/analysis.
+        analysis = self._workflow_run_analysis(workflow_run) if workflow_run else {}
+        if not workflow_run or not isinstance(analysis, dict) or not analysis:
+            yield {"type": "error", "content": "No analysis to confirm."}
+            return
+
+        # 2. Already confirmed -> safe idempotent no-op (before validation).
+        if analysis.get('anomalies_confirmed'):
+            yield {
+                "type": "anomalies_confirmed",
+                "content": "Anomalies already confirmed.",
+                "data": analysis,
+                "already_confirmed": True,
+            }
+            return
+
+        stored = analysis.get('anomalies') or []
+        existing_by_id = {a.get('id'): a for a in stored if isinstance(a, dict)}
+
+        payload = reviewed_anomalies if isinstance(reviewed_anomalies, list) else []
+        payload_ids = [
+            entry.get('id') for entry in payload if isinstance(entry, dict)
+        ]
+
+        # 3. Completeness check (atomic): payload ids must exactly equal the
+        #    stored anomaly id set -- reject on unknown / missing / duplicate.
+        stored_ids = set(existing_by_id.keys())
+        payload_id_set = set(payload_ids)
+        unknown = sorted(i for i in payload_id_set if i not in stored_ids)
+        missing = sorted(i for i in stored_ids if i not in payload_id_set)
+        duplicate = sorted({i for i in payload_ids if payload_ids.count(i) > 1})
+        if unknown or missing or duplicate:
+            yield {
+                "type": "error",
+                "content": (
+                    f"Anomaly review incomplete: unknown={unknown}, "
+                    f"missing={missing}, duplicate={duplicate}"
+                ),
+            }
+            return
+
+        # 4. Validate + merge each entry onto the full stored anomaly object.
+        valid_severities = {'critical', 'warning', 'info'}
+        merged = []
+        for entry in payload:
+            anomaly_id = entry.get('id')
+            base = dict(existing_by_id[anomaly_id])
+            severity = entry.get('severity')
+            if severity is not None:
+                if severity not in valid_severities:
+                    yield {
+                        "type": "error",
+                        "content": f"Invalid severity '{severity}' for {anomaly_id}.",
+                    }
+                    return
+                base['severity'] = severity
+            description = entry.get('description')
+            if description is not None:
+                if not isinstance(description, str):
+                    yield {
+                        "type": "error",
+                        "content": f"Invalid description for {anomaly_id}.",
+                    }
+                    return
+                base['description'] = description.strip()[:1000]
+            base['included'] = bool(entry.get('included', True))
+            merged.append(base)
+
+        # 5. Persist reviewed list + confirmation flag (keep original anomalies).
+        analysis['reviewed_anomalies'] = merged
+        analysis['anomalies_confirmed'] = True
+        workflow_run.analysis_result = analysis
+        workflow_run.save(update_fields=['analysis_result', 'updated_at'])
+
+        # Update the stored analysis message so a reload restores the same card
+        # in its locked, reviewed state (rather than an editable duplicate).
+        analysis_message = (
+            AgentMessage.objects
+            .filter(session=self.session, role='assistant', metadata__has_key='anomalies')
+            .order_by('-created_at')
+            .first()
+        )
+        if analysis_message:
+            meta = analysis_message.metadata or {}
+            meta['anomalies_confirmed'] = True
+            meta['reviewed_anomalies'] = merged
+            analysis_message.metadata = meta
+            analysis_message.save(update_fields=['metadata'])
+
+        included_count = sum(1 for a in merged if a.get('included'))
+        # 6. Emit confirmation with full merged objects so the UI can re-render.
+        yield {
+            "type": "anomalies_confirmed",
+            "content": f"Anomalies confirmed ({included_count} included).",
+            "data": analysis,
+        }
+
     def create_tasks_from_analysis(self, workflow_run):
         """Create Tasks directly from analysis results, optionally linking to Decision if it exists."""
         yield {"type": "text", "content": "Creating tasks..."}
@@ -1484,6 +1623,28 @@ class AgentOrchestrator:
             return
 
         analysis = self._workflow_run_analysis(workflow_run)
+
+        # Gate only applies when anomalies were actually detected: they must be
+        # reviewed + confirmed first. Zero-anomaly analyses proceed unchanged.
+        had_anomalies = bool(analysis.get('anomalies'))
+        if had_anomalies and not analysis.get('anomalies_confirmed'):
+            yield {
+                "type": "error",
+                "content": "Anomalies must be confirmed before creating tasks.",
+            }
+            return
+
+        # All-excluded: anomalies were detected but the user included none ->
+        # skip task creation. Zero-detected-anomaly runs are NOT skipped.
+        reviewed = analysis.get('reviewed_anomalies') or []
+        included_anomalies = [a for a in reviewed if a.get('included', True)]
+        if had_anomalies and not included_anomalies:
+            yield {
+                "type": "text",
+                "content": "All anomalies were excluded; no tasks were created.",
+            }
+            return
+
         recommended_tasks = analysis.get("recommended_tasks", [])
         if not recommended_tasks:
             yield {"type": "error", "content": "No recommended tasks found in analysis."}
@@ -1497,6 +1658,8 @@ class AgentOrchestrator:
             'input_data': {'analysis_result': analysis},
             'analysis_result': analysis,
             'decision_id': decision.id if decision else None,
+            'included_anomalies': included_anomalies,
+            'reviewed_anomalies': reviewed,
         }
         gate = request_external_commit(
             orchestrator=self,
