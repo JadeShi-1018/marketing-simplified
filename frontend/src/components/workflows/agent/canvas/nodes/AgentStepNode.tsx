@@ -10,6 +10,7 @@ import type { LocalStep } from "../useCanvasState"
 export interface AgentStepNodeData {
   step: LocalStep
   isSelected: boolean
+  hasNext: boolean
   onSelect: () => void
   onAddAfter: (e: React.MouseEvent) => void
   onDelete: () => void
@@ -20,7 +21,7 @@ const AgentStepNode = memo(function AgentStepNode({
 }: {
   data: AgentStepNodeData
 }) {
-  const { step, isSelected, onSelect, onAddAfter, onDelete } = data
+  const { step, isSelected, hasNext, onSelect, onAddAfter, onDelete } = data
   const meta = getStepMeta(step.step_type)
   const Icon = meta.icon
 
@@ -89,18 +90,20 @@ const AgentStepNode = memo(function AgentStepNode({
         style={{ right: -6, top: 36 }}
       />
 
-      {/* + button — positioned absolutely relative to the outer wrapper (which is now relative) */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          onAddAfter(e)
-        }}
-        className="absolute right-[-28px] top-[22px] flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-300 bg-white text-slate-500 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 hover:border-indigo-400 hover:text-indigo-600"
-        aria-label="Add step after"
-      >
-        <Plus className="h-3.5 w-3.5" />
-      </button>
+      {/* + button — only show when this is the last node (no next node) */}
+      {!hasNext && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onAddAfter(e)
+          }}
+          className="absolute right-[-28px] top-[22px] flex h-7 w-7 items-center justify-center rounded-full border-2 border-slate-300 bg-white text-slate-500 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 hover:border-indigo-400 hover:text-indigo-600"
+          aria-label="Add step after"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   )
 })

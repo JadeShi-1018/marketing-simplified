@@ -146,6 +146,11 @@ export function InstantConfig({ workflowId, config, onChange }: InstantConfigPro
             );
           })}
         </div>
+        {(!config?.event_types || config.event_types.length === 0) && (
+          <p className="mt-3 text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+            Select at least one event to enable instant triggers.
+          </p>
+        )}
       </div>
 
       {/* Webhook Section */}

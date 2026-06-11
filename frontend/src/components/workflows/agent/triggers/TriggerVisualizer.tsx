@@ -53,15 +53,15 @@ function PollingVisualizer({ status, triggerState, className }: VisualizerProps)
     : "soon";
 
   return (
-    <div className={cn("flex items-center gap-2 text-xs text-gray-600", className)}>
+    <div className={cn("flex items-center gap-2 text-xs text-gray-600 whitespace-nowrap", className)}>
       {status === "checking" ? (
         <>
-          <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-blue-500" />
           <span className="text-blue-600">Checking...</span>
         </>
       ) : (
         <>
-          <Clock className="h-3 w-3 text-blue-500" />
+          <Clock className="h-3 w-3 shrink-0 text-blue-500" />
           <span>Next check: {nextCheckTime}</span>
         </>
       )}
@@ -71,15 +71,15 @@ function PollingVisualizer({ status, triggerState, className }: VisualizerProps)
 
 function InstantVisualizer({ status, className }: VisualizerProps) {
   return (
-    <div className={cn("flex items-center gap-2 text-xs", className)}>
+    <div className={cn("flex items-center gap-2 text-xs whitespace-nowrap", className)}>
       {status === "triggered" ? (
         <>
-          <CheckCircle className="h-3 w-3 text-green-500" />
+          <CheckCircle className="h-3 w-3 shrink-0 text-green-500" />
           <span className="text-green-600">Triggered</span>
         </>
       ) : (
         <>
-          <div className="relative flex h-3 w-3">
+          <div className="relative flex h-3 w-3 shrink-0">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
             <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-500" />
           </div>
@@ -96,8 +96,8 @@ function ScheduledVisualizer({ triggerState, className }: VisualizerProps) {
     : "Not scheduled";
 
   return (
-    <div className={cn("flex items-center gap-2 text-xs text-gray-600", className)}>
-      <Calendar className="h-3 w-3 text-indigo-500" />
+    <div className={cn("flex items-center gap-2 text-xs text-gray-600 whitespace-nowrap", className)}>
+      <Calendar className="h-3 w-3 shrink-0 text-indigo-500" />
       <span>Next run: {nextRun}</span>
     </div>
   );
@@ -105,8 +105,8 @@ function ScheduledVisualizer({ triggerState, className }: VisualizerProps) {
 
 function ManualVisualizer({ className }: { className?: string }) {
   return (
-    <div className={cn("flex items-center gap-2 text-xs text-gray-500", className)}>
-      <CheckCircle className="h-3 w-3" />
+    <div className={cn("flex items-center gap-2 text-xs text-gray-500 whitespace-nowrap", className)}>
+      <CheckCircle className="h-3 w-3 shrink-0" />
       <span>Ready</span>
     </div>
   );

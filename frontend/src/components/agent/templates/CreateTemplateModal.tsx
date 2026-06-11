@@ -177,7 +177,7 @@ export function CreateTemplateModal({
 
         {/* Header label */}
         <div className="px-6 pt-6 pb-0">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gray-900">
             {isEditMode ? "Edit Template" : "Create Workflow Template"}
           </p>
           {!isEditMode && (
@@ -189,8 +189,11 @@ export function CreateTemplateModal({
           )}
         </div>
 
+        {/* Divider */}
+        <div className="mx-6 mt-3 mb-2 border-t border-gray-200" />
+
         {/* Body */}
-        <div className="max-h-[70vh] overflow-y-auto px-6 py-4 space-y-5">
+        <div className="max-h-[70vh] overflow-y-auto px-6 pt-2 pb-4 space-y-5">
 
           {/* Source workflow picker (create, not locked) */}
           {!isEditMode && !lockSourceWorkflow && (
@@ -240,10 +243,15 @@ export function CreateTemplateModal({
 
           {/* Use cases (documentation for users) */}
           <div>
-            <p className="mb-1 text-xs font-semibold text-gray-500">When to use this template</p>
-            <p className="mb-2 text-[11px] text-gray-400">
+            <p className="mb-1 text-xs font-semibold text-gray-900">When to use this template</p>
+            <p className="mb-3 text-[11px] text-gray-400">
               Optional example phrases so your team knows when to run this template.
             </p>
+            {useCases.length === 0 && (
+              <div className="mb-1.5 flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5">
+                <span className="text-xs text-amber-700">💡 Press Enter to add a use case</span>
+              </div>
+            )}
             <UseCasesEditor
               value={useCases}
               onChange={setUseCases}
@@ -253,7 +261,7 @@ export function CreateTemplateModal({
 
           {/* Category chips */}
           <div>
-            <p className="mb-2 text-xs font-semibold text-gray-500">Category</p>
+            <p className="mb-2 text-xs font-semibold text-gray-900">Category</p>
             <div className="flex flex-wrap gap-2">
               {CATEGORIES.map((cat) => (
                 <button
@@ -263,7 +271,7 @@ export function CreateTemplateModal({
                   className={cn(
                     "rounded-full border px-4 py-1.5 text-sm font-medium transition-all",
                     category === cat.value
-                      ? "border-indigo-400 bg-indigo-50 text-indigo-700"
+                      ? "border-transparent bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white"
                       : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:text-gray-800"
                   )}
                 >
@@ -275,7 +283,7 @@ export function CreateTemplateModal({
 
           {/* Sharing cards */}
           <div>
-            <p className="mb-1 text-xs font-semibold text-gray-500">Sharing</p>
+            <p className="mb-1 text-xs font-semibold text-gray-900">Sharing</p>
             <p className="mb-3 text-[11px] text-gray-400">
               Choose who else can see this template. Leave both unselected to keep it private.
             </p>
@@ -288,8 +296,9 @@ export function CreateTemplateModal({
                 className={cn(
                   "relative flex flex-col items-start gap-2 rounded-2xl border-2 p-4 text-left transition-all",
                   !userOrg && "cursor-not-allowed opacity-40",
-                  shareOrg ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
+                  shareOrg ? "bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
                 )}
+                style={shareOrg ? { borderImage: 'linear-gradient(135deg, #3CCED7, #A6E661) 1' } : undefined}
               >
                 {shareOrg && (
                   <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500">
@@ -321,8 +330,9 @@ export function CreateTemplateModal({
                 }}
                 className={cn(
                   "relative flex flex-col items-start gap-2 rounded-2xl border-2 p-4 text-left transition-all",
-                  shareProject ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
+                  shareProject ? "bg-indigo-50" : "border-gray-200 bg-white hover:border-gray-300"
                 )}
+                style={shareProject ? { borderImage: 'linear-gradient(135deg, #3CCED7, #A6E661) 1' } : undefined}
               >
                 {shareProject && selectedProjectIds.size > 0 && (
                   <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500">
@@ -366,13 +376,13 @@ export function CreateTemplateModal({
                             checked ? "bg-indigo-50 text-indigo-800" : "text-gray-700 hover:bg-white"
                           )}
                         >
+                          <span className="flex-1 truncate font-medium">{p.name}</span>
                           <span className={cn(
-                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-                            checked ? "border-indigo-500 bg-indigo-500" : "border-gray-300 bg-white"
+                            "flex h-4 w-4 shrink-0 items-center justify-center rounded-full transition-colors",
+                            checked ? "bg-gradient-to-r from-[#3CCED7] to-[#A6E661]" : "border-2 border-gray-300 bg-white"
                           )}>
                             {checked && <Check className="h-2.5 w-2.5 text-white" />}
                           </span>
-                          <span className="truncate font-medium">{p.name}</span>
                         </button>
                       )
                     })}
@@ -404,7 +414,7 @@ export function CreateTemplateModal({
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit || submitting}
-            className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {isEditMode ? "Save Changes" : "Create Template"}

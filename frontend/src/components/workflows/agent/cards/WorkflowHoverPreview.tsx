@@ -1,14 +1,43 @@
 "use client"
 
 import { useState } from "react"
-import { Bookmark, Pencil, Play, PlusCircle, Trash2 } from "lucide-react"
+import { Bookmark, Pencil, Play, PlusCircle, Trash2, Clock, Zap, Calendar } from "lucide-react"
 import { getStepMeta } from "../canvas/canvasStepMeta"
 import { brandBtnSm } from "../workflowBrandClasses"
 import { Building2, FolderKanban, Lock } from "lucide-react"
-import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory, TemplateProjectInfo, WorkflowTriggerConfig } from "@/types/agent"
+import type { AgentWorkflowDefinition, WorkflowStepType, TemplateCategory, TemplateProjectInfo, WorkflowTriggerConfig, TriggerType } from "@/types/agent"
 import toast from "react-hot-toast"
+import { useRouter } from "next/navigation"
 
 const MAX_FLOW_NODES = 6
+
+// ── Trigger helpers ────────────────────────────────────────────────────────────
+
+function getTriggerIcon(type: TriggerType) {
+  switch (type) {
+    case "polling":
+      return <Clock className="h-3 w-3" />
+    case "instant":
+      return <Zap className="h-3 w-3" />
+    case "scheduled":
+      return <Calendar className="h-3 w-3" />
+    default:
+      return null
+  }
+}
+
+function getTriggerLabel(type: TriggerType) {
+  switch (type) {
+    case "polling":
+      return "Polling"
+    case "instant":
+      return "Instant"
+    case "scheduled":
+      return "Scheduled"
+    default:
+      return "Trigger"
+  }
+}
 
 // ── Shared sub-components ─────────────────────────────────────────────────────
 
@@ -125,6 +154,7 @@ export function WorkflowHoverContent({
   onSaveAsTemplate,
   onDelete,
 }: WorkflowHoverContentProps) {
+  const router = useRouter()
   const [localStatus, setLocalStatus] = useState(currentStatus)
   const [toggling, setToggling] = useState(false)
   const [running, setRunning] = useState(false)
@@ -221,6 +251,26 @@ export function WorkflowHoverContent({
               </button>
             </>
           )}
+
+          {/* Divider + Trigger Settings (Non-manual triggers) */}
+          {triggerEnabled &&
+            triggerConfig?.trigger_type &&
+            triggerConfig.trigger_type !== "manual" && (
+              <>
+                <div className="mx-1 h-4 w-px shrink-0 bg-slate-200" />
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    router.push(`/workflows/${workflowId}?openTrigger=true`)
+                  }}
+                  className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
+                >
+                  {getTriggerIcon(triggerConfig.trigger_type)}
+                  {getTriggerLabel(triggerConfig.trigger_type)}
+                </button>
+              </>
+            )}
 
           {/* Divider + Delete */}
           {onDelete && (

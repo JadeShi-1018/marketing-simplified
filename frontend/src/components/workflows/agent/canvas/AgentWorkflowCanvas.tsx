@@ -21,6 +21,7 @@ import useCanvasState, { makeTempId } from "./useCanvasState"
 import { getStepMeta } from "./canvasStepMeta"
 import AgentStepNode, { type AgentStepNodeData } from "./nodes/AgentStepNode"
 import AgentAddNode, { type AgentAddNodeData } from "./nodes/AgentAddNode"
+import AgentStepEdge, { type AgentStepEdgeData } from "./edges/AgentStepEdge"
 import StepPickerPanel from "./panels/StepPickerPanel"
 import StepConfigPanel from "./panels/StepConfigPanel"
 import CanvasToolbar from "./CanvasToolbar"
@@ -84,10 +85,14 @@ function UnsavedChangesDialog({ isSaving, onClose, onLeave, onSave }: UnsavedCha
   )
 }
 
-// ── React Flow node type registry ──────────────────────────────────────────────
+// ── React Flow node and edge type registry ────────────────────────────────────
 const nodeTypes = {
   agentStep: AgentStepNode,
   agentAdd: AgentAddNode,
+}
+
+const edgeTypes = {
+  agentStepEdge: AgentStepEdge,
 }
 
 // Layout constants
@@ -133,6 +138,15 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
         nameInputRef.current?.select()
       }
     })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // On mount: check if openTrigger URL param is set, and if so, open trigger drawer
+  useEffect(() => {
+    const openTrigger = searchParams.get("openTrigger")
+    if (openTrigger === "true") {
+      setShowTriggerDrawer(true)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -221,6 +235,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
       data: {
         step,
         isSelected: selectedStepId === step.id,
+        hasNext: idx < steps.length - 1,
         onSelect: () => openConfig(step.id),
         onAddAfter: (e) => openPicker(idx, e),
         onDelete: () => {
@@ -259,14 +274,17 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
         id: `e-${steps[i].id}-${steps[i + 1].id}`,
         source: steps[i].id,
         target: steps[i + 1].id,
-        type: "smoothstep",
+        type: "agentStepEdge",
         markerEnd: { type: MarkerType.ArrowClosed, color: meta.edgeColor, width: 16, height: 16 },
         style: { stroke: meta.edgeColor, strokeWidth: 2 },
+        data: {
+          onAddBetween: (e: React.MouseEvent) => openPicker(i, e),
+        } satisfies AgentStepEdgeData,
       })
     }
 
     return edges
-  }, [steps])
+  }, [steps, openPicker])
 
   // ── Fit view when step count changes ───────────────────────────────────────
   useEffect(() => {
@@ -354,6 +372,7 @@ function CanvasInner({ workflowId, workflow, currentStatus, onStatusChange, isUp
         nodes={rfNodes}
         edges={rfEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.6 }}
         nodesDraggable={false}

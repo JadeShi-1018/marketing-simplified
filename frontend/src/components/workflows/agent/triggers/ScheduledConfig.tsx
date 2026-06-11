@@ -160,7 +160,7 @@ function buildCron(timeSlots: TimeSlot[]): string {
 }
 
 function buildSummary(timeSlots: TimeSlot[]): string {
-  if (timeSlots.length === 0) return "Add a time slot to get started";
+  if (timeSlots.length === 0) return "Add at least one time slot to enable scheduled triggers.";
 
   const pad = (n: number) => String(n).padStart(2, "0");
   const firstSlot = timeSlots[0];
@@ -514,7 +514,7 @@ export function ScheduledConfig({ config, onChange }: ScheduledConfigProps) {
         )}
       >
         {warnNoSlots ? (
-          "⚠ Add a time slot to get started"
+          "⚠ Add at least one time slot to enable scheduled triggers."
         ) : (
           <>
             <Clock className="h-3.5 w-3.5 shrink-0" />

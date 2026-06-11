@@ -108,6 +108,22 @@ export const TriggerConfigPanel = forwardRef<
   const handleSave = async () => {
     if (isSystem) return;
 
+    // Validate configuration before saving
+    if (enabled) {
+      if (triggerType === "polling" && pollingConfig.external_services.length === 0) {
+        toast.error("Please select at least one service to enable polling.");
+        return;
+      }
+      if (triggerType === "instant" && (!instantConfig?.event_types || instantConfig.event_types.length === 0)) {
+        toast.error("Please select at least one event to enable instant triggers.");
+        return;
+      }
+      if (triggerType === "scheduled" && (!scheduledConfig?.cron_expression || scheduledConfig.cron_expression === "")) {
+        toast.error("Please add at least one time slot for scheduled triggers.");
+        return;
+      }
+    }
+
     setSaving(true);
     try {
       const config: WorkflowTriggerConfig = {
