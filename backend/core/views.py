@@ -723,6 +723,30 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
                 'email': 'User is already a member of this project'
             })
 
+        # Seat cap check: enforce org's purchased seat limit before creating the invitation.
+        org = project.organization
+        if org:
+            from stripe_meta.services import get_active_real_subscription  # noqa: PLC0415
+            sub = get_active_real_subscription(org)
+            if sub:
+                current_count = User.objects.filter(organization=org).count()
+                if sub.seat_count <= current_count:
+                    is_free = sub.is_internal
+                    return Response(
+                        {
+                            'error': (
+                                'Free plan is limited to 1 seat. Upgrade to Team to add more members.'
+                                if is_free
+                                else 'Seat limit reached. Purchase more seats to add more members.'
+                            ),
+                            'code': 'SEAT_LIMIT_REACHED',
+                            'seats_available': 0,
+                            'seats_purchased': sub.seat_count,
+                            'upgrade_required': is_free,
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
         try:
             invitation = create_project_invitation(
                 email=email,
@@ -1115,6 +1139,29 @@ class ApproveProjectInvitationView(APIView):
             )
 
         if not invitation.approved:
+            # Race condition guard: seat may have filled since the invite was created.
+            org = project.organization
+            if org:
+                from stripe_meta.services import get_active_real_subscription  # noqa: PLC0415
+                sub = get_active_real_subscription(org)
+                if sub:
+                    current_count = User.objects.filter(organization=org).count()
+                    if sub.seat_count <= current_count:
+                        is_free = sub.is_internal
+                        return Response(
+                            {
+                                'error': (
+                                    'Free plan is limited to 1 seat. Upgrade to Team to add more members.'
+                                    if is_free
+                                    else 'Seat limit reached. Purchase more seats to add more members.'
+                                ),
+                                'code': 'SEAT_LIMIT_REACHED',
+                                'seats_available': 0,
+                                'seats_purchased': sub.seat_count,
+                                'upgrade_required': is_free,
+                            },
+                            status=status.HTTP_403_FORBIDDEN,
+                        )
             invitation.approved = True
             invitation.approved_by = request.user
             invitation.approved_at = timezone.now()
