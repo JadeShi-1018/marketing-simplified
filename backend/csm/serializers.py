@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Queue, QueueAgent, QueueTeam, CustomerUser, CsmNotification, Conversation, ConversationMessage, Ticket, QuickReplyTemplate
+from .models import Queue, QueueAgent, QueueTeam, CustomerUser, CsmNotification, Conversation, ConversationMessage, Ticket, QuickReplyTemplate, QuickReplyTemplateHistory
 
 
 class QueueSerializer(serializers.ModelSerializer):
@@ -244,7 +244,7 @@ class QuickReplyTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuickReplyTemplate
         fields = [
-            'id', 'organisation', 'title', 'content', 'rich_body',
+            'id', 'organisation', 'team', 'title', 'content', 'rich_body',
             'tags', 'is_active', 'created_by', 'created_by_name', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
@@ -254,3 +254,18 @@ class QuickReplyTemplateSerializer(serializers.ModelSerializer):
             return None
         full = obj.created_by.get_full_name()
         return full if full.strip() else obj.created_by.email
+
+
+class QuickReplyTemplateHistorySerializer(serializers.ModelSerializer):
+    edited_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = QuickReplyTemplateHistory
+        fields = ['id', 'edited_by', 'edited_by_name', 'edited_at', 'title', 'content', 'rich_body', 'tags']
+        read_only_fields = ['id', 'edited_by', 'edited_by_name', 'edited_at', 'title', 'content', 'rich_body', 'tags']
+
+    def get_edited_by_name(self, obj):
+        if not obj.edited_by:
+            return None
+        full = obj.edited_by.get_full_name()
+        return full if full.strip() else obj.edited_by.email

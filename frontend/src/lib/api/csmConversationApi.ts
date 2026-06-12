@@ -8,6 +8,7 @@ import {
   UpdateConversationPayload,
   QuickReplyTemplate,
   QuickReplyTemplatePayload,
+  QuickReplyTemplateHistory,
   Ticket,
 } from '@/types/csmConversation';
 
@@ -116,5 +117,10 @@ export class QuickReplyTemplateAPI {
 
   static async remove(id: number): Promise<void> {
     await api.delete(`${TMPL_BASE}/${id}/`);
+  }
+
+  static async history(id: number): Promise<QuickReplyTemplateHistory[]> {
+    const res = await api.get<QuickReplyTemplateHistory[]>(`${TMPL_BASE}/${id}/history/`);
+    return Array.isArray(res.data) ? res.data : [];
   }
 }

@@ -1,6 +1,8 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 import { ConversationMessage, MessageSenderType } from '@/types/csmConversation';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +14,30 @@ const SENDER_LABELS: Record<MessageSenderType, string> = {
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// Read-only rich text renderer using Tiptap
+function RichMessageBody({ body, isAgent }: { body: object; isAgent: boolean }) {
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: body,
+    editable: false,
+    immediatelyRender: false,
+    editorProps: {
+      attributes: {
+        class: cn(
+          'prose prose-sm max-w-none outline-none [&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1',
+          isAgent ? 'prose-invert' : ''
+        ),
+      },
+    },
+  });
+
+  useEffect(() => {
+    editor?.commands.setContent(body);
+  }, [editor, body]);
+
+  return <EditorContent editor={editor} />;
 }
 
 interface ConversationThreadProps {
@@ -69,7 +95,11 @@ export function ConversationThread({ messages, typingUserIds = [] }: Conversatio
                   : 'bg-gray-100 text-gray-900 rounded-bl-sm'
               )}
             >
-              {msg.content}
+              {msg.rich_body ? (
+                <RichMessageBody body={msg.rich_body} isAgent={isAgent} />
+              ) : (
+                <span className="whitespace-pre-wrap">{msg.content}</span>
+              )}
             </div>
           </div>
         );

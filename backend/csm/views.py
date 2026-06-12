@@ -9,14 +9,14 @@ from asgiref.sync import async_to_sync
 
 from core.admin_permissions import IsCsmAccessAllowed
 
-from .models import Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification, Conversation, ConversationMessage, QuickReplyTemplate
+from .models import Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification, Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory
 from .serializers import (
     QueueSerializer, QueueAgentSerializer,
     QueueTeamSerializer, CustomerUserSerializer,
     CsmNotificationSerializer,
     ConversationSerializer, ConversationDetailSerializer,
     ConversationMessageSerializer, TicketSerializer,
-    QuickReplyTemplateSerializer,
+    QuickReplyTemplateSerializer, QuickReplyTemplateHistorySerializer,
 )
 
 
@@ -552,7 +552,7 @@ class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         from core.admin_utils import get_csm_admin_org_ids
 
-        qs = QuickReplyTemplate.objects.filter(is_active=True).select_related('created_by')
+        qs = QuickReplyTemplate.objects.filter(is_active=True).select_related('created_by', 'team')
 
         org_id = self.request.query_params.get('organisation')
         if org_id:
@@ -566,6 +566,19 @@ class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
             ).values_list('organisation_id', flat=True)
             all_org_ids = set(list(accessible_org_ids) + list(agent_org_ids))
             qs = qs.filter(organisation_id__in=all_org_ids)
+
+        # Team scoping: show templates with no team, OR where the user belongs to the team
+        # Two-step: Django doesn't support chaining two FK levels in a single filter argument
+        customer_user_ids = CustomerUser.objects.filter(
+            user=self.request.user, is_active=True,
+        ).values_list('id', flat=True)
+        user_queue_ids = QueueAgent.objects.filter(
+            user_id__in=customer_user_ids,
+        ).values_list('queue_id', flat=True)
+        user_team_ids = QueueTeam.objects.filter(
+            queue_id__in=user_queue_ids,
+        ).values_list('team_id', flat=True)
+        qs = qs.filter(Q(team__isnull=True) | Q(team_id__in=list(user_team_ids)))
 
         # Support filtering by tag
         tag = self.request.query_params.get('tag')
@@ -584,10 +597,31 @@ class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        # Snapshot the current state BEFORE applying changes
+        QuickReplyTemplateHistory.objects.create(
+            template=instance,
+            edited_by=self.request.user,
+            title=instance.title,
+            content=instance.content,
+            rich_body=instance.rich_body,
+            tags=instance.tags,
+        )
+        serializer.save()
+
     def perform_destroy(self, instance):
         # Soft delete
         instance.is_active = False
         instance.save(update_fields=['is_active'])
+
+    @action(detail=True, methods=['get'], url_path='history')
+    def history(self, request, pk=None):
+        """Return the edit history for a template (admin/supervisor only)."""
+        template = self.get_object()
+        qs = template.history.select_related('edited_by').order_by('-edited_at')
+        serializer = QuickReplyTemplateHistorySerializer(qs, many=True)
+        return Response(serializer.data)
 
 
 class TicketViewSet(viewsets.ModelViewSet):

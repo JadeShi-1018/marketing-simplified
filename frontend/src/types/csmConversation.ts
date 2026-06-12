@@ -107,6 +107,7 @@ export interface UpdateConversationPayload {
 export interface QuickReplyTemplate {
   id: number;
   organisation: number;
+  team: number | null;
   title: string;
   content: string;
   rich_body: object | null;
@@ -120,11 +121,23 @@ export interface QuickReplyTemplate {
 
 export interface QuickReplyTemplatePayload {
   organisation: number;
+  team?: number | null;
   title: string;
   content: string;
   rich_body?: object | null;
   tags?: string[];
   is_active?: boolean;
+}
+
+export interface QuickReplyTemplateHistory {
+  id: number;
+  edited_by: number | null;
+  edited_by_name: string | null;
+  edited_at: string;
+  title: string;
+  content: string;
+  rich_body: object | null;
+  tags: string[];
 }
 
 // WebSocket event types

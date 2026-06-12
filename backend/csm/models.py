@@ -262,6 +262,12 @@ class QuickReplyTemplate(TimeStampedModel):
         on_delete=models.CASCADE,
         related_name='quick_reply_templates',
     )
+    team = models.ForeignKey(
+        Team, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='quick_reply_templates',
+        help_text="If set, only members of this team can see the template",
+    )
     title = models.CharField(max_length=200, help_text="Short label shown in the template picker")
     content = models.TextField(help_text="Plain-text content inserted into the composer")
     rich_body = models.JSONField(null=True, blank=True, help_text="Optional Tiptap JSON")
@@ -278,6 +284,31 @@ class QuickReplyTemplate(TimeStampedModel):
 
     def __str__(self):
         return f"[Template] {self.title}"
+
+
+class QuickReplyTemplateHistory(models.Model):
+    """Snapshot of a QuickReplyTemplate captured before each edit."""
+
+    template = models.ForeignKey(
+        QuickReplyTemplate, on_delete=models.CASCADE,
+        related_name='history',
+    )
+    edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='template_edits',
+    )
+    edited_at = models.DateTimeField(auto_now_add=True)
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    rich_body = models.JSONField(null=True, blank=True)
+    tags = models.JSONField(default=list)
+
+    class Meta:
+        ordering = ['-edited_at']
+
+    def __str__(self):
+        return f"History of template {self.template_id} at {self.edited_at}"
 
 
 class CSMInvitation(TimeStampedModel):

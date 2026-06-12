@@ -2,6 +2,8 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 import toast from 'react-hot-toast';
 import PortalAPI from '@/lib/api/portalApi';
 import { PortalConversationDetail, PortalMessage } from '@/types/portal';
@@ -14,6 +16,27 @@ function formatTime(iso: string) {
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+// Read-only rich text renderer
+function RichBody({ body, isCustomer }: { body: object; isCustomer: boolean }) {
+  const editor = useEditor({
+    extensions: [StarterKit],
+    content: body,
+    editable: false,
+    immediatelyRender: false,
+    editorProps: {
+      attributes: {
+        class: `prose prose-sm max-w-none outline-none [&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1 ${isCustomer ? 'prose-invert' : ''}`,
+      },
+    },
+  });
+
+  useEffect(() => {
+    editor?.commands.setContent(body);
+  }, [editor, body]);
+
+  return <EditorContent editor={editor} />;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -163,7 +186,11 @@ export default function TicketDetailPage({ params }: { params: { id: string } })
                   ? 'bg-[#3CCED7] text-white rounded-br-sm'
                   : 'bg-white border border-gray-200 text-gray-900 rounded-bl-sm'
               }`}>
-                {msg.content}
+                {msg.rich_body ? (
+                  <RichBody body={msg.rich_body} isCustomer={isCustomer} />
+                ) : (
+                  <span className="whitespace-pre-wrap">{msg.content}</span>
+                )}
               </div>
             </div>
           );
