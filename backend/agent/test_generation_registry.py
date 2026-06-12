@@ -16,7 +16,11 @@ class GenerationRegistryTests(TestCase):
     def test_normalize_defaults_when_omitted(self):
         self.assertEqual(
             normalize_generation_outputs(None),
-            ['recommended_tasks', 'miro_board', 'calendar_events'],
+            [
+                'recommended_tasks',
+                'recommended_decision_tree',
+                'miro_board',
+            ],
         )
 
     def test_normalize_parses_json_string(self):
@@ -37,6 +41,21 @@ class GenerationRegistryTests(TestCase):
         prompt = build_analysis_prompt(frozenset({'recommended_tasks'}), 'criteria here')
         self.assertIn('recommended_tasks', prompt)
         self.assertNotIn('anomalies', prompt)
+
+    def test_build_analysis_prompt_includes_decision_tree(self):
+        prompt = build_analysis_prompt(frozenset({'recommended_decision_tree'}), 'criteria here')
+        self.assertIn('recommended_decision_tree', prompt)
+        self.assertIn('parent_refs', prompt)
+        self.assertIn('Never null, never omitted, never a single string', prompt)
+        self.assertIn('"parent_refs": ["root_goal"]', prompt)
+
+    def test_build_analysis_prompt_includes_both_analysis_keys(self):
+        prompt = build_analysis_prompt(
+            frozenset({'recommended_tasks', 'recommended_decision_tree'}),
+            'criteria here',
+        )
+        self.assertIn('recommended_tasks', prompt)
+        self.assertIn('recommended_decision_tree', prompt)
 
     def test_build_analysis_prompt_empty_object_when_no_analysis_keys(self):
         prompt = build_analysis_prompt(frozenset({'miro_board'}), 'criteria here')
@@ -63,6 +82,103 @@ class GenerationRegistryTests(TestCase):
     def test_validate_analysis_rejects_missing_key(self):
         with self.assertRaises(GenerationValidationError):
             validate_analysis_response({}, frozenset({'recommended_tasks'}))
+
+    def _sample_decision_tree(self):
+        return {
+            'nodes': [
+                {
+                    'ref': 'root',
+                    'layer': 0,
+                    'title': 'Reallocate Meta budget?',
+                    'parent_refs': [],
+                },
+                {
+                    'ref': 'child_a',
+                    'layer': 1,
+                    'title': 'Pause underperforming ad sets',
+                    'parent_refs': ['root'],
+                },
+            ],
+        }
+
+    def test_validate_decision_tree_valid(self):
+        data = {'recommended_decision_tree': self._sample_decision_tree()}
+        result = validate_analysis_response(
+            data, frozenset({'recommended_decision_tree'})
+        )
+        self.assertEqual(len(result['recommended_decision_tree']['nodes']), 2)
+
+    def test_validate_decision_tree_empty_nodes(self):
+        data = {'recommended_decision_tree': {'nodes': []}}
+        result = validate_analysis_response(
+            data, frozenset({'recommended_decision_tree'})
+        )
+        self.assertEqual(result['recommended_decision_tree']['nodes'], [])
+
+    def test_validate_decision_tree_rejects_duplicate_ref(self):
+        data = {
+            'recommended_decision_tree': {
+                'nodes': [
+                    {'ref': 'dup', 'layer': 0, 'title': 'A', 'parent_refs': []},
+                    {'ref': 'dup', 'layer': 1, 'title': 'B', 'parent_refs': []},
+                ],
+            },
+        }
+        with self.assertRaises(GenerationValidationError):
+            validate_analysis_response(data, frozenset({'recommended_decision_tree'}))
+
+    def test_validate_decision_tree_rejects_bad_layer(self):
+        data = {
+            'recommended_decision_tree': {
+                'nodes': [
+                    {'ref': 'root', 'layer': 0, 'title': 'Root', 'parent_refs': []},
+                    {'ref': 'child', 'layer': 0, 'title': 'Child', 'parent_refs': ['root']},
+                ],
+            },
+        }
+        with self.assertRaises(GenerationValidationError):
+            validate_analysis_response(data, frozenset({'recommended_decision_tree'}))
+
+    def test_validate_decision_tree_rejects_unknown_parent(self):
+        data = {
+            'recommended_decision_tree': {
+                'nodes': [
+                    {'ref': 'child', 'layer': 1, 'title': 'Child', 'parent_refs': ['missing']},
+                ],
+            },
+        }
+        with self.assertRaises(GenerationValidationError):
+            validate_analysis_response(data, frozenset({'recommended_decision_tree'}))
+
+    def test_validate_decision_tree_rejects_extra_top_level_key(self):
+        data = {
+            'recommended_decision_tree': self._sample_decision_tree(),
+            'recommended_tasks': [],
+        }
+        with self.assertRaises(GenerationValidationError):
+            validate_analysis_response(
+                data,
+                frozenset({'recommended_decision_tree'}),
+            )
+
+    def test_filter_sse_includes_decision_tree(self):
+        analysis = {'recommended_decision_tree': self._sample_decision_tree()}
+        filtered = filter_sse_analysis_payload(
+            analysis,
+            frozenset({'recommended_decision_tree', 'miro_board'}),
+        )
+        self.assertEqual(list(filtered.keys()), ['recommended_decision_tree'])
+
+    def test_should_skip_create_decision_without_output(self):
+        self.assertTrue(
+            should_skip_workflow_step('create_decision', frozenset({'recommended_tasks'}))
+        )
+        self.assertFalse(
+            should_skip_workflow_step(
+                'create_decision',
+                frozenset({'recommended_decision_tree'}),
+            )
+        )
 
     def test_validate_calendar_events_response(self):
         data = {

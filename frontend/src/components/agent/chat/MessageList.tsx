@@ -10,9 +10,11 @@ import { ColumnMappingCard } from "./ColumnMappingCard"
 import { FollowUpCard } from "./FollowUpCard"
 import { MiroGenerateCard } from "./MiroGenerateCard"
 import { TaskListCard } from "./TaskListCard"
+import { DecisionTreeListCard } from "./DecisionTreeListCard"
 import type {
   AnomalyItem,
   RecommendedTask,
+  RecommendedDecisionTreeNode,
   ReviewedAnomaly,
   WorkflowStepState,
   ColumnDetectionData,
@@ -25,6 +27,7 @@ import { deriveMiroBoardCardState } from "@/lib/agentMiroBoardStatus"
 import { StepProgress, type StepProgressItem } from "./StepProgress"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import type { TaskGenerationStatus } from "./TaskListCard"
+import type { DecisionGenerationStatus } from "./DecisionTreeListCard"
 import { AgentMessageBoardBlock } from "./AgentMessageBoardBlock"
 import { AgentMessageBoardMarkdown } from "./AgentMessageBoardMarkdown"
 import { AgentMessageBoardText } from "./AgentMessageBoardText"
@@ -42,6 +45,7 @@ export type ChatMessageType =
   | "analysis"
   | "file_uploaded"
   | "tasks_created"
+  | "decisions_created"
   | "miro_status"
   | "step_progress"
   | "error"
@@ -58,6 +62,7 @@ export interface ChatMessage {
   anomalies?: AnomalyItem[]
   anomaliesConfirmed?: boolean
   recommendedTasks?: RecommendedTask[]
+  recommendedDecisionTree?: { nodes: RecommendedDecisionTreeNode[] }
   columnMappingData?: ColumnDetectionData
   fileName?: string
   navigateTo?: string
@@ -86,17 +91,27 @@ export interface MessageListProps {
   createdTaskIdByIndex?: Record<number, number>
   generatingTasks?: boolean
   pendingTaskApproval?: PendingExternalApproval | null
+  pendingDecisionApproval?: PendingExternalApproval | null
   selectedTaskIndexes?: number[]
   onSelectedTaskIndexesChange?: (next: number[]) => void
   tasksApprovalGenerating?: boolean
   onApproveSelectedTasks?: (selectedIndexes: number[], destination?: Record<string, unknown>) => void
   onRejectTasksApproval?: () => void
+  selectedDecisionRefs?: string[]
+  onSelectedDecisionRefsChange?: (next: string[]) => void
+  skippedDecisionRefs?: string[]
+  generatedDecisionRefs?: string[]
+  decisionsApprovalGenerating?: boolean
+  onApproveSelectedDecisions?: (selectedRefs: string[]) => void
   miroGenerateInFlight?: boolean
   latestAnalysisMessageId?: string | null
   showFollowUpToggle?: boolean
   followUpActive?: boolean
   stepState?: WorkflowStepState
   taskGenerationStatus?: TaskGenerationStatus
+  decisionGenerationStatus?: DecisionGenerationStatus
+  generatingDecisions?: boolean
+  createdDecisionByRef?: Record<string, number>
   isStreaming?: boolean
   showRevisitThinkingBubble?: boolean
   onRenderFinishChange?: (finished: boolean) => void
@@ -118,17 +133,27 @@ export function MessageList({
   createdTaskIdByIndex,
   generatingTasks,
   pendingTaskApproval,
+  pendingDecisionApproval,
   selectedTaskIndexes,
   onSelectedTaskIndexesChange,
   tasksApprovalGenerating,
   onApproveSelectedTasks,
   onRejectTasksApproval,
+  selectedDecisionRefs,
+  onSelectedDecisionRefsChange,
+  skippedDecisionRefs,
+  generatedDecisionRefs,
+  decisionsApprovalGenerating,
+  onApproveSelectedDecisions,
   miroGenerateInFlight = false,
   latestAnalysisMessageId,
   showFollowUpToggle,
   followUpActive,
   stepState,
   taskGenerationStatus,
+  decisionGenerationStatus,
+  generatingDecisions,
+  createdDecisionByRef,
   isStreaming = false,
   showRevisitThinkingBubble = false,
   onRenderFinishChange,
@@ -139,8 +164,13 @@ export function MessageList({
       ? requestedGenerationOutputs
       : DEFAULT_GENERATION_OUTPUTS
   const wantsTasks = effectiveGenerationOutputs.includes("recommended_tasks")
+  const wantsDecisions = effectiveGenerationOutputs.includes("recommended_decision_tree")
   const wantsMiro = effectiveGenerationOutputs.includes("miro_board")
-  const wantsCalendar = requestedGenerationOutputs.includes("calendar_events")
+  const downstreamOutputsComplete = Boolean(
+    stepState &&
+      (!wantsTasks || stepState.tasksCreated) &&
+      (!wantsDecisions || stepState.decisionsCreated)
+  )
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const prevScrollTopRef = useRef(0)
   const prevScrollHeightRef = useRef(0)
@@ -148,7 +178,9 @@ export function MessageList({
   const isAnalysisLikeMessage = (m: ChatMessage) =>
     m.type === "analysis" ||
     m.type === "tasks_created" ||
-    (Array.isArray(m.recommendedTasks) && m.recommendedTasks.length > 0)
+    m.type === "decisions_created" ||
+    (Array.isArray(m.recommendedTasks) && m.recommendedTasks.length > 0) ||
+    (Array.isArray(m.recommendedDecisionTree?.nodes) && m.recommendedDecisionTree.nodes.length > 0)
 
   const latestAnalysisWithTasks = [...messages]
     .reverse()
@@ -182,6 +214,17 @@ export function MessageList({
       (Boolean(approvalRequired) &&
         Boolean(stepState?.analysisComplete) &&
         !stepState?.tasksCreated))
+  const canSelectRecommendedDecisions =
+    (decisionGenerationStatus === "idle" || decisionGenerationStatus === "awaiting_approval") &&
+    !decisionsApprovalGenerating &&
+    !generatingDecisions &&
+    !stepState?.decisionsCreated
+  const decisionSelectionMode =
+    canSelectRecommendedDecisions &&
+    (Boolean(pendingDecisionApproval) ||
+      (Boolean(approvalRequired) &&
+        Boolean(stepState?.analysisComplete) &&
+        !stepState?.decisionsCreated))
 
   const showBottomActionCards = Boolean(
     wantsMiro &&
@@ -255,6 +298,8 @@ export function MessageList({
         showReupload: Boolean(stepState?.analysisComplete),
         suppressMiroMessageNav,
         miroCardsAnchorMode,
+        wantsTasks,
+        wantsDecisions,
       }),
     [
       messages,
@@ -266,6 +311,8 @@ export function MessageList({
       showMiroCard,
       suppressMiroMessageNav,
       miroCardsAnchorMode,
+      wantsTasks,
+      wantsDecisions,
     ]
   )
   const extraPartIdsOnQuit = useMemo(
@@ -379,6 +426,8 @@ export function MessageList({
                       stepState,
                       tasksCardMessageId,
                       suppressMiroMessageNav,
+                      wantsTasks,
+                      wantsDecisions,
                     })
                   : undefined
               }
@@ -491,7 +540,7 @@ export function MessageList({
                 </AgentMessageBoardBlock>
               )}
 
-              {/* TaskListCard: primary review surface. Prefer rendering on analysis messages. */}
+              {/* TaskListCard: primary review surface. Renders before decision tree card. */}
               {message.role === "assistant" &&
                 wantsTasks &&
                 message.recommendedTasks &&
@@ -528,7 +577,44 @@ export function MessageList({
               )}
 
               {message.role === "assistant" &&
-                wantsCalendar &&
+                wantsDecisions &&
+                message.recommendedDecisionTree?.nodes &&
+                message.recommendedDecisionTree.nodes.length > 0 &&
+                (message.type === "analysis" ||
+                  message.type === "decisions_created" ||
+                  message.type === "tasks_created") && (
+                <AgentMessageBoardBlock blockId={`${message.id}-decisions`}>
+                  <DecisionTreeListCard
+                    nodes={message.recommendedDecisionTree.nodes}
+                    messageId={message.id}
+                    blockId={`${message.id}-decisions`}
+                    approvalRequired={approvalRequired}
+                    generatedDecisionRefs={generatedDecisionRefs}
+                    skippedDecisionRefs={skippedDecisionRefs}
+                    createdDecisionByRef={createdDecisionByRef}
+                    generating={Boolean(decisionsApprovalGenerating) || Boolean(generatingDecisions)}
+                    generationStatus={decisionGenerationStatus}
+                    approvalMode={Boolean(pendingDecisionApproval)}
+                    selectionMode={decisionSelectionMode}
+                    selectedRefs={selectedDecisionRefs}
+                    onSelectedRefsChange={onSelectedDecisionRefsChange}
+                    onCreateSelected={pendingDecisionApproval ? onApproveSelectedDecisions : undefined}
+                    createButtonDisabled={
+                      Boolean(approvalDisabled) || Boolean(decisionsApprovalGenerating)
+                    }
+                    onCreateAll={
+                      !approvalRequired &&
+                      !pendingDecisionApproval &&
+                      stepState?.analysisComplete &&
+                      !stepState?.decisionsCreated
+                        ? () => onAction?.("create_decisions")
+                        : undefined
+                    }
+                  />
+                </AgentMessageBoardBlock>
+              )}
+
+              {message.role === "assistant" &&
                 (message.type === "analysis" || message.type === "tasks_created") &&
                 message.calendarEvents !== undefined && (
                 <AgentMessageBoardBlock blockId={`${message.id}-calendar-events`}>
@@ -543,7 +629,7 @@ export function MessageList({
               {message.role === "assistant" &&
                 showFollowUpToggle &&
                 message.id === latestAnalysisMessageId &&
-                (!stepState || stepState.tasksCreated) && (
+                (!stepState || downstreamOutputsComplete) && (
                 <AgentMessageBoardBlock blockId={`${message.id}-followup`}>
                   <FollowUpCard
                     active={followUpActive}

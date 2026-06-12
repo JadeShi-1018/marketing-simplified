@@ -160,7 +160,7 @@ class ChatView(EnglishResponseMixin, APIView):
 
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
-            'create_tasks', 'generate_miro',
+            'create_decisions', 'create_tasks', 'generate_miro',
             'confirm_columns', 'confirm_anomalies',
             'resolve_external_approval',
         }
@@ -256,6 +256,20 @@ class ChatView(EnglishResponseMixin, APIView):
                             message_type='approval_request',
                             metadata=data or {},
                         )
+                        continue
+
+                    if chunk_type == 'decision_draft':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        if content or data:
+                            AgentMessage.objects.create(
+                                session=session,
+                                role='assistant',
+                                content=content or 'Decision drafts created.',
+                                message_type='decision_draft',
+                                metadata=data or {},
+                            )
                         continue
 
                     # Miro status is persisted separately (_create_agent_status_message in the

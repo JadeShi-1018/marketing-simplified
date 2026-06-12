@@ -236,12 +236,17 @@ def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
     return column_summary, json.dumps(limited, default=str), criteria_text
 
 
+_ANALYSIS_VALIDATION_MAX_ATTEMPTS = 3
+
+
 def _call_gemini_analysis(
     spreadsheet_data,
     user_id=None,
     success_criteria=None,
     generation_outputs=None,
-    user_context=None):
+    user_context=None,
+    validation_feedback=None,
+):
     """Call Gemini to analyze spreadsheet data."""
     from .gemini_client import call_gemini_json
     from .generation_registry import (
@@ -266,11 +271,17 @@ def _call_gemini_analysis(
         f"Data summary: {column_summary}\n\n"
         f"Analyze the following data:\n\n{cleaned_data}"
     )
+    if validation_feedback:
+        user_prompt += (
+            f"\n\nYour previous JSON response failed validation: {validation_feedback}\n"
+            "Fix every issue and return ONLY the corrected JSON object."
+        )
 
     logger.info(
-        "Calling Gemini for spreadsheet analysis user_id=%s outputs=%s",
+        "Calling Gemini for spreadsheet analysis user_id=%s outputs=%s attempt=%s",
         user_id,
         sorted(requested),
+        'retry' if validation_feedback else 'initial',
     )
     return call_gemini_json(
         system_prompt=system_prompt,
@@ -346,6 +357,11 @@ def _coerce_llm_analysis_for_requested(data, requested):
     subset = {}
     if 'recommended_tasks' in expected:
         subset['recommended_tasks'] = data.get('recommended_tasks', [])
+    if 'recommended_decision_tree' in expected:
+        subset['recommended_decision_tree'] = data.get(
+            'recommended_decision_tree',
+            {'nodes': []},
+        )
     return validate_analysis_response(subset, requested)
 
 
@@ -372,19 +388,31 @@ def _run_analysis(
     # 1. Try Gemini (primary)
     from .gemini_client import _get_api_key as _gemini_key
     if _gemini_key():
-        try:
-            raw = _call_gemini_analysis(
-                spreadsheet_data,
-                user_id,
-                success_criteria=success_criteria,
-                user_context=user_context,
-                generation_outputs=list(requested),
-            )
-            return _assign_anomaly_ids(validate_analysis_response(raw, requested))
-        except GenerationValidationError:
-            raise
-        except Exception as e:
-            logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
+        validation_feedback = None
+        for attempt in range(1, _ANALYSIS_VALIDATION_MAX_ATTEMPTS + 1):
+            try:
+                raw = _call_gemini_analysis(
+                    spreadsheet_data,
+                    user_id,
+                    success_criteria=success_criteria,
+                    user_context=user_context,
+                    generation_outputs=list(requested),
+                    validation_feedback=validation_feedback,
+                )
+                return _assign_anomaly_ids(validate_analysis_response(raw, requested))
+            except GenerationValidationError as exc:
+                if attempt >= _ANALYSIS_VALIDATION_MAX_ATTEMPTS:
+                    raise
+                validation_feedback = str(exc)
+                logger.warning(
+                    "Gemini analysis validation failed (attempt %s/%s): %s; retrying",
+                    attempt,
+                    _ANALYSIS_VALIDATION_MAX_ATTEMPTS,
+                    exc,
+                )
+            except Exception as e:
+                logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
+                break
 
     # 2. Try Claude API (fallback)
     client = _get_llm_client()
@@ -822,6 +850,9 @@ class AgentOrchestrator:
             if 'created_tasks' in wf_patch:
                 wr.created_tasks = wf_patch['created_tasks']
                 uf.append('created_tasks')
+            if 'created_decisions' in wf_patch:
+                wr.created_decisions = wf_patch['created_decisions']
+                uf.append('created_decisions')
             if wf_patch.get('miro_board_id'):
                 wr.miro_board = Board.objects.get(id=wf_patch['miro_board_id'])
                 uf.append('miro_board')
@@ -870,6 +901,25 @@ class AgentOrchestrator:
         if calendar_context:
             yield from self.answer_calendar_question(message, calendar_context)
             yield {"type": "done"}
+            return
+
+        if action == 'create_decisions':
+            latest_run = self.session.workflow_runs.filter(
+                is_deleted=False
+            ).order_by('-created_at').first()
+
+            if latest_run and self._workflow_run_analysis(latest_run).get(
+                'recommended_decision_tree', {}
+            ).get('nodes'):
+                yield from self.create_decisions_from_analysis(latest_run)
+                yield {'type': 'done'}
+                return
+            if latest_run and latest_run.workflow_definition:
+                yield from self._resume_workflow(latest_run)
+                yield {'type': 'done'}
+                return
+            yield {'type': 'error', 'content': 'No analysis found to create decisions from.'}
+            yield {'type': 'done'}
             return
 
         # --- Resume a paused workflow ---
@@ -1593,6 +1643,52 @@ class AgentOrchestrator:
             "data": analysis,
         }
 
+    def create_decisions_from_analysis(self, workflow_run):
+        """Create Decision tree directly from analysis results."""
+        yield {'type': 'text', 'content': 'Creating decisions...'}
+
+        existing_decision_ids = getattr(workflow_run, 'created_decisions', []) or []
+        if existing_decision_ids:
+            yield {
+                'type': 'decision_draft',
+                'content': f'Decisions already created ({len(existing_decision_ids)}).',
+                'data': {
+                    'decision_ids': existing_decision_ids,
+                },
+            }
+            return
+
+        analysis = self._workflow_run_analysis(workflow_run)
+        tree = (analysis or {}).get('recommended_decision_tree') or {}
+        nodes = tree.get('nodes') or []
+        if not nodes:
+            yield {'type': 'text', 'content': 'No decision nodes found in analysis.'}
+            return
+
+        from .approval_gate import KIND_DECISION_TREE, request_external_commit
+
+        draft = {'recommended_decision_tree': tree}
+        commit_context = {
+            'input_data': {'analysis_result': analysis},
+            'analysis_result': analysis,
+        }
+        gate = request_external_commit(
+            orchestrator=self,
+            workflow_run=workflow_run,
+            step_execution=None,
+            kind=KIND_DECISION_TREE,
+            draft=draft,
+            commit_context=commit_context,
+        )
+        for ev in gate.sse_events:
+            yield ev
+        if gate.paused:
+            return
+
+        decision_ids = (gate.workflow_run_patch or {}).get('created_decisions') or []
+        workflow_run.created_decisions = decision_ids
+        workflow_run.save(update_fields=['created_decisions'])
+
     def create_tasks_from_analysis(self, workflow_run):
         """Create Tasks directly from analysis results, optionally linking to Decision if it exists."""
         yield {"type": "text", "content": "Creating tasks..."}
@@ -1763,7 +1859,6 @@ class AgentOrchestrator:
             current_step_order=1,
             spreadsheet=input_data.get('spreadsheet'),
             generation_outputs_requested=outputs,
-            user_context=user_context or '',
         )
         if user_context:
             cache.set(f"agent:context:{workflow_run.id}", user_context, 3600)

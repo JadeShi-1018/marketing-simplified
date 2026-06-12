@@ -13,14 +13,14 @@ export const GENERATION_OUTPUT_CATALOG: {
     description: 'Recommended tasks from spreadsheet analysis.',
   },
   {
+    key: 'recommended_decision_tree',
+    label: 'Decision tree',
+    description: 'Layered decision tree from spreadsheet analysis.',
+  },
+  {
     key: 'miro_board',
     label: 'Miro board',
     description: 'Generate a Miro board from analysis context.',
-  },
-  {
-    key: 'calendar_events',
-    label: 'Calendar event',
-    description: 'Suggested calendar events based on analysis.',
   },
 ];
 

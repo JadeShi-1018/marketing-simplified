@@ -165,6 +165,31 @@ describe("agentMessageBoardBlockIds", () => {
     ).toBe("msg-analysis-miro-generate")
   })
 
+  it("orders decision tree block after tasks block on the same analysis message", () => {
+    const analysisWithBoth = {
+      id: "msg-analysis",
+      role: "assistant" as const,
+      content: "Summary",
+      type: "analysis",
+      recommendedTasks: [{ summary: "Task A", type: "report", priority: "HIGH" as const }],
+      recommendedDecisionTree: {
+        nodes: [{ ref: "n1", layer: 1, title: "Decision A", parent_refs: [] }],
+      },
+    }
+
+    const ids = getMessageBoardBlockIds([analysisWithBoth], {
+      bottomCardsMessageId: "msg-analysis",
+      wantsTasks: true,
+      wantsDecisions: true,
+    })
+
+    const tasksIdx = ids.indexOf("msg-analysis-tasks")
+    const decisionsIdx = ids.indexOf("msg-analysis-decisions")
+
+    expect(tasksIdx).toBeGreaterThanOrEqual(0)
+    expect(decisionsIdx).toBeGreaterThan(tasksIdx)
+  })
+
   it("getMiroGenerateBlockId returns null when card is hidden", () => {
     expect(
       getMiroGenerateBlockId({

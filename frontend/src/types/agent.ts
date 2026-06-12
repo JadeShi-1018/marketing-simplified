@@ -56,6 +56,16 @@ export interface AgentMessageData {
   reviewed_anomalies?: AnomalyItem[];
   anomalies_confirmed?: boolean;
   decision_id?: number;
+  decision_ids?: number[];
+  created_decisions?: Array<{
+    ref: string;
+    decision_id: number;
+    title: string;
+    layer: number;
+  }>;
+  recommended_decision_tree?: {
+    nodes: Array<Record<string, unknown>>;
+  };
   task_ids?: number[];
   created_tasks?: Array<{ index: number; task_id: number; summary: string }>;
   board_id?: string;
@@ -91,8 +101,8 @@ export interface SuggestedCalendarEvent {
 
 export type GenerationOutputKey =
   | 'recommended_tasks'
-  | 'miro_board'
-  | 'calendar_events';
+  | 'recommended_decision_tree'
+  | 'miro_board';
 
 export type SSEEventType =
   | 'text'
@@ -124,6 +134,7 @@ export interface SSEEvent {
 
 export type AgentAction =
   | 'analyze'
+  | 'create_decisions'
   | 'create_tasks'
   | 'generate_miro'
   | 'start_follow_up'
@@ -227,11 +238,26 @@ export interface ImportedCSVFile {
 
 // ==================== Analysis Result Types ====================
 
+export interface RecommendedDecisionTreeNode {
+  ref: string;
+  layer: number;
+  title: string;
+  parent_refs: string[];
+  context_summary?: string;
+  reasoning?: string;
+  risk_level?: 'LOW' | 'MEDIUM' | 'HIGH';
+  confidence?: number;
+  topic?: string;
+}
+
 export interface AnalysisResult {
   anomalies: AnomalyItem[];
   reviewed_anomalies?: AnomalyItem[];
   anomalies_confirmed?: boolean;
   recommended_tasks?: RecommendedTask[];
+  recommended_decision_tree?: {
+    nodes: RecommendedDecisionTreeNode[];
+  };
 }
 
 export interface RecommendedTask {
@@ -247,6 +273,7 @@ export interface WorkflowStepState {
   analysisComplete: boolean;
   anomaliesConfirmed: boolean;
   tasksCreated: boolean;
+  decisionsCreated: boolean;
 }
 
 // ==================== Workflow Types ====================

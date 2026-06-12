@@ -81,8 +81,15 @@ class AnalyzeDataExecutor(BaseStepExecutor):
             self.workflow_run.save(update_fields=['analysis_result'])
 
             tasks = analysis.get('recommended_tasks', [])
+            tree = analysis.get('recommended_decision_tree') or {}
+            tree_nodes = tree.get('nodes') or []
+            parts = []
             if tasks:
-                content = f"Found {len(tasks)} recommended task(s)."
+                parts.append(f"{len(tasks)} recommended task(s)")
+            if tree_nodes:
+                parts.append(f"{len(tree_nodes)} decision node(s)")
+            if parts:
+                content = f"Found {' and '.join(parts)}."
             else:
                 content = "Analysis complete."
 
@@ -148,10 +155,64 @@ class CallLLMExecutor(BaseStepExecutor):
 
 
 class CreateDecisionExecutor(BaseStepExecutor):
-    """Legacy step type: agent workflows no longer persist Decision records."""
+    """Creates Decision tree from analysis recommended_decision_tree via the approval gate."""
 
     def execute(self, input_data):
-        return StepResult(success=True, output_data=input_data, sse_events=[])
+        from .approval_gate import KIND_DECISION_TREE, request_external_commit
+
+        analysis = input_data.get('analysis_result')
+        if not analysis:
+            return StepResult(success=False, error='No analysis_result in input')
+
+        try:
+            tree = analysis.get('recommended_decision_tree') or {}
+            nodes = tree.get('nodes') or []
+            if not nodes:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=[{
+                        'type': 'text',
+                        'content': 'No decision nodes to create.',
+                    }],
+                )
+
+            draft = {'recommended_decision_tree': tree}
+            commit_context = {
+                'input_data': input_data,
+                'analysis_result': analysis,
+            }
+            gate = request_external_commit(
+                orchestrator=self.orchestrator,
+                workflow_run=self.workflow_run,
+                step_execution=self.step_execution,
+                kind=KIND_DECISION_TREE,
+                draft=draft,
+                commit_context=commit_context,
+            )
+
+            if gate.paused:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=gate.sse_events,
+                    pause_external_approval=True,
+                )
+
+            wf = gate.workflow_run_patch or {}
+            created_ids = wf.get('created_decisions') or []
+            self.workflow_run.created_decisions = created_ids
+            self.workflow_run.save(update_fields=['created_decisions'])
+
+            base_out = gate.output_data or {**input_data, 'analysis_result': analysis}
+            return StepResult(
+                success=True,
+                output_data={**base_out, 'created_decision_ids': created_ids},
+                sse_events=gate.sse_events,
+            )
+        except Exception as e:
+            logger.exception("CreateDecisionExecutor failed")
+            return StepResult(success=False, error=str(e))
 
 
 class CreateTasksExecutor(BaseStepExecutor):

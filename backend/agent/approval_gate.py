@@ -15,6 +15,7 @@ import requests as http_requests
 logger = logging.getLogger(__name__)
 
 KIND_TASK = 'task'
+KIND_DECISION_TREE = 'decision_tree'
 KIND_MIRO_BOARD = 'miro_board'
 KIND_CALENDAR_EVENT = 'calendar_event'
 KIND_FORWARD_MESSAGE = 'forward_message'
@@ -63,7 +64,7 @@ def build_destination_options(
     commit_context: dict,
 ) -> tuple[list[dict], dict | None]:
     """Return (options, default_destination)."""
-    if kind in (KIND_TASK, KIND_MIRO_BOARD):
+    if kind in (KIND_TASK, KIND_DECISION_TREE, KIND_MIRO_BOARD):
         # Destination is always the session project for tasks + miro boards.
         # Keep default destination for internal commit plumbing, but do not offer options.
         default = {'project_id': str(project.id)}
@@ -186,6 +187,42 @@ def _commit_task(orchestrator, draft: dict, destination: dict | None, commit_con
                 'task_ids': created_ids,
                 'created_tasks': created_tasks,
                 'decision_id': decision.id if decision else None,
+            },
+        }
+    ]
+    return out, sse, wf_patch
+
+
+def _commit_decision_tree(orchestrator, draft: dict, destination: dict | None, commit_context: dict):
+    from .decision_tree_service import commit_decision_tree
+
+    tree = draft.get('recommended_decision_tree') or {}
+    nodes = tree.get('nodes') or []
+    if not nodes:
+        raise ValueError('No decision tree nodes in draft')
+
+    session = orchestrator.session
+    result = commit_decision_tree(
+        project=orchestrator.project,
+        user=orchestrator.user,
+        tree=tree,
+        agent_session_id=getattr(session, 'id', None),
+    )
+
+    input_data = commit_context.get('input_data') or {}
+    analysis = commit_context.get('analysis_result') or input_data.get('analysis_result')
+    decision_ids = result['decision_ids']
+    created_decisions = result['created_decisions']
+
+    wf_patch = {'created_decisions': decision_ids}
+    out = {**input_data, 'analysis_result': analysis}
+    sse = [
+        {
+            'type': 'decision_draft',
+            'content': f'Created {len(decision_ids)} decision draft(s).',
+            'data': {
+                'decision_ids': decision_ids,
+                'created_decisions': created_decisions,
             },
         }
     ]
@@ -338,6 +375,7 @@ def _commit_custom_api(_orchestrator, draft: dict, _destination: dict | None, co
 
 COMMIT_REGISTRY = {
     KIND_TASK: _commit_task,
+    KIND_DECISION_TREE: _commit_decision_tree,
     KIND_MIRO_BOARD: _commit_miro_board,
     KIND_CALENDAR_EVENT: _commit_calendar_events,
     KIND_FORWARD_MESSAGE: _commit_forward,

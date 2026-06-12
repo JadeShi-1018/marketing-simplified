@@ -5,14 +5,18 @@ from typing import Any
 
 GENERATION_OUTPUT_KEYS = frozenset({
     'recommended_tasks',
+    'recommended_decision_tree',
     'miro_board',
-    'calendar_events',
 })
 
 # Keys produced by the spreadsheet analysis Gemini call (not Miro/calendar dedicated calls).
-ANALYSIS_JSON_KEYS = frozenset({'recommended_tasks'})
+ANALYSIS_JSON_KEYS = frozenset({'recommended_tasks', 'recommended_decision_tree'})
 
-DEFAULT_GENERATION_OUTPUTS = list(GENERATION_OUTPUT_KEYS)
+DEFAULT_GENERATION_OUTPUTS = [
+    'recommended_tasks',
+    'recommended_decision_tree',
+    'miro_board',
+]
 
 CATALOG = [
     {
@@ -21,14 +25,14 @@ CATALOG = [
         'description': 'Recommended tasks from spreadsheet analysis.',
     },
     {
+        'key': 'recommended_decision_tree',
+        'label': 'Decision tree',
+        'description': 'Layered decision tree from spreadsheet analysis.',
+    },
+    {
         'key': 'miro_board',
         'label': 'Miro board',
         'description': 'Generate a Miro board snapshot from analysis context.',
-    },
-    {
-        'key': 'calendar_events',
-        'label': 'Calendar event',
-        'description': 'Suggested calendar events based on analysis.',
     },
 ]
 
@@ -37,6 +41,11 @@ _TASK_TYPES = frozenset({
     'scaling', 'communication', 'retrospective', 'experiment', 'platform_policy_update',
 })
 _TASK_PRIORITIES = frozenset({'HIGH', 'MEDIUM', 'LOW'})
+_RISK_LEVELS = frozenset({'LOW', 'MEDIUM', 'HIGH'})
+_DECISION_NODE_KEYS = frozenset({
+    'ref', 'layer', 'title', 'parent_refs',
+    'context_summary', 'reasoning', 'risk_level', 'confidence', 'topic',
+})
 
 _RECOMMENDED_TASKS_SCHEMA = """\
   "recommended_tasks": [
@@ -47,6 +56,34 @@ _RECOMMENDED_TASKS_SCHEMA = """\
       "priority": "one of: HIGH, MEDIUM, LOW"
     }
   ]"""
+
+_RECOMMENDED_DECISION_TREE_SCHEMA = """\
+  "recommended_decision_tree": {
+    "nodes": [
+      {
+        "ref": "root_goal",
+        "layer": 0,
+        "title": "Decision title (max 255 chars)",
+        "parent_refs": [],
+        "context_summary": "optional string — 1-3 sentence context from the data",
+        "reasoning": "optional string — reasoning for this decision",
+        "risk_level": "LOW | MEDIUM | HIGH (optional)",
+        "confidence": 3,
+        "topic": "optional string slug e.g. meta_retargeting"
+      },
+      {
+        "ref": "child_action",
+        "layer": 1,
+        "title": "Child decision title",
+        "parent_refs": ["root_goal"],
+        "context_summary": "optional string",
+        "reasoning": "optional string",
+        "risk_level": "MEDIUM",
+        "confidence": 3,
+        "topic": "optional string slug"
+      }
+    ]
+  }"""
 
 _ANALYSIS_PROMPT_HEADER = """\
 You are a data analysis expert. Analyze the provided spreadsheet data.
@@ -120,11 +157,49 @@ def build_analysis_prompt(requested: frozenset[str], criteria_block: str) -> str
     parts = []
     if 'recommended_tasks' in analysis_keys:
         parts.append(_RECOMMENDED_TASKS_SCHEMA)
+    if 'recommended_decision_tree' in analysis_keys:
+        parts.append(_RECOMMENDED_DECISION_TREE_SCHEMA)
     schema_body = ',\n'.join(parts)
-    rules = (
-        '- Suggest 1-5 tasks based on the data when recommended_tasks is requested\n'
-        '- If nothing actionable, return an empty recommended_tasks array\n'
-    )
+    rules_parts = []
+    if 'recommended_tasks' in analysis_keys:
+        rules_parts.append(
+            '- Suggest 1-5 tasks based on the data when recommended_tasks is requested'
+        )
+        rules_parts.append(
+            '- If nothing actionable, return an empty recommended_tasks array'
+        )
+    if 'recommended_decision_tree' in analysis_keys:
+        rules_parts.append(
+            '- Suggest 2-8 decision nodes forming a layered DAG grounded in the data'
+        )
+        rules_parts.append(
+            '- Every node MUST include these required fields with exact types:'
+        )
+        rules_parts.append(
+            '  • ref: non-empty string, unique across all nodes'
+        )
+        rules_parts.append(
+            '  • layer: non-negative integer (0 for roots; must be > every parent\'s layer)'
+        )
+        rules_parts.append(
+            '  • title: non-empty string (max 255 chars)'
+        )
+        rules_parts.append(
+            '  • parent_refs: JSON array of ref strings — use [] for layer-0 roots; '
+            'use ["parent_ref"] for children. Never null, never omitted, never a single string'
+        )
+        rules_parts.append(
+            '- Optional per node: context_summary (string), reasoning (string), '
+            'risk_level (LOW|MEDIUM|HIGH), confidence (integer 1-5), topic (string)'
+        )
+        rules_parts.append(
+            '- Parent-child edges flow parent to child; every child layer must be greater '
+            'than all of its parents\' layers'
+        )
+        rules_parts.append(
+            '- If nothing actionable, return recommended_decision_tree with nodes: []'
+        )
+    rules = '\n'.join(f'{line}\n' for line in rules_parts)
     return _ANALYSIS_PROMPT_HEADER.format(
         criteria_block=criteria_block,
         schema_body=schema_body,
@@ -150,6 +225,120 @@ def _validate_recommended_tasks(value: Any) -> list:
     return value
 
 
+def _validate_recommended_decision_tree(value: Any) -> dict:
+    if not isinstance(value, dict):
+        raise GenerationValidationError('recommended_decision_tree must be an object.')
+    nodes = value.get('nodes')
+    if nodes is None:
+        raise GenerationValidationError('recommended_decision_tree.nodes is required.')
+    if not isinstance(nodes, list):
+        raise GenerationValidationError('recommended_decision_tree.nodes must be a list.')
+    if len(value.keys()) != 1:
+        extra = set(value.keys()) - {'nodes'}
+        if extra:
+            raise GenerationValidationError(
+                f'recommended_decision_tree has unexpected keys: {", ".join(sorted(extra))}.'
+            )
+
+    refs: dict[str, dict] = {}
+    for idx, node in enumerate(nodes):
+        prefix = f'recommended_decision_tree.nodes[{idx}]'
+        if not isinstance(node, dict):
+            raise GenerationValidationError(f'{prefix} must be an object.')
+        unknown = set(node.keys()) - _DECISION_NODE_KEYS
+        if unknown:
+            raise GenerationValidationError(
+                f'{prefix} has unexpected keys: {", ".join(sorted(unknown))}.'
+            )
+        ref = node.get('ref')
+        if not isinstance(ref, str) or not ref.strip():
+            raise GenerationValidationError(f'{prefix}.ref is required.')
+        if ref in refs:
+            raise GenerationValidationError(f'{prefix}.ref must be unique (duplicate: {ref}).')
+        layer = node.get('layer')
+        if not isinstance(layer, int) or isinstance(layer, bool) or layer < 0:
+            raise GenerationValidationError(f'{prefix}.layer must be a non-negative integer.')
+        title = node.get('title')
+        if not isinstance(title, str) or not title.strip():
+            raise GenerationValidationError(f'{prefix}.title is required.')
+        parent_refs = node.get('parent_refs')
+        if not isinstance(parent_refs, list):
+            raise GenerationValidationError(f'{prefix}.parent_refs must be a list.')
+        for pidx, parent_ref in enumerate(parent_refs):
+            if not isinstance(parent_ref, str) or not parent_ref.strip():
+                raise GenerationValidationError(
+                    f'{prefix}.parent_refs[{pidx}] must be a non-empty string.'
+                )
+            if parent_ref == ref:
+                raise GenerationValidationError(f'{prefix} cannot reference itself as parent.')
+        risk_level = node.get('risk_level')
+        if risk_level is not None:
+            if not isinstance(risk_level, str) or risk_level not in _RISK_LEVELS:
+                raise GenerationValidationError(f'{prefix}.risk_level is invalid.')
+        confidence = node.get('confidence')
+        if confidence is not None:
+            if not isinstance(confidence, int) or isinstance(confidence, bool):
+                raise GenerationValidationError(f'{prefix}.confidence must be an integer.')
+            if confidence < 1 or confidence > 5:
+                raise GenerationValidationError(f'{prefix}.confidence must be between 1 and 5.')
+        for optional in ('context_summary', 'reasoning', 'topic'):
+            if optional in node and node[optional] is not None and not isinstance(node[optional], str):
+                raise GenerationValidationError(f'{prefix}.{optional} must be a string.')
+        refs[ref] = node
+
+    for ref, node in refs.items():
+        prefix = f'recommended_decision_tree.nodes[{ref}]'
+        parent_refs = node['parent_refs']
+        layer = node['layer']
+        if not parent_refs:
+            if layer != 0:
+                raise GenerationValidationError(
+                    f'{prefix}: nodes without parents must be at layer 0.'
+                )
+            continue
+        max_parent_layer = -1
+        for parent_ref in parent_refs:
+            if parent_ref not in refs:
+                raise GenerationValidationError(
+                    f'{prefix}.parent_refs references unknown ref: {parent_ref}.'
+                )
+            parent_layer = refs[parent_ref]['layer']
+            if parent_layer >= layer:
+                raise GenerationValidationError(
+                    f'{prefix}: layer must be greater than all parent layers.'
+                )
+            max_parent_layer = max(max_parent_layer, parent_layer)
+        if layer <= max_parent_layer:
+            raise GenerationValidationError(
+                f'{prefix}: layer must be greater than all parent layers.'
+            )
+
+    # Cycle detection via DFS on parent edges (child -> parents reversed for topo)
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def _has_cycle(node_ref: str) -> bool:
+        if node_ref in visiting:
+            return True
+        if node_ref in visited:
+            return False
+        visiting.add(node_ref)
+        for parent_ref in refs[node_ref]['parent_refs']:
+            if _has_cycle(parent_ref):
+                return True
+        visiting.remove(node_ref)
+        visited.add(node_ref)
+        return False
+
+    for ref in refs:
+        if _has_cycle(ref):
+            raise GenerationValidationError(
+                'recommended_decision_tree contains a cycle in parent_refs.'
+            )
+
+    return value
+
+
 def _validate_calendar_events(value: Any) -> list:
     if not isinstance(value, list):
         raise GenerationValidationError('calendar_events must be a list.')
@@ -171,6 +360,7 @@ def _validate_calendar_events(value: Any) -> list:
 
 _VALIDATORS = {
     'recommended_tasks': _validate_recommended_tasks,
+    'recommended_decision_tree': _validate_recommended_decision_tree,
     'calendar_events': _validate_calendar_events,
 }
 
@@ -220,6 +410,8 @@ def filter_sse_analysis_payload(analysis: dict, requested: frozenset[str]) -> di
 
 def should_skip_workflow_step(step_type: str, requested: frozenset[str]) -> bool:
     if step_type == 'create_tasks' and 'recommended_tasks' not in requested:
+        return True
+    if step_type == 'create_decision' and 'recommended_decision_tree' not in requested:
         return True
     if step_type in ('generate_miro_snapshot', 'create_miro_board') and 'miro_board' not in requested:
         return True

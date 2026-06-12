@@ -504,6 +504,7 @@ class AgentWorkflowRun(TimeStampedModel):
     current_step_order = models.PositiveIntegerField(null=True, blank=True)
     analysis_result = models.JSONField(null=True, blank=True)
     created_tasks = models.JSONField(default=list, blank=True)
+    created_decisions = models.JSONField(default=list, blank=True)
     miro_snapshot = models.JSONField(null=True, blank=True)
     miro_board = models.ForeignKey(
         'miro.Board',

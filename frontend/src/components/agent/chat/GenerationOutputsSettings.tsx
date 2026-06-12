@@ -12,16 +12,24 @@ import type { GenerationOutputKey } from '@/types/agent';
 import { GENERATION_OUTPUT_CATALOG } from '@/lib/generationOutputs';
 import { useGenerationOutputs } from '@/hooks/useGenerationOutputs';
 import { cn } from '@/lib/utils';
+import { ApprovalToggle } from './ApprovalToggle';
 
 interface GenerationOutputsSettingsProps {
   disabled?: boolean;
   className?: string;
+  sessionId?: string | null;
+  approvalRequired?: boolean;
+  onApprovalChange?: (next: boolean) => void;
 }
 
 export function GenerationOutputsSettings({
   disabled,
   className,
+  sessionId,
+  approvalRequired,
+  onApprovalChange,
 }: GenerationOutputsSettingsProps) {
+  const showApproval = typeof approvalRequired === 'boolean';
   const { selected, applySelection } = useGenerationOutputs();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<GenerationOutputKey[]>(selected);
@@ -64,7 +72,21 @@ export function GenerationOutputsSettings({
         align="end"
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <p className="text-sm font-medium text-foreground">Generation outputs</p>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-foreground">Generation outputs</p>
+          {showApproval && (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Approval</span>
+              <ApprovalToggle
+                sessionId={sessionId}
+                value={approvalRequired}
+                onChange={onApprovalChange}
+                disabled={disabled}
+                size="sm"
+              />
+            </div>
+          )}
+        </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
           Choose what to generate when you upload a file.
         </p>

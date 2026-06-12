@@ -11,6 +11,8 @@ export type MessageForBlockIds = {
   navigateLabel?: string
   anomalies?: unknown[]
   recommendedTasks?: unknown[]
+  recommendedDecisionTree?: { nodes?: unknown[] }
+  calendarEvents?: unknown[]
 }
 
 export type MiroCardsAnchorMode = "after_miro_started" | "after_tasks_created"
@@ -72,6 +74,8 @@ export type AssistantMessageBlockIdsOptions = {
   tasksCardMessageId?: string | null
   /** Miro nav is shown on the action card; omit per-message nav from the render queue. */
   suppressMiroMessageNav?: boolean
+  wantsTasks?: boolean
+  wantsDecisions?: boolean
 }
 
 /** Block ids for an assistant message in the same render order as MessageList. */
@@ -79,8 +83,14 @@ export function getAssistantMessageBlockIds(
   message: MessageForBlockIds,
   options: AssistantMessageBlockIdsOptions = {}
 ): string[] {
-  const { latestAnalysisMessageId, showFollowUpToggle, stepState, tasksCardMessageId } =
-    options
+  const {
+    latestAnalysisMessageId,
+    showFollowUpToggle,
+    stepState,
+    tasksCardMessageId,
+    wantsTasks = true,
+    wantsDecisions = true,
+  } = options
   const ids: string[] = []
 
   if (message.content && message.type !== "calendar_invite") {
@@ -108,12 +118,31 @@ export function getAssistantMessageBlockIds(
   }
 
   if (
+    wantsTasks &&
     message.recommendedTasks &&
     message.recommendedTasks.length > 0 &&
     (message.type === "analysis" || message.type === "tasks_created") &&
     (!tasksCardMessageId || message.id === tasksCardMessageId)
   ) {
     ids.push(`${message.id}-tasks`)
+  }
+
+  if (
+    wantsDecisions &&
+    message.recommendedDecisionTree?.nodes &&
+    message.recommendedDecisionTree.nodes.length > 0 &&
+    (message.type === "analysis" ||
+      message.type === "decisions_created" ||
+      message.type === "tasks_created")
+  ) {
+    ids.push(`${message.id}-decisions`)
+  }
+
+  if (
+    (message.type === "analysis" || message.type === "tasks_created") &&
+    message.calendarEvents !== undefined
+  ) {
+    ids.push(`${message.id}-calendar-events`)
   }
 
   if (
@@ -160,6 +189,8 @@ export function getMessageBoardBlockIds(
         stepState: options.stepState,
         tasksCardMessageId: options.tasksCardMessageId,
         suppressMiroMessageNav: options.suppressMiroMessageNav,
+        wantsTasks: options.wantsTasks,
+        wantsDecisions: options.wantsDecisions,
       })
     )
     if (message.id === miroAnchorId) {
