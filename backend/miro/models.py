@@ -1,8 +1,9 @@
 import uuid
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 
 
-class Board(models.Model):
+class Board(SluggedResourceModelMixin, models.Model):
     """
     Board model representing a MIRO-style collaborative board.
     Each board belongs to a project and can contain multiple board items.

@@ -41,7 +41,9 @@ interface PanelDraft {
 
 interface Props {
   decisionId: number;
-  projectId: number | null;
+  /** Slug of the decision; preferred for API lookups and URLs (slug-only backend). */
+  decisionSlug?: string | null;
+  projectId: number | string | null;
   /** Status from the graph card (used until detail API loads). */
   graphNodeStatus?: DecisionStatus | null;
   canEdit: boolean;
@@ -52,7 +54,7 @@ interface Props {
   onProvisionalSaved?: () => void;
   onDiscardProvisional?: () => Promise<void> | void;
   onClose: () => void;
-  onOpenFullPage?: (id: number, projectId?: number | null) => void;
+  onOpenFullPage?: (idOrSlug: number | string, projectId?: number | string | null) => void;
   onUpdated?: (opts?: {
     fullReload?: boolean;
     nodePatch?: { id: number } & Partial<Pick<DecisionGraphNode, 'title' | 'status' | 'riskLevel'>>;
@@ -61,6 +63,7 @@ interface Props {
 
 export default function DecisionTreeDetailPanel({
   decisionId,
+  decisionSlug = null,
   projectId,
   graphNodeStatus = null,
   canEdit: canEditProp,
@@ -73,7 +76,8 @@ export default function DecisionTreeDetailPanel({
   onOpenFullPage,
   onUpdated,
 }: Props) {
-  const detail = useDecisionDetail(decisionId, projectId);
+  const decisionKey = decisionSlug ?? decisionId;
+  const detail = useDecisionDetail(decisionKey, projectId);
   const { canEdit: roleCanEdit, members } = useProjectRole(projectId);
   const committed = detail.committed;
   const base = detail.base;
@@ -237,10 +241,10 @@ export default function DecisionTreeDetailPanel({
 
   const handleSignalSubmit = async (payload: SignalFormPayload) => {
     if (signalEdit?.id) {
-      await DecisionAPI.updateSignal(decisionId, signalEdit.id, payload, projectId);
+      await DecisionAPI.updateSignal(decisionKey, signalEdit.id, payload, projectId);
       toast.success('Signal updated');
     } else {
-      await DecisionAPI.createSignal(decisionId, payload, projectId);
+      await DecisionAPI.createSignal(decisionKey, payload, projectId);
       toast.success('Signal added');
     }
     await detail.refreshSignals();
@@ -251,7 +255,7 @@ export default function DecisionTreeDetailPanel({
     if (!pendingSignalDelete?.id) return;
     setSignalDeleting(true);
     try {
-      await DecisionAPI.deleteSignal(decisionId, pendingSignalDelete.id, projectId);
+      await DecisionAPI.deleteSignal(decisionKey, pendingSignalDelete.id, projectId);
       toast.success('Signal deleted');
       await detail.refreshSignals();
       setPendingSignalDelete(null);
@@ -267,8 +271,8 @@ export default function DecisionTreeDetailPanel({
   };
 
   const fullPageHref = projectId
-    ? `/decisions/${decisionId}?project_id=${projectId}`
-    : `/decisions/${decisionId}`;
+    ? `/decisions/${decisionKey}?project_id=${projectId}`
+    : `/decisions/${decisionKey}`;
 
   return (
     <>
@@ -304,7 +308,7 @@ export default function DecisionTreeDetailPanel({
               {onOpenFullPage && !isProvisional ? (
                 <button
                   type="button"
-                  onClick={() => onOpenFullPage(decisionId, projectId)}
+                  onClick={() => onOpenFullPage(decisionKey, projectId)}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-50 hover:text-gray-900"
                   title="Open full page"
                   aria-label="Open full page"
@@ -407,7 +411,7 @@ export default function DecisionTreeDetailPanel({
                 onDelete={(s) => setPendingSignalDelete(s)}
               />
               <DecisionConnectionsAside
-                decisionId={decisionId}
+                decisionId={decisionKey}
                 projectId={projectId}
                 mySeq={projectSeq}
               />
@@ -418,7 +422,7 @@ export default function DecisionTreeDetailPanel({
                 onCreateTask={() => {
                   const q = new URLSearchParams();
                   if (projectId) q.set('project_id', String(projectId));
-                  q.set('link_decision_id', String(decisionId));
+                  q.set('link_decision_id', String(decisionKey));
                   window.open(`/tasks/new?${q.toString()}`, '_blank');
                 }}
               />

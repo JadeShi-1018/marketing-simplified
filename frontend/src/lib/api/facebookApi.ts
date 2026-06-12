@@ -28,7 +28,7 @@ export interface FacebookStatus {
 }
 
 export interface FacebookAdAccountListParams {
-  project_id?: number;
+  project_id?: number | string;
   page?: number;
   page_size?: number;
   search?: string;
@@ -538,7 +538,7 @@ export interface MetaAdSetTimeseries {
 }
 
 export const facebookApi = {
-  getStatus: async (projectId?: number | null): Promise<FacebookStatus> => {
+  getStatus: async (projectId?: number | string | null): Promise<FacebookStatus> => {
     const response = await api.get("/api/facebook_integration/status/", {
       params: projectId ? { project_id: projectId } : undefined,
     });
@@ -555,7 +555,7 @@ export const facebookApi = {
     return response.data;
   },
 
-  connect: async (projectId?: number): Promise<FacebookConnectPayload> => {
+  connect: async (projectId?: number | string): Promise<FacebookConnectPayload> => {
     const response = await api.get("/api/facebook_integration/connect/", {
       params: projectId ? { project_id: projectId } : undefined,
     });
@@ -574,7 +574,7 @@ export const facebookApi = {
 
   linkAdAccountToProject: async (
     adAccountId: number,
-    projectId: number | null
+    projectId: number | string | null
   ): Promise<FacebookAdAccount> => {
     const response = await api.post(
       `/api/facebook_integration/ad_accounts/${adAccountId}/link_project/`,
@@ -778,7 +778,7 @@ export const facebookApi = {
 
   exportAdsToSpreadsheet: async (
     adAccountId: number,
-    projectId: number,
+    projectId: number | string,
     name: string,
     days: number,
     filters?: {
@@ -815,7 +815,7 @@ export const facebookApi = {
 
   exportCreativesToSpreadsheet: async (
     adAccountId: number,
-    projectId: number,
+    projectId: number | string,
     name: string,
     days: number,
     filters?: {
@@ -856,7 +856,7 @@ export const facebookApi = {
 
   exportCampaignsToSpreadsheet: async (
     adAccountId: number,
-    projectId: number,
+    projectId: number | string,
     name: string,
     days: number,
     filters?: { ids?: number[] }

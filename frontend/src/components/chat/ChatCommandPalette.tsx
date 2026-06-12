@@ -17,7 +17,7 @@ import type { Chat } from '@/types/chat';
 interface Props {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  projectId: number | null;
+  projectId: number | string | null;
   currentChatId: number | null;
   onSelectChat: (chatId: number) => void;
 }

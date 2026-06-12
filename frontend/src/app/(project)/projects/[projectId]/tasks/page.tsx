@@ -12,10 +12,10 @@ function RedirectBody() {
 
   useEffect(() => {
     const raw = params?.projectId;
-    const projectId = typeof raw === "string" ? Number(raw) : NaN;
+    const projectId = typeof raw === "string" ? raw : "";
     const p = new URLSearchParams();
-    if (Number.isFinite(projectId) && projectId >= 1) {
-      p.set("project_id", String(projectId));
+    if (projectId) {
+      p.set("project_id", projectId);
     }
     const create = searchParams.get("create");
     const origin = searchParams.get("origin_meeting_id");

@@ -57,7 +57,7 @@ class CampaignSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Campaign
-        fields = [
+        fields = ['slug', 
             'id', 'name', 'objective', 'platforms', 'hypothesis', 'tags',
             'start_date', 'end_date', 'actual_completion_date',
             'owner', 'owner_id', 'creator', 'assignee', 'assignee_id',
@@ -65,7 +65,7 @@ class CampaignSerializer(serializers.ModelSerializer):
             'status', 'status_note', 'latest_performance_summary',
             'created_at', 'updated_at', 'is_deleted'
         ]
-        read_only_fields = [
+        read_only_fields = ['slug', 
             'id', 'creator', 'status', 'actual_completion_date',
             'latest_performance_summary', 'created_at', 'updated_at', 'is_deleted'
         ]
@@ -467,10 +467,12 @@ class CampaignTemplateSerializer(serializers.ModelSerializer):
 
 class CampaignTaskLinkSerializer(serializers.ModelSerializer):
     """Serializer for Campaign-Task link"""
+    task_slug = serializers.SlugField(source='task.slug', read_only=True)
+
     class Meta:
         model = CampaignTaskLink
-        fields = ['id', 'campaign', 'task', 'link_type', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = ['id', 'campaign', 'task', 'task_slug', 'link_type', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'task_slug', 'created_at', 'updated_at']
 
 
 class CampaignTaskLinkCreateSerializer(serializers.Serializer):

@@ -7,7 +7,7 @@ import { toast } from "react-hot-toast";
 
 interface AlertDetailProps {
   alert: AlertTask;
-  projectId?: number | null;
+  projectId?: number | string | null;
   onRefresh?: () => void;
 }
 

@@ -31,8 +31,8 @@ export default function TasksV2Page() {
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
   const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+    ? projectIdParam
+    : activeProject?.slug || activeProject?.id || null;
 
   const tab: TasksTab = useMemo(
     () => (tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'tasks'),

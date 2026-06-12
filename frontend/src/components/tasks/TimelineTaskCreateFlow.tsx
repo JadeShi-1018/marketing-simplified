@@ -25,7 +25,7 @@ const TIMELINE_TASK_TYPE_KEYS = [
 ] as const;
 
 export type TimelineTaskCreateFlowProps = {
-  projectId: number | null;
+  projectId: number | string | null;
   originMeetingId: number | null;
   /** Open the create panel on mount (e.g. timeline-only entry points). */
   autoOpen?: boolean;
@@ -34,7 +34,7 @@ export type TimelineTaskCreateFlowProps = {
   createTask: (data: CreateTaskData) => Promise<TaskData>;
   reloadTasks?: () => Promise<void>;
   updateTask: (id: number, patch: Partial<TaskData>) => void;
-  children: (api: { openCreateTask: (projectId: number | null) => void }) => ReactNode;
+  children: (api: { openCreateTask: (projectId: number | string | null) => void }) => ReactNode;
 };
 
 export function TimelineTaskCreateFlow({
@@ -356,7 +356,7 @@ export function TimelineTaskCreateFlow({
     policyValidation.clearErrors();
   };
 
-  const handleCreateTask = (projectId: number | null) => {
+  const handleCreateTask = (projectId: number | string | null) => {
     resetFormData();
     clearAllValidationErrors();
     setTaskData((prev) => ({

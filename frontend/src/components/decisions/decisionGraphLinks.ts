@@ -1,5 +1,6 @@
 import { DecisionAPI } from '@/lib/api/decisionApi';
 import type { DecisionGraphEdge, DecisionGraphNode } from '@/types/decision';
+import { Id } from '@/types/common';
 
 export function normalizeUndirectedEdge(
   fromId: number,
@@ -51,14 +52,14 @@ export async function persistGraphLinkChanges(
   nodes: DecisionGraphNode[],
   nextEdges: DecisionGraphEdge[],
   prevEdges: DecisionGraphEdge[],
-  projectId: number,
+  projectId: Id,
 ): Promise<void> {
   const idToNode = new Map<number, DecisionGraphNode>();
   nodes.forEach((n) => idToNode.set(n.id, n));
 
   const currentByNode = connectedIdsFromEdges(nextEdges, idToNode);
   const initialByNode = connectedIdsFromEdges(prevEdges, idToNode);
-  const updates: { decisionId: number; connectedIds: number[]; projectId: number }[] = [];
+  const updates: { decisionId: number; connectedIds: number[]; projectId: Id }[] = [];
 
   nodes.forEach((node) => {
     if (!node.projectId) return;

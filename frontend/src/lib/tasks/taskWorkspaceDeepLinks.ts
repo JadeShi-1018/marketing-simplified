@@ -4,8 +4,8 @@
  * so origin is recoverable from a single place (URL + mirrored form state).
  */
 export function taskWorkspaceCreateFromMeetingHref(
-  projectId: number,
-  meetingId: number,
+  projectId: number | string,
+  meetingId: number | string,
 ): string {
   const p = new URLSearchParams();
   p.set("project_id", String(projectId));

@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status
+from core.slug_mixins import SlugLookupViewSetMixin
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -19,7 +20,7 @@ from .serializers import (
     CampaignCommentSerializer,
 )
 
-class EmailDraftViewSet(viewsets.ModelViewSet):
+class EmailDraftViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing email drafts (Campaigns).
     Provides CRUD operations for email drafts with template management.

@@ -173,7 +173,7 @@ export default function CreateCampaignFromTemplateDialog({
       const res = await CampaignAPI.createCampaignFromTemplate(selected.id, payload);
       toast.success('Campaign created');
       handleClose(false);
-      router.push(`/campaigns/${res.data.id}`);
+      router.push(`/campaigns/${res.data.slug}`);
     } catch (err: any) {
       setError(
         err?.response?.data?.error ||

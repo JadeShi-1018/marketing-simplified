@@ -154,7 +154,7 @@ export default function SpreadsheetDetailPage() {
 
       try {
         const sourceSheetData = await SpreadsheetAPI.readCellRange(
-          Number(spreadsheetId),
+          String(spreadsheetId),
           sourceSheetId,
           0,
           999,
@@ -252,12 +252,12 @@ export default function SpreadsheetDetailPage() {
 
     const promise: Promise<SheetData | null> = (async () => {
       try {
-        return await SpreadsheetAPI.createSheet(Number(spreadsheetId), { name: 'Sheet1' });
+        return await SpreadsheetAPI.createSheet(String(spreadsheetId), { name: 'Sheet1' });
       } catch (err: any) {
         // Defensive: if another tab / stale request beat us to it, surface the
         // existing Sheet1 instead of failing the page load.
         if (err?.response?.status === 400) {
-          const retry = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+          const retry = await SpreadsheetAPI.listSheets(String(spreadsheetId));
           if (retry.results && retry.results.length > 0) {
             return retry.results[0];
           }
@@ -288,11 +288,11 @@ export default function SpreadsheetDetailPage() {
         setError(null);
         
         // Fetch spreadsheet
-        const spreadsheetData = await SpreadsheetAPI.getSpreadsheet(Number(spreadsheetId));
+        const spreadsheetData = await SpreadsheetAPI.getSpreadsheet(String(spreadsheetId));
         setSpreadsheet(spreadsheetData);
 
         // Fetch sheets
-        const sheetsResponse = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+        const sheetsResponse = await SpreadsheetAPI.listSheets(String(spreadsheetId));
         const sheetsList = sheetsResponse.results || [];
 
         // Auto-create the first sheet if none exist yet
@@ -434,12 +434,12 @@ export default function SpreadsheetDetailPage() {
       const applyUrl = `/api/spreadsheet/patterns/${selectedPattern.id}/apply/`;
       if (process.env.NODE_ENV !== 'production') {
         console.info('[PatternApply] POST', applyUrl, {
-          spreadsheet_id: Number(spreadsheetId),
+          spreadsheet_id: String(spreadsheetId),
           sheet_id: activeSheetId,
         });
       }
       const response = await PatternAPI.applyPattern(selectedPattern.id, {
-        spreadsheet_id: Number(spreadsheetId),
+        spreadsheet_id: String(spreadsheetId),
         sheet_id: activeSheetId,
       });
       if (process.env.NODE_ENV !== 'production') {
@@ -759,7 +759,7 @@ export default function SpreadsheetDetailPage() {
         name,
         description: '',
         origin: {
-          spreadsheet_id: Number(spreadsheetId),
+          spreadsheet_id: String(spreadsheetId),
           sheet_id: activeSheetId ?? undefined,
         },
         steps: timelineItemsToCreateSteps(selectedItems),
@@ -795,11 +795,11 @@ export default function SpreadsheetDetailPage() {
 
     setCreating(true);
     try {
-      const newSheet = await SpreadsheetAPI.createSheet(Number(spreadsheetId), data);
+      const newSheet = await SpreadsheetAPI.createSheet(String(spreadsheetId), data);
       toast.success('Sheet created successfully');
       
       // Refresh the sheets list
-      const sheetsResponse = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+      const sheetsResponse = await SpreadsheetAPI.listSheets(String(spreadsheetId));
       const sheetsList = sheetsResponse.results || [];
       setSheets(sheetsList);
       setCreateSheetDefaultName(getNextSheetName(sheetsList));
@@ -838,13 +838,13 @@ export default function SpreadsheetDetailPage() {
 
     try {
       const sheetName = generatePivotSheetName(sheets.map((s) => s.name));
-      const newSheet = await SpreadsheetAPI.createSheet(Number(spreadsheetId), { name: sheetName });
+      const newSheet = await SpreadsheetAPI.createSheet(String(spreadsheetId), { name: sheetName });
 
-      await SpreadsheetAPI.resizeSheet(Number(spreadsheetId), newSheet.id, 100, 26);
+      await SpreadsheetAPI.resizeSheet(String(spreadsheetId), newSheet.id, 100, 26);
 
       // Persist initial pivot config on backend (empty definition with source sheet linkage).
       const initialConfig = createEmptyPivotConfig(activeSheetId);
-      await SpreadsheetAPI.upsertPivotConfig(Number(spreadsheetId), newSheet.id, {
+      await SpreadsheetAPI.upsertPivotConfig(String(spreadsheetId), newSheet.id, {
         sourceSheetId: activeSheetId,
         rows: initialConfig.rows,
         columns: initialConfig.columns,
@@ -852,7 +852,7 @@ export default function SpreadsheetDetailPage() {
         showGrandTotalRow: initialConfig.showGrandTotalRow,
       });
 
-      const sheetsResponse = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+      const sheetsResponse = await SpreadsheetAPI.listSheets(String(spreadsheetId));
       const sheetsList = sheetsResponse.results || [];
       setSheets(sheetsList);
       setCreateSheetDefaultName(getNextSheetName(sheetsList));
@@ -896,7 +896,7 @@ export default function SpreadsheetDetailPage() {
         let sourceData = pivotSourceDataBySheet[activeSheetId];
         if (!sourceData) {
           const sourceSheetResponse = await SpreadsheetAPI.readCellRange(
-            Number(spreadsheetId),
+            String(spreadsheetId),
             sourceSheetId,
             0,
             999,
@@ -981,14 +981,14 @@ export default function SpreadsheetDetailPage() {
         }> = [...setOperations, ...clearOperations];
 
         await SpreadsheetAPI.resizeSheet(
-          Number(spreadsheetId),
+          String(spreadsheetId),
           activeSheetId,
           Math.max(pivotResult.rowCount + 10, previousDimensions.rowCount + 10, 100),
           Math.max(pivotResult.colCount + 5, previousDimensions.colCount + 5, 26)
         );
 
         await SpreadsheetAPI.batchUpdateCells(
-          Number(spreadsheetId),
+          String(spreadsheetId),
           activeSheetId,
           allOperations,
           false
@@ -1012,14 +1012,14 @@ export default function SpreadsheetDetailPage() {
       // 4) Fire-and-forget: persist config and trigger backend recompute for durability.
       (async () => {
         try {
-          await SpreadsheetAPI.upsertPivotConfig(Number(spreadsheetId), activeSheetId, {
+          await SpreadsheetAPI.upsertPivotConfig(String(spreadsheetId), activeSheetId, {
             sourceSheetId,
             rows: newConfig.rows,
             columns: newConfig.columns,
             values: newConfig.values,
             showGrandTotalRow: newConfig.showGrandTotalRow,
           });
-          await SpreadsheetAPI.recomputePivot(Number(spreadsheetId), activeSheetId);
+          await SpreadsheetAPI.recomputePivot(String(spreadsheetId), activeSheetId);
         } catch (err) {
           // Best-effort; log but don't surface noisy errors to the user.
           console.error('Background pivot persistence/recompute failed:', err);
@@ -1062,7 +1062,7 @@ export default function SpreadsheetDetailPage() {
 
     setRenaming(true);
     try {
-      const updatedSheet = await SpreadsheetAPI.updateSheet(Number(spreadsheetId), sheetId, {
+      const updatedSheet = await SpreadsheetAPI.updateSheet(String(spreadsheetId), sheetId, {
         name: trimmedName,
       });
 
@@ -1115,7 +1115,7 @@ export default function SpreadsheetDetailPage() {
 
     setRenamingSpreadsheetSaving(true);
     try {
-      const updated = await SpreadsheetAPI.updateSpreadsheet(Number(spreadsheetId), {
+      const updated = await SpreadsheetAPI.updateSpreadsheet(String(spreadsheetId), {
         name: trimmedName,
       });
       setSpreadsheet((prev) => (prev ? { ...prev, name: updated.name } : prev));
@@ -1156,10 +1156,10 @@ export default function SpreadsheetDetailPage() {
 
       setDeletingSheet(true);
       try {
-        await SpreadsheetAPI.deleteSheet(Number(projectId), Number(spreadsheetId), sheet.id);
+        await SpreadsheetAPI.deleteSheet(String(projectId), String(spreadsheetId), sheet.id);
         toast.success('Sheet deleted');
 
-        const sheetsResponse = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+        const sheetsResponse = await SpreadsheetAPI.listSheets(String(spreadsheetId));
         const sheetsList = sheetsResponse.results || [];
         setSheets(sheetsList);
 
@@ -1232,9 +1232,9 @@ export default function SpreadsheetDetailPage() {
                       setLoading(true);
                       const fetchData = async () => {
                         try {
-                          const spreadsheetData = await SpreadsheetAPI.getSpreadsheet(Number(spreadsheetId));
+                          const spreadsheetData = await SpreadsheetAPI.getSpreadsheet(String(spreadsheetId));
                           setSpreadsheet(spreadsheetData);
-                          const sheetsResponse = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+                          const sheetsResponse = await SpreadsheetAPI.listSheets(String(spreadsheetId));
                           setSheets(sheetsResponse.results || []);
                         } catch (err: any) {
                           setError(
@@ -1509,7 +1509,7 @@ export default function SpreadsheetDetailPage() {
                   <div className="flex-1 min-h-0 min-w-0 overflow-hidden flex flex-col">
                     <SpreadsheetGrid
                       ref={gridRef}
-                      spreadsheetId={Number(spreadsheetId)}
+                      spreadsheetId={String(spreadsheetId)}
                       sheetId={activeSheet?.id ?? 0}
                       loading={isPageLoading || !activeSheet}
                       spreadsheetName={spreadsheet?.name}

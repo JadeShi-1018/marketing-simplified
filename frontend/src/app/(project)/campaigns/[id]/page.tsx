@@ -30,7 +30,7 @@ export default function CampaignV2DetailPage() {
   const campaignId = params?.id as string;
   const projectIdParam = searchParams?.get('project_id');
   const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
+  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
 
   const { currentCampaign, loading, error, fetchCampaign, updateCampaign } = useCampaignData();
 

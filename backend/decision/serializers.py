@@ -232,7 +232,7 @@ class DecisionListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Decision
-        fields = [
+        fields = ['slug', 
             "id",
             "projectSeq",
             "status",
@@ -252,6 +252,7 @@ class DecisionListSerializer(serializers.ModelSerializer):
             "createdByAgent",
             "agentSessionId",
         ]
+        read_only_fields = ['slug']
 
     def get_selectedOptionText(self, obj):
         selected_option = obj.options.filter(is_selected=True).first()
@@ -337,6 +338,7 @@ class DecisionGraphNodeSerializer(serializers.ModelSerializer):
         model = Decision
         fields = [
             "id",
+            "slug",
             "title",
             "status",
             "riskLevel",
@@ -536,7 +538,7 @@ class DecisionDraftSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Decision
-        fields = [
+        fields = ['slug', 
             "id",
             "title",
             "contextSummary",
@@ -580,13 +582,14 @@ class DecisionDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Decision
         fields = "__all__"
-        extra_fields = [
+        extra_fields = ['slug', 
             "signals",
             "options",
             "reviews",
             "commit_record",
             "state_transitions",
         ]
+        read_only_fields = ['slug', 'slug']
 
 
 class CommittedSignalSerializer(SignalResponseSerializer):
@@ -710,7 +713,7 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
     stateTransitions = CommittedStateTransitionSerializer(many=True, read_only=True)
     class Meta:
         model = Decision
-        fields = [
+        fields = ['slug', 
             "id",
             "projectSeq",
             "status",
@@ -737,6 +740,7 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
             "origin_meeting",
             "originMeeting",
         ]
+        read_only_fields = ['slug']
 
     def get_topicLabel(self, obj):
         labels = self.context.get("topic_labels") or {}

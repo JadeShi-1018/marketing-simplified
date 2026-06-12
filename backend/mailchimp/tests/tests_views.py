@@ -246,7 +246,7 @@ class EmailDraftCRUDTests(APITestCase):
             template=template
         )
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("settings", response.data)
@@ -268,7 +268,7 @@ class EmailDraftCRUDTests(APITestCase):
             subject_line="Other User Subject"
         )
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -281,7 +281,7 @@ class EmailDraftCRUDTests(APITestCase):
         )
 
         self.client.force_authenticate(user=None)
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -302,7 +302,7 @@ class EmailDraftCRUDTests(APITestCase):
             }
         }
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.patch(url, update_payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -329,7 +329,7 @@ class EmailDraftCRUDTests(APITestCase):
             }
         }
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.patch(url, update_payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -367,7 +367,7 @@ class EmailDraftCRUDTests(APITestCase):
             }
         }
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.put(url, update_payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -385,7 +385,7 @@ class EmailDraftCRUDTests(APITestCase):
             }
         }
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.put(url, update_payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
@@ -399,7 +399,8 @@ class EmailDraftCRUDTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         campaign_id = response.data["id"]
-        url = reverse("email-draft-detail", args=[campaign_id])
+        campaign_slug = Campaign.objects.get(id=campaign_id).slug
+        url = reverse("email-draft-detail", args=[campaign_slug])
         del_response = self.client.delete(url)
         self.assertEqual(del_response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Campaign.objects.filter(id=campaign_id).exists())
@@ -418,7 +419,7 @@ class EmailDraftCRUDTests(APITestCase):
             subject_line="Other User Subject"
         )
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.delete(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -428,8 +429,9 @@ class EmailDraftCRUDTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         campaign_id = response.data["id"]
+        campaign_slug = Campaign.objects.get(id=campaign_id).slug
         self.client.force_authenticate(user=None)
-        url = reverse("email-draft-detail", args=[campaign_id])
+        url = reverse("email-draft-detail", args=[campaign_slug])
         response = self.client.delete(url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -509,7 +511,7 @@ class EmailDraftCommentTests(APITestCase):
             campaign=self.campaign,
             subject_line="Subject",
         )
-        self.comments_url = reverse("email-draft-comments", args=[self.campaign.id])
+        self.comments_url = reverse("email-draft-comments", args=[self.campaign.slug])
 
     def test_create_and_list_comments(self):
         """Users can create comments and retrieve them."""
@@ -537,7 +539,7 @@ class EmailDraftCommentTests(APITestCase):
         )
         detail_url = reverse(
             "email-draft-update-comment",
-            kwargs={"id": self.campaign.id, "comment_id": comment.id},
+            kwargs={"id": self.campaign.slug, "comment_id": comment.id},
         )
 
         resolve_response = self.client.patch(
@@ -564,7 +566,7 @@ class EmailDraftCommentTests(APITestCase):
         )
         detail_url = reverse(
             "email-draft-update-comment",
-            kwargs={"id": self.campaign.id, "comment_id": comment.id},
+            kwargs={"id": self.campaign.slug, "comment_id": comment.id},
         )
 
         response = self.client.patch(
@@ -611,7 +613,7 @@ class EmailDraftAdditionalEndpointsTests(APITestCase):
             template=template
         )
 
-        url = reverse("email-draft-preview", args=[campaign.id])
+        url = reverse("email-draft-preview", args=[campaign.slug])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -637,7 +639,7 @@ class EmailDraftAdditionalEndpointsTests(APITestCase):
             from_name="Preview Company"
         )
 
-        url = reverse("email-draft-preview", args=[campaign.id])
+        url = reverse("email-draft-preview", args=[campaign.slug])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
@@ -651,7 +653,7 @@ class EmailDraftAdditionalEndpointsTests(APITestCase):
         """Test preview endpoint with campaign without settings"""
         campaign = Campaign.objects.create(user=self.user, type="regular", status="draft")
 
-        url = reverse("email-draft-preview", args=[campaign.id])
+        url = reverse("email-draft-preview", args=[campaign.slug])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
@@ -675,7 +677,7 @@ class EmailDraftAdditionalEndpointsTests(APITestCase):
             subject_line="Other User Subject"
         )
 
-        url = reverse("email-draft-preview", args=[campaign.id])
+        url = reverse("email-draft-preview", args=[campaign.slug])
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -787,7 +789,7 @@ class EmailDraftErrorHandlingTests(APITestCase):
             }
         }
 
-        url = reverse("email-draft-detail", args=[campaign.id])
+        url = reverse("email-draft-detail", args=[campaign.slug])
         response = self.client.put(url, payload, format='json')
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)

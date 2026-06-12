@@ -121,7 +121,7 @@ export interface UseOverviewDataReturn {
   errors: Record<string, string>;
 }
 
-export function useOverviewData(projectId: number | null | undefined): UseOverviewDataReturn {
+export function useOverviewData(projectId: number | string | null | undefined): UseOverviewDataReturn {
   const [data, setData] = useState<OverviewMock>(EMPTY_DATA);
   const [alerts, setAlerts] = useState<AlertData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);

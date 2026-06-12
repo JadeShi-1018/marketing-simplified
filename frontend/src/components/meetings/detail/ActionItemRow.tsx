@@ -13,7 +13,7 @@ interface Props {
   onPatch: (patch: { title?: string; description?: string; is_resolved?: boolean }) => Promise<void>;
   onDelete: () => Promise<void>;
   onConvert: () => void;
-  projectId: number;
+  projectId: number | string;
 }
 
 export default function ActionItemRow({
@@ -110,10 +110,10 @@ export default function ActionItemRow({
         )}
         {isConverted && (
           <Link
-            href={`/tasks/${item.converted_task_id}?project_id=${projectId}`}
+            href={`/tasks/${item.converted_task_slug ?? item.converted_task_id}?project_id=${projectId}`}
             className="mt-1 inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100"
           >
-            <span>Task #{item.converted_task_id}</span>
+            <span>Task: {item.converted_task_slug ?? `#${item.converted_task_id}`}</span>
             <ExternalLink className="h-2.5 w-2.5" aria-hidden="true" />
           </Link>
         )}

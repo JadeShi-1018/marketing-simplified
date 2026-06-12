@@ -4,6 +4,7 @@ Campaign Management Module - Views
 """
 
 from rest_framework import viewsets, status, permissions
+from core.slug_mixins import SlugLookupViewSetMixin
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -57,7 +58,7 @@ from .serializers import (
 # Campaign ViewSet
 # ============================================================================
 
-class CampaignViewSet(viewsets.ModelViewSet):
+class CampaignViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for Campaign CRUD operations and status transitions.
     

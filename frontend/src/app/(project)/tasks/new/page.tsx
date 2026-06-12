@@ -109,12 +109,9 @@ export default function CreateTaskPage() {
   const linkDecisionIdParam = searchParams?.get('link_decision_id');
   const activeProject = useProjectStore((s) => s.activeProject);
   const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
-  const linkDecisionId =
-    linkDecisionIdParam && Number.isFinite(Number(linkDecisionIdParam))
-      ? Number(linkDecisionIdParam)
-      : null;
+    ? projectIdParam
+    : activeProject?.slug || activeProject?.id || null;
+  const linkDecisionId = linkDecisionIdParam || null;
 
   const [taskTypes, setTaskTypes] = useState<{ value: string; label: string }[]>([]);
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
@@ -464,11 +461,11 @@ export default function CreateTaskPage() {
           className="mb-4 inline-flex items-center gap-1.5 text-xs text-gray-500 transition hover:text-gray-900"
         >
           <ArrowLeft aria-hidden="true" className="h-3.5 w-3.5" />
-          {linkDecisionId ? `Back to decision #${linkDecisionId}` : 'Back to tasks'}
+          {linkDecisionId ? (Number.isFinite(Number(linkDecisionId)) ? `Back to decision #${linkDecisionId}` : `Back to decision: ${linkDecisionId}`) : 'Back to tasks'}
         </button>
         {linkDecisionId && (
           <div className="mb-4 rounded-md border border-[#3CCED7]/30 bg-[#3CCED7]/5 px-3 py-2 text-[12px] text-gray-700">
-            This task will be linked to <span className="font-medium">Decision #{linkDecisionId}</span> on create.
+            This task will be linked to <span className="font-medium">Decision {Number.isFinite(Number(linkDecisionId)) ? `#${linkDecisionId}` : linkDecisionId}</span> on create.
           </div>
         )}
 

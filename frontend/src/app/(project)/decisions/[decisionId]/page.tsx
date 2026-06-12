@@ -46,13 +46,13 @@ function DecisionDetailContent() {
   const searchParams = useSearchParams();
   const activeProject = useProjectStore((s) => s.activeProject);
 
-  const decisionId = Number(params?.decisionId);
+  const decisionId = String(params.decisionId);
   const projectIdParam = searchParams?.get('project_id');
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
+  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
 
   const { canEdit, canApproveOrReview, members } = useProjectRole(projectId);
 
-  const detail = useDecisionDetail(Number.isFinite(decisionId) ? decisionId : null, projectId);
+  const detail = useDecisionDetail(decisionId || null, projectId);
   const status = detail.status;
   const base = detail.base;
 
@@ -305,7 +305,7 @@ function DecisionDetailContent() {
   };
 
   // ---- Loading / error states ----
-  if (!decisionId || !Number.isFinite(decisionId)) {
+  if (!decisionId) {
     return (
       <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="mx-auto w-full max-w-[1440px] px-3 py-3 text-sm text-gray-500 sm:px-6 sm:py-4">
@@ -412,7 +412,7 @@ function DecisionDetailContent() {
                 onCreateTask={() => {
                   const q = new URLSearchParams();
                   if (projectId) q.set('project_id', String(projectId));
-                  q.set('link_decision_id', String(decisionId));
+                  q.set('link_decision_id', String(detail.committed?.slug ?? decisionId));
                   router.push(`/tasks/new?${q.toString()}`);
                 }}
               />

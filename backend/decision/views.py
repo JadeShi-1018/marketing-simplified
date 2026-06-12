@@ -3,6 +3,7 @@ from django.db.models import Max, Q
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -32,6 +33,7 @@ from .serializers import (
 
 
 class DecisionDraftViewSet(
+    SlugLookupViewSetMixin,
     mixins.CreateModelMixin,
     mixins.RetrieveModelMixin,
     mixins.UpdateModelMixin,
@@ -261,6 +263,7 @@ class DecisionDraftViewSet(
 
 
 class DecisionViewSet(
+    SlugLookupViewSetMixin,
     mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.ReadOnlyModelViewSet,
@@ -415,6 +418,7 @@ class DecisionViewSet(
                 other = edge.from_decision
             connected[other.id] = {
                 "id": other.id,
+                "slug": other.slug,
                 "project_seq": other.project_seq,
                 "title": other.title,
             }
@@ -479,7 +483,7 @@ class DecisionViewSet(
     @action(detail=True, methods=['get', 'put'], url_path='connections')
     def connections(self, request, pk=None):
         decision = (
-            Decision.objects.filter(pk=pk, is_deleted=False)
+            Decision.objects.filter(**resolve_lookup_kwargs(pk), is_deleted=False)
             .select_related("project")
             .first()
         )
@@ -808,7 +812,7 @@ class DecisionViewSet(
                     body="A decision has been submitted and is waiting for your approval.",
                     related_object_type="decision",
                     related_object_id=str(decision.id),
-                    action_url=decision_action_url(decision.id, decision.project_id),
+                    action_url=decision_action_url(decision.slug, decision.project_id),
                     metadata={"project_id": decision.project_id},
                 )
 
@@ -941,7 +945,7 @@ class DecisionViewSet(
                 body="Your decision has been approved and committed.",
                 related_object_type="decision",
                 related_object_id=str(decision.id),
-                action_url=decision_action_url(decision.id, decision.project_id),
+                action_url=decision_action_url(decision.slug, decision.project_id),
                 metadata={"project_id": decision.project_id},
             )
 

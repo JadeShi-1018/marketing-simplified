@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, Loader2 } from 'lucide-react';
+import { Id } from '@/types/common';
 import {
   WorkspaceAPI,
   type DashboardSummaryData,
@@ -829,7 +830,7 @@ function deriveOpsMetrics(
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-interface Props { projectId: number; }
+interface Props { projectId: Id; }
 
 export default function WorkspaceDashboard({ projectId }: Props) {
   const [workspace, setWorkspace] = useState<WorkspaceDashboardData | null>(null);

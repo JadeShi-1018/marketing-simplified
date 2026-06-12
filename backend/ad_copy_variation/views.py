@@ -4,12 +4,14 @@ from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
+from core.slug_mixins import SlugLookupViewSetMixin
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from core.models import Project, ProjectMember
+from core.slug_backfill import _generate_slug
 from meta_ads.models import MetaAdCreative
 
 from . import services
@@ -31,7 +33,7 @@ class AdCopyVariationPagination(PageNumberPagination):
         })
 
 
-class AdCopyVariationViewSet(viewsets.ModelViewSet):
+class AdCopyVariationViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     queryset = AdCopyVariation.objects.all()
     serializer_class = AdCopyVariationSerializer
     permission_classes = [IsAuthenticated]
@@ -318,6 +320,11 @@ class AdCopyVariationViewSet(viewsets.ModelViewSet):
                 status=AdCopyVariation.STATUS_DRAFT,
                 created_by=self.request.user,
             ))
+        # bulk_create bypasses model save(), so slugs must be pre-generated
+        # to satisfy the NOT NULL constraint on the slug column.
+        used = set(AdCopyVariation.objects.values_list('slug', flat=True))
+        for row in rows:
+            row.slug = _generate_slug('adcopyvariation', row.headline, used)
         AdCopyVariation.objects.bulk_create(rows)
         return list(
             AdCopyVariation.objects.filter(

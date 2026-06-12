@@ -100,7 +100,7 @@ class DecisionNotificationTests(TestCase):
 
     def _patch_to_commit_ready(self, decision):
         r = self.author_client.patch(
-            f"/api/decisions/drafts/{decision.id}/",
+            f"/api/decisions/drafts/{decision.slug}/",
             _COMMIT_READY,
             format="json",
         )
@@ -118,7 +118,7 @@ class DecisionNotificationTests(TestCase):
         self._patch_to_commit_ready(decision)
 
         r = self.author_client.post(
-            f"/api/decisions/{decision.id}/commit/", {}, format="json"
+            f"/api/decisions/{decision.slug}/commit/", {}, format="json"
         )
         self.assertEqual(r.status_code, 200)
 
@@ -152,7 +152,7 @@ class DecisionNotificationTests(TestCase):
 
         # Author commits → AWAITING_APPROVAL
         self.author_client.post(
-            f"/api/decisions/{decision.id}/commit/", {}, format="json"
+            f"/api/decisions/{decision.slug}/commit/", {}, format="json"
         )
         decision = Decision.objects.get(pk=decision.id)
         self.assertEqual(decision.status, Decision.Status.AWAITING_APPROVAL)
@@ -161,7 +161,7 @@ class DecisionNotificationTests(TestCase):
 
         # Owner approves
         r = self.owner_client.post(
-            f"/api/decisions/{decision.id}/approve/", {}, format="json"
+            f"/api/decisions/{decision.slug}/approve/", {}, format="json"
         )
         self.assertEqual(r.status_code, 200)
 
@@ -195,7 +195,7 @@ class DecisionNotificationTests(TestCase):
         self._patch_to_commit_ready(decision)
 
         self.author_client.post(
-            f"/api/decisions/{decision.id}/commit/", {}, format="json"
+            f"/api/decisions/{decision.slug}/commit/", {}, format="json"
         )
         decision = Decision.objects.get(pk=decision.id)
         self.assertEqual(decision.status, Decision.Status.AWAITING_APPROVAL)
@@ -203,7 +203,7 @@ class DecisionNotificationTests(TestCase):
         mock_publish.reset_mock()
 
         r = self.author_client.post(
-            f"/api/decisions/{decision.id}/approve/", {}, format="json"
+            f"/api/decisions/{decision.slug}/approve/", {}, format="json"
         )
         self.assertEqual(r.status_code, 200)
 

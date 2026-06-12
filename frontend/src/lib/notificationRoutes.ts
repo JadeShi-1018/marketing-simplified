@@ -6,14 +6,16 @@ import { NOTIFICATION_EVENT } from "@/types/notifications";
 export interface NotificationNavigationTarget {
   href: string;
   requiresProjectSwitch: boolean;
-  projectId?: number;
+  projectId?: number | string;
 }
 
-export function parseProjectIdFromActionUrl(actionUrl: string): number | undefined {
-  const legacyMatch = actionUrl.match(/\/projects\/(\d+)/);
+export function parseProjectIdFromActionUrl(actionUrl: string): number | string | undefined {
+  const legacyMatch = actionUrl.match(/\/projects\/([^/]+)/);
   if (legacyMatch) {
-    const projectId = Number(legacyMatch[1]);
+    const rawVal = legacyMatch[1];
+    const projectId = Number(rawVal);
     if (Number.isFinite(projectId) && projectId > 0) return projectId;
+    return rawVal;
   }
 
   try {
@@ -22,6 +24,7 @@ export function parseProjectIdFromActionUrl(actionUrl: string): number | undefin
     if (fromQuery) {
       const projectId = Number(fromQuery);
       if (Number.isFinite(projectId) && projectId > 0) return projectId;
+      return fromQuery;
     }
   } catch {
     // ignore malformed URLs
@@ -32,7 +35,7 @@ export function parseProjectIdFromActionUrl(actionUrl: string): number | undefin
 
 export function extractNotificationProjectId(
   notification: NotificationItem
-): number | undefined {
+): number | string | undefined {
   const { metadata, action_url: actionUrl } = notification;
   const taskMeta = metadata?.task as Record<string, unknown> | undefined;
   const meetingMeta = metadata?.meeting as Record<string, unknown> | undefined;
@@ -46,6 +49,7 @@ export function extractNotificationProjectId(
   if (raw != null) {
     const projectId = Number(raw);
     if (Number.isFinite(projectId) && projectId > 0) return projectId;
+    if (typeof raw === "string" && raw.trim()) return raw;
   }
 
   if (actionUrl) {
@@ -55,18 +59,18 @@ export function extractNotificationProjectId(
   return undefined;
 }
 
-function withProjectQuery(path: string, projectId: number): string {
+function withProjectQuery(path: string, projectId: number | string): string {
   const separator = path.includes("?") ? "&" : "?";
   return `${path}${separator}project_id=${projectId}`;
 }
 
 function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarget | null {
-  const projectTask = actionUrl.match(/^\/projects\/(\d+)\/tasks\/(\d+)/);
+  const projectTask = actionUrl.match(/^\/projects\/([^/]+)\/tasks\/([^/]+)/);
   if (projectTask) {
     return { href: `/tasks/${projectTask[2]}`, requiresProjectSwitch: false };
   }
 
-  const projectMeeting = actionUrl.match(/^\/projects\/(\d+)\/meetings\/(\d+)/);
+  const projectMeeting = actionUrl.match(/^\/projects\/([^/]+)\/meetings\/([^/]+)/);
   if (projectMeeting) {
     return {
       href: `/meetings/${projectMeeting[2]}?project_id=${projectMeeting[1]}`,
@@ -74,7 +78,7 @@ function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarg
     };
   }
 
-  const projectDecision = actionUrl.match(/^\/projects\/(\d+)\/decisions\/(\d+)/);
+  const projectDecision = actionUrl.match(/^\/projects\/([^/]+)\/decisions\/([^/]+)/);
   if (projectDecision) {
     return {
       href: `/decisions/${projectDecision[2]}?project_id=${projectDecision[1]}`,
@@ -82,12 +86,14 @@ function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarg
     };
   }
 
-  const projectOnly = actionUrl.match(/^\/projects\/(\d+)\/?$/);
+  const projectOnly = actionUrl.match(/^\/projects\/([^/]+)\/?$/);
   if (projectOnly) {
+    const rawVal = projectOnly[1];
+    const pid = Number(rawVal);
     return {
       href: "/overview",
       requiresProjectSwitch: true,
-      projectId: Number(projectOnly[1]),
+      projectId: Number.isFinite(pid) && pid > 0 ? pid : rawVal,
     };
   }
 
@@ -104,6 +110,7 @@ export function buildNotificationFullPageTarget(
   const {
     related_object_type,
     related_object_id,
+    related_object_slug,
     metadata,
     action_url: actionUrl,
     event_type: eventType,
@@ -133,30 +140,33 @@ export function buildNotificationFullPageTarget(
 
   if (objectType === "project" && related_object_id) {
     const pid = Number(related_object_id);
-    if (!Number.isFinite(pid) || pid <= 0) return null;
-    return { href: "/overview", requiresProjectSwitch: true, projectId: pid };
+    const resolvedProjectId = Number.isFinite(pid) && pid > 0 ? pid : String(related_object_id);
+    return { href: "/overview", requiresProjectSwitch: true, projectId: resolvedProjectId };
   }
 
   if (objectType === "task" && related_object_id) {
-    return { href: `/tasks/${related_object_id}`, requiresProjectSwitch: false };
+    const taskKey = related_object_slug ?? related_object_id;
+    return { href: `/tasks/${taskKey}`, requiresProjectSwitch: false };
   }
 
   if (objectType === "meeting" && related_object_id) {
+    const meetingKey = related_object_slug ?? related_object_id;
     const href = projectId
-      ? withProjectQuery(`/meetings/${related_object_id}`, projectId)
-      : `/meetings/${related_object_id}`;
+      ? withProjectQuery(`/meetings/${meetingKey}`, projectId)
+      : `/meetings/${meetingKey}`;
     return { href, requiresProjectSwitch: false };
   }
 
   if (objectType === "decision" && related_object_id) {
+    const decisionKey = related_object_slug ?? related_object_id;
     const href = projectId
-      ? withProjectQuery(`/decisions/${related_object_id}`, projectId)
-      : `/decisions/${related_object_id}`;
+      ? withProjectQuery(`/decisions/${decisionKey}`, projectId)
+      : `/decisions/${decisionKey}`;
     return { href, requiresProjectSwitch: false };
   }
 
   if (objectType === "budget_request") {
-    const taskId = metadata?.task_id ?? related_object_id;
+    const taskId = metadata?.task_slug ?? metadata?.task_id ?? related_object_slug ?? related_object_id;
     if (taskId) {
       return { href: `/tasks/${taskId}`, requiresProjectSwitch: false };
     }
@@ -169,11 +179,18 @@ export function buildNotificationFullPageTarget(
   return null;
 }
 
-export async function activateProjectForNavigation(projectId: number): Promise<void> {
+export async function activateProjectForNavigation(projectId: number | string): Promise<void> {
   const store = useProjectStore.getState();
-  if (store.activeProject?.id === projectId) return;
+  if (
+    String(store.activeProject?.id) === String(projectId) ||
+    store.activeProject?.slug === projectId
+  )
+    return;
 
-  const fromStore = store.projects.find((project) => project.id === projectId);
+  const fromStore = store.projects.find(
+    (project) =>
+      String(project.id) === String(projectId) || project.slug === projectId
+  );
   if (fromStore) {
     store.setActiveProject(fromStore);
     return;

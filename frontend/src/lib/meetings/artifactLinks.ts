@@ -21,7 +21,7 @@ export function isKnownMeetingArtifactKind(t: string): t is MeetingArtifactKind 
 
 /** In-app href for supported artifact types; unknown types return null (non-breaking). */
 export function meetingArtifactHref(
-  projectId: number,
+  projectId: number | string,
   artifactType: string,
   artifactId: number,
 ): string | null {

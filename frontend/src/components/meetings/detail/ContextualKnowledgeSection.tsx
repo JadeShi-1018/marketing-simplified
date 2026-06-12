@@ -8,7 +8,7 @@ import api, { decisionCaptureAPI } from '@/lib/api';
 import type { KnowledgeNavigationLink } from '@/types/meeting';
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   meetingTitle: string;
   generatedDecisions: KnowledgeNavigationLink[];
@@ -17,9 +17,9 @@ interface Props {
   onMutated: () => void;
 }
 
-function rewriteToV2(link: KnowledgeNavigationLink, kind: 'decision' | 'task', projectId: number): string {
+function rewriteToV2(link: KnowledgeNavigationLink, kind: 'decision' | 'task', projectId: number | string): string {
   const base = kind === 'decision' ? '/decisions' : '/tasks';
-  return `${base}/${link.id}?project_id=${projectId}`;
+  return `${base}/${link.slug ?? link.id}?project_id=${projectId}`;
 }
 
 export default function ContextualKnowledgeSection({
@@ -90,18 +90,19 @@ export default function ContextualKnowledgeSection({
   const createTask = async () => {
     setCreatingTask(true);
     try {
-      const response = await api.post<{ id: number }>('/api/tasks/', {
+      const response = await api.post<{ id: number; slug?: string }>('/api/tasks/', {
         project_id: projectId,
         origin_meeting_id: meetingId,
         type: 'execution',
         summary: (meetingTitle || 'New task').slice(0, 200),
         create_as_draft: true,
       });
+      const newSlug = response.data?.slug;
       const newId = response.data?.id;
-      if (newId) {
+      if (newSlug || newId) {
         toast.success('Task draft created');
         onMutated();
-        window.location.href = `/tasks/${newId}?project_id=${projectId}`;
+        window.location.href = `/tasks/${newSlug ?? newId}?project_id=${projectId}`;
       } else {
         toast.error('Task created but no id returned.');
       }

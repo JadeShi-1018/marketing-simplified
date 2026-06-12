@@ -119,7 +119,7 @@ export default function TaskDetailHeader({
     }
     setSaving(true);
     try {
-      await TaskAPI.updateTask(task.id, { summary: trimmed });
+      await TaskAPI.updateTask(task.slug ?? task.id, { summary: trimmed });
       lastSaved.current = trimmed;
       await onUpdated();
       setEditingTitle(false);
@@ -135,7 +135,7 @@ export default function TaskDetailHeader({
     if (!task.id) return;
     setFieldSaving(true);
     try {
-      await TaskAPI.updateTask(task.id, data);
+      await TaskAPI.updateTask(task.slug ?? task.id, data);
       await onUpdated();
     } catch (e) {
       toast.error((e as any)?.response?.data?.detail || 'Update failed');

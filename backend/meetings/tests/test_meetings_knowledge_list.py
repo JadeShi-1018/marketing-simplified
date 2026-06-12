@@ -83,7 +83,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _url(self, **query):
-        base = f"/api/projects/{self.project.id}/meetings/"
+        base = f"/api/projects/{self.project.slug}/meetings/"
         if not query:
             return base
         q = "&".join(f"{k}={v}" for k, v in query.items())
@@ -174,7 +174,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
             type_definition=self.review,
             objective="o",
         )
-        base = f"/api/projects/{self.project.id}/meetings/"
+        base = f"/api/projects/{self.project.slug}/meetings/"
         qs = urlencode(
             [
                 ("meeting_type", "planning"),
@@ -232,7 +232,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
             type_definition=self.planning,
             objective="o",
         )
-        base = f"/api/projects/{self.project.id}/meetings/"
+        base = f"/api/projects/{self.project.slug}/meetings/"
         qs = urlencode(
             [
                 ("participant", str(self.user.id)),
@@ -388,14 +388,14 @@ class TestMeetingsKnowledgeListAPI(TestCase):
         self.assertEqual(ld[0]["title"], "Pause spend")
         self.assertEqual(
             ld[0]["url"],
-            f"/decisions/{d1.id}?project_id={self.project.id}",
+            f"/decisions/{d1.slug}?project_id={self.project.id}",
         )
         lt = row["generated_tasks"][0]
         self.assertEqual(lt["id"], t.id)
         self.assertEqual(lt["title"], "Do thing")
         self.assertEqual(
             lt["url"],
-            f"/tasks/{t.id}",
+            f"/tasks/{t.slug}",
         )
 
     def test_filter_has_generated_decisions_uses_origin_only(self):
@@ -645,7 +645,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
         self.assertIn("date_to", r.data)
 
     def test_forbidden_other_project(self):
-        r = self.client.get(f"/api/projects/{self.other_project.id}/meetings/")
+        r = self.client.get(f"/api/projects/{self.other_project.slug}/meetings/")
         self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_not_found_unknown_project(self):

@@ -26,36 +26,36 @@ interface DrawerObjectCardProps {
 }
 
 interface TaskData {
-  id: number;
+  id: number | string;
   summary: string;
   status: string;
   priority: string;
-  owner?: { id: number; username: string; email: string };
-  assignee?: { id: number; username: string; email: string };
+  owner?: { id: number | string; username: string; email: string };
+  assignee?: { id: number | string; username: string; email: string };
   due_date?: string;
 }
 
 interface MeetingData {
-  id: number;
+  id: number | string;
   title: string;
   scheduled_time?: string | null;
   status?: string;
-  participants?: Array<{ id: number; username: string; avatar?: string | null }>;
+  participants?: Array<{ id: number | string; username: string; avatar?: string | null }>;
 }
 
 interface ProjectCardData {
-  id: number;
+  id: number | string;
   name: string;
   created_at?: string;
   is_active?: boolean;
   status?: string;
-  owner?: { id: number; username?: string; name?: string; email?: string } | null;
+  owner?: { id: number | string; username?: string; name?: string; email?: string } | null;
   member_count?: number;
-  members?: Array<{ id: number; username?: string; name?: string }>;
+  members?: Array<{ id: number | string; username?: string; name?: string }>;
 }
 
 interface DecisionCardData {
-  id: number;
+  id: number | string;
   projectSeq?: number | null;
   title?: string | null;
   riskLevel?: string | null;
@@ -63,7 +63,7 @@ interface DecisionCardData {
 }
 
 interface BudgetCardData {
-  id: number;
+  id: number | string;
   summary: string;
   amount: string;
   currency: string;
@@ -127,7 +127,7 @@ function formatDate(dateStr?: string | null): string | null {
 // ── Shared stacked-avatars component ─────────────────────────────────────────
 
 interface AvatarPerson {
-  id: number;
+  id: number | string;
   username?: string;
   name?: string;
   avatar?: string | null;
@@ -484,12 +484,22 @@ function GenericCard({ notification }: { notification: NotificationItem }) {
 
 // ── Parse helpers ─────────────────────────────────────────────────────────────
 
-function parseActionUrl(actionUrl: string): { projectId?: number; meetingId?: number } {
-  const projectMatch = actionUrl.match(/\/projects\/(\d+)/);
-  const meetingMatch = actionUrl.match(/\/meetings\/(\d+)/);
+function parseActionUrl(actionUrl: string): {
+  projectId?: number;
+  meetingKey?: string;
+  taskKey?: string;
+  decisionKey?: string;
+} {
+  const projectMatch =
+    actionUrl.match(/\/projects\/(\d+)/) || actionUrl.match(/[?&]project_id=(\d+)/);
+  const meetingMatch = actionUrl.match(/\/meetings\/([^/?#]+)/);
+  const taskMatch = actionUrl.match(/\/tasks\/([^/?#]+)/);
+  const decisionMatch = actionUrl.match(/\/decisions\/([^/?#]+)/);
   return {
     projectId: projectMatch ? parseInt(projectMatch[1], 10) : undefined,
-    meetingId: meetingMatch ? parseInt(meetingMatch[1], 10) : undefined,
+    meetingKey: meetingMatch ? meetingMatch[1] : undefined,
+    taskKey: taskMatch ? taskMatch[1] : undefined,
+    decisionKey: decisionMatch ? decisionMatch[1] : undefined,
   };
 }
 
@@ -534,14 +544,16 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
 
       try {
         if (objectType === "task") {
-          const response = await TaskAPI.getTask(parseInt(objectId, 10));
+          // API lookups are slug-only; the slug lives in action_url.
+          const { taskKey } = parseActionUrl(notification.action_url || "");
+          const response = await TaskAPI.getTask(taskKey ?? parseInt(objectId, 10));
           setTaskData(response.data);
 
         } else if (objectType === "meeting") {
           const projectId = extractProjectId(notification);
           if (projectId) {
-            const { meetingId } = parseActionUrl(notification.action_url || "");
-            const id = meetingId || parseInt(objectId, 10);
+            const { meetingKey } = parseActionUrl(notification.action_url || "");
+            const id = meetingKey || parseInt(objectId, 10);
             const data = await MeetingsAPI.getMeeting(projectId, id);
             setMeetingData({
               id: data.id,
@@ -591,7 +603,8 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
 
         } else if (objectType === "decision") {
           const projectId = extractProjectId(notification);
-          const data = await DecisionAPI.getDecision(parseInt(objectId, 10), projectId);
+          const { decisionKey } = parseActionUrl(notification.action_url || "");
+          const data = await DecisionAPI.getDecision(decisionKey ?? parseInt(objectId, 10), projectId);
           setDecisionData({
             id: data.id,
             projectSeq: data.projectSeq,
@@ -609,10 +622,11 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
             status: String(meta.status ?? "SUBMITTED"),
             poolName: meta.budget_pool_name as string | undefined,
           };
+          const { taskKey } = parseActionUrl(notification.action_url || "");
           const taskId = meta.task_id as number | undefined;
           try {
-            if (taskId) {
-              const response = await BudgetAPI.getBudgetRequest(taskId);
+            if (taskKey || taskId) {
+              const response = await BudgetAPI.getBudgetRequest(taskKey ?? taskId!);
               const data = response.data as Record<string, unknown>;
               setBudgetData({
                 id: (data.id as number) ?? parseInt(objectId, 10),

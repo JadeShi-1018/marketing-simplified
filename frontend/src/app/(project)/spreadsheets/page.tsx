@@ -39,8 +39,8 @@ export default function SpreadsheetsV2ListPage() {
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
   const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+    ? projectIdParam
+    : activeProject?.slug || activeProject?.id || null;
   const projectContextLoading = !projectIdParam && !hasProjectStoreHydrated;
 
   const [project, setProject] = useState<ProjectData | null>(null);
@@ -65,7 +65,7 @@ export default function SpreadsheetsV2ListPage() {
     ProjectAPI.getProjects()
       .then((list) => {
         if (cancelled) return;
-        const match = list.find((p) => p.id === projectId);
+        const match = list.find((p) => String(p.id) === String(projectId) || p.slug === projectId);
         setProject(match || null);
       })
       .catch(() => {

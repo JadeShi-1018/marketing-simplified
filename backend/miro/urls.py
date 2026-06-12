@@ -12,23 +12,23 @@ app_name = 'miro'
 urlpatterns = [
     # Board CRUD
     path('boards/', BoardViewSet.as_view({'get': 'list', 'post': 'create'}), name='board-list'),
-    path('boards/<uuid:pk>/', BoardViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='board-detail'),
-    path('boards/<uuid:board_id>/access/', BoardAccessView.as_view(), name='board-access'),
+    path('boards/<str:pk>/', BoardViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='board-detail'),
+    path('boards/<str:board_id>/access/', BoardAccessView.as_view(), name='board-access'),
     
     # Board items (nested)
-    path('boards/<uuid:board_id>/items/', BoardViewSet.as_view({'get': 'items', 'post': 'items'}), name='board-items'),
-    path('boards/<uuid:board_id>/items/batch/', BoardViewSet.as_view({'patch': 'batch_items'}), name='board-items-batch'),
+    path('boards/<str:board_id>/items/', BoardViewSet.as_view({'get': 'items', 'post': 'items'}), name='board-items'),
+    path('boards/<str:board_id>/items/batch/', BoardViewSet.as_view({'patch': 'batch_items'}), name='board-items-batch'),
     
     # Item operations
     path('items/<uuid:pk>/', BoardItemViewSet.as_view({'patch': 'partial_update', 'delete': 'destroy'}), name='item-detail'),
     
     # Board revisions (nested)
-    path('boards/<uuid:board_id>/revisions/', BoardViewSet.as_view({'get': 'revisions', 'post': 'revisions'}), name='board-revisions'),
-    path('boards/<uuid:board_id>/revisions/<int:version>/', BoardViewSet.as_view({'get': 'revision_detail'}), name='board-revision-detail'),
-    path('boards/<uuid:board_id>/revisions/<int:version>/restore/', BoardViewSet.as_view({'post': 'restore_revision'}), name='board-revision-restore'),
+    path('boards/<str:board_id>/revisions/', BoardViewSet.as_view({'get': 'revisions', 'post': 'revisions'}), name='board-revisions'),
+    path('boards/<str:board_id>/revisions/<int:version>/', BoardViewSet.as_view({'get': 'revision_detail'}), name='board-revision-detail'),
+    path('boards/<str:board_id>/revisions/<int:version>/restore/', BoardViewSet.as_view({'post': 'restore_revision'}), name='board-revision-restore'),
     
     # Share token access
     path('share/boards/<str:share_token>/', ShareBoardView.as_view(), name='share-board'),
-    path('projects/<int:project_id>/latest-board/', LatestProjectBoardView.as_view(), name='latest-project-board'),
+    path('projects/<str:project_id>/latest-board/', LatestProjectBoardView.as_view(), name='latest-project-board'),
 ]
 

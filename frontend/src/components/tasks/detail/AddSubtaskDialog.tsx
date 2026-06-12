@@ -13,8 +13,8 @@ type Mode = 'create' | 'choose';
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  parentTaskId: number;
-  parentProjectId?: number;
+  parentTaskId: number | string;
+  parentProjectId?: number | string;
   onAdded: () => void;
 }
 

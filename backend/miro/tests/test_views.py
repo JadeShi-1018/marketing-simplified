@@ -258,7 +258,7 @@ class BoardAPITest(TestCase):
             board=older_board,
         )
 
-        response = self.client.get(f"/api/miro/projects/{self.project.id}/latest-board/")
+        response = self.client.get(f"/api/miro/projects/{self.project.slug}/latest-board/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["board"]["id"], str(older_board.id))
         self.assertNotEqual(response.data["board"]["id"], str(newer_board.id))
@@ -277,7 +277,7 @@ class BoardAPITest(TestCase):
         )
         self.assertNotEqual(older_board.id, newer_board.id)
 
-        response = self.client.get(f"/api/miro/projects/{self.project.id}/latest-board/")
+        response = self.client.get(f"/api/miro/projects/{self.project.slug}/latest-board/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["board"]["id"], str(newer_board.id))
 

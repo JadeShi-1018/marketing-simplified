@@ -369,7 +369,7 @@ function NotionV2DetailContent() {
       const created = await NotionDraftAPI.duplicateDraft(draftId);
       if (!created?.id) throw new Error('Duplicated draft id missing');
       toast.success('Draft duplicated');
-      router.push(`/notion/${created.id}`);
+      router.push(`/notion/${created.slug}`);
     } catch (error: any) {
       console.error('Failed to duplicate draft', error);
       toast.error(error?.response?.data?.detail || 'Failed to duplicate draft');

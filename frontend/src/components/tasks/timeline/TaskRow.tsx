@@ -193,7 +193,7 @@ const TaskRow = ({
               <span className="shrink-0 text-[10px] text-slate-400" title="From decision">
                 From{' '}
                 <Link
-                  href={`/decisions/${task.object_id}${(task.project?.id ?? task.project_id) ? `?project_id=${task.project?.id ?? task.project_id}` : ''}`}
+                  href={`/decisions/${task.linked_object_slug ?? task.object_id}${(task.project?.id ?? task.project_id) ? `?project_id=${task.project?.id ?? task.project_id}` : ''}`}
                   className="text-indigo-600 hover:text-indigo-800 hover:underline"
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -246,7 +246,7 @@ const TaskRow = ({
       onConfirm={async () => {
         if (!task.id) return;
         try {
-          await TaskAPI.deleteTask(task.id);
+          await TaskAPI.deleteTask(task.slug ?? task.id);
           toast.success('Task deleted');
           onDelete?.(task.id);
         } catch (error) {

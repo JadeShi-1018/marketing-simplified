@@ -9,7 +9,7 @@ import type { DecisionRiskLevel, DecisionStatus } from '@/types/decision';
 import type { ReactNode } from 'react';
 
 interface Props {
-  projectId: number | null;
+  projectId: number | string | null;
   projectName?: string | null;
   projectSeq?: number | null;
   title: string;

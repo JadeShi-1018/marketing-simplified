@@ -173,6 +173,7 @@ def _commit_task(orchestrator, draft: dict, destination: dict | None, commit_con
             {
                 'index': original_index,
                 'task_id': task.id,
+                'task_slug': task.slug,
                 'summary': summary,
             }
         )

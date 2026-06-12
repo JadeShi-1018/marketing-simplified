@@ -108,7 +108,7 @@ export default function CampaignHeader({ campaign, onUpdate, loading, onChangeSt
       try {
         setLoadingUsers(true);
         console.log('Fetching project members for project:', projectId);
-        const members = await ProjectAPI.getProjectMembers(Number(projectId));
+        const members = await ProjectAPI.getProjectMembers(projectId);
         console.log('Received members:', members);
         
         const userList: User[] = members

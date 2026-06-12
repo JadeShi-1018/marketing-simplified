@@ -15,7 +15,7 @@ export const TASK_ENGAGEMENT_SUMMARY_USE_MOCK = false;
 export const TASK_ENGAGEMENT_SUMMARY_PATH =
   '/api/behavioral-tracking/tasks';
 
-export function engagementSummaryUrl(taskId: number): string {
+export function engagementSummaryUrl(taskId: number | string): string {
   return `${TASK_ENGAGEMENT_SUMMARY_PATH}/${taskId}/engagement-summary/`;
 }
 
@@ -33,7 +33,7 @@ export const TaskEngagementAPI = {
    * Uses mock data while TASK_ENGAGEMENT_SUMMARY_USE_MOCK is true.
    */
   getEngagementSummary: async (
-    taskId: number,
+    taskId: number | string,
   ): Promise<TaskEngagementSummary> => {
     if (TASK_ENGAGEMENT_SUMMARY_USE_MOCK) {
       void taskId;

@@ -12,7 +12,7 @@ import CsmAPI from '@/lib/api/csmApi';
 import { Plus, Pencil, Trash2, AlertCircle, Inbox } from 'lucide-react';
 
 interface QueuesTabProps {
-  projectId: number;
+  projectId: number | string;
   organisationId: number;
 }
 

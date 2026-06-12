@@ -1,20 +1,21 @@
 import api from '../api';
 
 export interface ProjectOrganization {
-  id: number;
+  id: number | string;
   name: string;
   slug?: string;
 }
 
 export interface ProjectOwner {
-  id: number;
+  id: number | string;
   username?: string;
   email?: string;
   name?: string;
 }
 
 export interface ProjectData {
-  id: number;
+  id: number | string;
+  slug?: string;
   name: string;
   description?: string | null;
   organization_id?: number;  // Included for completeness, can be removed if never used
@@ -93,7 +94,7 @@ export interface ProjectMemberUser {
 export interface ProjectMemberData {
   id: number;
   user: ProjectMemberUser;
-  project: { id: number; name: string; owner?: { id: number; username?: string; email?: string } };
+  project: { id: number | string; name: string; owner?: { id: number; username?: string; email?: string } };
   role: string;
   is_active: boolean;
   created_at?: string;
@@ -104,7 +105,7 @@ export interface ProjectInvitationData {
   id: number;
   email: string;
   role: string;
-  project: { id: number; name: string };
+  project: { id: number | string; name: string };
   token?: string;
   invited_by?: ProjectMemberUser;
   approved?: boolean;
@@ -164,7 +165,7 @@ export const ProjectAPI = {
       .get<ProjectData[]>('/api/core/projects/', { params })
       .then((response) => normalizeProjectsResponse(response.data));
   },
-  getProject: (projectId: number): Promise<ProjectData> => {
+  getProject: (projectId: number | string): Promise<ProjectData> => {
     return api
       .get<ProjectData>(`/api/core/projects/${projectId}/`)
       .then((response) => response.data);
@@ -239,19 +240,19 @@ export const ProjectAPI = {
   },
 
   // Mark a project as the user's active project
-  setActiveProject: (projectId: number) => {
+  setActiveProject: (projectId: number | string) => {
     return api
       .post(`/api/core/projects/${projectId}/set_active/`)
       .then((response) => response.data);
   },
 
   // Delete a project (owner permission required)
-  deleteProject: (projectId: number) => {
+  deleteProject: (projectId: number | string) => {
     return api.delete(`/api/core/projects/${projectId}/`).then((response) => response.data);
   },
 
   // Get members of a specific project
-  getProjectMembers: (projectId: number): Promise<ProjectMemberData[]> => {
+  getProjectMembers: (projectId: number | string): Promise<ProjectMemberData[]> => {
     return api
       .get(`/api/core/projects/${projectId}/members/`)
       .then((response) => {
@@ -261,14 +262,14 @@ export const ProjectAPI = {
   },
 
   // Get allowed project role options for the current user's organization
-  getProjectAvailableRoles: (projectId: number): Promise<ProjectAvailableRolesResponse> => {
+  getProjectAvailableRoles: (projectId: number | string): Promise<ProjectAvailableRolesResponse> => {
     return api
       .get<ProjectAvailableRolesResponse>(`/api/core/projects/${projectId}/roles/`)
       .then((response) => response.data);
   },
 
   // Get all members of a specific project (fetches all pagination pages)
-  getAllProjectMembers: async (projectId: number): Promise<ProjectMemberData[]> => {
+  getAllProjectMembers: async (projectId: number | string): Promise<ProjectMemberData[]> => {
     const allMembers: ProjectMemberData[] = [];
     const seenMemberIds = new Set<number>();
     const visitedUrls = new Set<string>();
@@ -300,7 +301,7 @@ export const ProjectAPI = {
   },
 
   inviteProjectMember: (
-    projectId: number,
+    projectId: number | string,
     payload: ProjectMemberInvitePayload
   ): Promise<any> => {
     return api
@@ -308,15 +309,15 @@ export const ProjectAPI = {
       .then((response) => response.data);
   },
 
-  removeProjectMember: (projectId: number, memberId: number): Promise<any> => {
+  removeProjectMember: (projectId: number | string, memberId: number | string): Promise<any> => {
     return api
       .delete(`/api/core/projects/${projectId}/members/${memberId}/`)
       .then((response) => response.data);
   },
 
   updateProjectMemberRole: (
-    projectId: number,
-    memberId: number,
+    projectId: number | string,
+    memberId: number | string,
     role: string
   ): Promise<ProjectMemberData> => {
     return api
@@ -324,17 +325,17 @@ export const ProjectAPI = {
       .then((response) => response.data);
   },
 
-  getPendingInvitationApprovals: (projectId: number): Promise<ProjectInvitationData[]> => {
+  getPendingInvitationApprovals: (projectId: number | string): Promise<ProjectInvitationData[]> => {
     return api
       .get(`/api/core/projects/${projectId}/invitations/pending-approval/`)
       .then((response) => response.data || []);
   },
-  getPendingInvitations: (projectId: number): Promise<ProjectInvitationData[]> => {
+  getPendingInvitations: (projectId: number | string): Promise<ProjectInvitationData[]> => {
     return api
       .get(`/api/core/projects/${projectId}/invitations/`)
       .then((response) => response.data || []);
   },
-  getMyPendingInvitations: (projectId?: number): Promise<ProjectInvitationData[]> => {
+  getMyPendingInvitations: (projectId?: number | string): Promise<ProjectInvitationData[]> => {
     const params = projectId ? { project_id: projectId } : undefined;
     return api
       .get(`/api/core/invitations/pending/`, { params })
@@ -352,13 +353,13 @@ export const ProjectAPI = {
       .then((response) => response.data);
   },
 
-  approveProjectInvitation: (projectId: number, invitationId: number): Promise<ProjectInvitationData> => {
+  approveProjectInvitation: (projectId: number | string, invitationId: number | string): Promise<ProjectInvitationData> => {
     return api
       .post(`/api/core/projects/${projectId}/invitations/${invitationId}/approve/`)
       .then((response) => response.data);
   },
 
-  rejectProjectInvitation: (projectId: number, invitationId: number): Promise<any> => {
+  rejectProjectInvitation: (projectId: number | string, invitationId: number | string): Promise<any> => {
     return api
       .delete(`/api/core/projects/${projectId}/invitations/${invitationId}/reject/`)
       .then((response) => response.data);

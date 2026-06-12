@@ -9,7 +9,7 @@ import type { ArtifactLink, KnowledgeNavigationLink } from '@/types/meeting';
 import AddArtifactDialog from './AddArtifactDialog';
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   relatedDecisions: KnowledgeNavigationLink[];
   relatedTasks: KnowledgeNavigationLink[];
@@ -20,7 +20,7 @@ interface Props {
   onMutated: () => void;
 }
 
-function v2Url(link: KnowledgeNavigationLink, kind: 'decision' | 'task', projectId: number): string {
+function v2Url(link: KnowledgeNavigationLink, kind: 'decision' | 'task', projectId: number | string): string {
   const base = kind === 'decision' ? '/decisions' : '/tasks';
   return `${base}/${link.id}?project_id=${projectId}`;
 }

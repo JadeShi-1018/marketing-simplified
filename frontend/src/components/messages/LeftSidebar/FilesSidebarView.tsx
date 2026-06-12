@@ -26,7 +26,7 @@ function getFileIcon(row: ChatFileListItem) {
   return <File className="w-4 h-4 text-gray-500" />;
 }
 
-export default function FilesSidebarView({ selectedProjectId }: { selectedProjectId: number }) {
+export default function FilesSidebarView({ selectedProjectId }: { selectedProjectId: number | string }) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

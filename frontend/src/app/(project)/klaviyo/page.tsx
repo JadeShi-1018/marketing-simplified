@@ -16,6 +16,7 @@ import type { KlaviyoDraft } from '@/hooks/useKlaviyoData';
 function toRow(draft: KlaviyoDraft): EmailDraftRow {
   return {
     id: draft.id,
+    slug: draft.slug,
     title: draft.name || draft.subject || 'Untitled template',
     subject: draft.subject,
     status: draft.status || 'draft',
@@ -65,7 +66,7 @@ export default function KlaviyoV2Page() {
   }, [drafts, searchQuery]);
 
   const handleOpen = (row: EmailDraftRow) => {
-    router.push(`/klaviyo/${row.id}`);
+    router.push(`/klaviyo/${row.slug}`);
   };
   const handleEdit = handleOpen;
 
@@ -94,7 +95,7 @@ export default function KlaviyoV2Page() {
         status: 'draft',
       });
       if (created?.id) {
-        router.push(`/klaviyo/${created.id}`);
+        router.push(`/klaviyo/${created.slug}`);
       } else {
         void loadDrafts();
       }

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { Id } from "@/types/common";
 import { useRouter } from "next/navigation";
 import {
   Plus,
@@ -72,7 +73,7 @@ function MiroV2ListContent() {
     return visible.filter((b) => (b.title || "").toLowerCase().includes(q));
   }, [visible, searchQuery]);
 
-  const projectName = (projectId: number) =>
+  const projectName = (projectId: Id) =>
     projects.find((p) => p.id === projectId)?.name || `Project #${projectId}`;
 
   const formatDate = (iso?: string) => {
@@ -96,7 +97,7 @@ function MiroV2ListContent() {
     setIsCreateModalOpen(true);
   };
 
-  const submitCreate = async (data: { projectId: number; title: string }) => {
+  const submitCreate = async (data: { projectId: Id; title: string }) => {
     setIsCreating(true);
     try {
       const created = await miroApi.createBoard({
@@ -108,7 +109,7 @@ function MiroV2ListContent() {
       setBoards(list);
       setIsCreateModalOpen(false);
       toast.success("Board created");
-      if (created?.id) router.push(`/miro/${created.id}`);
+      if (created?.id) router.push(`/miro/${created.slug}`);
     } catch (err: any) {
       toast.error(err instanceof Error ? err.message : "Failed to create board");
     } finally {
@@ -270,7 +271,7 @@ function MiroV2ListContent() {
                   >
                     <button
                       type="button"
-                      onClick={() => router.push(`/miro/${board.id}`)}
+                      onClick={() => router.push(`/miro/${board.slug}`)}
                       className="block h-32 w-full bg-gradient-to-br from-[#3CCED7]/20 via-white to-[#A6E661]/20 text-left"
                     >
                       <div className="flex h-full items-center justify-center">
@@ -281,7 +282,7 @@ function MiroV2ListContent() {
                       <div className="min-w-0 flex-1">
                         <button
                           type="button"
-                          onClick={() => router.push(`/miro/${board.id}`)}
+                          onClick={() => router.push(`/miro/${board.slug}`)}
                           className="block w-full truncate text-left text-sm font-medium text-gray-900 hover:text-[#3CCED7]"
                           title={board.title || "Untitled Board"}
                         >
@@ -317,7 +318,7 @@ function MiroV2ListContent() {
                               type="button"
                               onClick={() => {
                                 setMenuOpenId(null);
-                                router.push(`/miro/${board.id}`);
+                                router.push(`/miro/${board.slug}`);
                               }}
                               className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
                             >

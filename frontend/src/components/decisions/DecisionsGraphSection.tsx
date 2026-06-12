@@ -17,12 +17,12 @@ import type { DecisionGraphEdge, DecisionGraphNode, DecisionGraphResponse } from
 
 interface Props {
   graph: DecisionGraphResponse | null;
-  projectId?: number | null;
+  projectId?: number | string | null;
   canEdit: boolean;
   canCreate?: boolean;
   onEditDecision: (node: DecisionGraphNode) => void;
   onDeleteDecision?: (node: DecisionGraphNode) => void;
-  onOpenFullPage?: (id: number, projectId?: number | null) => void;
+  onOpenFullPage?: (idOrSlug: number | string, projectId?: number | string | null) => void;
   createRequestKey?: number;
   onDecisionUpdated?: (opts?: {
     fullReload?: boolean;
@@ -160,7 +160,7 @@ export default function DecisionsGraphSection({
 
   const handleMoveDecisionToTopic = async (
     decisionId: number,
-    fromProjectId: number,
+    fromProjectId: number | string,
     topic: string,
   ) => {
     try {
@@ -245,10 +245,10 @@ export default function DecisionsGraphSection({
     onRenameTopic: canEdit ? handleRenameTopic : undefined,
     onCreateTopic: canEdit ? handleCreateTopic : undefined,
     onDeleteTopic: canEdit ? handleDeleteTopic : undefined,
-    getDecisionUrl: (id: number, pid?: number | null) =>
-      `/decisions/${id}${pid ? `?project_id=${pid}` : ''}`,
-    getReviewUrl: (id: number, pid?: number | null) =>
-      `/decisions/${id}${pid ? `?project_id=${pid}` : ''}`,
+    getDecisionUrl: (idOrSlug: number | string, pid?: number | string | null) =>
+      `/decisions/${idOrSlug}${pid ? `?project_id=${pid}` : ''}`,
+    getReviewUrl: (idOrSlug: number | string, pid?: number | string | null) =>
+      `/decisions/${idOrSlug}${pid ? `?project_id=${pid}` : ''}`,
   };
 
   const embeddedViewport = {
@@ -379,6 +379,7 @@ export default function DecisionsGraphSection({
           <DecisionTreeDetailPanel
             key={fullscreenSelectedId}
             decisionId={fullscreenSelectedId}
+            decisionSlug={selectedGraphNode?.slug ?? null}
             projectId={selectedGraphNode?.projectId ?? projectId ?? null}
             graphNodeStatus={selectedGraphNode?.status ?? 'DRAFT'}
             canEdit={canEdit}

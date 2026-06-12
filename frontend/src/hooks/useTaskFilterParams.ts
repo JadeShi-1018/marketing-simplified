@@ -27,6 +27,13 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
       return parsed.length ? parsed[0] : undefined;
     };
 
+    const getProjectId = (key: string): number | string | undefined => {
+      const raw = searchParams.get(key);
+      if (!raw) return undefined;
+      const num = Number(raw);
+      return Number.isFinite(num) ? num : raw;
+    };
+
     const getStrings = (key: string): string[] => {
       return searchParams.getAll(key).filter(Boolean);
     };
@@ -50,7 +57,7 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
     };
 
     return {
-      project_id: getNumber("project_id"),
+      project_id: getProjectId("project_id"),
       type: (() => {
         const vals = getStrings("type");
         return vals.length > 1 ? vals : vals[0] || undefined;
@@ -126,7 +133,11 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
         else params.set(k, value);
       };
 
-      setNumber("project_id", next.project_id);
+      if (next.project_id === undefined || next.project_id === null) {
+        params.delete("project_id");
+      } else {
+        params.set("project_id", String(next.project_id));
+      }
       setRepeated("type", next.type as any);
       setRepeated("status", next.status as any);
       setRepeated("priority", next.priority as any);

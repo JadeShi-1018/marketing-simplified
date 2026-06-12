@@ -155,21 +155,21 @@ def test_cycle_rejected_on_parent_update():
 
     client = _client_for(user)
     resp_ab = client.patch(
-        f"/api/decisions/drafts/{decision_b.id}/?project_id={project.id}",
+        f"/api/decisions/drafts/{decision_b.slug}/?project_id={project.id}",
         {"parentDecisionIds": [decision_a.id]},
         format="json",
     )
     assert resp_ab.status_code == 200
 
     resp_bc = client.patch(
-        f"/api/decisions/drafts/{decision_c.id}/?project_id={project.id}",
+        f"/api/decisions/drafts/{decision_c.slug}/?project_id={project.id}",
         {"parentDecisionIds": [decision_b.id]},
         format="json",
     )
     assert resp_bc.status_code == 200
 
     resp_ca = client.patch(
-        f"/api/decisions/drafts/{decision_a.id}/?project_id={project.id}",
+        f"/api/decisions/drafts/{decision_a.slug}/?project_id={project.id}",
         {"parentDecisionIds": [decision_c.id]},
         format="json",
     )
@@ -206,7 +206,7 @@ def test_graph_endpoint_returns_nodes_and_edges():
     )
 
     client = _client_for(user)
-    resp = client.get(f"/api/core/projects/{project.id}/decisions/graph/")
+    resp = client.get(f"/api/core/projects/{project.slug}/decisions/graph/")
     assert resp.status_code == 200
     node_ids = {node["id"] for node in resp.data["nodes"]}
     assert decision_a.id in node_ids
@@ -242,7 +242,7 @@ def test_connections_put_creates_related_storyline_edge():
 
     client = _client_for(user)
     resp = client.put(
-        f"/api/decisions/{decision_a.id}/connections/?project_id={project.id}",
+        f"/api/decisions/{decision_a.slug}/connections/?project_id={project.id}",
         {"connectedDecisionSeqs": [decision_b.project_seq]},
         format="json",
     )

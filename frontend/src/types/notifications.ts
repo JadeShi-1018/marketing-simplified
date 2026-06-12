@@ -50,6 +50,7 @@ export interface NotificationItem {
   event_type: string;
   related_object_type: string;
   related_object_id: string;
+  related_object_slug?: string | null;
   title: string;
   body: string;
   is_read: boolean;

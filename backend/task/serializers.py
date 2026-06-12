@@ -100,7 +100,7 @@ class TaskSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Task
-        fields = [
+        fields = ['slug', 
             'id', 'summary', 'description', 'status', 'type', 'priority',
             'owner', 'owner_id', 'created_by', 'project', 'project_id',
             'current_approver', 'current_approver_id',
@@ -120,7 +120,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = [
+        read_only_fields = ['slug', 
             'id', 'status', 'owner', 'created_by', 'content_type', 'object_id', 'linked_object',
             'is_subtask', 'parent_relationship', 'anomaly_status',
             'approval_chain_progress', 'can_lock', 'approvals_summary', 'is_pinned',

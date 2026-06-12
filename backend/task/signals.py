@@ -216,7 +216,7 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
         body=f"Status changed from {old} to {instance.status}.",
         related_object_type="task",
         related_object_id=str(instance.id),
-        action_url=task_action_url(instance.id),
+        action_url=task_action_url(instance.slug),
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,
@@ -257,7 +257,7 @@ def notify_on_anomaly_status_change(sender, instance, created, **kwargs):
         body=f"Task anomaly status changed to {instance.anomaly_status}.",
         related_object_type="task",
         related_object_id=str(instance.id),
-        action_url=task_action_url(instance.id),
+        action_url=task_action_url(instance.slug),
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,

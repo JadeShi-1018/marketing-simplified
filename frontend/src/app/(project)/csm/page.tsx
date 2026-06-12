@@ -25,8 +25,8 @@ const CSMPageContent: React.FC = () => {
   const activeProject = useProjectStore((s) => s.activeProject);
 
   const paramProjectId = searchParams.get('project');
-  const projectId = paramProjectId ? Number(paramProjectId) : activeProject?.id ?? 0;
-  const projectValid = Number.isFinite(projectId) && projectId > 0;
+  const projectId = paramProjectId || (activeProject?.id ?? '');
+  const projectValid = !!projectId;
 
   const initialTab = (searchParams.get('tab') as TabId) || 'organisations';
   const [activeTab, setActiveTab] = useState<TabId>(

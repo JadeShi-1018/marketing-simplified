@@ -37,7 +37,7 @@ class TestTaskTags:
             {'name': 'Urgent', 'color': '#EB5757'},
         ]
 
-        detail = reverse('task-detail', kwargs={'pk': task.pk})
+        detail = reverse('task-detail', kwargs={'pk': task.slug})
         patched = authenticated_client.patch(detail, {'tags': next_tags}, format='json')
         assert patched.status_code == status.HTTP_200_OK
         assert patched.data['tags'] == next_tags
@@ -47,7 +47,7 @@ class TestTaskTags:
         user.save(update_fields=['active_project'])
 
         task = Task.objects.create(summary='B', type='asset', project=project, owner=user)
-        detail = reverse('task-detail', kwargs={'pk': task.pk})
+        detail = reverse('task-detail', kwargs={'pk': task.slug})
         bad = authenticated_client.patch(
             detail,
             {'tags': [{'name': 'x', 'color': '#00000G'}]},
@@ -60,7 +60,7 @@ class TestTaskTags:
         user.save(update_fields=['active_project'])
 
         task = Task.objects.create(summary='Custom color', type='asset', project=project, owner=user)
-        detail = reverse('task-detail', kwargs={'pk': task.pk})
+        detail = reverse('task-detail', kwargs={'pk': task.slug})
         patched = authenticated_client.patch(
             detail,
             {'tags': [{'name': 'Custom', 'color': '#123abc'}]},
@@ -82,7 +82,7 @@ class TestTaskTags:
             owner=user,
             tags=[{'name': 'Frontend', 'color': '#26b5ce'}],
         )
-        detail = reverse('task-detail', kwargs={'pk': task.pk})
+        detail = reverse('task-detail', kwargs={'pk': task.slug})
         r = authenticated_client.get(detail)
         assert r.status_code == status.HTTP_200_OK
         assert 'tags' in r.data
@@ -199,7 +199,7 @@ class TestTaskTags:
         user.save(update_fields=['active_project'])
 
         task = Task.objects.create(summary='Long tag', type='asset', project=project, owner=user)
-        detail = reverse('task-detail', kwargs={'pk': task.pk})
+        detail = reverse('task-detail', kwargs={'pk': task.slug})
         patched = authenticated_client.patch(
             detail,
             {'tags': [{'name': '1234567890123456', 'color': '#26B5CE'}]},

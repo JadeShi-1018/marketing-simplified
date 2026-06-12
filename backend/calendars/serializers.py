@@ -630,6 +630,17 @@ class CalendarEventSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True,
     )
+    # Slugs for front-end navigation (browser URLs and API lookups are slug-only)
+    decision_slug = serializers.SlugField(
+        source='decision.slug',
+        read_only=True,
+        allow_null=True,
+    )
+    task_slug = serializers.SlugField(
+        source='task.slug',
+        read_only=True,
+        allow_null=True,
+    )
     review_id = serializers.IntegerField(
         source='review.id',
         read_only=True,
@@ -692,6 +703,8 @@ class CalendarEventSerializer(serializers.ModelSerializer):
             'end_time',
             'decision_id',   # For front-end navigation to decision detail
             'task_id',       # For front-end navigation to task detail
+            'decision_slug', # Slug-based navigation (URLs are slug-only)
+            'task_slug',     # Slug-based navigation (URLs are slug-only)
             'review_id',     # For front-end navigation to review detail
             'project_id',    # For front-end permission header on navigation
             'created_at',
@@ -699,6 +712,6 @@ class CalendarEventSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'event_type', 'title', 'description', 'start_time', 'end_time',
-            'decision_id', 'task_id', 'review_id', 'project_id',
+            'decision_id', 'task_id', 'decision_slug', 'task_slug', 'review_id', 'project_id',
             'created_at', 'updated_at',
         ]

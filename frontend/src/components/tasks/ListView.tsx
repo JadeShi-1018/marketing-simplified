@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { ArrowDownToLine, ArrowUpToLine, Bookmark, ChevronDown, ChevronLeft, ChevronRight, Loader2, Pin, Plus, Save, Search, Trash2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { TaskBulkFailureItem, TaskData, TaskListFilters } from '@/types/task';
+import { Id } from '@/types/common';
 import { userDisplayName } from '@/types/task';
 import { TASK_PRIORITY_BY_VALUE, TASK_PRIORITY_OPTIONS } from '@/lib/tasks/taskPriorities';
 import { TASK_STATUS_BY_VALUE, TASK_STATUS_OPTIONS } from '@/lib/tasks/taskStatuses';
@@ -32,7 +33,7 @@ interface ListViewProps {
   tasks: TaskData[];
   loading: boolean;
   error: string | null;
-  projectId?: number | null;
+  projectId?: Id | null;
   /** Opens the shared Linear import modal owned by the tasks page. */
   onOpenLinearImport?: () => void;
   /** After a successful bulk push to Linear, refresh task list from parent. */
@@ -77,10 +78,10 @@ type SavedView = {
   search: string;
 };
 
-const savedViewsKey = (projectId: number | null) => `tasks-saved-views-${projectId ?? 'all'}`;
-const preViewKey = (projectId: number | null) => `tasks-pre-view-state-${projectId ?? 'all'}`;
+const savedViewsKey = (projectId: Id | null) => `tasks-saved-views-${projectId ?? 'all'}`;
+const preViewKey = (projectId: Id | null) => `tasks-pre-view-state-${projectId ?? 'all'}`;
 
-const backNavFlag = (projectId: number | null) => `tasks-back-nav-${projectId ?? 'all'}`;
+const backNavFlag = (projectId: Id | null) => `tasks-back-nav-${projectId ?? 'all'}`;
 // Unique ID for this page load — resets on every reload, stays constant within a session.
 // Stored alongside the back-nav flag so we can tell if the flag was written in this
 // page load (client-side nav) or a previous one (stale after reload).
@@ -339,7 +340,7 @@ export default function ListView({
     };
   }, [projectId]);
 
-  const restoredForProject = useRef<number | null | 'all'>(undefined as any);
+  const restoredForProject = useRef<Id | null | 'all'>(undefined as any);
   useEffect(() => {
     const key = projectId ?? 'all';
     if (restoredForProject.current === key) return;
@@ -464,8 +465,8 @@ export default function ListView({
   const [rowMenu, setRowMenu] = useState<TaskListRowContextMenuState>(null);
   const [menuMembers, setMenuMembers] = useState<ProjectMemberData[]>([]);
   const [menuMembersLoading, setMenuMembersLoading] = useState(false);
-  const membersByProjectIdRef = useRef<Map<number, ProjectMemberData[]>>(new Map());
-  const pendingMemberFetchesRef = useRef<Map<number, Promise<ProjectMemberData[]>>>(new Map());
+  const membersByProjectIdRef = useRef<Map<number | string, ProjectMemberData[]>>(new Map());
+  const pendingMemberFetchesRef = useRef<Map<number | string, Promise<ProjectMemberData[]>>>(new Map());
 
   useEffect(() => {
     if (!rowMenu) {
@@ -532,8 +533,8 @@ export default function ListView({
   const closeRowMenu = useCallback(() => setRowMenu(null), []);
 
   const handleOpenDetail = useCallback(
-    (taskId: number) => {
-      router.push(`/tasks/${taskId}`);
+    (taskKey: number | string) => {
+      router.push(`/tasks/${taskKey}`);
     },
     [router]
   );
@@ -815,8 +816,8 @@ export default function ListView({
     setTaskPinBusy(task.id, true);
     try {
       const res = nextPinned
-        ? await TaskAPI.pinTask(task.id)
-        : await TaskAPI.unpinTask(task.id);
+        ? await TaskAPI.pinTask(task.slug ?? task.id)
+        : await TaskAPI.unpinTask(task.slug ?? task.id);
       const data = res.data as TaskData;
       updateTaskInStore(task.id, { is_pinned: data.is_pinned ?? nextPinned });
       toast.success(nextPinned ? 'Task pinned' : 'Task unpinned');
@@ -839,7 +840,7 @@ export default function ListView({
     updateTaskInStore(task.id, patch);
     setTaskSaving(task.id, true);
     try {
-      await TaskAPI.updateTask(task.id, requestData as Partial<TaskData>);
+      await TaskAPI.updateTask(task.slug ?? task.id, requestData as Partial<TaskData>);
       markRecentlyUpdated([task.id]);
       if (task.id === drawerTaskId) setDrawerRefreshKey((k) => k + 1);
       return true;

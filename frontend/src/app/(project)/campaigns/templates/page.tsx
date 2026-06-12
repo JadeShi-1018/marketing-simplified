@@ -24,7 +24,7 @@ export default function TemplatesListV2Page() {
   const searchParams = useSearchParams();
   const projectIdParam = searchParams?.get('project_id');
   const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
+  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
 
   const { items, loading, error, refresh } = useCampaignTemplates();
   const [searchQuery, setSearchQuery] = useState('');

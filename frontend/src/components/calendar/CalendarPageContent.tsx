@@ -518,13 +518,13 @@ export default function CalendarPageContent() {
             onEventClick={(event, position) => {
               const meta = extractNavigationMetadata(event.description || "");
               if (meta && meta.isDerived) {
-                if (meta.decision_id) {
+                if (meta.decision_slug || meta.decision_id) {
                   const query = meta.project_id ? `?project_id=${meta.project_id}` : '';
-                  router.push(`/decisions/${meta.decision_id}${query}`);
+                  router.push(`/decisions/${meta.decision_slug ?? meta.decision_id}${query}`);
                   return;
                 }
-                if (meta.task_id) {
-                  router.push(`/tasks/${meta.task_id}`);
+                if (meta.task_slug || meta.task_id) {
+                  router.push(`/tasks/${meta.task_slug ?? meta.task_id}`);
                   return;
                 }
               }

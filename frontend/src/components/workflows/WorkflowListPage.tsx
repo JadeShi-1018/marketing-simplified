@@ -98,7 +98,7 @@ export default function WorkflowListPage() {
   };
 
   const handleEditWorkflow = (workflow: WorkflowSummary) => {
-    window.location.href = `/workflows/${workflow.id}`;
+    window.location.href = `/workflows/${workflow.slug}`;
   };
 
   const handleDuplicateWorkflow = async (workflow: WorkflowSummary) => {

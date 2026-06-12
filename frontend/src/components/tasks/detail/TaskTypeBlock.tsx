@@ -347,7 +347,7 @@ export default function TaskTypeBlock({
         // In DRAFT status, any failure (partial data, validation, etc.) silently falls back to draft_payload.
         if (task.status === 'DRAFT' && task.id) {
           // Always persist form state to draft_payload first (captures cleared fields).
-          await TaskAPI.updateTask(task.id, { draft_payload: formState });
+          await TaskAPI.updateTask(task.slug ?? task.id, { draft_payload: formState });
           // Then try to update the linked object with whatever is valid.
           try {
             await config.updateApi(linkedId, config.getUpdatePayload(formState));
@@ -364,7 +364,7 @@ export default function TaskTypeBlock({
           if (task.id) {
             // Payload can't be built yet (some required fields missing).
             // Save form state to draft_payload so nothing is lost.
-            await TaskAPI.updateTask(task.id, { draft_payload: formState });
+            await TaskAPI.updateTask(task.slug ?? task.id, { draft_payload: formState });
             toast.success('Details saved.');
             setEditing(false);
             onUpdated?.();
@@ -379,7 +379,7 @@ export default function TaskTypeBlock({
           if (task.id) {
             if (createdId && config.contentType) {
               try {
-                await TaskAPI.linkTask(task.id, config.contentType, String(createdId));
+                await TaskAPI.linkTask(task.slug ?? task.id, config.contentType, String(createdId));
               } catch {
                 // Non-fatal: serializer fallback via reverse FK will still work
               }
@@ -387,7 +387,7 @@ export default function TaskTypeBlock({
             // Linked object is now the source of truth — clear stale draft_payload so it
             // doesn't shadow fields like current_approver_name in the display merge.
             try {
-              await TaskAPI.updateTask(task.id, { draft_payload: null });
+              await TaskAPI.updateTask(task.slug ?? task.id, { draft_payload: null });
             } catch {
               // Non-fatal
             }

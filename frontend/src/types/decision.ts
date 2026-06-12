@@ -1,4 +1,5 @@
 import type { OriginMeetingPayload } from '@/types/meeting';
+import type { Id } from './common';
 
 export type DecisionStatus =
   | 'PREDRAFT'
@@ -148,15 +149,18 @@ export interface DecisionCommittedResponse {
   agentSessionId?: string | null;
   /** Provenance: meeting this decision is anchored to, if any. */
   origin_meeting?: OriginMeetingPayload | null;
+  /** Slug for URL routing */
+  slug?: string | null;
 }
 
 export interface DecisionListItem {
   id: number;
+  slug?: string | null;
   title?: string | null;
   status: DecisionStatus;
   riskLevel?: DecisionRiskLevel | null;
   confidenceScore?: number | null;
-  projectId?: number | null;
+  projectId?: Id | null;
   topic?: string | null;
   topicLabel?: string | null;
   projectSeq?: number | null;
@@ -177,12 +181,13 @@ export interface DecisionListResponse {
 
 export interface DecisionGraphNode {
   id: number;
+  slug?: string | null;
   title?: string | null;
   status: DecisionStatus;
   projectSeq?: number | null;
   createdAt: string;
   updatedAt: string;
-  projectId?: number | null;
+  projectId?: Id | null;
   projectName?: string | null;
   projectTheme?: string | null;
   projectSubtitle?: string | null;

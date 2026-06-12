@@ -22,9 +22,9 @@ import type { TiptapJSONContent } from '@/types/comment';
 
 // ==================== Chat Endpoints ====================
 
-const PROJECT_DRAFT_KEY_PREFIX = (projectId: number) => `chat_draft_v2_${projectId}_`;
+const PROJECT_DRAFT_KEY_PREFIX = (projectId: number | string) => `chat_draft_v2_${projectId}_`;
 
-function pruneProjectChatDrafts(projectId: number, chats: Chat[]) {
+function pruneProjectChatDrafts(projectId: number | string, chats: Chat[]) {
   if (typeof window === 'undefined') return;
 
   const prefix = PROJECT_DRAFT_KEY_PREFIX(projectId);
@@ -148,7 +148,7 @@ export interface BrowseChannelRow {
   is_member: boolean;
 }
 
-export const browseChannels = async (projectId: number): Promise<BrowseChannelRow[]> => {
+export const browseChannels = async (projectId: number | string): Promise<BrowseChannelRow[]> => {
   const response = await api.get('/api/chat/chats/browse/', { params: { project_id: projectId } });
   return response.data;
 };
@@ -202,7 +202,7 @@ export const updateChatDetails = async (
 
 // ==================== Starred chats ====================
 
-export const listStarredChats = async (projectId: number): Promise<ChatStarRow[]> => {
+export const listStarredChats = async (projectId: number | string): Promise<ChatStarRow[]> => {
   const response = await api.get('/api/chat/starred/', { params: { project_id: projectId } });
   return response.data;
 };
@@ -217,7 +217,7 @@ export const unstarChat = async (chatId: number): Promise<void> => {
 };
 
 export const reorderStarredChats = async (
-  projectId: number,
+  projectId: number | string,
   chatIds: number[]
 ): Promise<void> => {
   await api.post('/api/chat/starred/reorder/', {
@@ -400,7 +400,7 @@ export const forwardMessagesBatch = async (
  * Check if a private chat already exists between two users
  */
 export const findPrivateChat = async (
-  projectId: number,
+  projectId: number | string,
   otherUserId: number
 ): Promise<Chat | null> => {
   try {

@@ -1,3 +1,5 @@
+import type { Id } from './common';
+
 // Campaign enums
 export type CampaignStatus = 'PLANNING' | 'TESTING' | 'SCALING' | 'OPTIMIZING' | 'PAUSED' | 'COMPLETED' | 'ARCHIVED';
 export type CampaignObjective = 'AWARENESS' | 'CONSIDERATION' | 'CONVERSION' | 'RETENTION' | 'ENGAGEMENT' | 'TRAFFIC' | 'LEAD_GENERATION' | 'APP_PROMOTION';
@@ -20,6 +22,7 @@ export interface ProjectSummary {
 // Campaign data types
 export interface CampaignData {
   id: string;
+  slug: string;
   name: string;
   objective: CampaignObjective;
   platforms: CampaignPlatform[];
@@ -34,7 +37,7 @@ export interface CampaignData {
   assignee?: UserSummary;
   assignee_id?: number;
   project: ProjectSummary;
-  project_id?: number;
+  project_id?: Id;
   budget_estimate?: number;
   status: CampaignStatus;
   status_note?: string;
@@ -51,7 +54,7 @@ export interface CreateCampaignData {
   start_date: string;
   end_date?: string;
   owner_id: number; // User ID (integer)
-  project_id: number; // Project ID (integer)
+  project_id: Id; // Project ID (integer or slug)
   hypothesis?: string;
   tags?: string[];
   budget_estimate?: number;
@@ -76,6 +79,7 @@ export interface CampaignTaskLink {
   id: string;
   campaign: string; // Campaign UUID
   task: number; // Task ID
+  task_slug?: string; // Task slug (API lookups are slug-only)
   link_type?: string;
   created_at: string;
   updated_at: string;
@@ -206,7 +210,7 @@ export interface CampaignTemplate {
   sharing_scope: TemplateSharingScope;
   sharing_scope_display: string;
   project?: ProjectSummary;
-  project_id?: number;
+  project_id?: Id;
   objective?: CampaignObjective;
   platforms?: CampaignPlatform[];
   hypothesis_framework?: string;
@@ -226,14 +230,14 @@ export interface CreateTemplateData {
   name: string;
   description?: string;
   sharing_scope?: TemplateSharingScope;
-  project_id?: number;
+  project_id?: Id;
 }
 
 export interface UpdateTemplateData {
   name?: string;
   description?: string;
   sharing_scope?: TemplateSharingScope;
-  project_id?: number;
+  project_id?: Id;
   objective?: CampaignObjective;
   platforms?: CampaignPlatform[];
   hypothesis_framework?: string;

@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Users, Clock, Activity, Trash2, Loader2, Settings2 } from 'lucide-react';
 import type { ProjectData } from '@/lib/api/projectApi';
+import { Id } from '@/types/common';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -16,9 +17,9 @@ import {
 interface ProjectCardProps {
   project: ProjectData;
   isDefault: boolean;
-  onSetDefault: (id: number) => Promise<boolean> | boolean;
-  onSelect: (id: number) => Promise<boolean> | boolean;
-  onDelete: (id: number, name: string) => void;
+  onSetDefault: (id: Id) => Promise<boolean> | boolean;
+  onSelect: (id: Id) => Promise<boolean> | boolean;
+  onDelete: (id: Id, name: string) => void;
   deleting?: boolean;
 }
 
@@ -223,13 +224,13 @@ export default function ProjectCard({ project, isDefault, onSetDefault, onSelect
          <DropdownMenuContent side="bottom" align="start" sideOffset={4} className="w-48 p-1">
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/admin/experience-groups?project=${project.id}`), 0)}
+            onSelect={() => setTimeout(() => router.push(`/admin/experience-groups?project=${project.slug || project.id}`), 0)}
           >
             <span>Experience Groups</span>
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/admin/customers?project=${project.id}`), 0)}
+            onSelect={() => setTimeout(() => router.push(`/admin/customers?project=${project.slug || project.id}`), 0)}
           >
             <span>Customers</span>
           </DropdownMenuItem>

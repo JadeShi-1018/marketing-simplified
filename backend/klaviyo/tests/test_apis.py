@@ -93,7 +93,7 @@ class EmailDraftAPITests(TestCase):
             user=self.user,   
         )
 
-        url = f"{DRAFTS_URL}{draft.id}/"
+        url = f"{DRAFTS_URL}{draft.slug}/"
         response = self.client.get(url, format="json")
 
         self.assertEqual(response.status_code, 200)
@@ -111,7 +111,7 @@ class EmailDraftAPITests(TestCase):
             user=self.user,  
         )
 
-        url = f"{DRAFTS_URL}{draft.id}/"
+        url = f"{DRAFTS_URL}{draft.slug}/"
         payload = {"status": self.status_ready}
 
         response = self.client.patch(url, payload, format="json")
@@ -133,7 +133,7 @@ class EmailDraftAPITests(TestCase):
             user=self.user,   
         )
 
-        url = f"{DRAFTS_URL}{draft.id}/"
+        url = f"{DRAFTS_URL}{draft.slug}/"
         response = self.client.delete(url, format="json")
 
         self.assertIn(response.status_code, (200, 204))

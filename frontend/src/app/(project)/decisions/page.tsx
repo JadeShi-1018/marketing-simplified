@@ -41,7 +41,7 @@ function DecisionsV2Content() {
   const activeProject = useProjectStore((s) => s.activeProject);
   const user = useAuthStore((s) => s.user);
 
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
+  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
 
   const role = useMemo(() => {
     if (!user) return null;
@@ -57,7 +57,7 @@ function DecisionsV2Content() {
   const canCreate = roleLevel <= EDIT_MAX_LEVEL;
   const canDelete = roleLevel <= EDIT_MAX_LEVEL;
 
-  const navigateToDecision = (id: number, targetProjectId?: number | null) => {
+  const navigateToDecision = (id: string | number, targetProjectId?: number | string | null) => {
     const resolvedProjectId = targetProjectId ?? projectId;
     const qs = resolvedProjectId ? `?project_id=${resolvedProjectId}` : '';
     router.push(`/decisions/${id}${qs}`);

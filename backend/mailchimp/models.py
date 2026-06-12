@@ -1,4 +1,6 @@
-from django.db import models, transaction
+from django.db import models
+from django.db import transaction
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
@@ -7,7 +9,7 @@ User = get_user_model()
 # ---------------------------
 # Campaign 
 # ---------------------------
-class Campaign(models.Model):
+class Campaign(SluggedResourceModelMixin, models.Model):
     id = models.AutoField(primary_key=True, unique=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="campaigns")
     parent_campaign_id = models.CharField(max_length=100, null=True, blank=True)

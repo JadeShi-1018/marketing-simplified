@@ -13,7 +13,7 @@ interface ActiveUserChip {
 }
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meeting: Meeting;
   wsState: WsState;
   closeCode: number | null;
@@ -70,7 +70,7 @@ export default function DocumentHeader({
   const status = formatStatus(wsState, closeCode, saving, lastSyncedAt);
   const archived = meeting.is_archived || meeting.status === 'archived';
   const noAccess = closeCode === 4003;
-  const detailHref = `/meetings/${meeting.id}?project_id=${projectId}`;
+  const detailHref = `/meetings/${meeting.slug}?project_id=${projectId}`;
 
   return (
     <header className="space-y-4 rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:p-5">

@@ -60,7 +60,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         )
         create_meeting_decision_origin(meeting=m, decision=d)
 
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("generated_decisions", response.data)
@@ -70,7 +70,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         self.assertEqual(response.data["generated_decisions"][0]["id"], d.id)
         self.assertEqual(
             response.data["generated_decisions"][0]["url"],
-            f"/decisions/{d.id}?project_id={self.project.id}",
+            f"/decisions/{d.slug}?project_id={self.project.id}",
         )
         self.assertEqual(
             response.data["generated_decisions"][0]["detail_url"],
@@ -94,7 +94,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         d.is_deleted = True
         d.save(update_fields=["is_deleted", "updated_at"])
 
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["generated_decisions"], [])
@@ -118,7 +118,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             artifact_type="decision",
             artifact_id=d.id,
         )
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["generated_decisions"]), 1)
@@ -143,7 +143,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             artifact_id=d.id,
         )
 
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["generated_decisions"]), 0)
@@ -152,7 +152,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         self.assertEqual(response.data["related_decisions"][0]["title"], "Artifact-linked D")
         self.assertEqual(
             response.data["related_decisions"][0]["url"],
-            f"/decisions/{d.id}?project_id={self.project.id}",
+            f"/decisions/{d.slug}?project_id={self.project.id}",
         )
 
     def test_meeting_detail_returns_generated_tasks(self):
@@ -170,7 +170,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         )
         MeetingTaskOrigin.objects.create(meeting=m, task=t)
 
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("generated_tasks", response.data)
@@ -179,7 +179,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         self.assertEqual(response.data["generated_tasks"][0]["title"], "Task title")
         self.assertEqual(
             response.data["generated_tasks"][0]["url"],
-            f"/tasks/{t.id}",
+            f"/tasks/{t.slug}",
         )
 
     def test_meeting_detail_related_tasks_from_artifacts_only(self):
@@ -201,14 +201,14 @@ class TestKnowledgeNavigationAPIContract(TestCase):
             artifact_id=t.id,
         )
 
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["generated_tasks"]), 0)
         self.assertEqual(len(response.data["related_tasks"]), 1)
         self.assertEqual(response.data["related_tasks"][0]["id"], t.id)
         self.assertEqual(response.data["related_tasks"][0]["title"], "Artifact task")
-        self.assertEqual(response.data["related_tasks"][0]["url"], f"/tasks/{t.id}")
+        self.assertEqual(response.data["related_tasks"][0]["url"], f"/tasks/{t.slug}")
 
     def test_decision_detail_returns_origin_meeting(self):
         m = Meeting.objects.create(
@@ -225,7 +225,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         create_meeting_decision_origin(meeting=m, decision=d)
         Decision.objects.filter(pk=d.pk).update(status=Decision.Status.COMMITTED)
 
-        url = f"/api/decisions/{d.id}/"
+        url = f"/api/decisions/{d.slug}/"
         response = self.client.get(url, {"project_id": self.project.id})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("origin_meeting", response.data)
@@ -235,7 +235,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         self.assertEqual(om["title"], "Source meeting")
         self.assertEqual(
             om["url"],
-            f"/projects/{self.project.id}/meetings/{m.id}",
+            f"/projects/{self.project.id}/meetings/{m.slug}",
         )
         self.assertEqual(om["detail_url"], om["url"])
         self.assertEqual(om["project_id"], self.project.id)
@@ -257,7 +257,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         )
         MeetingTaskOrigin.objects.create(meeting=m, task=t)
 
-        url = f"/api/tasks/{t.id}/"
+        url = f"/api/tasks/{t.slug}/"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("origin_meeting", response.data)
@@ -267,7 +267,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         self.assertEqual(om["title"], "Task origin meeting")
         self.assertEqual(
             om["url"],
-            f"/projects/{self.project.id}/meetings/{m.id}",
+            f"/projects/{self.project.id}/meetings/{m.slug}",
         )
         self.assertEqual(om["detail_url"], om["url"])
         self.assertEqual(om["project_id"], self.project.id)
@@ -288,7 +288,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         )
         create_meeting_decision_origin(meeting=m, decision=d)
 
-        url = f"/api/decisions/drafts/{d.id}/"
+        url = f"/api/decisions/drafts/{d.slug}/"
         response = self.client.get(url, {"project_id": self.project.id})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("origin_meeting", response.data)
@@ -297,7 +297,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         self.assertEqual(om["id"], m.id)
         self.assertEqual(
             om["url"],
-            f"/projects/{self.project.id}/meetings/{m.id}",
+            f"/projects/{self.project.id}/meetings/{m.slug}",
         )
         self.assertEqual(om["detail_url"], om["url"])
         self.assertEqual(om["project_id"], self.project.id)

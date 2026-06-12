@@ -258,7 +258,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const [approvalRequired, setApprovalRequired] = useState(false)
   const [generatedTaskIndexes, setGeneratedTaskIndexes] = useState<number[]>([])
   const [skippedTaskIndexes, setSkippedTaskIndexes] = useState<number[]>([])
-  const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number>>({})
+  const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number | string>>({})
   const [pendingTaskApproval, setPendingTaskApproval] = useState<PendingExternalApproval | null>(null)
   const [pendingMiroApproval, setPendingMiroApproval] = useState<PendingExternalApproval | null>(null)
   const [selectedTaskIndexes, setSelectedTaskIndexes] = useState<number[]>([])
@@ -450,8 +450,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       // clear them from the skipped list so the UI stays consistent.
       setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
       const pairs = created
-        .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-        .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+        .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+        .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
       setCreatedTaskIdByIndex(Object.fromEntries(pairs))
     } else {
       setGeneratedTaskIndexes([])
@@ -609,8 +609,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         setGeneratedTaskIndexes(Array.from(new Set(idxs)))
         setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
         const pairs = created
-          .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-          .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+          .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+          .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
         setCreatedTaskIdByIndex(Object.fromEntries(pairs))
       }
       if (lastTaskCreated) {
@@ -676,8 +676,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             .filter((n: unknown) => typeof n === "number" && Number.isFinite(n))
           setGeneratedTaskIndexes(Array.from(new Set(idxs)))
           const pairs = created
-            .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-            .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+            .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+            .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
           setCreatedTaskIdByIndex(Object.fromEntries(pairs))
         }
         if (lastTaskCreated) {
@@ -1124,8 +1124,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -1381,8 +1381,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
               .filter((n: unknown) => typeof n === "number" && Number.isFinite(n))
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -1548,8 +1548,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0

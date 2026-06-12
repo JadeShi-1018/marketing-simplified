@@ -44,8 +44,8 @@ const DecisionDetailView = ({
   const options = (decision.options || []) as DecisionOptionDraft[];
   const selectedOption = options.find((option) => option.isSelected);
   const decisionLink = projectId
-    ? `/decisions/${decision.id}?project_id=${projectId}`
-    : `/decisions/${decision.id}`;
+    ? `/decisions/${decision.slug}?project_id=${projectId}`
+    : `/decisions/${decision.slug}`;
 
   /** Open the Dashboard Agent side panel with the session that created this decision. */
   const handleOpenAgentSession = () => {

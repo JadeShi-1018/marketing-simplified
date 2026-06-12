@@ -26,7 +26,7 @@ export interface AdCopyVariation extends AdCopyVariationCopy {
 }
 
 export interface GenerateVariationRequest {
-  project_id: number;
+  project_id: number | string;
   source_mode: AdCopyVariationSourceMode;
   count?: number;
   creative_id?: number;
@@ -46,7 +46,7 @@ export interface BatchGenerateResponse {
 }
 
 export interface SaveVariationRequest extends AdCopyVariationCopy {
-  project?: number | null;
+  project?: number | string | null;
   source_mode: AdCopyVariationSourceMode;
   creative?: number | null;
   source_ref?: string;

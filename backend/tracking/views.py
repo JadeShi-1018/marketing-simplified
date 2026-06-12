@@ -32,6 +32,12 @@ class TaskEngagementView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, task_id):
+        from django.shortcuts import get_object_or_404  # noqa: PLC0415
+        from core.slug_mixins import resolve_lookup_kwargs  # noqa: PLC0415
+        from task.models import Task  # noqa: PLC0415
+
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
+        task_id = task.pk
         ct = ContentType.objects.get(app_label='task', model='task')
 
         agg = TrackingEvent.objects.filter(

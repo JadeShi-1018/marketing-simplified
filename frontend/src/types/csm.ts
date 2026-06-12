@@ -16,7 +16,7 @@ export const TIER_COLORS: Record<TierType, string> = {
 
 export interface Queue {
   id: number;
-  project: number;
+  project: number | string;
   organisation: number | null;
   organisation_name: string | null;
   name: string;
@@ -29,7 +29,7 @@ export interface Queue {
 }
 
 export interface CreateQueueData {
-  project: number;
+  project: number | string;
   name: string;
   description?: string;
   tier: TierType;
@@ -189,7 +189,7 @@ export interface UpdateTicketData {
 export interface CSMInvitation {
   id: number;
   email: string;
-  project: number;
+  project: number | string;
   team: number | null;
   invited_by: number | null;
   token: string;
@@ -202,7 +202,7 @@ export interface CSMInvitation {
 
 export interface CreateInvitationData {
   email: string;
-  project: number;
+  project: number | string;
   team?: number | null;
 }
 

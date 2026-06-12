@@ -103,13 +103,7 @@ export default function ChatWidgetWindow({ projectId }: ChatWidgetWindowProps) {
     setMessagePageOpen(true);
 
     const params = new URLSearchParams();
-    const fallbackProjectId = projectId ? Number(projectId) : NaN;
-    const targetProjectId =
-      typeof widgetProjectId === 'number' && widgetProjectId > 0
-        ? widgetProjectId
-        : Number.isFinite(fallbackProjectId) && fallbackProjectId > 0
-          ? fallbackProjectId
-          : null;
+    const targetProjectId = widgetProjectId || projectId || null;
 
     if (targetProjectId) {
       params.set('projectId', String(targetProjectId));

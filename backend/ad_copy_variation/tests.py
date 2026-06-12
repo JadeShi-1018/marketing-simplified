@@ -112,7 +112,7 @@ class AdCopyVariationCRUDTests(APITestCase):
             hook='retrieve hook',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['hook'], 'retrieve hook')
@@ -126,7 +126,7 @@ class AdCopyVariationCRUDTests(APITestCase):
             hook='before',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
         resp = self.client.patch(url, {'hook': 'after'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         row.refresh_from_db()
@@ -139,7 +139,7 @@ class AdCopyVariationCRUDTests(APITestCase):
             source_mode='existing',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
         resp = self.client.delete(url)
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(AdCopyVariation.objects.filter(pk=row.id).exists())
@@ -229,7 +229,7 @@ class AdCopyVariationCRUDTests(APITestCase):
             hook='before',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
 
         resp = self.client.patch(
             url,
@@ -790,7 +790,7 @@ class PermissionTests(APITestCase):
         self.assertIn(resp.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
     def test_detail_unauthenticated(self):
-        resp = self.client.get(reverse('ad-copy-variation-detail', args=[self.row.id]))
+        resp = self.client.get(reverse('ad-copy-variation-detail', args=[self.row.slug]))
         self.assertIn(resp.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
     def test_create_unauthenticated(self):

@@ -52,8 +52,8 @@ export default function MeetingsV2Page() {
   const projectIdParam = searchParams?.get('project_id');
   const activeProject = useProjectStore((s) => s.activeProject);
   const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+    ? projectIdParam
+    : activeProject?.slug || activeProject?.id || null;
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');

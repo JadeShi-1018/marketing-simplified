@@ -18,7 +18,7 @@ export default function CampaignsV2Page() {
   const searchParams = useSearchParams();
   const projectIdParam = searchParams?.get('project_id');
   const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
+  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
 
   const { campaigns, loading, error, fetchCampaigns } = useCampaignData();
   const [searchQuery, setSearchQuery] = useState('');
@@ -104,7 +104,7 @@ export default function CampaignsV2Page() {
           campaigns={filtered}
           loading={loading}
           errorMessage={errorMessage}
-          onRowClick={(c) => router.push(`/campaigns/${c.id}`)}
+          onRowClick={(c) => router.push(`/campaigns/${c.slug}`)}
         />
 
         <CreateCampaignDialog

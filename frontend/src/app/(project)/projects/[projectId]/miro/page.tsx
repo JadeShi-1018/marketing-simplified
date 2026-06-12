@@ -11,7 +11,7 @@ import CreateBoardModal from "@/components/miro/CreateBoardModal";
 export default function ProjectMiroPage() {
   const router = useRouter();
   const params = useParams();
-  const projectId = params?.projectId ? Number(params.projectId) : null;
+  const projectId = params?.projectId ? String(params.projectId) : null;
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export default function ProjectMiroPage() {
       setError(null);
       try {
         const latest = await miroApi.getLatestProjectBoard(projectId);
-        router.replace(`/miro/${latest.board.id}`);
+        router.replace(`/miro/${latest.board.slug}`);
       } catch (err: any) {
         console.error("Failed to resolve latest board:", err);
 
@@ -93,7 +93,7 @@ export default function ProjectMiroPage() {
         viewport: { x: 0, y: 0, zoom: 1.0 },
       });
       setIsCreateModalOpen(false);
-      router.replace(`/miro/${createdBoard.id}`);
+      router.replace(`/miro/${createdBoard.slug}`);
     } catch (err: any) {
       console.error("Failed to create board:", err);
       setError(

@@ -29,7 +29,7 @@ import CommentSection from '@/components/comments/CommentSection';
 export default function TaskV2DetailPage() {
   const params = useParams();
   const router = useRouter();
-  const taskId = params?.taskId ? Number(params.taskId) : null;
+  const taskId = params?.taskId ? String(params.taskId) : null;
 
   const [task, setTask] = useState<TaskData | null>(null);
   const updateTaskInStore = useTaskStore((s) => s.updateTask);
@@ -100,7 +100,7 @@ export default function TaskV2DetailPage() {
   const doDelete = async () => {
     if (!task?.id) return;
     try {
-      await TaskAPI.deleteTask(task.id);
+      await TaskAPI.deleteTask(task.slug ?? task.id);
       router.push('/tasks');
     } catch (e) {
       toast.error((e as any)?.response?.data?.detail || 'Delete failed');

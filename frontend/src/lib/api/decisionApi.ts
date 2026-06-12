@@ -40,7 +40,7 @@ export interface DecisionTopicLabelResponse {
   defaultTitle: string;
 }
 
-const withProject = (projectId?: number | null) => {
+const withProject = (projectId?: number | string | null) => {
   if (!projectId) return {};
   return {
     headers: { 'x-project-id': projectId },
@@ -50,7 +50,7 @@ const withProject = (projectId?: number | null) => {
 
 export const DecisionAPI = {
   createDraft: async (
-    projectId: number,
+    projectId: number | string,
     body?: { origin_meeting_id?: number },
   ) => {
     const response = await api.post<DecisionDraftResponse>(
@@ -60,7 +60,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  getDraft: async (decisionId: number, projectId?: number | null) => {
+  getDraft: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.get<DecisionDraftResponse>(
       `/api/decisions/drafts/${decisionId}/`,
       withProject(projectId)
@@ -68,9 +68,9 @@ export const DecisionAPI = {
     return response.data;
   },
   patchDraft: async (
-    decisionId: number,
+    decisionId: number | string,
     payload: DecisionDraftPayload,
-    projectId?: number | null
+    projectId?: number | string | null
   ) => {
     const response = await api.patch<DecisionDraftResponse>(
       `/api/decisions/drafts/${decisionId}/`,
@@ -79,7 +79,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  getDecision: async (decisionId: number, projectId?: number | null) => {
+  getDecision: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.get<DecisionCommittedResponse>(
       `/api/decisions/${decisionId}/`,
       withProject(projectId)
@@ -88,9 +88,9 @@ export const DecisionAPI = {
   },
   /** Update content fields on committed/reviewed decisions (tree panel amend). */
   patchDecision: async (
-    decisionId: number,
+    decisionId: number | string,
     payload: DecisionDraftPayload,
-    projectId?: number | null,
+    projectId?: number | string | null,
   ) => {
     const response = await api.patch<DecisionCommittedResponse>(
       `/api/decisions/${decisionId}/`,
@@ -99,7 +99,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  commit: async (decisionId: number, projectId?: number | null) => {
+  commit: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.post<DecisionCommitResponse>(
       `/api/decisions/${decisionId}/commit/`,
       {},
@@ -108,9 +108,9 @@ export const DecisionAPI = {
     return response.data;
   },
   createReview: async (
-    decisionId: number,
+    decisionId: number | string,
     payload: DecisionReviewPayload,
-    projectId?: number | null
+    projectId?: number | string | null
   ) => {
     const response = await api.post<DecisionCommitResponse>(
       `/api/decisions/${decisionId}/reviews/`,
@@ -119,7 +119,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  approve: async (decisionId: number, projectId?: number | null) => {
+  approve: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.post<DecisionCommitResponse>(
       `/api/decisions/${decisionId}/approve/`,
       {},
@@ -127,7 +127,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  archive: async (decisionId: number, projectId?: number | null) => {
+  archive: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.post<DecisionCommitResponse>(
       `/api/decisions/${decisionId}/archive/`,
       {},
@@ -135,7 +135,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  listReviews: async (decisionId: number, projectId?: number | null) => {
+  listReviews: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.get(
       `/api/decisions/${decisionId}/reviews/`,
       withProject(projectId)
@@ -143,7 +143,7 @@ export const DecisionAPI = {
     return response.data as unknown as { items?: any[] } | any[];
   },
   listDecisions: async (
-    projectId: number,
+    projectId: number | string,
     params?: { status?: string; riskLevel?: string }
   ): Promise<DecisionListResponse> => {
     const base = withProject(projectId);
@@ -164,13 +164,12 @@ export const DecisionAPI = {
       if (data?.items?.length) {
         accumulated.push(...data.items);
       }
-      pageToken = data?.nextPageToken ?? null;
-      if (!data?.nextPageToken) break;
+      pageToken = data.nextPageToken;
     }
 
-    return { items: accumulated, nextPageToken: null };
+    return { items: accumulated };
   },
-  listSignals: async (decisionId: number, projectId?: number | null) => {
+  listSignals: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.get<DecisionSignalListResponse>(
       `/api/decisions/${decisionId}/signals/`,
       withProject(projectId)
@@ -178,7 +177,7 @@ export const DecisionAPI = {
     return response.data;
   },
   getDecisionGraph: async (
-    projectId: number,
+    projectId: number | string,
     options?: { scope?: 'project' | 'all_projects' },
   ): Promise<DecisionGraphResponse> => {
     const response = await api.get<DecisionGraphResponse>(
@@ -189,7 +188,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  getConnections: async (decisionId: number, projectId?: number | null) => {
+  getConnections: async (decisionId: number | string, projectId?: number | string | null) => {
     const response = await api.get<DecisionConnectionsResponse>(
       `/api/decisions/${decisionId}/connections/`,
       withProject(projectId)
@@ -197,9 +196,9 @@ export const DecisionAPI = {
     return response.data;
   },
   updateConnections: async (
-    decisionId: number,
+    decisionId: number | string,
     connectedDecisionSeqs: number[],
-    projectId?: number | null
+    projectId?: number | string | null
   ) => {
     const response = await api.put<DecisionConnectionsResponse>(
       `/api/decisions/${decisionId}/connections/`,
@@ -209,9 +208,9 @@ export const DecisionAPI = {
     return response.data;
   },
   updateConnectionsById: async (
-    decisionId: number,
+    decisionId: number | string,
     connectedDecisionIds: number[],
-    projectId?: number | null
+    projectId?: number | string | null
   ) => {
     const response = await api.put<DecisionConnectionsResponse>(
       `/api/decisions/${decisionId}/connections/`,
@@ -221,9 +220,9 @@ export const DecisionAPI = {
     return response.data;
   },
   moveDecisionToProject: async (
-    decisionId: number,
-    fromProjectId: number,
-    targetProjectId: number,
+    decisionId: number | string,
+    fromProjectId: number | string,
+    targetProjectId: number | string,
   ) => {
     const response = await api.post<DecisionDraftResponse>(
       `/api/decisions/${decisionId}/move-project/`,
@@ -233,8 +232,8 @@ export const DecisionAPI = {
     return response.data;
   },
   moveDecisionToTopic: async (
-    decisionId: number,
-    projectId: number,
+    decisionId: number | string,
+    projectId: number | string,
     topic: string,
   ) => {
     const response = await api.post<DecisionDraftResponse>(
@@ -245,7 +244,7 @@ export const DecisionAPI = {
     return response.data;
   },
   renameDecisionTopic: async (
-    projectId: number,
+    projectId: number | string,
     topic: string,
     title: string,
   ) => {
@@ -256,7 +255,7 @@ export const DecisionAPI = {
     return response.data;
   },
   createDecisionTopic: async (
-    projectId: number,
+    projectId: number | string,
     title: string,
   ) => {
     const response = await api.post<DecisionTopicLabelResponse>(
@@ -266,7 +265,7 @@ export const DecisionAPI = {
     return response.data;
   },
   deleteDecisionTopic: async (
-    projectId: number,
+    projectId: number | string,
     topic: string,
   ) => {
     await api.delete(
@@ -274,9 +273,9 @@ export const DecisionAPI = {
     );
   },
   createSignal: async (
-    decisionId: number,
+    decisionId: number | string,
     payload: DecisionSignalPayload,
-    projectId?: number | null
+    projectId?: number | string | null
   ) => {
     const response = await api.post<DecisionSignal>(
       `/api/decisions/${decisionId}/signals/`,
@@ -286,10 +285,10 @@ export const DecisionAPI = {
     return response.data;
   },
   updateSignal: async (
-    decisionId: number,
-    signalId: number,
+    decisionId: number | string,
+    signalId: number | string,
     payload: Partial<DecisionSignalPayload>,
-    projectId?: number | null
+    projectId?: number | string | null
   ) => {
     const response = await api.patch<DecisionSignal>(
       `/api/decisions/${decisionId}/signals/${signalId}/`,
@@ -299,9 +298,9 @@ export const DecisionAPI = {
     return response.data;
   },
   deleteSignal: async (
-    decisionId: number,
-    signalId: number,
-    projectId?: number | null
+    decisionId: number | string,
+    signalId: number | string,
+    projectId?: number | string | null
   ) => {
     const response = await api.delete(
       `/api/decisions/${decisionId}/signals/${signalId}/`,
@@ -309,7 +308,7 @@ export const DecisionAPI = {
     );
     return response.data;
   },
-  deleteDecision: async (decisionId: number, projectId?: number | null) => {
+  deleteDecision: async (decisionId: number | string, projectId?: number | string | null) => {
     await api.delete(`/api/decisions/${decisionId}/`, withProject(projectId));
   },
 };

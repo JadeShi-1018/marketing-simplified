@@ -2,36 +2,38 @@ from django.db import transaction
 from django.db.models import QuerySet
 
 from core.models import ProjectMember
+from core.slug_mixins import resolve_lookup_kwargs
 from miro.models import Board, BoardAccess
 
 
-def user_has_project_access(user, project_id: int) -> bool:
+def user_has_project_access(user, project_id) -> bool:
     return ProjectMember.objects.filter(
         user=user,
-        project_id=project_id,
+        **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'),
         is_active=True,
     ).exists()
 
 
 def get_accessible_board_for_user(user, board_id) -> Board:
+    from core.slug_mixins import resolve_lookup_kwargs
     return Board.objects.select_related("project").get(
-        id=board_id,
+        **resolve_lookup_kwargs(board_id, 'id'),
         project__members__user=user,
         project__members__is_active=True,
     )
 
 
-def get_project_boards_queryset(project_id: int) -> QuerySet[Board]:
+def get_project_boards_queryset(project_id) -> QuerySet[Board]:
     return Board.objects.filter(
-        project_id=project_id,
+        **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'),
         is_archived=False,
     ).order_by("-updated_at", "-created_at")
 
 
-def get_latest_project_board_for_user(user, project_id: int) -> Board | None:
+def get_latest_project_board_for_user(user, project_id) -> Board | None:
     access = (
         BoardAccess.objects.select_related("board")
-        .filter(user=user, project_id=project_id, board__is_archived=False)
+        .filter(user=user, **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'), board__is_archived=False)
         .first()
     )
     if access:

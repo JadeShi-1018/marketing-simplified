@@ -8,8 +8,8 @@ import { taskWorkspaceCreateFromMeetingHref } from '@/lib/tasks/taskWorkspaceDee
 export interface MeetingSummaryKnowledgeNavProps {
   generatedDecisions?: KnowledgeNavigationLink[];
   generatedTasks?: KnowledgeNavigationLink[];
-  projectId?: number;
-  meetingId?: number;
+  projectId?: number | string;
+  meetingId?: number | string;
 }
 
 /**
@@ -23,9 +23,7 @@ export function MeetingSummaryKnowledgeNav({
 }: MeetingSummaryKnowledgeNavProps) {
   const showCreate =
     projectId != null &&
-    meetingId != null &&
-    Number.isFinite(projectId) &&
-    Number.isFinite(meetingId);
+    meetingId != null;
 
   return (
     <div className="space-y-4" data-testid="meeting-summary-knowledge-nav">

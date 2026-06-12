@@ -41,7 +41,7 @@ interface DecisionTreeProps {
   nodes: DecisionGraphNode[];
   edges: DecisionGraphEdge[];
   topics?: DecisionGraphTopic[];
-  projectId?: number | null;
+  projectId?: number | string | null;
   mode?: 'viewer' | 'selector' | 'link-editor';
   onAddDecision?: (decision: DecisionGraphNode) => void;
   selectedSeqs?: Set<number> | number[];
@@ -67,14 +67,14 @@ interface DecisionTreeProps {
   linkingDisabled?: boolean;
   onCreateLink?: (fromId: number, toId: number) => void;
   onRemoveLink?: (fromId: number, toId: number) => void;
-  /** Override URL builder for detail popover link. Defaults to /decisions/{id}. */
-  getDecisionUrl?: (id: number, projectId?: number | null) => string;
-  /** Override URL builder for review popover link. Defaults to /decisions/{id}/review. */
-  getReviewUrl?: (id: number, projectId?: number | null) => string;
+  /** Override URL builder for detail popover link. Defaults to /decisions/{slug}. */
+  getDecisionUrl?: (idOrSlug: number | string, projectId?: number | string | null) => string;
+  /** Override URL builder for review popover link. Defaults to /decisions/{slug}/review. */
+  getReviewUrl?: (idOrSlug: number | string, projectId?: number | string | null) => string;
   /** Notifies parent when zoom % changes (for toolbar display). */
   onZoomPercentChange?: (percent: number) => void;
   /** Move a decision into another topic column in Topics view. */
-  onMoveDecisionToTopic?: (decisionId: number, projectId: number, topic: string) => void | Promise<void>;
+  onMoveDecisionToTopic?: (decisionId: number, projectId: number | string, topic: string) => void | Promise<void>;
   /** Rename a topic column title in Topics view. */
   onRenameTopic?: (topic: string, title: string) => void | Promise<void>;
   /** Create an empty topic column in Topics view. */
@@ -83,11 +83,11 @@ interface DecisionTreeProps {
   onDeleteTopic?: (topic: string) => void | Promise<void>;
 }
 
-const defaultGetDecisionUrl = (id: number, projectId?: number | null) =>
-  `/decisions/${id}${projectId ? `?project_id=${projectId}` : ''}`;
+const defaultGetDecisionUrl = (idOrSlug: number | string, projectId?: number | string | null) =>
+  `/decisions/${idOrSlug}${projectId ? `?project_id=${projectId}` : ''}`;
 
-const defaultGetReviewUrl = (id: number, projectId?: number | null) =>
-  `/decisions/${id}/review${projectId ? `?project_id=${projectId}` : ''}`;
+const defaultGetReviewUrl = (idOrSlug: number | string, projectId?: number | string | null) =>
+  `/decisions/${idOrSlug}/review${projectId ? `?project_id=${projectId}` : ''}`;
 
 type PositionedNode = DecisionGraphNode & { x: number; y: number; dateKey: string };
 type DateColumn = {
@@ -427,7 +427,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
   const linkPointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const linkSuppressClickRef = useRef(false);
   const movePointerStartRef = useRef<{ x: number; y: number } | null>(null);
-  const movePointerFromRef = useRef<{ decisionId: number; projectId: number; topic: string } | null>(null);
+  const movePointerFromRef = useRef<{ decisionId: number; projectId: number | string; topic: string } | null>(null);
   const moveSuppressClickRef = useRef(false);
   const newTopicInputRef = useRef<HTMLInputElement | null>(null);
   const viewportSnapshotRef = useRef<{ left: number; top: number } | null>(null);
@@ -2297,7 +2297,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
               ) : null}
               {popover.node.status === 'COMMITTED' && canReview ? (
                 <Link
-                  href={(getReviewUrl ?? defaultGetReviewUrl)(popover.node.id, projectId)}
+                  href={(getReviewUrl ?? defaultGetReviewUrl)(popover.node.slug ?? popover.node.id, projectId)}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex w-[80px] items-center justify-center gap-1.5 rounded-md border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-3 py-1.5 text-xs font-semibold text-[#1a9ba3] hover:border-blue-300"
@@ -2307,7 +2307,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
                 </Link>
               ) : null}
               <Link
-                href={(getDecisionUrl ?? defaultGetDecisionUrl)(popover.node.id, projectId)}
+                href={(getDecisionUrl ?? defaultGetDecisionUrl)(popover.node.slug ?? popover.node.id, projectId)}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-md bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white"

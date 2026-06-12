@@ -73,7 +73,7 @@ function NotionV2ListContent() {
       });
       if (!created?.id) throw new Error('Draft created but id is missing');
       toast.success('Draft created');
-      router.push(`/notion/${created.id}`);
+      router.push(`/notion/${created.slug}`);
     } catch (error: any) {
       console.error('Failed to create draft', error);
       toast.error(error?.response?.data?.detail || 'Failed to create draft');
@@ -95,7 +95,7 @@ function NotionV2ListContent() {
         const created = await NotionDraftAPI.duplicateDraft(id);
         if (!created?.id) throw new Error('Duplicated draft id missing');
         toast.success('Draft duplicated');
-        router.push(`/notion/${created.id}`);
+        router.push(`/notion/${created.slug}`);
       } catch (error: any) {
         console.error('Failed to duplicate draft', error);
         toast.error(error?.response?.data?.detail || 'Failed to duplicate draft');

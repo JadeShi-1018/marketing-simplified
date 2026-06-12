@@ -4,6 +4,7 @@ Campaign Management Module - Models
 """
 
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth import get_user_model
 from django_fsm import FSMField, transition
 from django.core.exceptions import ValidationError
@@ -18,7 +19,7 @@ User = get_user_model()
 # Campaign Models
 # ============================================================================
 
-class Campaign(TimeStampedModel):
+class Campaign(SluggedResourceModelMixin, TimeStampedModel):
     """
     Core Campaign Model - Represents advertising campaigns for strategic planning.
 

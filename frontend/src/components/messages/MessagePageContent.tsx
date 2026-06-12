@@ -33,7 +33,7 @@ export default function MessagePageContent() {
   const currentUserId = currentUser?.id ? Number(currentUser.id) : 0;
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | string | null>(null);
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isCreateChannelDialogOpen, setIsCreateChannelDialogOpen] = useState(false);
   const [isConversationDrawerOpen, setIsConversationDrawerOpen] = useState(false);
@@ -99,17 +99,16 @@ export default function MessagePageContent() {
   useEffect(() => {
     const projectIdParam = searchParams.get('projectId');
     const chatIdParam = searchParams.get('chatId');
-    const projectIdFromQuery = projectIdParam ? Number(projectIdParam) : NaN;
+    const projectIdFromQuery = projectIdParam || null;
     const chatIdFromQuery = chatIdParam ? Number(chatIdParam) : NaN;
 
     if (
-      Number.isFinite(projectIdFromQuery) &&
-      projectIdFromQuery > 0 &&
+      projectIdFromQuery &&
       projectIdFromQuery !== selectedProjectId
     ) {
       setSelectedProjectId(projectIdFromQuery);
     } else if (
-      !Number.isFinite(projectIdFromQuery) &&
+      !projectIdFromQuery &&
       activeProject?.id &&
       activeProject.id !== selectedProjectId
     ) {
@@ -126,11 +125,11 @@ export default function MessagePageContent() {
   }, [searchParams, selectedProjectId, setCurrentChat, activeProject?.id]);
 
   const replaceMessagesQuery = useCallback(
-    (next: { projectId?: number | null; chatId?: number | null; messageId?: number | null }) => {
+    (next: { projectId?: number | string | null; chatId?: number | null; messageId?: number | null }) => {
       const params = new URLSearchParams(searchParams.toString());
 
       if (next.projectId === null) params.delete('projectId');
-      else if (typeof next.projectId === 'number' && Number.isFinite(next.projectId) && next.projectId > 0) {
+      else if (next.projectId) {
         params.set('projectId', String(next.projectId));
       }
 
@@ -178,9 +177,8 @@ export default function MessagePageContent() {
   });
 
   const projectIdFromQuery = searchParams.get('projectId');
-  const parsedProjectIdFromQuery = projectIdFromQuery ? Number(projectIdFromQuery) : NaN;
   const hasProjectCandidate =
-    (Number.isFinite(parsedProjectIdFromQuery) && parsedProjectIdFromQuery > 0) ||
+    Boolean(projectIdFromQuery) ||
     Boolean(activeProject?.id);
   const projectSelectionLoading =
     selectedProjectId === null && (!hasProjectStoreHydrated || hasProjectCandidate);
@@ -301,14 +299,11 @@ export default function MessagePageContent() {
       msgId: number,
       chatId: number,
       parentMsgId?: number | null,
-      savedProjectId?: number | null,
+      savedProjectId?: number | string | null,
     ) => {
       setIsSavedOpen(false);
 
-      let targetProjectId =
-        savedProjectId && Number.isFinite(savedProjectId) && savedProjectId > 0
-          ? savedProjectId
-          : null;
+      let targetProjectId = savedProjectId || null;
 
       let targetChat = targetProjectId
         ? chatsByProject[targetProjectId]?.find((chat) => Number(chat.id) === Number(chatId))
@@ -330,10 +325,9 @@ export default function MessagePageContent() {
       }
 
       const rawProjectId = targetChat?.project_id ?? targetChat?.project ?? targetProjectId ?? selectedProjectId;
-      const parsedProjectId = rawProjectId ? Number(rawProjectId) : NaN;
-      if (Number.isFinite(parsedProjectId) && parsedProjectId > 0) {
-        targetProjectId = parsedProjectId;
-        setSelectedProjectId(parsedProjectId);
+      if (rawProjectId) {
+        targetProjectId = rawProjectId;
+        setSelectedProjectId(rawProjectId);
       }
 
       const params = new URLSearchParams(searchParams.toString());

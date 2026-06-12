@@ -19,13 +19,13 @@ const getErrorMessage = (error: any): string => {
 
 export const deriveProjectStatus = (
   project: ProjectData,
-  activeProjectIds: number[] = [],
-  inactiveProjectIds: number[] = [],
-  completedProjectIds: number[] = []
+  activeProjectIds: (number | string)[] = [],
+  inactiveProjectIds: (number | string)[] = [],
+  completedProjectIds: (number | string)[] = []
 ): DerivedProjectStatus => {
-  const isCompletedLocal = completedProjectIds.includes(project.id);
-  const isManuallyInactive = inactiveProjectIds.includes(project.id);
-  const isActiveLocal = activeProjectIds.includes(project.id);
+  const isCompletedLocal = completedProjectIds.some((id) => String(id) === String(project.id));
+  const isManuallyInactive = inactiveProjectIds.some((id) => String(id) === String(project.id));
+  const isActiveLocal = activeProjectIds.some((id) => String(id) === String(project.id));
 
   if (isCompletedLocal) {
     return 'completed';
@@ -52,8 +52,8 @@ export const useProjects = () => {
   const [projects, setProjects] = useState<ProjectData[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [updatingProjectId, setUpdatingProjectId] = useState<number | null>(null);
-  const [deletingProjectId, setDeletingProjectId] = useState<number | null>(null);
+  const [updatingProjectId, setUpdatingProjectId] = useState<number | string | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<number | string | null>(null);
   const {
     activeProject,
     activeProjectIds,
@@ -86,12 +86,12 @@ export const useProjects = () => {
         const latestActiveProjectId = latestStoreActiveProject?.id ?? null;
         const activeChangedDuringRequest = latestActiveProjectId !== activeProjectIdAtRequestStart;
         const apiActiveIds = list
-          .filter((item) => item.is_active && !inactiveIds.includes(item.id))
+          .filter((item) => item.is_active && !inactiveIds.some((id) => String(id) === String(item.id)))
           .map((item) => item.id);
         const apiActiveProject =
-          list.find((item) => item.is_active && !inactiveIds.includes(item.id)) ?? null;
+          list.find((item) => item.is_active && !inactiveIds.some((id) => String(id) === String(item.id))) ?? null;
         const latestStoreActiveProjectFromList = latestActiveProjectId
-          ? list.find((item) => item.id === latestActiveProjectId) ?? null
+          ? list.find((item) => String(item.id) === String(latestActiveProjectId)) ?? null
           : null;
 
         if (activeChangedDuringRequest && latestActiveProjectId) {
@@ -125,14 +125,14 @@ export const useProjects = () => {
   );
 
   const setActiveProject = useCallback(
-    async (projectId: number, isCurrentlyActive: boolean) => {
+    async (projectId: number | string, isCurrentlyActive: boolean) => {
       // Toggle off locally if already active
       if (isCurrentlyActive) {
         toggleActiveProjectId(projectId);
         addInactiveProjectId(projectId);
         setProjects((prev) =>
           prev.map((project) =>
-            project.id === projectId
+            String(project.id) === String(projectId)
               ? { ...project, is_active: false, isActiveResolved: false, derivedStatus: 'open' }
               : project
           )
@@ -143,22 +143,22 @@ export const useProjects = () => {
       setUpdatingProjectId(projectId);
       try {
         const selectedProject =
-          projects.find((project) => project.id === projectId) ?? null;
+          projects.find((project) => String(project.id) === String(projectId)) ?? null;
 
         await ProjectAPI.setActiveProject(projectId);
         toast.success('Active project updated');
         setProjects((prev) =>
           prev.map((project) => ({
             ...project,
-            is_active: project.id === projectId,
-            isActiveResolved: project.id === projectId,
+            is_active: String(project.id) === String(projectId),
+            isActiveResolved: String(project.id) === String(projectId),
           }))
         );
         if (selectedProject) {
           setStoreActiveProject({ ...selectedProject, is_active: true });
         }
         setActiveProjectIds([projectId]);
-        setInactiveProjectIds((prev) => prev.filter((id) => id !== projectId));
+        setInactiveProjectIds((prev) => prev.filter((id) => String(id) !== String(projectId)));
         await fetchProjects();
         return true;
       } catch (err) {
@@ -182,41 +182,41 @@ export const useProjects = () => {
   );
 
   const deleteProject = useCallback(
-    async (projectId: number) => {
+    async (projectId: number | string) => {
       setDeletingProjectId(projectId);
       try {
-        const remainingProjects = projects.filter((project) => project.id !== projectId);
+        const remainingProjects = projects.filter((project) => String(project.id) !== String(projectId));
         const nextActiveProject =
-          activeProject?.id === projectId ? remainingProjects[0] ?? null : null;
+          String(activeProject?.id) === String(projectId) ? remainingProjects[0] ?? null : null;
 
         await ProjectAPI.deleteProject(projectId);
         let nextProjects = remainingProjects;
 
-        setCompletedProjectIds((prev) => prev.filter((id) => id !== projectId));
+        setCompletedProjectIds((prev) => prev.filter((id) => String(id) !== String(projectId)));
 
         if (nextActiveProject) {
           try {
             await ProjectAPI.setActiveProject(nextActiveProject.id);
             nextProjects = remainingProjects.map((project) => ({
               ...project,
-              is_active: project.id === nextActiveProject.id,
-              isActiveResolved: project.id === nextActiveProject.id,
+              is_active: String(project.id) === String(nextActiveProject.id),
+              isActiveResolved: String(project.id) === String(nextActiveProject.id),
             }));
             setStoreActiveProject({ ...nextActiveProject, is_active: true });
             setActiveProjectIds([nextActiveProject.id]);
             setInactiveProjectIds((prev) =>
-              prev.filter((id) => id !== projectId && id !== nextActiveProject.id)
+              prev.filter((id) => String(id) !== String(projectId) && String(id) !== String(nextActiveProject.id))
             );
           } catch {
             setStoreActiveProject(null);
-            setActiveProjectIds((prev) => prev.filter((id) => id !== projectId));
-            setInactiveProjectIds((prev) => prev.filter((id) => id !== projectId));
+            setActiveProjectIds((prev) => prev.filter((id) => String(id) !== String(projectId)));
+            setInactiveProjectIds((prev) => prev.filter((id) => String(id) !== String(projectId)));
             toast.error('Project deleted, but failed to set a new active project.');
           }
         } else {
-          setActiveProjectIds((prev) => prev.filter((id) => id !== projectId));
-          setInactiveProjectIds((prev) => prev.filter((id) => id !== projectId));
-          if (activeProject?.id === projectId) {
+          setActiveProjectIds((prev) => prev.filter((id) => String(id) !== String(projectId)));
+          setInactiveProjectIds((prev) => prev.filter((id) => String(id) !== String(projectId)));
+          if (String(activeProject?.id) === String(projectId)) {
             setStoreActiveProject(null);
           }
         }
@@ -243,10 +243,11 @@ export const useProjects = () => {
         ...project,
         derivedStatus: deriveProjectStatus(project, activeProjectIds, inactiveProjectIds, completedProjectIds),
         isActiveResolved:
-          (!inactiveProjectIds.includes(project.id) && (activeProjectIds.includes(project.id) || !!project.is_active)) ||
+          (!inactiveProjectIds.some((id) => String(id) === String(project.id)) &&
+            (activeProjectIds.some((id) => String(id) === String(project.id)) || !!project.is_active)) ||
           false,
         isCompletedResolved:
-          completedProjectIds.includes(project.id) ||
+          completedProjectIds.some((id) => String(id) === String(project.id)) ||
           project.status === 'completed' ||
           project.status === 'archived' ||
           (project as any)?.is_deleted ||

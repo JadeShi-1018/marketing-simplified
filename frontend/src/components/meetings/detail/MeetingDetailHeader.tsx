@@ -9,7 +9,7 @@ import MeetingFSMActionBar from './MeetingFSMActionBar';
 import AuditLogDrawer from '@/components/audit/AuditLogDrawer';
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meeting: Meeting;
   availableTransitions: string[];
   participantsCount: number;

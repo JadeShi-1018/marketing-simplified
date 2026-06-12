@@ -140,7 +140,7 @@ const EditForm: React.FC<EditFormProps> = ({ regionId, onSaved, onClose }) => {
 // ── Regions Tab ──────────────────────────────────────────────────────────────
 
 interface RegionsTabProps {
-  projectId: number;
+  projectId: number | string;
   organisationId: number;
 }
 

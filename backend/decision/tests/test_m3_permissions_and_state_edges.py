@@ -79,16 +79,16 @@ def _commit_ready_payload():
 def _create_committed_decision(client, title):
     create_resp = client.post("/api/decisions/drafts/", {"title": title}, format="json")
     assert create_resp.status_code == 201
-    decision_id = Decision.objects.get(title=title).id
+    decision = Decision.objects.get(title=title)
     patch_resp = client.patch(
-        f"/api/decisions/drafts/{decision_id}/",
+        f"/api/decisions/drafts/{decision.slug}/",
         _commit_ready_payload(),
         format="json",
     )
     assert patch_resp.status_code == 200
-    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client.post(f"/api/decisions/{decision.slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 200
-    return decision_id
+    return decision
 
 
 @pytest.mark.django_db
@@ -124,7 +124,7 @@ def test_insufficient_role_for_commit_forbidden():
     """Assert commit is forbidden for roles above edit threshold."""
     owner, project = _create_user_with_project(role="owner")
     owner_client = _client_for(owner, project)
-    decision_id = _create_committed_decision(owner_client, "Commit Permission Test")
+    _create_committed_decision(owner_client, "Commit Permission Test")
 
     viewer = User.objects.create_user(
         email="viewer@test.com",
@@ -151,13 +151,13 @@ def test_insufficient_role_for_commit_forbidden():
     )
     draft_id = draft.id
     patch_resp = viewer_client.patch(
-        f"/api/decisions/drafts/{draft_id}/",
+        f"/api/decisions/drafts/{draft.slug}/",
         _commit_ready_payload(),
         format="json",
     )
     assert patch_resp.status_code == 403
 
-    commit_resp = viewer_client.post(f"/api/decisions/{draft_id}/commit/", {}, format="json")
+    commit_resp = viewer_client.post(f"/api/decisions/{draft.slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 403
     decision = Decision.objects.get(pk=draft_id)
     assert decision.status == Decision.Status.DRAFT
@@ -170,7 +170,7 @@ def test_insufficient_role_for_review_forbidden():
     """Assert review is forbidden for roles above review threshold."""
     owner, project = _create_user_with_project(role="owner")
     owner_client = _client_for(owner, project)
-    decision_id = _create_committed_decision(owner_client, "Review Permission Test")
+    committed = _create_committed_decision(owner_client, "Review Permission Test")
 
     reviewer = User.objects.create_user(
         email="designer@test.com",
@@ -190,7 +190,7 @@ def test_insufficient_role_for_review_forbidden():
     reviewer_client = _client_for(reviewer, project)
 
     review_resp = reviewer_client.post(
-        f"/api/decisions/{decision_id}/reviews/",
+        f"/api/decisions/{committed.slug}/reviews/",
         {
             "outcomeText": "Outcome summary",
             "reflectionText": "Reflection summary",
@@ -199,7 +199,7 @@ def test_insufficient_role_for_review_forbidden():
         format="json",
     )
     assert review_resp.status_code == 403
-    decision = Decision.objects.get(pk=decision_id)
+    decision = Decision.objects.get(pk=committed.id)
     assert decision.status == Decision.Status.COMMITTED
     assert Review.objects.filter(decision=decision).count() == 0
     assert DecisionStateTransition.objects.filter(decision=decision).count() == 1

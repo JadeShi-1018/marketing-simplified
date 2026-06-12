@@ -15,7 +15,7 @@ interface Member {
 }
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   participants: ParticipantLink[];
   members: Member[];

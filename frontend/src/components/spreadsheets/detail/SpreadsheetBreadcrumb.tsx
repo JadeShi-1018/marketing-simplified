@@ -3,8 +3,10 @@
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 
+import { Id } from '@/types/common';
+
 interface Props {
-  projectId: number | null;
+  projectId: Id | null;
   projectName?: string | null;
   spreadsheetName?: string | null;
 }

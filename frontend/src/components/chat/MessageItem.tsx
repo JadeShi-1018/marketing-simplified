@@ -91,10 +91,11 @@ function formatTime(iso: string): string {
   }
 }
 
-function extractTaskIds(content: string): number[] {
-  return [...content.matchAll(/\/tasks\/(\d+)/g)]
-    .map((m) => Number(m[1]))
-    .filter((id) => !Number.isNaN(id));
+function extractTaskIds(content: string): (number | string)[] {
+  // Task URLs are slug-based; numeric ids are still matched for old messages.
+  return [...content.matchAll(/\/tasks\/([\w-]+)/g)].map((m) =>
+    /^\d+$/.test(m[1]) ? Number(m[1]) : m[1]
+  );
 }
 
 

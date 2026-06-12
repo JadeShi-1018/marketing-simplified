@@ -72,11 +72,11 @@ export default function MeetingDetailPage() {
   const searchParams = useSearchParams();
   const activeProject = useProjectStore((s) => s.activeProject);
 
-  const meetingId = Number(params?.meetingId);
+  const meetingId = String(params.meetingId);
   const projectIdParam = searchParams?.get('project_id');
   const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+    ? projectIdParam
+    : activeProject?.slug || activeProject?.id || null;
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [availableTransitions, setAvailableTransitions] = useState<string[]>([]);
@@ -182,7 +182,7 @@ export default function MeetingDetailPage() {
 
   const handleDocumentOpen = useCallback(() => {
     if (!projectId || !meeting) return;
-    router.push(`/meetings/${meeting.id}/document?project_id=${projectId}`);
+    router.push(`/meetings/${meeting.slug}/document?project_id=${projectId}`);
   }, [router, projectId, meeting]);
 
   const handleCreateZoomMeeting = useCallback(async () => {

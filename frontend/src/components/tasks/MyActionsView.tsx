@@ -49,7 +49,7 @@ function ActionTaskRow({ task, onDismiss }: { task: MyActionsTaskStub; onDismiss
       )}
       <div className="min-w-0 flex-1 overflow-hidden">
         <Link
-          href={`/tasks/${task.id}`}
+          href={`/tasks/${task.slug}`}
           className="block truncate text-sm text-gray-800 hover:text-[#3CCED7] hover:underline"
         >
           {task.summary}
@@ -155,7 +155,9 @@ function loadViewedAt(): Record<string, string> {
   } catch { return {}; }
 }
 
-export default function MyActionsView({ projectId, refreshKey }: { projectId: number | null; refreshKey?: number }) {
+import { Id } from '@/types/common';
+
+export default function MyActionsView({ projectId, refreshKey }: { projectId: Id | null; refreshKey?: number }) {
   const [data, setData] = useState<MyActionsPayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);

@@ -71,7 +71,9 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const resp = await TaskAPI.getTask(taskId);
+      // API lookups are slug-only; resolve the slug from the store when available.
+      const storeSlug = useTaskStore.getState().tasks.find((t) => t.id === taskId)?.slug;
+      const resp = await TaskAPI.getTask(storeSlug ?? taskId);
       const fresh = normalizeTaskFromApi(resp.data);
       setTask(fresh);
       if (fresh.id) updateTaskInStore(fresh.id, fresh);
@@ -248,11 +250,11 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           </div>
           <div className="flex items-center gap-1">
             <a
-              href={`/tasks/${taskId}`}
+              href={`/tasks/${task?.slug ?? taskId}`}
               data-testid="task-drawer-open-full"
               onClick={(e) => {
                 e.preventDefault();
-                router.push(`/tasks/${taskId}`);
+                router.push(`/tasks/${task?.slug ?? taskId}`);
               }}
               title="Open full page"
               aria-label="Open full page"
@@ -391,7 +393,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           if (!task?.id || deleteBusy) return;
           setDeleteBusy(true);
           try {
-            await TaskAPI.deleteTask(task.id);
+            await TaskAPI.deleteTask(task.slug ?? task.id);
             toast.success('Task deleted');
             setDeleteConfirmOpen(false);
             onTaskUpdate?.();

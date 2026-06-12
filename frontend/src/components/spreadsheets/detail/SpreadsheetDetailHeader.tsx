@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react';
 import { Check, Loader2, Pencil } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Id } from '@/types/common';
 import SpreadsheetBreadcrumb from './SpreadsheetBreadcrumb';
 
 interface Props {
-  projectId: number | null;
+  projectId: Id | null;
   projectName?: string | null;
   spreadsheetName: string;
   canRename?: boolean;

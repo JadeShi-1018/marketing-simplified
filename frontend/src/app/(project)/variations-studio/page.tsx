@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Id } from "@/types/common";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { ArrowLeft, Loader2, Pencil } from "lucide-react";
@@ -923,7 +924,7 @@ function AiDraftsTab({
   projectId,
   initialCreativeId,
 }: {
-  projectId: number | null;
+  projectId: Id | null;
   initialCreativeId: number | null;
 }) {
   const [rows, setRows] = useState<AdCopyVariation[]>([]);

@@ -161,7 +161,7 @@ def fire_task_overdue_notifications() -> int:
                 body=f"This task was due on {task.due_date}.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=task_action_url(task.id),
+                action_url=task_action_url(task.slug),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -224,7 +224,7 @@ def fire_decision_deadline_notifications() -> int:
         )
         label = decision.title or f"Decision #{decision.project_seq}"
         action_url = (
-            decision_action_url(decision.id, decision.project_id)
+            decision_action_url(decision.slug, decision.project_id)
             if decision.project_id
             else ""
         )
@@ -329,7 +329,7 @@ def fire_meeting_starting_soon_notifications() -> int:
                     body=f"Your meeting starts in {start_label}.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=meeting_action_url(meeting.id, meeting.project_id),
+                    action_url=meeting_action_url(meeting.slug, meeting.project_id),
                     metadata={
                         "change_type": "meeting_start",
                         "start_time": start_label,

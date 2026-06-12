@@ -22,11 +22,11 @@ export default function MeetingDocumentPage() {
   const token = useAuthStore((s) => s.token);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
 
-  const meetingId = Number(params?.meetingId);
+  const meetingId = String(params.meetingId);
   const projectIdParam = searchParams?.get('project_id');
   const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+    ? projectIdParam
+    : activeProject?.slug || activeProject?.id || null;
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [members, setMembers] = useState<MemberLike[]>([]);
@@ -42,7 +42,7 @@ export default function MeetingDocumentPage() {
   });
 
   useEffect(() => {
-    if (!projectId || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     let cancelled = false;
     setLoading(true);
     setLoadError(null);

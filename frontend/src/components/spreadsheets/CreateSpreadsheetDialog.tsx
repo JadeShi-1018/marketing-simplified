@@ -5,12 +5,13 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { Loader2, X } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { SpreadsheetAPI } from '@/lib/api/spreadsheetApi';
+import { Id } from '@/types/common';
 import type { SpreadsheetData } from '@/types/spreadsheet';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  projectId: number;
+  projectId: Id;
   defaultName?: string;
   onCreated?: (spreadsheet: SpreadsheetData) => void | Promise<void>;
 }
