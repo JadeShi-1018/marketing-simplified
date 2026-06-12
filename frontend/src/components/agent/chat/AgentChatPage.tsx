@@ -102,7 +102,11 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     content: m.content,
     type,
     isFollowUpPrompt,
-    anomalies: m.data?.anomalies,
+    // Prefer the reviewed list so a restored, confirmed card shows the user's
+    // include/exclude + edits; fall back to the raw anomalies pre-confirmation.
+    anomalies: m.data?.reviewed_anomalies ?? m.data?.anomalies,
+    anomaliesConfirmed:
+      Boolean(m.data?.anomalies_confirmed) || (m.data?.anomalies?.length ?? 0) === 0,
     recommendedTasks: m.data?.recommended_tasks,
     navigateTo,
     navigateLabel,
@@ -250,6 +254,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const [stepProgress, setStepProgress] = useState<StepProgressItem[]>([])
   const [stepState, setStepState] = useState<WorkflowStepState>({
     analysisComplete: false,
+    anomaliesConfirmed: false,
     tasksCreated: false,
   })
   const [followUpAvailable, setFollowUpAvailable] = useState(false)
@@ -352,14 +357,44 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     }
   }, [])
 
-  const queueAutoExternalActionsAfterAnalysis = useCallback((options?: { approvalRequired?: boolean }) => {
-    const requiresApproval = options?.approvalRequired ?? approvalRequiredRef.current
+  // Low-level: queue and run the downstream external actions (create tasks,
+  // generate miro). Runs at most once per analysis cycle.
+  const triggerExternalActions = useCallback((requiresApprovalArg?: boolean) => {
     if (autoExternalActionsTriggeredRef.current) return
     autoExternalActionsTriggeredRef.current = true
+    const requiresApproval = requiresApprovalArg ?? approvalRequiredRef.current
     autoActionQueueRef.current = requiresApproval ? ["create_tasks"] : ["create_tasks", "generate_miro"]
     setTaskGenerationStatus("generating")
     tryRunNextAutoAction()
   }, [tryRunNextAutoAction])
+
+  // After analysis: only auto-run downstream actions when there are no anomalies
+  // to review (clean dataset / already confirmed). When anomalies are present,
+  // defer until the user confirms them via confirm_anomalies.
+  const queueAutoExternalActionsAfterAnalysis = useCallback(
+    (options?: { approvalRequired?: boolean; analysis?: AnalysisResult | null }) => {
+      if (options && 'analysis' in options) {
+        const anomalies = options.analysis?.anomalies ?? []
+        const alreadyConfirmed =
+          Boolean(options.analysis?.anomalies_confirmed) || anomalies.length === 0
+        if (anomalies.length > 0 && !alreadyConfirmed) {
+          return // wait for the user to confirm anomalies
+        }
+      }
+      triggerExternalActions(options?.approvalRequired)
+    },
+    [triggerExternalActions]
+  )
+
+  // After the user confirms anomalies: run downstream actions only if at least
+  // one anomaly was included. All-excluded => no tasks.
+  const runPostConfirmActions = useCallback(
+    (hasIncluded: boolean) => {
+      if (!hasIncluded) return
+      triggerExternalActions()
+    },
+    [triggerExternalActions]
+  )
 
   const setSessionId = useCallback((id: string | null) => {
     sessionIdRef.current = id
@@ -463,12 +498,17 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     // task/decision data from a *previous* upload cycle does not carry over.
     const restoredStepState: WorkflowStepState = {
       analysisComplete: false,
+      anomaliesConfirmed: false,
       tasksCreated: false,
     }
     for (const m of session.messages) {
       if (m.data?.anomalies) {
         restoredStepState.analysisComplete = true
         restoredStepState.tasksCreated = false
+        // A fresh analysis resets confirmation; clean datasets (no anomalies)
+        // and already-confirmed analyses are treated as confirmed.
+        restoredStepState.anomaliesConfirmed =
+          Boolean(m.data?.anomalies_confirmed) || m.data.anomalies.length === 0
       }
       if (m.message_type === "task_created" || m.data?.task_ids) restoredStepState.tasksCreated = true
     }
@@ -505,6 +545,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     const recommendedTaskCount = latestRecommendedTasksRef.current?.length ?? 0
     if (
       restoredStepState.analysisComplete &&
+      restoredStepState.anomaliesConfirmed &&
       !restoredStepState.tasksCreated &&
       recommendedTaskCount > 0 &&
       !pendingTaskApprovalFromMessages
@@ -721,7 +762,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       setFollowUpStarted(false)
       setSessionTitle("Chat")
       setApprovalRequired(getApprovalPref())
-      setStepState({ analysisComplete: false, tasksCreated: false })
+      setStepState({ analysisComplete: false, anomaliesConfirmed: false, tasksCreated: false })
       setGeneratedTaskIndexes([])
       setSkippedTaskIndexes([])
       setCreatedTaskIdByIndex({})
@@ -755,7 +796,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       setFollowUpStarted(false)
       setSessionTitle("Chat")
       setApprovalRequired(false)
-      setStepState({ analysisComplete: false, tasksCreated: false })
+      setStepState({ analysisComplete: false, anomaliesConfirmed: false, tasksCreated: false })
     }
 
     const handleLoadSession = (e: Event) => {
@@ -789,7 +830,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const handleFileUpload = useCallback(async (file: File, userContext?: string) => {
     setHasStarted(true)
     // Reset workflow state so a new upload always starts from analysis
-    setStepState({ analysisComplete: false, tasksCreated: false })
+    setStepState({ analysisComplete: false, anomaliesConfirmed: false, tasksCreated: false })
     setGeneratedTaskIndexes([])
     setSkippedTaskIndexes([])
     setCreatedTaskIdByIndex({})
@@ -903,20 +944,30 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           latestRecommendedTasksRef.current = analysisData?.recommended_tasks || null
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
-          setStepState((prev) => ({ ...prev, analysisComplete: true }))
-          setGeneratedTaskIndexes([])
-          setSkippedTaskIndexes([])
-          setCreatedTaskIdByIndex({})
-          updateMessage(aiMsgId, {
-            content: contentParts.join("\n"),
-            type: "analysis",
-            anomalies: analysisData?.anomalies,
-            recommendedTasks: analysisData?.recommended_tasks,
-          })
-          selectAllRecommendedTasks(analysisData?.recommended_tasks?.length ?? 0)
-          queueAutoExternalActionsAfterAnalysis()
-          // Individual anomalies are added to the right panel via the
-          // AnomalyCard "+ Add" button — no auto-broadcast on new analysis.
+          {
+            const anomConfirmed =
+              Boolean(analysisData?.anomalies_confirmed) ||
+              (analysisData?.anomalies?.length ?? 0) === 0
+            setStepState((prev) => ({
+              ...prev,
+              analysisComplete: true,
+              anomaliesConfirmed: anomConfirmed,
+            }))
+            setGeneratedTaskIndexes([])
+            setSkippedTaskIndexes([])
+            setCreatedTaskIdByIndex({})
+            updateMessage(aiMsgId, {
+              content: contentParts.join("\n"),
+              type: "analysis",
+              anomalies: analysisData?.anomalies,
+              anomaliesConfirmed: anomConfirmed,
+              recommendedTasks: analysisData?.recommended_tasks,
+            })
+            selectAllRecommendedTasks(analysisData?.recommended_tasks?.length ?? 0)
+            // Defer downstream actions until anomalies are confirmed; clean
+            // datasets (no anomalies) proceed immediately.
+            queueAutoExternalActionsAfterAnalysis({ analysis: analysisData })
+          }
         } else if (event.type === "confirmation_request") {
           // If column mapping already shown, don't overwrite the card — just
           // silently wait for user confirmation via ColumnMappingCard buttons.
@@ -1080,17 +1131,24 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           latestRecommendedTasksRef.current = data.recommended_tasks || null
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
-          setStepState((prev) => ({ ...prev, analysisComplete: true }))
+          const anomConfirmed =
+            Boolean(data.anomalies_confirmed) || (data.anomalies?.length ?? 0) === 0
+          setStepState((prev) => ({
+            ...prev,
+            analysisComplete: true,
+            anomaliesConfirmed: anomConfirmed,
+          }))
           setGeneratedTaskIndexes([])
           setSkippedTaskIndexes([])
           setCreatedTaskIdByIndex({})
           updateMessage(aiMsgId, {
             type: "analysis",
             anomalies: data.anomalies,
+            anomaliesConfirmed: anomConfirmed,
             recommendedTasks: data.recommended_tasks,
           })
           selectAllRecommendedTasks(data.recommended_tasks?.length ?? 0)
-          queueAutoExternalActionsAfterAnalysis()
+          queueAutoExternalActionsAfterAnalysis({ analysis: data })
         }
         if (event.type === "approval_request" && event.data) {
           const d = event.data as Record<string, unknown>
@@ -1176,6 +1234,47 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   // Keep ref in sync so handleFileUpload's done handler can call the latest version
   handleConfirmColumnsRef.current = handleConfirmColumns
 
+  /**
+   * Confirm the user's anomaly review. Persists the reviewed list, locks the
+   * card read-only, and (only if anomalies were included) runs the downstream
+   * task/miro actions. All-excluded confirms but creates nothing.
+   */
+  const handleConfirmAnomalies = useCallback(
+    (messageId: string, reviewed: import("@/types/agent").ReviewedAnomaly[]) => {
+      const sid = sessionIdRef.current
+      if (!sid) return
+      const requestSessionId = String(sid)
+
+      AgentAPI.sendMessage(
+        sid,
+        { message: "confirm_anomalies", action: "confirm_anomalies", reviewed_anomalies: reviewed },
+        (event: SSEEvent) => {
+          if (String(sessionIdRef.current) !== requestSessionId) return
+          if (event.type === "anomalies_confirmed") {
+            const data = (event.data as unknown as AnalysisResult) || null
+            const reviewedList = data?.reviewed_anomalies ?? []
+            const includedCount = reviewedList.filter((a) => a.included !== false).length
+            setStepState((prev) => ({ ...prev, anomaliesConfirmed: true }))
+            updateMessage(messageId, {
+              anomaliesConfirmed: true,
+              ...(reviewedList.length > 0 ? { anomalies: reviewedList } : {}),
+            })
+            runPostConfirmActions(includedCount > 0)
+          } else if (event.type === "error") {
+            // Leave the card editable for retry; surface the error inline.
+            addMessage({
+              id: `ai-anom-err-${Date.now()}`,
+              role: "assistant",
+              content: event.content || "Failed to confirm anomalies.",
+              type: "error",
+            })
+          }
+        }
+      )
+    },
+    [addMessage, updateMessage, runPostConfirmActions]
+  )
+
   /** Re-upload: reset to welcome screen so the user can upload a different file */
   const handleReupload = useCallback(() => {
     sessionIdRef.current = null
@@ -1187,7 +1286,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     setFollowUpAvailable(false)
     setFollowUpStarted(false)
     setStepProgress([])
-    setStepState({ analysisComplete: false, tasksCreated: false })
+    setStepState({ analysisComplete: false, anomaliesConfirmed: false, tasksCreated: false })
     setGeneratedTaskIndexes([])
     setSkippedTaskIndexes([])
     latestRecommendedTasksRef.current = null
@@ -1357,19 +1456,24 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           latestRecommendedTasksRef.current = data.recommended_tasks || null
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
-          setStepState((prev) => ({ ...prev, analysisComplete: true }))
+          const anomConfirmed =
+            Boolean(data.anomalies_confirmed) || (data.anomalies?.length ?? 0) === 0
+          setStepState((prev) => ({
+            ...prev,
+            analysisComplete: true,
+            anomaliesConfirmed: anomConfirmed,
+          }))
           setGeneratedTaskIndexes([])
           setSkippedTaskIndexes([])
           setCreatedTaskIdByIndex({})
           updateMessage(aiMsgId, {
             type: "analysis",
             anomalies: data.anomalies,
+            anomaliesConfirmed: anomConfirmed,
             recommendedTasks: data.recommended_tasks,
           })
           selectAllRecommendedTasks(data.recommended_tasks?.length ?? 0)
-          // Individual anomalies are added to the right panel via the
-          // AnomalyCard "+ Add" button — no auto-broadcast on new analysis.
-          queueAutoExternalActionsAfterAnalysis()
+          queueAutoExternalActionsAfterAnalysis({ analysis: data })
         }
         if (event.type === "task_created" && event.data) {
           setStepState((prev) => ({ ...prev, tasksCreated: true }))
@@ -1663,6 +1767,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     if (isStreamingRef.current || !sessionIdRef.current) return
     if (approvalRequiredRef.current) return
     if (!stepState.analysisComplete || stepState.tasksCreated) return
+    // Do not auto-run downstream actions until anomalies are confirmed.
+    if (!stepState.anomaliesConfirmed) return
     if (pendingTaskApproval) return
     if ((latestRecommendedTasksRef.current?.length ?? 0) === 0) return
     if (autoExternalActionsTriggeredRef.current) return
@@ -1672,6 +1778,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     isStreaming,
     approvalRequired,
     stepState.analysisComplete,
+    stepState.anomaliesConfirmed,
     stepState.tasksCreated,
     pendingTaskApproval,
     queueAutoExternalActionsAfterAnalysis,
@@ -1856,6 +1963,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           onRejectMiroApproval: handleRejectMiroApproval,
           onAction: handleAction,
           onConfirmColumns: handleConfirmColumns,
+          onConfirmAnomalies: handleConfirmAnomalies,
           onReupload: handleReupload,
           latestAnalysisMessageId,
           showFollowUpToggle: followUpAvailable || followUpStarted,

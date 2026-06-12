@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
+  buildSequentialChainEdges,
   hasEdge,
-  normalizeUndirectedEdge,
+  normalizeDirectedEdge,
   persistGraphLinkChanges,
 } from '@/components/decisions/decisionGraphLinks';
 import type { DecisionGraphEdge, DecisionGraphNode } from '@/types/decision';
@@ -19,6 +20,7 @@ export function useDecisionGraphLinks(
 ) {
   const [edges, setEdges] = useState<DecisionGraphEdge[]>(serverEdges);
   const [saving, setSaving] = useState(false);
+  const pendingLinksRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     setEdges(serverEdges);
@@ -54,8 +56,11 @@ export function useDecisionGraphLinks(
 
   const handleCreateLink = useCallback(
     async (fromId: number, toId: number) => {
-      if (!enabled || !projectId) return;
-      const newEdge = normalizeUndirectedEdge(fromId, toId, idToNode);
+      if (!enabled || !projectId || saving) return;
+      const pendingKey = `${fromId}->${toId}`;
+      if (pendingLinksRef.current.has(pendingKey)) return;
+
+      const newEdge = normalizeDirectedEdge(fromId, toId, idToNode, 'RELATED');
       if (!newEdge) {
         toast.error('Cannot link these decisions.');
         return;
@@ -63,16 +68,32 @@ export function useDecisionGraphLinks(
       if (hasEdge(edges, newEdge.from, newEdge.to)) {
         return;
       }
+
+      pendingLinksRef.current.add(pendingKey);
       const nextEdges = [...edges, newEdge];
       try {
         await applyEdgeChange(nextEdges, edges);
         toast.success('Link added');
       } catch {
         // toast shown in applyEdgeChange
+      } finally {
+        pendingLinksRef.current.delete(pendingKey);
       }
     },
-    [enabled, projectId, idToNode, edges, applyEdgeChange],
+    [enabled, projectId, saving, idToNode, edges, applyEdgeChange],
   );
+
+  const handleAutoLinkSequence = useCallback(async (): Promise<boolean> => {
+    if (!enabled || !projectId || nodes.length < 2) return false;
+    const nextEdges = buildSequentialChainEdges(nodes, edges);
+    if (nextEdges.length === edges.length) return false;
+    try {
+      await applyEdgeChange(nextEdges, edges);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [enabled, projectId, nodes, edges, applyEdgeChange]);
 
   const handleRemoveLink = useCallback(
     async (fromId: number, toId: number) => {
@@ -97,6 +118,7 @@ export function useDecisionGraphLinks(
     linkingEnabled: enabled && Boolean(projectId),
     linkingDisabled: saving,
     handleCreateLink,
+    handleAutoLinkSequence,
     handleRemoveLink,
   };
 }

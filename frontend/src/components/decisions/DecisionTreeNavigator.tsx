@@ -8,6 +8,16 @@ import {
 } from '@/components/decisions/decisionTreeLayout';
 import type { DecisionGraphNode, DecisionGraphTopic } from '@/types/decision';
 
+type DecisionMapMode = 'auto' | 'tree' | TimelineGranularity;
+
+const MAP_MODE_LABELS: Record<DecisionMapMode, string> = {
+  auto: 'Topics',
+  tree: 'Graph',
+  day: 'Day',
+  week: 'Week',
+  month: 'Month',
+};
+
 export interface DecisionTreeViewportControls {
   zoomPercent: number;
   onZoomIn: () => void;
@@ -24,8 +34,8 @@ interface Props {
   onJumpToTopic?: (topic: string) => void;
   selectedTopic?: string | null;
   viewport?: DecisionTreeViewportControls;
-  timelineMode?: 'auto' | TimelineGranularity;
-  onTimelineModeChange?: (mode: 'auto' | TimelineGranularity) => void;
+  timelineMode?: DecisionMapMode;
+  onTimelineModeChange?: (mode: DecisionMapMode) => void;
   className?: string;
 }
 
@@ -118,7 +128,7 @@ export default function DecisionTreeNavigator({
     <div
       className={`rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm ${className}`}
       role="search"
-      aria-label="Find decisions on the tree"
+      aria-label="Find decisions on the map"
     >
       <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -258,19 +268,19 @@ export default function DecisionTreeNavigator({
                 className="flex h-9 items-center rounded-md border border-slate-200 bg-slate-50 p-0.5"
                 aria-label="Timeline grouping"
               >
-                {(['auto', 'day', 'week', 'month'] as const).map((mode) => (
+                {(['auto', 'tree', 'day', 'week', 'month'] as const).map((mode) => (
                   <button
                     key={mode}
                     type="button"
                     onClick={() => onTimelineModeChange(mode)}
-                    className={`h-7 rounded border px-2.5 text-xs font-semibold capitalize transition ${
+                    className={`h-7 rounded border px-2.5 text-xs font-semibold transition ${
                       timelineMode === mode
                         ? 'border-slate-900 bg-slate-900 text-white shadow-sm'
                         : 'border-transparent text-slate-500 hover:bg-white hover:text-slate-800'
                     }`}
                     aria-pressed={timelineMode === mode}
                   >
-                    {mode === 'auto' ? 'Topics' : mode}
+                    {MAP_MODE_LABELS[mode]}
                   </button>
                 ))}
               </div>
@@ -284,27 +294,29 @@ export default function DecisionTreeNavigator({
                 Today
               </button>
             ) : null}
-            <div className="flex h-9 items-center gap-0.5 rounded-md border border-slate-200 bg-slate-50 px-1">
-              <button
-                type="button"
-                onClick={viewport.onZoomOut}
-                className="inline-flex h-7 w-7 items-center justify-center rounded text-[15px] text-slate-500 transition hover:bg-white hover:text-slate-900"
-                aria-label="Zoom out"
-              >
-                −
-              </button>
-              <span className="min-w-[46px] text-center text-sm font-medium tabular-nums text-slate-600">
-                {viewport.zoomPercent}%
-              </span>
-              <button
-                type="button"
-                onClick={viewport.onZoomIn}
-                className="inline-flex h-7 w-7 items-center justify-center rounded text-[15px] text-slate-500 transition hover:bg-white hover:text-slate-900"
-                aria-label="Zoom in"
-              >
-                +
-              </button>
-            </div>
+            {timelineMode !== 'tree' ? (
+              <div className="flex h-9 items-center gap-0.5 rounded-md border border-slate-200 bg-slate-50 px-1">
+                <button
+                  type="button"
+                  onClick={viewport.onZoomOut}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded text-[15px] text-slate-500 transition hover:bg-white hover:text-slate-900"
+                  aria-label="Zoom out"
+                >
+                  −
+                </button>
+                <span className="min-w-[46px] text-center text-sm font-medium tabular-nums text-slate-600">
+                  {viewport.zoomPercent}%
+                </span>
+                <button
+                  type="button"
+                  onClick={viewport.onZoomIn}
+                  className="inline-flex h-7 w-7 items-center justify-center rounded text-[15px] text-slate-500 transition hover:bg-white hover:text-slate-900"
+                  aria-label="Zoom in"
+                >
+                  +
+                </button>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </div>

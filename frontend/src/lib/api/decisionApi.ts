@@ -20,6 +20,7 @@ export interface DecisionDraftPayload {
   confidenceScore?: number | null;
   options?: DecisionOptionDraft[];
   topic?: string | null;
+  parentDecisionIds?: number[];
 }
 
 export interface DecisionSignalPayload {

@@ -2,18 +2,30 @@ import { DecisionAPI } from '@/lib/api/decisionApi';
 import type { DecisionGraphEdge, DecisionGraphNode } from '@/types/decision';
 import { Id } from '@/types/common';
 
-export function normalizeUndirectedEdge(
+export function normalizeDirectedEdge(
   fromId: number,
   toId: number,
   idToNode: Map<number, DecisionGraphNode>,
+  edgeType: DecisionGraphEdge['edgeType'] = 'RELATED',
 ): DecisionGraphEdge | null {
   const fromNode = idToNode.get(fromId);
   const toNode = idToNode.get(toId);
   if (!fromNode?.projectSeq || !toNode?.projectSeq) return null;
   if (fromId === toId) return null;
-  return fromId <= toId
-    ? { from: fromId, to: toId }
-    : { from: toId, to: fromId };
+  return { from: fromId, to: toId, edgeType: edgeType ?? 'RELATED' };
+}
+
+/** @deprecated Prefer normalizeDirectedEdge — kept for connection editor compatibility. */
+export function normalizeUndirectedEdge(
+  fromId: number,
+  toId: number,
+  idToNode: Map<number, DecisionGraphNode>,
+): DecisionGraphEdge | null {
+  return normalizeDirectedEdge(fromId, toId, idToNode, 'RELATED');
+}
+
+export function directedEdgeKey(edge: DecisionGraphEdge): string {
+  return `${edge.from}->${edge.to}:${edge.edgeType ?? 'RELATED'}`;
 }
 
 export function edgeKey(edge: DecisionGraphEdge): string {
@@ -21,8 +33,41 @@ export function edgeKey(edge: DecisionGraphEdge): string {
 }
 
 export function hasEdge(edges: DecisionGraphEdge[], fromId: number, toId: number): boolean {
-  const key = fromId < toId ? `${fromId},${toId}` : `${toId},${fromId}`;
-  return edges.some((e) => edgeKey(e) === key);
+  return edges.some(
+    (edge) =>
+      (edge.from === fromId && edge.to === toId) ||
+      (edge.from === toId && edge.to === fromId),
+  );
+}
+
+const sortNodesForChain = (nodes: DecisionGraphNode[]) =>
+  [...nodes].sort((a, b) => {
+    const aSeq = a.projectSeq ?? Number.MAX_SAFE_INTEGER;
+    const bSeq = b.projectSeq ?? Number.MAX_SAFE_INTEGER;
+    if (aSeq !== bSeq) return aSeq - bSeq;
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
+/** Connect each decision to the next in project sequence (#1 → #2 → #3 …). */
+export function buildSequentialChainEdges(
+  nodes: DecisionGraphNode[],
+  existingEdges: DecisionGraphEdge[] = [],
+): DecisionGraphEdge[] {
+  if (nodes.length < 2) return existingEdges;
+
+  const idToNode = new Map(nodes.map((node) => [node.id, node]));
+  const nextEdges = [...existingEdges];
+  const sorted = sortNodesForChain(nodes);
+
+  for (let i = 0; i < sorted.length - 1; i += 1) {
+    const from = sorted[i];
+    const to = sorted[i + 1];
+    if (hasEdge(nextEdges, from.id, to.id)) continue;
+    const edge = normalizeDirectedEdge(from.id, to.id, idToNode, 'RELATED');
+    if (edge) nextEdges.push(edge);
+  }
+
+  return nextEdges;
 }
 
 function connectedIdsFromEdges(

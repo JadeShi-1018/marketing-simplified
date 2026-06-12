@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 import DecisionsCardHeader from './DecisionsCardHeader';
 import DecisionsGraphSection from './DecisionsGraphSection';
 import DecisionsEmptyState from './DecisionsEmptyState';
 import DecisionDeleteDialog from './DecisionDeleteDialog';
+import { readDecisionMapUrlState } from '@/components/decisions/decisionMapUrlState';
 import { DecisionAPI } from '@/lib/api/decisionApi';
 import type {
   DecisionGraphEdge,
@@ -30,6 +32,8 @@ export default function DecisionsPageCard({
   canDelete,
   onNavigateToDecision,
 }: Props) {
+  const searchParams = useSearchParams();
+  const mapFullscreen = readDecisionMapUrlState(searchParams).fullscreen;
   const [items, setItems] = useState<DecisionListItem[]>([]);
   const [graph, setGraph] = useState<DecisionGraphResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -49,7 +53,7 @@ export default function DecisionsPageCard({
       try {
         const [listRes, graphRes] = await Promise.all([
           DecisionAPI.listDecisions(projectId),
-          DecisionAPI.getDecisionGraph(projectId, { scope: 'all_projects' }).catch(() => null),
+          DecisionAPI.getDecisionGraph(projectId, { scope: 'project' }).catch(() => null),
         ]);
         if (cancelled) return;
         setItems(listRes.items ?? []);
@@ -134,6 +138,7 @@ export default function DecisionsPageCard({
   const decisionCount = graphDecisionCount || items.length;
   const hasItems = decisionCount > 0 || graphTopicCount > 0;
   const hasGraphItems = graphDecisionCount > 0 || graphTopicCount > 0;
+  const showGraphSection = hasItems || mapFullscreen;
   const graphNodeForDelete = (node: DecisionGraphNode) => {
     const listItem = items.find((i) => i.id === node.id);
     setPendingDelete(
@@ -176,7 +181,7 @@ export default function DecisionsPageCard({
       return;
     }
     try {
-      const graphRes = await DecisionAPI.getDecisionGraph(projectId, { scope: 'all_projects' });
+      const graphRes = await DecisionAPI.getDecisionGraph(projectId, { scope: 'project' });
       setGraph(graphRes ?? null);
       const listRes = await DecisionAPI.listDecisions(projectId);
       setItems(listRes.items ?? []);
@@ -196,14 +201,14 @@ export default function DecisionsPageCard({
           onCreate={handleCreateFullPage}
         />
 
-        {loading && !hasItems ? (
+        {loading && !hasItems && !mapFullscreen ? (
           <div className="flex items-center justify-center px-3 py-12 text-gray-500 sm:px-6 sm:py-16">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Loading decisions…
           </div>
-        ) : !hasItems ? (
+        ) : !hasItems && !mapFullscreen ? (
           <DecisionsEmptyState onCreate={handleCreateFullPage} canCreate={canCreate} />
-        ) : (
+        ) : showGraphSection ? (
           <DecisionsGraphSection
             graph={graph}
             projectId={projectId}
@@ -215,7 +220,7 @@ export default function DecisionsPageCard({
             createRequestKey={createRequestKey}
             onDecisionUpdated={refreshGraph}
           />
-        )}
+        ) : null}
       </section>
 
       <DecisionDeleteDialog

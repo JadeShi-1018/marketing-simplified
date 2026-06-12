@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
@@ -42,6 +42,13 @@ function DecisionsV2Content() {
   const user = useAuthStore((s) => s.user);
 
   const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
+
+  useEffect(() => {
+    if (!projectId || projectIdParam) return;
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    params.set('project_id', String(projectId));
+    router.replace(`/decisions?${params.toString()}`, { scroll: false });
+  }, [projectId, projectIdParam, router, searchParams]);
 
   const role = useMemo(() => {
     if (!user) return null;

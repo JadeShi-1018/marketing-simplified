@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import Link from 'next/link';
+import dagre from '@dagrejs/dagre';
 import { CheckCircle2, FileText, Link2, PencilLine, Plus, Trash2, X } from 'lucide-react';
 import DecisionStatusPill from '@/components/decisions/DecisionStatusPill';
 import {
@@ -73,6 +74,8 @@ interface DecisionTreeProps {
   getReviewUrl?: (idOrSlug: number | string, projectId?: number | string | null) => string;
   /** Notifies parent when zoom % changes (for toolbar display). */
   onZoomPercentChange?: (percent: number) => void;
+  /** Controls non-timeline map layout. Topics keeps topic columns; Tree uses links as parent-child structure. */
+  viewMode?: DecisionTreeViewMode;
   /** Move a decision into another topic column in Topics view. */
   onMoveDecisionToTopic?: (decisionId: number, projectId: number | string, topic: string) => void | Promise<void>;
   /** Rename a topic column title in Topics view. */
@@ -90,19 +93,31 @@ const defaultGetReviewUrl = (idOrSlug: number | string, projectId?: number | str
   `/decisions/${idOrSlug}/review${projectId ? `?project_id=${projectId}` : ''}`;
 
 type PositionedNode = DecisionGraphNode & { x: number; y: number; dateKey: string };
+type PositionedTreeGroup = {
+  key: string;
+  title: string;
+  count: number;
+  x: number;
+  y: number;
+  expanded: boolean;
+  childIds: number[];
+};
 type DateColumn = {
   dateKey: string;
   x: number;
   count: number;
   granularity: TimelineGranularity;
-  layoutKind?: 'time' | 'cluster';
+  layoutKind?: 'time' | 'cluster' | 'tree';
   topic?: string | null;
   primaryLabel?: string;
   secondaryLabel?: string;
 };
+export type DecisionTreeViewMode = 'topics' | 'tree';
 
 const NODE_WIDTH = 300;
 const NODE_HEIGHT = 96;
+const TREE_GROUP_WIDTH = 260;
+const TREE_GROUP_HEIGHT = 82;
 const COLUMN_GAP = 120;
 const COLUMN_PADDING_X = 24;
 const ROW_GAP = 32;
@@ -164,7 +179,7 @@ const formatDateLabelMinimal = (dateKey: string) => {
 };
 
 const formatColumnLabel = (column: DateColumn, labelMode: 'full' | 'short' | 'minimal') => {
-  if (column.layoutKind === 'cluster') {
+  if (column.layoutKind === 'cluster' || column.layoutKind === 'tree') {
     return {
       primary: column.primaryLabel || column.dateKey,
       secondary: column.secondaryLabel || '',
@@ -381,6 +396,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
     getDecisionUrl,
     getReviewUrl,
     onZoomPercentChange,
+    viewMode = 'topics',
     onMoveDecisionToTopic,
     onRenameTopic,
     onCreateTopic,
@@ -422,6 +438,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
   const [moveHoverTopic, setMoveHoverTopic] = useState<string | null>(null);
   const [editingTopic, setEditingTopic] = useState<{ topic: string; value: string } | null>(null);
   const [newTopicTitle, setNewTopicTitle] = useState<string | null>(null);
+  const [expandedTreeGroups, setExpandedTreeGroups] = useState<Set<string>>(new Set());
   const [topicGuideDismissed, setTopicGuideDismissed] = useState(false);
   const [topicGuidePage, setTopicGuidePage] = useState<0 | 1 | 2>(0);
   const linkPointerStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -444,12 +461,169 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
   }, [removedSeqs]);
 
   const todayKey = useMemo(() => formatLocalDateKey(new Date()), []);
+  const isTreeLayout = viewMode === 'tree' && !timelineGranularityOverride;
+  const isTopicLayout = viewMode === 'topics' && !timelineGranularityOverride;
 
-  const { positionedNodes, dateColumns, timelineGranularity } = useMemo(() => {
+  const { positionedNodes, positionedTreeGroups, dateColumns, timelineGranularity } = useMemo(() => {
     const dayKeys = nodes.map((node) => formatDateKey(node.createdAt));
     const granularity = timelineGranularityOverride ?? pickTimelineGranularity([...new Set(dayKeys)]);
 
-    if (!timelineGranularityOverride) {
+    if (isTreeLayout) {
+      const groupLabels = new Map<string, string>();
+      topics?.forEach((topic) => {
+        if (!topic.topic) return;
+        groupLabels.set(topic.topic, topic.title || topic.defaultTitle || topic.topic);
+      });
+      const byGroup = new Map<string, DecisionGraphNode[]>();
+      nodes.forEach((node) => {
+        const key = topicGroupKey(node);
+        if (!byGroup.has(key)) byGroup.set(key, []);
+        byGroup.get(key)?.push(node);
+        if (!groupLabels.has(key)) {
+          groupLabels.set(key, topicGroupLabel(node));
+        }
+      });
+
+      const nodeById = new Map(nodes.map((node) => [node.id, node]));
+      const positioned: PositionedNode[] = [];
+      const positionedGroups: PositionedTreeGroup[] = [];
+      const depthCounts = new Map<number, number>();
+      let maxDepth = 0;
+      const dagreGraph = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
+      dagreGraph.setGraph({
+        rankdir: 'LR',
+        nodesep: ROW_GAP + 26,
+        ranksep: COLUMN_GAP + 64,
+        marginx: PADDING,
+        marginy: NODE_Y_BASE,
+      });
+      const nodeGroupKey = new Map<number, string>();
+      const groupNodeIdsByKey = new Map<string, Set<number>>();
+      byGroup.forEach((groupNodes, groupKey) => {
+        const ids = new Set(groupNodes.map((node) => node.id));
+        groupNodeIdsByKey.set(groupKey, ids);
+        groupNodes.forEach((node) => nodeGroupKey.set(node.id, groupKey));
+      });
+
+      Array.from(byGroup.keys())
+        .sort((a, b) => (groupLabels.get(a) || a).localeCompare(groupLabels.get(b) || b))
+        .forEach((groupKey) => {
+          const groupNodes = sortNodesStable(byGroup.get(groupKey) || []);
+          const expanded = expandedTreeGroups.has(groupKey);
+          dagreGraph.setNode(`group:${groupKey}`, {
+            width: TREE_GROUP_WIDTH,
+            height: TREE_GROUP_HEIGHT,
+          });
+
+          if (expanded && groupNodes.length > 0) {
+            groupNodes.forEach((node) => {
+              dagreGraph.setNode(`decision:${node.id}`, {
+                width: NODE_WIDTH,
+                height: NODE_HEIGHT,
+              });
+            });
+          }
+        });
+
+      const expandedNodeIds = new Set<number>();
+      byGroup.forEach((groupNodes, groupKey) => {
+        if (!expandedTreeGroups.has(groupKey)) return;
+        groupNodes.forEach((node) => expandedNodeIds.add(node.id));
+      });
+
+      const incomingByGroup = new Map<string, Map<number, number>>();
+      byGroup.forEach((groupNodes, groupKey) => {
+        const incoming = new Map<number, number>();
+        groupNodes.forEach((node) => incoming.set(node.id, 0));
+        incomingByGroup.set(groupKey, incoming);
+      });
+      edges.forEach((edge) => {
+        const fromGroup = nodeGroupKey.get(edge.from);
+        const toGroup = nodeGroupKey.get(edge.to);
+        if (!fromGroup || fromGroup !== toGroup || edge.from === edge.to) return;
+        if (!expandedNodeIds.has(edge.from) || !expandedNodeIds.has(edge.to)) return;
+        dagreGraph.setEdge(`decision:${edge.from}`, `decision:${edge.to}`);
+        const incoming = incomingByGroup.get(toGroup);
+        if (incoming) incoming.set(edge.to, (incoming.get(edge.to) ?? 0) + 1);
+      });
+
+      byGroup.forEach((groupNodes, groupKey) => {
+        if (!expandedTreeGroups.has(groupKey)) return;
+        const incoming = incomingByGroup.get(groupKey) ?? new Map<number, number>();
+        const roots = sortNodesStable(groupNodes).filter((node) => (incoming.get(node.id) ?? 0) === 0);
+        const startNodes = roots.length > 0 ? roots : sortNodesStable(groupNodes);
+        startNodes.forEach((node) => {
+          dagreGraph.setEdge(`group:${groupKey}`, `decision:${node.id}`);
+        });
+      });
+
+      dagre.layout(dagreGraph);
+
+      Array.from(byGroup.keys())
+        .sort((a, b) => (groupLabels.get(a) || a).localeCompare(groupLabels.get(b) || b))
+        .forEach((groupKey) => {
+          const groupNodes = sortNodesStable(byGroup.get(groupKey) || []);
+          const expanded = expandedTreeGroups.has(groupKey);
+          const groupLayout = dagreGraph.node(`group:${groupKey}`) as { x?: number; y?: number } | undefined;
+          const childIds: number[] = [];
+
+          if (expanded) {
+            groupNodes.forEach((node) => {
+              const layout = dagreGraph.node(`decision:${node.id}`) as { x?: number; y?: number } | undefined;
+              if (!layout || layout.x == null || layout.y == null) return;
+              const graphNode = nodeById.get(node.id);
+              if (!graphNode) return;
+              const depth = Math.max(1, Math.round((layout.x - (groupLayout?.x ?? layout.x)) / (NODE_WIDTH + COLUMN_GAP)));
+              maxDepth = Math.max(maxDepth, depth);
+              depthCounts.set(depth, (depthCounts.get(depth) ?? 0) + 1);
+              positioned.push({
+                ...graphNode,
+                dateKey: `tree:${depth}`,
+                x: PADDING + layout.x - NODE_WIDTH / 2,
+                y: NODE_Y_BASE + layout.y - NODE_HEIGHT / 2,
+              });
+              childIds.push(node.id);
+            });
+          }
+
+          positionedGroups.push({
+            key: groupKey,
+            title: groupLabels.get(groupKey) || groupKey,
+            count: groupNodes.length,
+            x: PADDING + (groupLayout?.x ?? TREE_GROUP_WIDTH / 2) - TREE_GROUP_WIDTH / 2,
+            y: NODE_Y_BASE + (groupLayout?.y ?? TREE_GROUP_HEIGHT / 2) - TREE_GROUP_HEIGHT / 2,
+            expanded,
+            childIds,
+          });
+        });
+
+      const columns: DateColumn[] = [];
+      for (let depth = 0; depth <= maxDepth; depth += 1) {
+        const count = depth === 0 ? positionedGroups.length : depthCounts.get(depth) ?? 0;
+        columns.push({
+          dateKey: `tree:${depth}`,
+          x: PADDING + depth * (NODE_WIDTH + COLUMN_GAP),
+          count,
+          granularity,
+          layoutKind: 'tree',
+          primaryLabel: depth === 0 ? 'Categories' : `Step ${depth}`,
+          secondaryLabel:
+            depth === 0
+              ? `${count} group${count === 1 ? '' : 's'}`
+              : `${count} decision${count === 1 ? '' : 's'}`,
+        });
+      }
+
+      return {
+        positionedNodes: positioned,
+        positionedTreeGroups: positionedGroups,
+        dateColumns: columns,
+        timelineGranularity: granularity,
+        layoutLabel: 'Tree',
+      };
+    }
+
+    if (isTopicLayout) {
       const byTopic = new Map<string, DecisionGraphNode[]>();
       const topicLabels = new Map<string, string>();
       topics?.forEach((topic) => {
@@ -498,6 +672,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
 
       return {
         positionedNodes: all,
+        positionedTreeGroups: [],
         dateColumns: columns,
         timelineGranularity: granularity,
         layoutLabel: 'Topics',
@@ -563,11 +738,12 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
 
     return {
       positionedNodes: all,
+      positionedTreeGroups: [],
       dateColumns: columns,
       timelineGranularity: granularity,
       layoutLabel: timelineGranularityOverride ? granularityLabel(granularity) : `Auto Map · ${granularityLabel(granularity)}`,
     };
-  }, [nodes, timelineGranularityOverride, todayKey, topics]);
+  }, [edges, expandedTreeGroups, isTopicLayout, isTreeLayout, nodes, timelineGranularityOverride, todayKey, topics]);
 
   const todayBucketKey = useMemo(
     () => bucketDateKey(todayKey, timelineGranularity),
@@ -641,7 +817,9 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
   const contentSize = useMemo(() => {
     const maxX = Math.max(0, ...positionedNodes.map((node) => node.x + NODE_WIDTH));
     const maxY = Math.max(0, ...positionedNodes.map((node) => node.y + NODE_HEIGHT));
-    const hasActionPanel = Boolean(onCreateDecision) || (!timelineGranularityOverride && Boolean(onCreateTopic));
+    const maxGroupX = Math.max(0, ...positionedTreeGroups.map((group) => group.x + TREE_GROUP_WIDTH));
+    const maxGroupY = Math.max(0, ...positionedTreeGroups.map((group) => group.y + TREE_GROUP_HEIGHT));
+    const hasActionPanel = Boolean(onCreateDecision) || (isTopicLayout && Boolean(onCreateTopic));
     const createPanelWidth = hasActionPanel ? NODE_WIDTH + COLUMN_PADDING_X * 2 + COLUMN_GAP : 0;
     const emptyMinWidth = hasActionPanel && positionedNodes.length === 0
       ? PADDING + NODE_WIDTH + COLUMN_PADDING_X * 2 + PADDING
@@ -650,10 +828,10 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
       ? NODE_Y_BASE + NODE_HEIGHT + PADDING
       : 0;
     return {
-      width: Math.max(emptyMinWidth, maxX + createPanelWidth + PADDING + EXTRA_SCROLL),
-      height: Math.max(emptyMinHeight, maxY + PADDING + EXTRA_SCROLL),
+      width: Math.max(emptyMinWidth, maxX, maxGroupX, PADDING + NODE_WIDTH) + createPanelWidth + PADDING + EXTRA_SCROLL,
+      height: Math.max(emptyMinHeight, maxY, maxGroupY, NODE_Y_BASE + TREE_GROUP_HEIGHT) + PADDING + EXTRA_SCROLL,
     };
-  }, [positionedNodes, onCreateDecision, onCreateTopic, timelineGranularityOverride]);
+  }, [positionedNodes, positionedTreeGroups, onCreateDecision, onCreateTopic, isTopicLayout]);
 
   const nodeMap = useMemo(() => {
     return positionedNodes.reduce<Record<number, PositionedNode>>((acc, node) => {
@@ -704,7 +882,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
   }, []);
 
   const handleMovePointerDown = useCallback((event: React.PointerEvent, node: PositionedNode) => {
-    if (!onMoveDecisionToTopic || node.projectId == null || timelineGranularityOverride || mode !== 'viewer') return;
+    if (!onMoveDecisionToTopic || node.projectId == null || !isTopicLayout || mode !== 'viewer') return;
     event.stopPropagation();
     setPopover(null);
     moveSuppressClickRef.current = false;
@@ -716,7 +894,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
     } catch {
       // ignore if capture unsupported
     }
-  }, [mode, onMoveDecisionToTopic, timelineGranularityOverride]);
+  }, [isTopicLayout, mode, onMoveDecisionToTopic]);
 
   const clearMoveDrag = useCallback(() => {
     setMoveDragNodeId(null);
@@ -742,7 +920,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
   }, []);
 
   useEffect(() => {
-    if (!moveDragNodeId || !onMoveDecisionToTopic || timelineGranularityOverride) return;
+    if (!moveDragNodeId || !onMoveDecisionToTopic || !isTopicLayout) return;
 
     const onMove = (event: PointerEvent) => {
       const start = movePointerStartRef.current;
@@ -781,7 +959,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
     findTopicColumnAtCanvas,
     moveDragNodeId,
     onMoveDecisionToTopic,
-    timelineGranularityOverride,
+    isTopicLayout,
   ]);
 
   const beginLinkPointer = useCallback((e: React.PointerEvent, node: PositionedNode) => {
@@ -1131,7 +1309,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
   }, [focusDateKey, timelineGranularity, scrollToColumn, scrollToNode]);
 
   const headerStyleDateKey = (column: DateColumn) => {
-    if (column.layoutKind === 'cluster') return todayKey;
+    if (column.layoutKind === 'cluster' || column.layoutKind === 'tree') return todayKey;
     if (column.granularity === 'day') return column.dateKey;
     if (column.granularity === 'month') return `${column.dateKey}-01`;
     if (column.dateKey.startsWith('week:')) return column.dateKey.slice(5);
@@ -1140,7 +1318,7 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
 
   const showTopicMotionGuide =
     !topicGuideDismissed &&
-    !timelineGranularityOverride &&
+    isTopicLayout &&
     mode === 'viewer' &&
     (onCreateTopic || onMoveDecisionToTopic);
 
@@ -1621,13 +1799,13 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
             />
           )}
 
-          {(onCreateDecision || (!timelineGranularityOverride && onCreateTopic)) ? (() => {
+          {(onCreateDecision || (isTopicLayout && onCreateTopic)) ? (() => {
             const lastCol = dateColumns[dateColumns.length - 1];
             const createPanelX = lastCol
               ? lastCol.x + NODE_WIDTH + COLUMN_PADDING_X + COLUMN_GAP - COLUMN_PADDING_X
               : PADDING - COLUMN_PADDING_X;
             const hasCreatePanel = Boolean(onCreateDecision);
-            const hasTopicPanel = !timelineGranularityOverride && Boolean(onCreateTopic);
+            const hasTopicPanel = isTopicLayout && Boolean(onCreateTopic);
             return (
               <>
                 {hasCreatePanel ? (
@@ -1773,6 +1951,31 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
               </filter>
             </defs>
             <g style={{ pointerEvents: 'none' }}>
+              {positionedTreeGroups.flatMap((group) =>
+                group.childIds
+                  .map((childId) => nodeMap[childId])
+                  .filter((child): child is PositionedNode => Boolean(child) && child.dateKey === 'tree:1')
+                  .map((child) => {
+                    const startX = group.x + TREE_GROUP_WIDTH;
+                    const startY = group.y + TREE_GROUP_HEIGHT / 2;
+                    const endX = child.x - EDGE_END_GAP;
+                    const endY = child.y + NODE_HEIGHT / 2;
+                    const midX = startX + Math.max(48, (endX - startX) / 2);
+                    const path = `M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`;
+                    return (
+                      <path
+                        key={`tree-group-edge-${group.key}-${child.id}`}
+                        d={path}
+                        stroke={EDGE_STROKE_NORMAL}
+                        strokeWidth={1.75}
+                        fill="none"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        markerEnd="url(#decision-arrow)"
+                      />
+                    );
+                  }),
+              )}
               {edges.map((edge, idx) => {
                 const fromNode = nodeMap[edge.from];
                 const toNode = nodeMap[edge.to];
@@ -1936,6 +2139,8 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
                       dateKey:
                         column.layoutKind === 'cluster'
                           ? `${label.primary} · ${label.secondary}`
+                          : column.layoutKind === 'tree'
+                          ? `${label.primary} · ${label.secondary}`
                           : column.granularity === 'day'
                           ? column.dateKey
                           : bucketTooltip(column.dateKey, column.granularity, column.count),
@@ -2063,10 +2268,60 @@ const DecisionTree = forwardRef<DecisionTreeHandle, DecisionTreeProps>(function 
             })}
           </div>
 
+          {positionedTreeGroups.map((group, index) => {
+            const accentColors = [
+              'from-[#E8FBFC] to-[#F6FEFF] text-[#126B72] ring-[#3CCED7]/45',
+              'from-[#EEF2FF] to-white text-[#3730A3] ring-indigo-200',
+              'from-[#F0FDF4] to-white text-[#166534] ring-emerald-200',
+              'from-[#FFF7ED] to-white text-[#9A3412] ring-orange-200',
+            ];
+            const accent = accentColors[index % accentColors.length];
+            return (
+              <button
+                key={`tree-group-${group.key}`}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setExpandedTreeGroups((current) => {
+                    const next = new Set(current);
+                    if (next.has(group.key)) next.delete(group.key);
+                    else next.add(group.key);
+                    return next;
+                  });
+                }}
+                className={`group absolute flex flex-col justify-center rounded-[18px] bg-gradient-to-br px-4 text-left shadow-[0_10px_26px_rgba(15,23,42,0.10)] ring-2 transition hover:-translate-y-[1px] hover:shadow-[0_18px_36px_rgba(15,23,42,0.14)] ${accent}`}
+                style={{
+                  width: TREE_GROUP_WIDTH,
+                  height: TREE_GROUP_HEIGHT,
+                  left: group.x,
+                  top: group.y,
+                  zIndex: 22,
+                }}
+                aria-expanded={group.expanded}
+                aria-label={`${group.expanded ? 'Collapse' : 'Expand'} ${group.title}`}
+                title={group.expanded ? 'Collapse group' : 'Expand group'}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="block truncate text-[17px] font-semibold leading-tight">
+                      {group.title}
+                    </span>
+                    <span className="mt-1 block text-[13px] font-medium opacity-70">
+                      {group.count} decision{group.count === 1 ? '' : 's'}
+                    </span>
+                  </span>
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/80 text-[22px] font-semibold shadow-sm transition group-hover:bg-white">
+                    {group.expanded ? '−' : '+'}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+
           {positionedNodes.map((node) => {
             const canMoveNode =
               Boolean(onMoveDecisionToTopic) &&
-              !timelineGranularityOverride &&
+              isTopicLayout &&
               node.projectId != null &&
               mode === 'viewer';
             const linkDragActive = Boolean(linkDragFrom);
