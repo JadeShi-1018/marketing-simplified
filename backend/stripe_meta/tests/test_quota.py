@@ -145,6 +145,54 @@ class QuotaAccountingTests(TestCase):
         row = self._usage()
         self.assertEqual(row.tokens_reserved, 3000)
 
+    def test_reserve_returns_year_month(self):
+        """reserve_quota must return the month the reservation landed in."""
+        ym = reserve_quota(self.org, 5000)
+        self.assertEqual(ym, timezone.now().strftime('%Y-%m'))
+
+    def test_commit_with_reserved_month_survives_month_boundary(self):
+        """
+        M-5 regression: a call spanning midnight on the 1st — reserve in month A,
+        clock rolls to month B, commit runs. With year_month threaded through,
+        commit must reconcile month A's row; month B must not be created/touched
+        (the old recomputed-ym code raised DoesNotExist, released against month B
+        driving it negative, and leaked month A's reservation).
+        """
+        from unittest.mock import patch
+        from datetime import timedelta
+
+        reserved_ym = reserve_quota(self.org, 5000)
+
+        # Roll the clock into the next month for everything inside services.py.
+        next_month = (timezone.now().replace(day=1) + timedelta(days=32)).replace(day=1)
+        with patch('stripe_meta.services.timezone.now', return_value=next_month):
+            commit_quota(self.org, actual_tokens=3000, reserved_tokens=5000, year_month=reserved_ym)
+
+        row = UsageMonthly.objects.get(organization=self.org, year_month=reserved_ym)
+        self.assertEqual(row.tokens_used, 3000)
+        self.assertEqual(row.tokens_reserved, 0)
+        # No row for the new month was created.
+        self.assertEqual(
+            UsageMonthly.objects.filter(organization=self.org).count(), 1,
+        )
+
+    def test_release_with_reserved_month_survives_month_boundary(self):
+        """release_quota with the reserved month must clear THAT month's reservation
+        even when the clock has rolled into the next month."""
+        from unittest.mock import patch
+        from datetime import timedelta
+
+        reserved_ym = reserve_quota(self.org, 5000)
+
+        next_month = (timezone.now().replace(day=1) + timedelta(days=32)).replace(day=1)
+        with patch('stripe_meta.services.timezone.now', return_value=next_month):
+            release_quota(self.org, 5000, year_month=reserved_ym)
+
+        row = UsageMonthly.objects.get(organization=self.org, year_month=reserved_ym)
+        self.assertEqual(row.tokens_reserved, 0)
+        self.assertEqual(row.tokens_used, 0)
+        self.assertEqual(UsageMonthly.objects.filter(organization=self.org).count(), 1)
+
 
 # ── check_quota_or_402 enforcement ────────────────────────────────────────────
 

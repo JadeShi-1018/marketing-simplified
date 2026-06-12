@@ -41,6 +41,7 @@ class Subscription(models.Model):
     is_internal = models.BooleanField(default=False)   # True for Free sentinel subscriptions
     monthly_revenue_cents = models.IntegerField(default=0)
     stripe_overage_item_id = models.CharField(max_length=255, null=True, blank=True)
+    cancel_at_period_end = models.BooleanField(default=False)
 
     class Meta:
         constraints = [
@@ -73,6 +74,9 @@ class StripeWebhookEvent(models.Model):
     stripe_event_id = models.CharField(max_length=255, unique=True)
     event_type = models.CharField(max_length=100)
     received_at = models.DateTimeField(auto_now_add=True)
+    # Atomic processing claim — set by the delivery that wins the conditional
+    # UPDATE; cleared on handler failure so Stripe's retry can claim again.
+    claimed_at = models.DateTimeField(null=True, blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)
     error_message = models.TextField(blank=True)
 
@@ -83,8 +87,9 @@ class UsageMonthly(models.Model):
     year_month = models.CharField(max_length=7)          # e.g. '2026-06'
     tokens_used = models.BigIntegerField(default=0)      # committed actual usage
     tokens_reserved = models.BigIntegerField(default=0)  # in-flight pre-reservations
-    overage_tokens = models.BigIntegerField(default=0)   # tokens beyond quota (reported to Stripe at month-end)
-    overage_reported_at = models.DateTimeField(null=True, blank=True)
+    overage_tokens = models.BigIntegerField(default=0)   # tokens beyond quota (reported to Stripe after month close)
+    overage_reported_tokens = models.BigIntegerField(default=0)  # tokens already credited to Stripe (units x 1M)
+    overage_reported_at = models.DateTimeField(null=True, blank=True)  # last successful report (informational, not a guard)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

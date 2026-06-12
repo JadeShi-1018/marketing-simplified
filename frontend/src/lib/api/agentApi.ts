@@ -118,7 +118,7 @@ export const AgentAPI = {
           const qCode = errJson?.code as string | undefined;
           if ((response.status === 402 || response.status === 409) && qCode && QUOTA_CODES.has(qCode)) {
             dispatchQuotaError({ code: qCode, ...errJson });
-            onDone?.();
+            onError?.(new Error('quota_error'));
             return;
           }
 
@@ -255,7 +255,7 @@ export const AgentAPI = {
           const qCode = errJson?.code as string | undefined;
           if ((response.status === 402 || response.status === 409) && qCode && QUOTA_CODES.has(qCode)) {
             dispatchQuotaError({ code: qCode, ...errJson });
-            onDone?.();
+            onError?.(new Error('quota_error'));
             return;
           }
 

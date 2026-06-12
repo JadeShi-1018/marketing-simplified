@@ -35,6 +35,7 @@ export interface ActiveSubscription {
   member_count: number;
   is_active: boolean;
   end_date: string | null;
+  cancel_at_period_end: boolean;
   plan: Plan;
 }
 
@@ -201,6 +202,7 @@ export default function usePlan(enabled = true): UsePlanReturn {
               })
             : 'the end of your billing period';
           toast.success(`Your plan will downgrade to Free on ${dateStr}. You keep your current benefits until then.`);
+          await fetchSubscription();
           return;
         }
 

@@ -47,7 +47,7 @@ export default function SeatCalculator({
         max={50}
         value={seats}
         onChange={handleChange}
-        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-[#3CCED7]"
+        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:ring-offset-2"
       />
 
       <div className="flex items-center justify-between text-xs text-gray-500">

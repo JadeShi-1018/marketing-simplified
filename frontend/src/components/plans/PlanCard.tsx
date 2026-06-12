@@ -31,6 +31,7 @@ interface PlanCardProps {
   onSubscribe?: (planId: number, seatCount: number) => Promise<void>;
   isCurrentPlan?: boolean;
   canManagePlans?: boolean;
+  variant?: 'grid' | 'card';
 }
 
 
@@ -50,6 +51,7 @@ export default function PlanCard({
   onSubscribe,
   isCurrentPlan,
   canManagePlans = true,
+  variant = 'grid',
 }: PlanCardProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [seatCount, setSeatCount] = useState(includedSeats);
@@ -79,8 +81,12 @@ export default function PlanCard({
     {} as Record<string, PlanFeature[]>,
   );
 
+  const containerClass = variant === 'card'
+    ? 'relative bg-white border border-gray-200 rounded-xl shadow-sm'
+    : 'relative bg-white border-r border-b border-gray-300';
+
   return (
-    <div className="relative bg-white border-r border-b border-gray-300">
+    <div className={containerClass}>
       {badge && (
         <div className="absolute top-4 right-4 z-10">
           <span className="text-[10px] uppercase tracking-wide font-semibold px-2 py-1 rounded-full bg-green-600 text-white">
@@ -94,8 +100,8 @@ export default function PlanCard({
         <div className="font-medium text-[clamp(1.25*1rem,((1.25-((1.5-1.25)/(90-20)*20))*1rem+((1.5-1.25)/(90-20))*100vw),1.5*1rem)]">
           {name}
         </div>
-        <div className="text-base font-normal h-[4.5rem]">
-          <p className="mb-4">{description}</p>
+        <div className="text-base font-normal min-h-[4.5rem]">
+          <p>{description}</p>
         </div>
       </div>
 
@@ -133,7 +139,7 @@ export default function PlanCard({
         <button
           onClick={handleSubscribe}
           disabled={isLoading || isCurrentPlan || !canManagePlans}
-          className="w-full py-3 text-base font-medium rounded-lg transition-opacity bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-white shadow-sm hover:opacity-95 disabled:opacity-50 disabled:bg-gray-200 disabled:bg-none disabled:cursor-not-allowed disabled:text-gray-500 flex items-center justify-center gap-2"
+          className="w-full py-3 text-base font-semibold rounded-lg transition-opacity bg-gradient-to-r from-[#3CCED7] to-[#A6E661] text-gray-900 shadow-sm hover:opacity-95 disabled:opacity-50 disabled:bg-gray-200 disabled:bg-none disabled:cursor-not-allowed disabled:text-gray-500 flex items-center justify-center gap-2"
         >
           {isLoading && <Loader2 className="w-5 h-5 animate-spin" />}
           {isCurrentPlan ? 'Current plan' : ctaText}
@@ -145,7 +151,7 @@ export default function PlanCard({
         <div className="flex-1 space-y-3">
           {/* Token billing highlights */}
           <div className="space-y-2">
-            <div className="text-[.8rem] font-[550] text-gray-500 uppercase">USAGE</div>
+            <div className="text-[.8rem] font-semibold text-gray-500 uppercase">USAGE</div>
             <ul className="space-y-2">
               <li className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -197,7 +203,7 @@ export default function PlanCard({
           {/* Legacy feature list (if provided) */}
           {Object.entries(groupedFeatures).map(([category, categoryFeatures]) => (
             <div key={category} className="space-y-2">
-              <div className="text-[.8rem] font-[550] text-gray-500 uppercase">{category}</div>
+              <div className="text-[.8rem] font-semibold text-gray-500 uppercase">{category}</div>
               <ul className="space-y-2">
                 {categoryFeatures.map((feat, idx) => (
                   <li key={idx} className="flex items-center justify-between">

@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -120,7 +120,7 @@ function ManageSeatsBlock({
   return (
     <div className="mb-6 rounded-xl border border-[#3CCED7]/30 bg-white px-5 py-4">
       <div className="mb-3 text-sm font-semibold text-gray-800">Manage Seats</div>
-      <div className="flex flex-wrap items-center gap-6 text-sm text-gray-600">
+      <div className="rounded-lg bg-gray-50 p-3 flex flex-wrap items-center gap-6 text-sm text-gray-600">
         <div>
           <span className="font-medium text-gray-900">{subscription.member_count}</span>{' '}
           member{subscription.member_count !== 1 ? 's' : ''}
@@ -162,7 +162,7 @@ function ManageSeatsBlock({
             )}
           </div>
           {confirmState && (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
               <div className="font-medium text-gray-800 mb-1">
                 Confirm purchase — {confirmState.seat_count} seats
               </div>
@@ -211,6 +211,18 @@ function SubscriptionV2Content() {
   const [cancelScheduledDate, setCancelScheduledDate] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
 
+  useEffect(() => {
+    if (subscription?.cancel_at_period_end && subscription.end_date) {
+      setCancelScheduledDate(
+        new Date(subscription.end_date).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+        })
+      );
+    } else {
+      setCancelScheduledDate(null);
+    }
+  }, [subscription]);
+
   const currentPlan = plans.find((p) => p.id === currentPlanId) ?? null;
   const isPaidPlan = currentPlan ? currentPlan.base_price_cents > 0 : false;
 
@@ -221,6 +233,7 @@ function SubscriptionV2Content() {
     : null;
 
   const activePlans = plans.filter((p) => !p.is_archived);
+  const displayCurrency = currentPlan?.currency ?? activePlans[0]?.currency ?? 'USD';
 
   const currentMonthlyCents = subscription
     ? (subscription.plan.base_price_cents ?? 0) +
@@ -289,14 +302,14 @@ function SubscriptionV2Content() {
                   ) : (
                     <p className="text-xs text-gray-500">
                       {subscription?.end_date
-                        ? `Renews on ${periodEndDate} · $${(currentMonthlyCents / 100).toFixed(2)} ${currentPlan?.currency ?? 'AUD'}/mo`
+                        ? `Renews on ${periodEndDate} · $${(currentMonthlyCents / 100).toFixed(2)} ${displayCurrency}/mo`
                         : 'Auto-renews monthly · cancel anytime'}
                     </p>
                   )}
                   {isOrgAdmin && !cancelScheduledDate && (
                     <button
                       onClick={() => setShowCancelConfirm(true)}
-                      className="ml-4 text-xs text-red-500 hover:text-red-700 hover:underline whitespace-nowrap"
+                      className="ml-4 rounded-md border border-red-200 px-3 py-1 text-xs text-red-500 hover:bg-red-50 whitespace-nowrap"
                     >
                       Cancel subscription
                     </button>
@@ -374,6 +387,7 @@ function SubscriptionV2Content() {
                     onSubscribe={handleSubscribe}
                     isCurrentPlan={isCurrent}
                     canManagePlans={isOrgAdmin}
+                    variant="card"
                   />
                 );
               })}
@@ -381,7 +395,7 @@ function SubscriptionV2Content() {
           )}
 
           <p className="mt-6 text-xs text-gray-400">
-            All prices in {currentPlan?.currency ?? (activePlans[0]?.currency ?? 'USD')}. Billing is handled securely by Stripe.
+            All prices in {displayCurrency}. Billing is handled securely by Stripe.
           </p>
         </div>
       </div>

@@ -28,7 +28,7 @@ const slides: Slide[] = [
     body: '500K tokens is enough for approximately 100 deep data analyses or 1 000 simple conversations per month — no credit card required.',
   },
   {
-    icon: <Layers className="h-10 w-10 text-orange-400" />,
+    icon: <Layers className="h-10 w-10 text-[#3CCED7]" />,
     title: 'Quota is tracked per Project',
     body: "Your token counter is linked to your active Project, not your user account. If you switch to a different Project, you'll see a separate quota. That's expected — each Project has its own allowance.",
   },
@@ -98,25 +98,28 @@ export default function OnboardingTokenIntro() {
           </div>
 
           <div className="flex w-full gap-2">
-            {slide > 0 && (
-              <button
-                onClick={() => setSlide((s) => s - 1)}
-                className="flex-1 rounded-lg border border-gray-200 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-              >
-                Back
-              </button>
-            )}
+            <button
+              onClick={() => setSlide((s) => s - 1)}
+              disabled={slide === 0}
+              tabIndex={slide === 0 ? -1 : undefined}
+              aria-hidden={slide === 0}
+              className={`flex-none px-6 rounded-lg border border-gray-200 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 ${
+                slide === 0 ? 'invisible' : ''
+              }`}
+            >
+              Back
+            </button>
             {isLast ? (
               <button
                 onClick={dismiss}
-                className="flex-1 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] py-2 text-sm font-medium text-white hover:opacity-90"
+                className="flex-1 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] py-2 text-sm font-semibold text-gray-900 hover:opacity-90"
               >
                 Got it
               </button>
             ) : (
               <button
                 onClick={() => setSlide((s) => s + 1)}
-                className="flex-1 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] py-2 text-sm font-medium text-white hover:opacity-90"
+                className="flex-1 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] py-2 text-sm font-semibold text-gray-900 hover:opacity-90"
               >
                 Next
               </button>

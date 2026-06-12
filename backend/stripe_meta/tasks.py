@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 import stripe
 from celery import shared_task
@@ -17,14 +18,26 @@ stripe.api_key = settings.STRIPE_SECRET_KEY
 @shared_task
 def report_overage_to_stripe():
     """
-    Report accumulated overage tokens to Stripe via the Billing Meter Events API.
-    Run once per month (e.g. last day at 23:00 UTC via Celery Beat).
+    Report overage tokens for the PREVIOUS (completed) calendar month to Stripe
+    via the Billing Meter Events API. Scheduled early on the 1st of each month,
+    so the target month is always closed before reporting — no late-month usage
+    can accrue after the report.
+
+    Delta-based: overage_reported_tokens tracks tokens already credited to Stripe
+    (units x 1M). Each run reports ceil(unreported delta / 1M) units, so partial
+    megatokens are billed as a full unit rather than dropped (bounded overbilling
+    < 1 unit per org-month; self-corrects because later growth must first exceed
+    the credited amount).
 
     Idempotency — two layers:
-      1. Local: skip rows where overage_reported_at is already set (guard against reruns).
-      2. Remote: Stripe deduplicates MeterEvents with the same identifier within a window.
+      1. Local: delta <= 0 (everything already credited) skips the row.
+      2. Remote: identifier f'{org}-{ym}-overage-{credited_before}' — a rerun of
+         the same delta reuses the identifier and Stripe dedups it; a legitimate
+         later delta has an advanced baseline and is accepted.
     """
-    ym = timezone.now().strftime('%Y-%m')
+    today = timezone.now().date()
+    prev_month_last_day = today.replace(day=1) - timedelta(days=1)
+    ym = prev_month_last_day.strftime('%Y-%m')
 
     for sub in (
         Subscription.objects.filter(is_active=True, is_internal=False)
@@ -36,14 +49,12 @@ def report_overage_to_stripe():
 
         if not usage:
             continue
-        if usage.overage_tokens == 0:
-            continue
-        if usage.overage_reported_at is not None:
+
+        delta = usage.overage_tokens - usage.overage_reported_tokens
+        if delta <= 0:
             continue
 
-        units = usage.overage_tokens // 1_000_000
-        if units <= 0:
-            continue
+        units = -(-delta // 1_000_000)   # ceil division, integer-only
 
         cid = sub.organization.stripe_customer_id
         if not cid:
@@ -53,21 +64,26 @@ def report_overage_to_stripe():
             )
             continue
 
+        credited_before = usage.overage_reported_tokens
+
+        def _mark_reported(usage, credited_before, units):
+            usage.overage_reported_tokens = credited_before + units * 1_000_000
+            usage.overage_reported_at = timezone.now()
+            usage.save(update_fields=['overage_reported_tokens', 'overage_reported_at'])
+
         try:
             stripe.billing.MeterEvent.create(
                 event_name='token_overage',
                 payload={'value': str(units), 'stripe_customer_id': cid},
-                identifier=f'{sub.organization_id}-{ym}-overage',
+                identifier=f'{sub.organization_id}-{ym}-overage-{credited_before}',
                 timestamp=int(timezone.now().timestamp()),
             )
-            usage.overage_reported_at = timezone.now()
-            usage.save(update_fields=['overage_reported_at'])
+            _mark_reported(usage, credited_before, units)
         except stripe.InvalidRequestError as e:
             if 'already exists' in str(e):
-                # Stripe idempotency hit: the event was already received on a prior run.
-                # Treat as success so the local guard is set and reruns stop hammering Stripe.
-                usage.overage_reported_at = timezone.now()
-                usage.save(update_fields=['overage_reported_at'])
+                # Stripe idempotency hit: this exact delta was already received on a
+                # prior run whose local update failed. Apply the same local credit.
+                _mark_reported(usage, credited_before, units)
                 logger.info(
                     'report_overage_to_stripe: idempotent hit for org %s — marking reported',
                     sub.organization_id,

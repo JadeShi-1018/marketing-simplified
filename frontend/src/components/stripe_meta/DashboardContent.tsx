@@ -8,6 +8,8 @@ import useStripe from '@/hooks/useStripe';
 import usePlan from '@/hooks/usePlan';
 import { useRouter } from 'next/navigation';
 import { Skeleton } from '@/components/ui/skeleton';
+import api from '@/lib/api';
+import { formatTokens } from '@/lib/format';
 
 interface DashboardContentProps {
   user: {
@@ -38,11 +40,17 @@ export default function DashboardContent({
   user,
   loading = false,
 }: DashboardContentProps) {
-  const { getSubscription, getUsage } = useStripe();
+  const { getSubscription } = useStripe();
   const { cancelSubscription } = usePlan();
   const router = useRouter();
   const [subscription, setSubscription] = useState<any>(null);
-  const [usage, setUsage] = useState<any>(null);
+  const [tokenSummary, setTokenSummary] = useState<{
+    tokens_used: number;
+    overage_tokens: number;
+    monthly_token_quota: number | null;
+    overage_price_cents_per_1m: number | null;
+    currency: string;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isCanceling, setIsCanceling] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -51,7 +59,7 @@ export default function DashboardContent({
   const isOrgAdmin = !!authUser?.roles?.includes('Organization Admin');
 
   const handleSubscriptionClick = () => {
-    router.push('/plans');
+    router.push('/subscription');
   };
 
   const handleCancelSubscription = async () => {
@@ -79,9 +87,8 @@ export default function DashboardContent({
             }
             toast.success('Subscription canceled successfully');
             
-            // Update local state
             setSubscription(null);
-            setUsage(null);
+            setTokenSummary(null);
             
             // Refresh user data to get updated plan_id
             const { getCurrentUser } = useAuthStore.getState();
@@ -131,16 +138,12 @@ export default function DashboardContent({
           const subscriptionData = await getSubscription();
           setSubscription(subscriptionData);
           
-          // Only try to fetch usage if there's an active subscription
           try {
-            const usageData = await getUsage();
-            setUsage(usageData);
-          } catch (usageError: any) {
-            // If usage fetch fails (e.g., no active subscription), clear usage
-            if (usageError.response?.status === 400 || usageError.response?.status === 404) {
-              setUsage(null);
-            } else {
-              console.error('Failed to fetch usage:', usageError);
+            const { data } = await api.get('/api/stripe/org-token-summary/');
+            setTokenSummary(data);
+          } catch (tokenError: any) {
+            if (tokenError.response?.status !== 404) {
+              console.error('Failed to fetch token summary:', tokenError);
             }
           }
         } catch (error) {
@@ -149,9 +152,8 @@ export default function DashboardContent({
           setIsLoading(false);
         }
       } else {
-        // Clear data when no organization
         setSubscription(null);
-        setUsage(null);
+        setTokenSummary(null);
       }
     };
 
@@ -164,7 +166,7 @@ export default function DashboardContent({
         pollIntervalRef.current = null;
       }
     };
-  }, [getSubscription, getUsage, loading, user?.organization?.id]); // Only depend on organization ID
+  }, [getSubscription, loading, user?.organization?.id]);
 
   return (
     <div className="space-y-6">
@@ -186,8 +188,8 @@ export default function DashboardContent({
         <div className="group border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
           <div className="flex items-center justify-between mb-4">
             <div className="text-lg font-semibold text-gray-800">Account</div>
-            <div className="w-8 h-8 bg-gradient-to-br  rounded-lg flex items-center justify-center">
-              <User className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 bg-gradient-to-br from-[#3CCED7]/20 to-[#A6E661]/20 rounded-lg flex items-center justify-center">
+              <User className="w-4 h-4 text-[#3CCED7]" />
             </div>
           </div>
           <div className="space-y-3">
@@ -225,8 +227,8 @@ export default function DashboardContent({
         >
           <div className="flex items-center justify-between mb-4">
             <div className="text-lg font-semibold text-gray-800">Subscription</div>
-            <div className="w-8 h-8 bg-gradient-to-br rounded-lg flex items-center justify-center">
-              <CheckCircle className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 bg-gradient-to-br from-[#3CCED7]/20 to-[#A6E661]/20 rounded-lg flex items-center justify-center">
+              <CheckCircle className="w-4 h-4 text-[#3CCED7]" />
             </div>
           </div>
           {loading ? (
@@ -288,11 +290,11 @@ export default function DashboardContent({
           )}
         </div>
 
-        <div className="group border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-all duration-300  hover:-translate-y-1">
+        <div className="group border border-gray-200 rounded-xl p-6 hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
           <div className="flex items-center justify-between mb-4">
             <div className="text-lg font-semibold text-gray-800">Usage</div>
-            <div className="w-8 h-8 bg-gradient-to-br  rounded-lg flex items-center justify-center">
-              <BarChart3 className="w-4 h-4 text-white" />
+            <div className="w-8 h-8 bg-gradient-to-br from-[#3CCED7]/20 to-[#A6E661]/20 rounded-lg flex items-center justify-center">
+              <BarChart3 className="w-4 h-4 text-[#3CCED7]" />
             </div>
           </div>
           {loading ? (
@@ -300,34 +302,49 @@ export default function DashboardContent({
           ) : user?.organization ? (
             isLoading ? (
               <DashboardSummarySkeleton />
-            ) : usage ? (
-              <div className="space-y-3">
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-sm font-medium text-gray-600">Previews</span>
-                  <span className="text-sm text-gray-800">
-                    {usage.previews_used} / {subscription?.plan?.max_previews_per_day || 'Unlimited'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                  <span className="text-sm font-medium text-gray-600">Tasks</span>
-                  <span className="text-sm text-gray-800">
-                    {usage.tasks_used} / {subscription?.plan?.max_tasks_per_day || 'Unlimited'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center py-2">
-                  <span className="text-sm font-medium text-gray-600">Team Members</span>
-                  <span className="text-sm text-gray-800">
-                    1 / {subscription?.plan?.max_team_members || 'Unlimited'}
-                  </span>
-                </div>
-              </div>
+            ) : tokenSummary ? (
+              (() => {
+                const { tokens_used, monthly_token_quota, overage_tokens, overage_price_cents_per_1m, currency } = tokenSummary;
+                const pct = monthly_token_quota ? Math.min((tokens_used / monthly_token_quota) * 100, 100) : 0;
+                const barColor = !monthly_token_quota ? 'bg-[#3CCED7]' : tokens_used > monthly_token_quota ? 'bg-red-500' : pct > 80 ? 'bg-orange-400' : 'bg-[#3CCED7]';
+                return (
+                  <div className="space-y-3">
+                    <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                      <span className="text-sm font-medium text-gray-600">Tokens used</span>
+                      <span className="text-sm font-semibold text-gray-800">
+                        {formatTokens(tokens_used)}
+                        {monthly_token_quota ? ` / ${formatTokens(monthly_token_quota)}` : ' / Unlimited'}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${barColor}`}
+                        style={{ width: monthly_token_quota ? `${pct}%` : '100%' }}
+                      />
+                    </div>
+                    {overage_tokens > 0 && (
+                      <div className="flex justify-between items-center py-2 border-t border-gray-100">
+                        <span className="text-sm font-medium text-orange-600">Overage</span>
+                        <span className="text-sm font-semibold text-orange-600">
+                          {formatTokens(overage_tokens)}
+                          {overage_price_cents_per_1m != null && (
+                            <span className="text-xs font-normal text-gray-500 ml-1">
+                              ({currency} {(overage_price_cents_per_1m / 100).toFixed(2)}/1M)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()
             ) : (
               <div className="text-center py-4">
                 <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                  <AlertTriangle className="w-6 h-6 text-gray-400" />
+                  <BarChart3 className="w-6 h-6 text-gray-400" />
                 </div>
                 <p className="text-sm text-gray-500 mb-2">No Usage Data</p>
-                <p className="text-xs text-gray-400">No usage records found for today.</p>
+                <p className="text-xs text-gray-400">Token usage will appear here once available.</p>
               </div>
             )
           ) : (
@@ -336,7 +353,7 @@ export default function DashboardContent({
                 <AlertTriangle className="w-6 h-6 text-gray-400" />
               </div>
               <p className="text-sm text-gray-500 mb-2">Organization Required</p>
-                <p className="text-xs text-gray-400">You haven&apos;t joined any organization, so usage tracking is not available.</p>
+              <p className="text-xs text-gray-400">You haven&apos;t joined any organization, so usage tracking is not available.</p>
             </div>
           )}
         </div>
@@ -345,8 +362,8 @@ export default function DashboardContent({
       <div className="border border-gray-200 rounded-xl p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="text-lg font-semibold text-gray-800">Recent Activity</div>
-          <div className="w-8 h-8 bg-gradient-to-br  rounded-lg flex items-center justify-center">
-            <Clock className="w-4 h-4 text-white" />
+          <div className="w-8 h-8 bg-gradient-to-br from-[#3CCED7]/20 to-[#A6E661]/20 rounded-lg flex items-center justify-center">
+            <Clock className="w-4 h-4 text-[#3CCED7]" />
           </div>
         </div>
         <div className="text-center py-8">

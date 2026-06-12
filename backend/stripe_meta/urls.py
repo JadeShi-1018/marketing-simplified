@@ -26,6 +26,8 @@ urlpatterns = [
     path('usage/', views.get_usage, name='get_usage'),
     # GET /quota-preview/?project_id=<id>
     path('quota-preview/', views.quota_preview, name='quota_preview'),
+    # GET /org-token-summary/
+    path('org-token-summary/', views.org_token_summary, name='org_token_summary'),
     
     # Organization endpoints
     # POST /organization

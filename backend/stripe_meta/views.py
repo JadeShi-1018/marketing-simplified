@@ -106,6 +106,10 @@ def switch_plan(request):
                 current_subscription.stripe_subscription_id,
                 cancel_at_period_end=True,
             )
+
+            current_subscription.cancel_at_period_end = True
+            current_subscription.save(update_fields=['cancel_at_period_end'])
+
             return Response(
                 {'status': 'scheduled_downgrade', 'effective_at': period_end},
                 status=status.HTTP_200_OK,
@@ -227,6 +231,9 @@ def cancel_subscription(request):
             subscription.stripe_subscription_id,
             cancel_at_period_end=True,
         )
+
+        subscription.cancel_at_period_end = True
+        subscription.save(update_fields=['cancel_at_period_end'])
 
         return Response({'success': True, 'cancel_at': period_end})
 
@@ -579,31 +586,39 @@ def invite_users_to_organization(request):
             )
         organization = user.organization
 
-        # Seat cap check (Model B): enforce purchased seat limit before touching DB.
-        # Covers both paid plans and Free orgs (sentinel seat_count=1).
+        # Seat cap check (Model B): enforce purchased seat limit atomically with the
+        # member adds — select_for_update on the subscription row serializes
+        # concurrent invites so two requests at cap-1 can't both pass (check-then-act
+        # race). Covers both paid plans and Free orgs (sentinel seat_count=1).
         # sub=None (org has no subscription at all) is treated as uncapped — don't block.
-        sub = get_active_real_subscription(organization)
-        if sub:
-            current_count = CustomUser.objects.filter(organization=organization).count()
-            available = sub.seat_count - current_count
-            if len(emails) > available:
-                is_free = sub.is_internal  # sentinel ↔ Free tier; paid sub ↔ Team/higher
-                return Response(
-                    {
-                        'error': (
-                            'Free plan is limited to 1 seat. Upgrade to Team to add more members.'
-                            if is_free
-                            else 'Seat limit reached. Purchase more seats to add more members.'
-                        ),
-                        'code': 'SEAT_LIMIT_REACHED',
-                        'seats_available': max(0, available),
-                        'seats_purchased': sub.seat_count,
-                        'upgrade_required': is_free,
-                    },
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-
         with transaction.atomic():
+            sub = (
+                Subscription.objects.select_for_update()
+                .filter(organization=organization, is_active=True)
+                .order_by('is_internal')
+                .select_related('plan')
+                .first()
+            )
+            if sub:
+                current_count = CustomUser.objects.filter(organization=organization).count()
+                available = sub.seat_count - current_count
+                if len(emails) > available:
+                    is_free = sub.is_internal  # sentinel ↔ Free tier; paid sub ↔ Team/higher
+                    return Response(
+                        {
+                            'error': (
+                                'Free plan is limited to 1 seat. Upgrade to Team to add more members.'
+                                if is_free
+                                else 'Seat limit reached. Purchase more seats to add more members.'
+                            ),
+                            'code': 'SEAT_LIMIT_REACHED',
+                            'seats_available': max(0, available),
+                            'seats_purchased': sub.seat_count,
+                            'upgrade_required': is_free,
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
             try:
                 for email in emails:
                     user = CustomUser.objects.filter(email=email).first()
@@ -845,6 +860,37 @@ def quota_preview(request):
     })
 
 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated, HasValidOrganizationToken])
+def org_token_summary(request):
+    """Return current-month token usage + plan quota for the requesting user's organization."""
+    org = request.user.organization
+    if not org:
+        return Response(
+            {'error': 'User has no linked organization', 'code': 'NO_ORG'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    ym = timezone.now().strftime('%Y-%m')
+    usage = UsageMonthly.objects.filter(organization=org, year_month=ym).first()
+
+    sub = (
+        Subscription.objects.filter(organization=org, is_active=True)
+        .select_related('plan')
+        .order_by('is_internal')
+        .first()
+    )
+    plan = sub.plan if sub else None
+
+    return Response({
+        'tokens_used': usage.tokens_used if usage else 0,
+        'overage_tokens': usage.overage_tokens if usage else 0,
+        'monthly_token_quota': plan.monthly_token_quota if plan else None,
+        'overage_price_cents_per_1m': plan.overage_price_cents_per_1m if plan else None,
+        'currency': plan.currency if plan else 'AUD',
+    })
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def stripe_webhook(request):
@@ -875,6 +921,21 @@ def stripe_webhook(request):
         logger.info("stripe_webhook duplicate event_id=%s event_type=%s", event_id, event_type)
         return JsonResponse({'received': True, 'status': 'duplicate'})
 
+    # Atomic claim: only one concurrent delivery of the same event may proceed.
+    # The conditional UPDATE is the lock — exactly one delivery flips claimed_at
+    # from NULL. The loser returns 409 so Stripe retries later; by then the winner
+    # has either set processed_at (retry → duplicate) or failed and released the
+    # claim (retry → reprocess).
+    claimed = StripeWebhookEvent.objects.filter(
+        pk=webhook_event.pk, claimed_at__isnull=True,
+    ).update(claimed_at=timezone.now())
+    if not claimed:
+        logger.info(
+            "stripe_webhook event already claimed by a concurrent delivery "
+            "event_id=%s event_type=%s", event_id, event_type,
+        )
+        return JsonResponse({'received': False, 'status': 'in_flight'}, status=409)
+
     handlers = {
         'checkout.session.completed': handle_checkout_completed,
         'customer.subscription.created': handle_subscription_created,
@@ -899,8 +960,10 @@ def stripe_webhook(request):
         webhook_event.save(update_fields=['processed_at'])
         return JsonResponse({'received': True})
     except Exception:
+        # Release the claim so Stripe's retry can reprocess; keep error bubbling (500).
         webhook_event.error_message = traceback.format_exc()[:2000]
-        webhook_event.save(update_fields=['error_message'])
+        webhook_event.claimed_at = None
+        webhook_event.save(update_fields=['error_message', 'claimed_at'])
         logger.exception("stripe_webhook handler failed event_id=%s event_type=%s", event_id, event_type)
         return JsonResponse({'error': 'Handler failed'}, status=500)
 
@@ -1085,6 +1148,17 @@ def handle_payment_succeeded(invoice_data, event_id=None):
 
     if stripe_subscription_id and user:
         invoice_id = invoice_data.get('id')
+        # Payment fields are null=False — a sparse lines payload (one-off invoice
+        # items, API shape drift) would IntegrityError → 500 → infinite Stripe
+        # retry. Skip-and-warn instead, matching the null-parent / missing-org_id
+        # handling in the other handlers.
+        if not price_id or not product_id:
+            logger.warning(
+                "handle_payment_succeeded: missing price/product in invoice lines "
+                "invoice_id=%s price_id=%s product_id=%s event_id=%s — skipping Payment record",
+                invoice_id, price_id, product_id, event_id,
+            )
+            return
         Payment.objects.create(
             user=user,
             stripe_invoice_id=invoice_id,
@@ -1118,16 +1192,40 @@ def handle_subscription_updated(subscription_data, event_id=None):
 
     org_id = subscription.organization_id
     subscription.is_active = subscription_data['status'] == 'active'
+    subscription.cancel_at_period_end = subscription_data.get('cancel_at_period_end', False)
 
     items = subscription_data.get('items', {}).get('data', [])
     if items:
-        subscription.start_date = datetime.fromtimestamp(items[0].get('current_period_start', 0))
-        subscription.end_date = datetime.fromtimestamp(items[0].get('current_period_end', 0))
-        current_price_id = items[0]['price']['id']
-        if subscription.plan.stripe_price_id != current_price_id:
-            new_plan = Plan.objects.filter(stripe_price_id=current_price_id).first()
-            if new_plan:
-                subscription.plan = new_plan
+        # Match line items by price_id — items[0] is NOT the base item on multi-item
+        # subscriptions (base + extra seats + metered overage can arrive in any order).
+        def _item_for_price(price_id):
+            return next(
+                (i for i in items if i.get('price', {}).get('id') == price_id),
+                None,
+            )
+
+        # Base item: current plan's price first; if absent, the plan changed on
+        # Stripe's side — find whichever known Plan price is present.
+        base_item = _item_for_price(subscription.plan.stripe_price_id)
+        if base_item is None:
+            for candidate_plan in Plan.objects.exclude(stripe_price_id__isnull=True).exclude(stripe_price_id=''):
+                candidate_item = _item_for_price(candidate_plan.stripe_price_id)
+                if candidate_item is not None:
+                    subscription.plan = candidate_plan
+                    base_item = candidate_item
+                    break
+
+        if base_item is not None:
+            subscription.start_date = datetime.fromtimestamp(base_item.get('current_period_start', 0))
+            subscription.end_date = datetime.fromtimestamp(base_item.get('current_period_end', 0))
+
+        # Sync purchased seats from the extra-seat item quantity (mirrors
+        # handle_subscription_created) so Stripe-side seat edits don't drift locally.
+        extra_seat_price_id = subscription.plan.stripe_extra_seat_price_id
+        if extra_seat_price_id:
+            seat_item = _item_for_price(extra_seat_price_id)
+            extra_qty = seat_item.get('quantity', 0) if seat_item else 0
+            subscription.seat_count = (subscription.plan.included_seats or 1) + extra_qty
 
     subscription.save()
     logger.info("handle_subscription_updated exit event_id=%s org_id=%s", event_id, org_id)
@@ -1269,7 +1367,12 @@ def handle_invoice_finalized(data, event_id=None):
     plan = sub.plan if sub else None
     rate = plan.overage_price_cents_per_1m if plan else None
     if rate is not None:
-        local_overage_cents = (usage.overage_tokens // 1_000_000) * rate
+        # Expected units must mirror report_overage_to_stripe's ceil + credited model:
+        # overage_reported_tokens is always units x 1M (what we actually sent to the
+        # meter); before any report, expect ceil of the raw overage.
+        reported_units = usage.overage_reported_tokens // 1_000_000
+        expected_units = reported_units if reported_units > 0 else -(-usage.overage_tokens // 1_000_000)
+        local_overage_cents = expected_units * rate
         if stripe_overage_cents != local_overage_cents:
             logger.warning(
                 "handle_invoice_finalized MISMATCH org=%s ym=%s "

@@ -66,24 +66,35 @@ def get_active_real_subscription(organization):
     )
 
 
-def reserve_quota(organization, tokens: int) -> None:
-    """Atomically pre-reserve tokens before an LLM call starts."""
+def reserve_quota(organization, tokens: int) -> str:
+    """
+    Atomically pre-reserve tokens before an LLM call starts.
+
+    Returns the year_month the reservation was written to. Callers MUST pass it
+    back to commit_quota/release_quota — recomputing the month there would hit
+    the wrong row for calls spanning midnight on the 1st (reserve in month A,
+    commit in month B → month B driven negative, month A's reservation leaked).
+    """
     ym = timezone.now().strftime('%Y-%m')
     _get_or_create_usage(organization, ym)
     UsageMonthly.objects.filter(organization=organization, year_month=ym).update(
         tokens_reserved=F('tokens_reserved') + tokens,
     )
+    return ym
 
 
-def commit_quota(organization, actual_tokens: int, reserved_tokens: int) -> None:
+def commit_quota(organization, actual_tokens: int, reserved_tokens: int, year_month: str | None = None) -> None:
     """
     Reconcile after a successful LLM call:
       tokens_reserved -= reserved_tokens
       tokens_used     += actual_tokens
       overage_tokens  += delta (Team metered billing accumulator)
     Uses select_for_update to prevent lost-update races.
+
+    year_month: the month returned by reserve_quota; defaults to the current
+    month for callers without a reservation context.
     """
-    ym = timezone.now().strftime('%Y-%m')
+    ym = year_month or timezone.now().strftime('%Y-%m')
     sub = get_active_real_subscription(organization)
     quota = sub.plan.monthly_token_quota if sub and sub.plan else None
 
@@ -103,9 +114,14 @@ def commit_quota(organization, actual_tokens: int, reserved_tokens: int) -> None
         )
 
 
-def release_quota(organization, tokens: int) -> None:
-    """Return reserved tokens when an LLM call fails (failed calls are not billed)."""
-    ym = timezone.now().strftime('%Y-%m')
+def release_quota(organization, tokens: int, year_month: str | None = None) -> None:
+    """
+    Return reserved tokens when an LLM call fails (failed calls are not billed).
+
+    year_month: the month returned by reserve_quota; defaults to the current
+    month for callers without a reservation context.
+    """
+    ym = year_month or timezone.now().strftime('%Y-%m')
     UsageMonthly.objects.filter(organization=organization, year_month=ym).update(
         tokens_reserved=F('tokens_reserved') - tokens,
     )

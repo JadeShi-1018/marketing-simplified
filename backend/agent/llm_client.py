@@ -69,8 +69,9 @@ def call_llm(
     if not allowed:
         raise QuotaError(**err_payload)
 
-    # 3. Reserve
-    reserve_quota(org, estimated_total)
+    # 3. Reserve — capture the month the reservation landed in so commit/release
+    #    hit the same row even if the call spans midnight on the 1st.
+    reserved_ym = reserve_quota(org, estimated_total)
 
     try:
         # 4. Dispatch to provider
@@ -87,7 +88,7 @@ def call_llm(
         actual_input = result['usage']['input']
         actual_output = result['usage']['output']
         actual_normalized = int((actual_input + actual_output) * multiplier)
-        commit_quota(org, actual_normalized, estimated_total)
+        commit_quota(org, actual_normalized, estimated_total, year_month=reserved_ym)
 
         # 6. Write cost log (integer arithmetic, cents per 1M tokens)
         prices = settings.LLM_PRICE_TABLE.get(model, {'input': 0, 'output': 0})
@@ -110,11 +111,11 @@ def call_llm(
         return result
 
     except QuotaError:
-        release_quota(org, estimated_total)
+        release_quota(org, estimated_total, year_month=reserved_ym)
         raise
 
     except Exception as exc:
-        release_quota(org, estimated_total)
+        release_quota(org, estimated_total, year_month=reserved_ym)
         LLMCallLog.objects.create(
             organization=org,
             agent_session=agent_session,

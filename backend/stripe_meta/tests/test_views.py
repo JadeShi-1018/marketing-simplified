@@ -945,6 +945,75 @@ class WebhookViewsTest(StripeViewsTestCase):
                 cancel_at_period_end=True,
             )
 
+    def test_cancel_subscription_persists_cancel_at_period_end(self):
+        """cancel_subscription must write cancel_at_period_end=True to the local DB row."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.return_value = {}
+
+            response = self.client.post(
+                reverse('stripe_meta:cancel_subscription'),
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.subscription.refresh_from_db()
+            self.assertTrue(
+                self.subscription.cancel_at_period_end,
+                "cancel_at_period_end must be True in DB after cancellation — "
+                "omitting this causes the amber banner to reset on page refresh"
+            )
+
+    def test_get_subscription_exposes_cancel_at_period_end(self):
+        """get_subscription serializer must expose cancel_at_period_end so the frontend can restore cancel state on load."""
+        self.subscription.cancel_at_period_end = True
+        self.subscription.save(update_fields=['cancel_at_period_end'])
+
+        response = self.client.get(
+            reverse('stripe_meta:get_subscription'),
+            HTTP_X_ORGANIZATION_TOKEN=self.org_token
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn('cancel_at_period_end', data, "Serializer must expose cancel_at_period_end")
+        self.assertTrue(data['cancel_at_period_end'])
+
+    def test_switch_plan_downgrade_persists_cancel_at_period_end(self):
+        """switch_plan downgrade to Free must write cancel_at_period_end=True locally — same bug class as cancel_subscription."""
+        free_plan = Plan.objects.create(
+            name="Free Downgrade Target",
+            base_price_cents=0,
+            stripe_price_id=None,
+        )
+
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.return_value = {}
+
+            response = self.client.post(
+                reverse('stripe_meta:switch_plan'),
+                data={'plan_id': free_plan.id},
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token
+            )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data['status'], 'scheduled_downgrade')
+            self.assertEqual(data['effective_at'], 1700000000)
+            mock_modify.assert_called_once_with(
+                self.subscription.stripe_subscription_id,
+                cancel_at_period_end=True,
+            )
+            self.subscription.refresh_from_db()
+            self.assertTrue(
+                self.subscription.cancel_at_period_end,
+                "cancel_at_period_end must be True in DB after a scheduled downgrade — "
+                "omitting this causes the banner to revert to 'Renews on...' after refresh"
+            )
+
     def test_cancel_subscription_stripe_error_handling(self):
         """StripeError from modify propagates as 400 STRIPE_ERROR."""
         with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \

@@ -51,7 +51,7 @@ export default function TokenBadge({ projectId }: TokenBadgeProps) {
   return (
     <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-700">
       <span className={`h-2 w-2 rounded-full ${dotColor}`} />
-      <span className="font-medium">{project_name}</span>
+      <span className="max-w-[12rem] truncate font-medium">{project_name}</span>
       <span className="text-gray-400">·</span>
       <span>
         {isUnlimited ? 'Unlimited' : `${formatTokens(tokens_used)} / ${formatTokens(monthly_token_quota)}`}

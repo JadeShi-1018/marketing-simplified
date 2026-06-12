@@ -405,7 +405,9 @@ CELERY_BEAT_SCHEDULE = {
     },
     'report-overage-to-stripe': {
         'task': 'stripe_meta.tasks.report_overage_to_stripe',
-        'schedule': crontab(hour=23, minute=0, day_of_month=28),  # monthly near month-end
+        # 1st of month, 01:00 UTC — reports the PREVIOUS (completed) month, so no
+        # late-month overage is missed and an off-schedule run targets the right month.
+        'schedule': crontab(hour=1, minute=0, day_of_month=1),
         'options': {'timezone': 'UTC'},
     },
     'cleanup-expired-tiktok-previews': {

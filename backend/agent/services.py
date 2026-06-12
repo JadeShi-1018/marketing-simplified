@@ -479,7 +479,7 @@ def _call_gemini_chat(
     current_username='',
     agent_session=None,
 ):
-    """Call Gemini for post-analysis follow-up. Replaces _call_dify_chat."""
+    """Call LLM for post-analysis follow-up."""
     from .llm_client import call_llm as _call_llm_unified
 
     user_prompt = (
@@ -503,7 +503,7 @@ def _call_gemini_chat(
         )
         parsed = json.loads(result['text'])
     except Exception as e:
-        logger.error("Gemini chat call failed: %s", e)
+        logger.error("LLM follow-up call failed: %s", e)
         raise RuntimeError(f"Gemini chat failed: {e}") from e
 
     normalized = _normalize_llm_chat_output(parsed)

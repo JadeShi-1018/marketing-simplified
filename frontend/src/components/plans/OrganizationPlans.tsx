@@ -61,7 +61,7 @@ export default function OrganizationPlans({ loading = false }: { loading?: boole
               <div className="relative w-5 h-5">
                 <svg className="w-5 h-5" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
                   {/* Horizontal line (stays fixed) */}
-                  <line x1="4" y1="10" x2="16" y2="10" stroke="#2563eb" strokeWidth="2" strokeLinecap="round" />
+                  <line x1="4" y1="10" x2="16" y2="10" stroke="#3CCED7" strokeWidth="2" strokeLinecap="round" />
                   {/* Second line: starts horizontal, rotates 90deg clockwise when expanded */}
                   <g style={{
                     transformOrigin: '10px 10px',
@@ -73,7 +73,7 @@ export default function OrganizationPlans({ loading = false }: { loading?: boole
                       y1="10"
                       x2="16"
                       y2="10"
-                      stroke="#2563eb"
+                      stroke="#3CCED7"
                       strokeWidth="2"
                       strokeLinecap="round"
                     />
@@ -114,6 +114,7 @@ export default function OrganizationPlans({ loading = false }: { loading?: boole
                     includedSeats={plan.included_seats}
                     extraSeatPriceCents={plan.extra_seat_price_cents ?? 0}
                     overagePriceCentsPer1m={plan.overage_price_cents_per_1m}
+                    currency={plan.currency}
                     ctaText={currentPlanId ? (currentPlanId === plan.id ? 'Current plan' : 'Switch plan') : 'Subscribe now'}
                     badge={index === arr.length - 2 ? 'Popular' : undefined}
                     planId={plan.id}

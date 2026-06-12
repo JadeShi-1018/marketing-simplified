@@ -91,7 +91,7 @@ class AnalyzeDataExecutor(BaseStepExecutor):
 
 
 class CallDifyExecutor(BaseStepExecutor):
-    """Legacy step type — Dify has been replaced by Gemini. Returns error if called."""
+    """Legacy step type replaced by call_llm. Returns error if called."""
 
     def execute(self, input_data):
         return StepResult(
