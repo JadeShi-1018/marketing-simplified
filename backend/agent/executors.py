@@ -6,6 +6,7 @@ the logic for that particular action.
 """
 import logging
 import os
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class AnalyzeDataExecutor(BaseStepExecutor):
                 input_data.get('success_criteria')
                 or (self.workflow_run.success_criteria if self.workflow_run.success_criteria else None)
             )
-            user_context = self.workflow_run.user_context or None
+            user_context = cache.get(f"agent:context:{self.workflow_run.id}")
             analysis = _run_analysis(
                 spreadsheet_data,
                 user_id=user_id,
@@ -144,6 +145,30 @@ class CreateTasksExecutor(BaseStepExecutor):
             return StepResult(success=False, error='No analysis_result in input')
 
         try:
+            # Gate only applies when anomalies were detected: they must be
+            # reviewed + confirmed first. Zero-anomaly analyses proceed unchanged.
+            had_anomalies = bool(analysis.get('anomalies'))
+            if had_anomalies and not analysis.get('anomalies_confirmed'):
+                return StepResult(
+                    success=False,
+                    error='Anomalies must be confirmed before creating tasks.',
+                )
+
+            # All-excluded: anomalies existed but none were included -> no-op
+            # success so the workflow completes cleanly. Zero-detected-anomaly
+            # runs are NOT skipped (existing behaviour preserved).
+            reviewed = analysis.get('reviewed_anomalies') or []
+            included_anomalies = [a for a in reviewed if a.get('included', True)]
+            if had_anomalies and not included_anomalies:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=[{
+                        'type': 'text',
+                        'content': 'All anomalies were excluded; no tasks were created.',
+                    }],
+                )
+
             tasks_data = analysis.get('recommended_tasks', [])
             if not tasks_data:
                 return StepResult(success=False, error='No recommended_tasks in analysis.')
@@ -154,6 +179,8 @@ class CreateTasksExecutor(BaseStepExecutor):
                 'input_data': input_data,
                 'analysis_result': analysis,
                 'decision_id': decision.id if decision else None,
+                'included_anomalies': included_anomalies,
+                'reviewed_anomalies': reviewed,
             }
             gate = request_external_commit(
                 orchestrator=self.orchestrator,

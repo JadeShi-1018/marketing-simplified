@@ -1,9 +1,15 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-import { authAPI } from './api';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import {
+  authPersistStorage,
+  authAPI,
+  clearPersistedAuthState,
+  persistAuthTokens,
+  readPersistedAuthState,
+} from './api';
 import { User } from '../types/auth';
 import TeamAPI from './api/teamApi';
-import { LOGIN_ERROR_MESSAGES, isNetworkError } from './authMessages';
+import { LOGIN_ERROR_MESSAGES, isNetworkError, isRetryableAuthError } from './authMessages';
 import { useChatStore } from './chatStore';
 
 // Authentication state interface
@@ -88,6 +94,12 @@ export const useAuthStore = create<AuthState>()(
             refreshToken: refresh,
             organizationAccessToken: organization_access_token || null,
             isAuthenticated: true,
+          });
+          persistAuthTokens({
+            token,
+            refreshToken: refresh,
+            organizationAccessToken: organization_access_token || null,
+            user,
           });
 
           // Get user teams after successful login
@@ -180,14 +192,34 @@ export const useAuthStore = create<AuthState>()(
       getCurrentUser: async () => {
         try {
           const user = await authAPI.getCurrentUser();
-          set({ user, isAuthenticated: true });
+          let persistedToken = get().token;
+          let persistedRefreshToken = get().refreshToken;
+          let persistedOrganizationToken = get().organizationAccessToken;
+          const authData = readPersistedAuthState();
+          persistedToken = authData?.state?.token ?? persistedToken;
+          persistedRefreshToken = authData?.state?.refreshToken ?? persistedRefreshToken;
+          persistedOrganizationToken =
+            authData?.state?.organizationAccessToken ?? persistedOrganizationToken;
+          set({
+            user,
+            token: persistedToken,
+            refreshToken: persistedRefreshToken,
+            organizationAccessToken: persistedOrganizationToken,
+            isAuthenticated: true,
+          });
+          persistAuthTokens({
+            token: persistedToken,
+            refreshToken: persistedRefreshToken,
+            organizationAccessToken: persistedOrganizationToken,
+            user,
+          });
           return { success: true };
         } catch (error: any) {
-          // If token is invalid, clear auth data
-          if (error.response?.status === 401) {
-            get().clearAuth();
-          }
-          return { success: false, error: 'Failed to get user info' };
+          return {
+            success: false,
+            error: 'Failed to get user info',
+            retryable: isRetryableAuthError(error),
+          };
         }
       },
 
@@ -218,6 +250,7 @@ export const useAuthStore = create<AuthState>()(
           const response = await authAPI.refreshOrganizationToken();
           const token = response.organization_access_token || null;
           set({ organizationAccessToken: token });
+          persistAuthTokens({ organizationAccessToken: token });
           return { success: true };
         } catch (error: any) {
           const message =
@@ -231,31 +264,84 @@ export const useAuthStore = create<AuthState>()(
 
       // Initialize authentication state on app startup
       initializeAuth: async () => {
-        const { token } = get();
-        
-        if (!token) {
+        let { token, refreshToken, user: persistedUser } = get();
+        const persistedAuth = readPersistedAuthState();
+        token = token ?? persistedAuth?.state?.token ?? null;
+        refreshToken = refreshToken ?? persistedAuth?.state?.refreshToken ?? null;
+        persistedUser = persistedUser ?? persistedAuth?.state?.user ?? null;
+        const organizationAccessToken =
+          get().organizationAccessToken ??
+          persistedAuth?.state?.organizationAccessToken ??
+          null;
+        if (token || refreshToken || organizationAccessToken || persistedUser) {
+          set({
+            token,
+            refreshToken,
+            organizationAccessToken,
+            user: persistedUser,
+            isAuthenticated: Boolean(token && persistedUser),
+          });
+        }
+
+        if (!token && !refreshToken) {
           set({ initialized: true });
           return;
         }
 
         set({ loading: true });
-        
+
         try {
+          if (refreshToken) {
+            const refreshedToken = await authAPI.refreshToken(refreshToken);
+            if (refreshedToken) {
+              token = refreshedToken;
+              set({
+                token: refreshedToken,
+                isAuthenticated: Boolean(refreshedToken && (get().user || persistedUser)),
+              });
+              persistAuthTokens({ token: refreshedToken, refreshToken, user: get().user ?? persistedUser });
+            }
+          }
+
+          if (!token) {
+            return;
+          }
+
           // Validate token by calling /auth/me
-          const userResult = await get().getCurrentUser();
-          
+          let userResult = await get().getCurrentUser();
+
+          if (!userResult.success && refreshToken && !userResult.retryable) {
+            const refreshedToken = await authAPI.refreshToken(refreshToken);
+            if (refreshedToken) {
+              token = refreshedToken;
+              set({ token: refreshedToken });
+              persistAuthTokens({ token: refreshedToken, refreshToken, user: get().user ?? persistedUser });
+              userResult = await get().getCurrentUser();
+            }
+          }
+
           if (!userResult.success) {
-            // Token is invalid, clear auth data
+            if (userResult.retryable) {
+              // Backend unavailable — keep persisted session instead of forcing re-login.
+              set({
+                isAuthenticated: Boolean(token && (get().user || persistedUser)),
+              });
+              return;
+            }
             get().clearAuth();
             return;
           }
 
-          // Get user teams after successful user validation
           await get().getUserTeams();
-          
         } catch (error) {
           console.error('Auth initialization failed:', error);
-          get().clearAuth();
+          if (isRetryableAuthError(error)) {
+            set({
+              isAuthenticated: Boolean(token && (get().user || persistedUser)),
+            });
+          } else {
+            get().clearAuth();
+          }
         } finally {
           set({ loading: false, initialized: true });
         }
@@ -274,6 +360,7 @@ export const useAuthStore = create<AuthState>()(
         // real unread_count on the next login — the root cause of badges and the
         // "New messages" divider not appearing without a page refresh.
         chatStore.clearUserState();
+        clearPersistedAuthState();
 
         set({
           user: null,
@@ -289,6 +376,7 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'auth-storage', // localStorage key
+      storage: createJSONStorage(() => authPersistStorage),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
       },
@@ -298,6 +386,7 @@ export const useAuthStore = create<AuthState>()(
         refreshToken: state.refreshToken,
         organizationAccessToken: state.organizationAccessToken,
         user: state.user,
+        isAuthenticated: !!state.token && !!state.user,
         userTeams: state.userTeams,
         selectedTeamId: state.selectedTeamId
       })

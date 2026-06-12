@@ -499,10 +499,4 @@ class Migration(migrations.Migration):
             unique_together={('workflow', 'order')},
         ),
         migrations.RunPython(seed_system_agent_state, unseed_system_agent_state),
-    
-        migrations.AddField(
-            model_name='agentworkflowrun',
-            name='user_context',
-            field=models.TextField(blank=True, default=''),
-        ),
     ]
