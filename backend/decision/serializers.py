@@ -355,12 +355,14 @@ class DecisionGraphNodeSerializer(serializers.ModelSerializer):
 class DecisionEdgeSerializer(serializers.ModelSerializer):
     from_ = serializers.IntegerField(source="from_decision_id", read_only=True)
     to = serializers.IntegerField(source="to_decision_id", read_only=True)
+    edgeType = serializers.CharField(source="edge_type", read_only=True)
 
     class Meta:
         model = DecisionEdge
         fields = [
             "from_",
             "to",
+            "edgeType",
         ]
 
     def to_representation(self, instance):
@@ -368,6 +370,7 @@ class DecisionEdgeSerializer(serializers.ModelSerializer):
         return {
             "from": data.get("from_"),
             "to": data.get("to"),
+            "edgeType": data.get("edgeType"),
         }
 
 
