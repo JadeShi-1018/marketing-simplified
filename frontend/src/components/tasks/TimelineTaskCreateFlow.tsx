@@ -268,7 +268,6 @@ export function TimelineTaskCreateFlow({
     }
 
     const payload = config.getPayload(createdTask);
-    console.log(`Creating ${taskType} with payload:`, payload);
 
     try {
       const response = await config.api(payload);
@@ -276,7 +275,6 @@ export function TimelineTaskCreateFlow({
         response && typeof response === "object" && "data" in response
           ? (response as any).data
           : response;
-      console.log(`${taskType} created:`, createdObject);
       return createdObject;
     } catch (error: any) {
       if (taskType === "retrospective" && error.response?.status === 400) {
@@ -301,10 +299,6 @@ export function TimelineTaskCreateFlow({
               retrospectivesResponse.data &&
               retrospectivesResponse.data.length > 0
             ) {
-              console.log(
-                "Found existing retrospective:",
-                retrospectivesResponse.data[0],
-              );
               return retrospectivesResponse.data[0];
             }
           } catch (findError) {
@@ -393,11 +387,6 @@ export function TimelineTaskCreateFlow({
 
   // Submit method to create task and related objects
   const handleSubmitTask = async () => {
-    console.log(
-      "Submitting task creation form with data:",
-      isSubmitting,
-      taskData,
-    );
     if (isSubmitting) return;
 
     // Validate task form first
@@ -452,9 +441,7 @@ export function TimelineTaskCreateFlow({
         ...(originMeetingIdNum != null ? { origin_meeting_id: originMeetingIdNum } : {}),
       };
 
-      console.log("Creating task with payload:", taskPayload);
       const createdTask = await createTask(taskPayload);
-      console.log("Task created:", createdTask);
 
       // Ensure task has an ID before proceeding
       if (!createdTask.id) {
@@ -471,21 +458,12 @@ export function TimelineTaskCreateFlow({
 
       // Step 3: Link the task to the specific type object
       if (createdObject && config?.contentType) {
-        console.log(`Linking task to ${taskData.type}`, {
-          taskId: createdTask.id,
-          contentType: config.contentType,
-          objectId: createdObject.id,
-          createdObject: createdObject,
-        });
-
         try {
-          const linkResponse = await TaskAPI.linkTask(
+          await TaskAPI.linkTask(
             createdTask.id,
             config.contentType,
             createdObject.id.toString(),
           );
-
-          console.log("Link task response:", linkResponse);
 
           const updatedTask = {
             ...createdTask,
@@ -495,8 +473,6 @@ export function TimelineTaskCreateFlow({
           };
 
           updateTask(createdTask.id, updatedTask);
-
-          console.log("Task linked to task type object successfully");
         } catch (linkError: any) {
           console.error("Error linking task to object:", linkError);
           const errorMsg =
@@ -516,14 +492,9 @@ export function TimelineTaskCreateFlow({
       // Step 4: For asset tasks, upload initial version file if provided
       if (taskData.type === "asset" && createdObject && assetData.file) {
         try {
-          console.log(
-            "Uploading initial version file for asset:",
-            createdObject.id,
-          );
           await AssetAPI.createAssetVersion(String(createdObject.id), {
             file: assetData.file,
           });
-          console.log("Initial version file uploaded successfully");
         } catch (error) {
           console.error("Error uploading initial version file:", error);
           toast.error(
@@ -543,7 +514,6 @@ export function TimelineTaskCreateFlow({
         await reloadTasks();
       }
 
-      console.log("Task creation completed successfully");
       onTaskCreated?.();
     } catch (error: any) {
       console.error("Error creating task:", error);

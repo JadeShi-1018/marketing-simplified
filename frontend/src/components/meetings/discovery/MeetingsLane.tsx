@@ -58,7 +58,6 @@ export function MeetingsLane({
               visible={resultCount}
               total={totalCount}
               loading={loading}
-              debugLabel={title}
             />
           </div>
           {description?.trim() ? (

@@ -36,6 +36,7 @@ from .serializers import (
     AgentSessionListSerializer,
     AgentSessionDetailSerializer,
     ChatInputSerializer,
+    UploadAnalyzeInputSerializer,
     AgentWorkflowDefinitionListSerializer,
     AgentWorkflowDefinitionDetailSerializer,
     AgentWorkflowStepSerializer,
@@ -43,6 +44,7 @@ from .serializers import (
     AgentWorkflowRunSerializer,
     StepReorderSerializer,
 )
+from .generation_registry import GenerationValidationError, get_catalog, normalize_generation_outputs
 from .services import AgentOrchestrator
 from . import data_service
 
@@ -158,8 +160,8 @@ class ChatView(EnglishResponseMixin, APIView):
 
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
-            'create_tasks', 'generate_miro',
-            'distribute_message', 'confirm_columns', 'confirm_anomalies',
+            'create_decisions', 'create_tasks', 'generate_miro',
+            'confirm_columns', 'confirm_anomalies',
             'resolve_external_approval',
         }
 
@@ -254,6 +256,20 @@ class ChatView(EnglishResponseMixin, APIView):
                             message_type='approval_request',
                             metadata=data or {},
                         )
+                        continue
+
+                    if chunk_type == 'decision_draft':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        if content or data:
+                            AgentMessage.objects.create(
+                                session=session,
+                                role='assistant',
+                                content=content or 'Decision drafts created.',
+                                message_type='decision_draft',
+                                metadata=data or {},
+                            )
                         continue
 
                     # Miro status is persisted separately (_create_agent_status_message in the
@@ -458,8 +474,20 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        upload_fields = UploadAnalyzeInputSerializer(data=request.data)
+        upload_fields.is_valid(raise_exception=True)
+        try:
+            generation_outputs = normalize_generation_outputs(
+                upload_fields.validated_data.get('generation_outputs')
+            )
+        except GenerationValidationError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Create or reuse session
-        session_id = request.data.get('session_id')
+        session_id = upload_fields.validated_data.get('session_id') or request.data.get('session_id')
         user_context = request.data.get('user_context') or None
         if session_id:
             try:
@@ -498,17 +526,25 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                     "original_filename": result['original_filename'],
                     "row_count": result['row_count'],
                     "column_count": result['column_count'],
+                    "generation_outputs": generation_outputs,
                 },
             }
             yield f"data: {json.dumps(file_event)}\n\n"
 
             # Route through the workflow engine (column detection + analysis).
             assistant_content_parts = []
-            assistant_metadata = {"file_id": result['id']}
+            assistant_metadata = {
+                "file_id": result['id'],
+                "generation_outputs": generation_outputs,
+            }
             last_message_type = 'text'
 
             try:
-                for chunk in orchestrator.handle_message("", file_id=result['id'], user_context=user_context):
+                for chunk in orchestrator.handle_message(
+                    "",
+                    file_id=result['id'],
+                    generation_outputs=generation_outputs,
+                    user_context=user_context):
                     chunk_type = chunk.get('type', 'text')
                     content = chunk.get('content', '')
                     data = chunk.get('data')
@@ -524,6 +560,9 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                         assistant_metadata.update(data)
 
                     yield f"data: {json.dumps(chunk, default=str)}\n\n"
+            except GenerationValidationError as exc:
+                logger.warning("FileUploadAnalyzeView validation error: %s", exc)
+                yield f"data: {json.dumps({'type': 'error', 'content': str(exc)})}\n\n"
             except Exception:
                 logger.exception("FileUploadAnalyzeView workflow error")
                 yield f"data: {json.dumps({'type': 'error', 'content': 'An internal error occurred. Please try again.'})}\n\n"
@@ -789,6 +828,14 @@ class WorkflowRunDetailView(EnglishResponseMixin, APIView):
             executions, many=True,
         ).data
         return Response(run_data)
+
+
+class GenerationOutputsCatalogView(EnglishResponseMixin, APIView):
+    """GET /api/agent/generation-outputs/ — catalog of tickable generation outputs."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({'outputs': get_catalog()})
 
 
 class AgentConfigStatusView(EnglishResponseMixin, APIView):
