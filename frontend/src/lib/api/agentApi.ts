@@ -567,21 +567,14 @@ export const AgentAPI = {
     templateId: string,
     params: { project_id: number; name?: string }
   ): Promise<AgentWorkflowDefinition> => {
-    // First get the template to access its workflow_definition
-    const template = await AgentAPI.getTemplate(templateId);
-
-    if (!template.workflow_definition) {
-      throw new Error('Template has no workflow definition');
-    }
-
     // Ensure we pass project context to backend via header
     const headers = params.project_id
       ? { 'X-Active-Project': String(params.project_id) }
       : {};
 
-    // Call duplicate endpoint on the workflow_definition
+    // Call new apply endpoint on template
     const response = await api.post<AgentWorkflowDefinition>(
-      `/api/agent/workflows/${template.workflow_definition}/duplicate/`,
+      `/api/agent/templates/${templateId}/apply/`,
       { name: params.name },
       { headers }
     );

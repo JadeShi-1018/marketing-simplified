@@ -247,12 +247,13 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
     """
     Serializer for AgentWorkflowTemplate.
 
+    Templates store their own steps configuration and are fully independent.
+
     Visibility:
       - organization: visible to all members of that org
       - projects (M2M): visible to members of any listed project
       - both empty: private (creator only)
     """
-    workflow_name = serializers.CharField(source='workflow_definition.name', read_only=True)
     workflow_step_count = serializers.SerializerMethodField()
     workflow_step_types = serializers.SerializerMethodField()
     applied_project_count = serializers.SerializerMethodField()
@@ -273,7 +274,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         model = AgentWorkflowTemplate
         fields = [
             'id', 'name', 'description', 'category',
-            'workflow_definition', 'workflow_name', 'workflow_step_count',
+            'steps_config', 'workflow_step_count',
             'workflow_step_types', 'created_by',
             'organization', 'organization_name',
             'project_list',
@@ -283,24 +284,18 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'workflow_definition', 'created_by',
+            'id', 'created_by',
             'organization',
             'created_at', 'updated_at',
         ]
 
     def get_workflow_step_count(self, obj):
-        if obj.workflow_definition:
-            return obj.workflow_definition.steps.filter(is_deleted=False).count()
-        return 0
+        return len(obj.steps_config or [])
 
     def get_workflow_step_types(self, obj):
-        if obj.workflow_definition:
-            return list(
-                obj.workflow_definition.steps.filter(is_deleted=False)
-                .order_by('order')
-                .values_list('step_type', flat=True)
-            )
-        return []
+        if not obj.steps_config:
+            return []
+        return [step.get('step_type') for step in obj.steps_config]
 
     def get_applied_project_count(self, obj):
         return obj.projects.count()

@@ -1074,20 +1074,15 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
         ).distinct().order_by('-created_at')
 
     def perform_create(self, serializer):
-        """Clone source workflow and create template."""
+        """
+        Create template by copying steps from source workflow.
+        Templates are now fully independent - no workflow_definition dependency.
+        """
         source_workflow_id = serializer.validated_data.pop('source_workflow_id', None)
 
         if not source_workflow_id:
-            # If no source specified, create empty workflow
-            # (This should normally not happen as we require source_workflow_id)
-            new_workflow = AgentWorkflowDefinition.objects.create(
-                name=f"{serializer.validated_data['name']} Workflow",
-                project=None,
-                is_system=False,
-                is_default=False,
-                status='active',
-                created_by=self.request.user,
-            )
+            # If no source specified, create empty template
+            steps_config = []
         else:
             # Get source workflow
             try:
@@ -1099,16 +1094,22 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
                 from rest_framework.exceptions import ValidationError
                 raise ValidationError({'source_workflow_id': 'Source workflow not found.'})
 
-            # Clone workflow
-            new_workflow = _clone_workflow_definition(source_workflow)
-            new_workflow.created_by = self.request.user
-            new_workflow.name = f"{serializer.validated_data['name']} Workflow"
-            new_workflow.save()
+            # Copy steps configuration from source workflow
+            steps = source_workflow.steps.filter(is_deleted=False).order_by('order')
+            steps_config = []
+            for step in steps:
+                steps_config.append({
+                    'step_type': step.step_type,
+                    'name': step.name,
+                    'order': step.order,
+                    'config': step.config or {},
+                    'description': step.description or '',
+                })
 
         # Create template (serializer.create() also sets the projects M2M)
         serializer.save(
             created_by=self.request.user,
-            workflow_definition=new_workflow,
+            steps_config=steps_config,
         )
 
     def perform_update(self, serializer):
@@ -1129,6 +1130,52 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
         # Soft delete
         instance.is_deleted = True
         instance.save()
+
+    @action(detail=True, methods=['post'])
+    def apply(self, request, pk=None):
+        """
+        Apply template to create a new workflow in the current project.
+        Copies steps from template.steps_config to the new workflow.
+        """
+        template = self.get_object()
+        project = _get_user_project(request)
+
+        if not project:
+            return Response(
+                {'detail': 'An active project is required to apply a template.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get custom name from request
+        custom_name = (request.data.get('name') or '').strip()
+        workflow_name = custom_name or template.name
+
+        # Create new workflow
+        from django.db import transaction
+        with transaction.atomic():
+            new_workflow = AgentWorkflowDefinition.objects.create(
+                name=workflow_name,
+                description=template.description,
+                project=project,
+                is_default=False,
+                is_system=False,
+                status='draft',
+                created_by=request.user,
+            )
+
+            # Copy steps from template.steps_config
+            for step_config in template.steps_config:
+                AgentWorkflowStep.objects.create(
+                    workflow=new_workflow,
+                    step_type=step_config.get('step_type'),
+                    name=step_config.get('name'),
+                    order=step_config.get('order', 0),
+                    config=step_config.get('config', {}),
+                    description=step_config.get('description', ''),
+                )
+
+        serializer = AgentWorkflowDefinitionDetailSerializer(new_workflow)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 class WorkflowTriggerLogViewSet(EnglishResponseMixin, viewsets.ReadOnlyModelViewSet):

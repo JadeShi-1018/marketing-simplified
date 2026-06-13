@@ -11,7 +11,7 @@ import ReactFlow, {
   type Node,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { AgentAPI } from "@/lib/api/agentApi";
@@ -157,31 +157,18 @@ interface TemplatePreviewCanvasProps {
 export default function TemplatePreviewCanvas({ template, onBack }: TemplatePreviewCanvasProps) {
   const router = useRouter();
   const { projectParams } = useAgentWorkflowProjectParams();
-  const [steps, setSteps] = useState<AgentWorkflowStep[]>([]);
-  const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const creatingRef = useRef(false);
 
-  // Fetch workflow steps
-  useEffect(() => {
-    if (!template.workflow_definition) {
-      setLoading(false);
-      return;
-    }
-
-    // Don't pass projectParams because template workflow_definition has project=None
-    AgentAPI.getWorkflow(template.workflow_definition)
-      .then((workflow) => {
-        setSteps(workflow.steps ?? []);
-      })
-      .catch((err) => {
-        console.error("Failed to fetch template workflow:", err);
-        toast.error("Failed to load template workflow");
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [template.workflow_definition]);
+  // Use template's own steps_config (no need to fetch workflow)
+  // Add temporary IDs for React Flow nodes
+  const steps = useMemo(() => {
+    if (!template.steps_config) return [];
+    return template.steps_config.map((step, index) => ({
+      ...step,
+      id: `template-step-${index}`, // Temporary ID for display
+    }));
+  }, [template.steps_config]);
 
   const handleCreateWorkflow = useCallback(async () => {
     // Prevent duplicate clicks
@@ -228,14 +215,6 @@ export default function TemplatePreviewCanvas({ template, onBack }: TemplatePrev
       setCreating(false);
     }
   }, [template.id, template.name, projectParams, router, creating]);
-
-  if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
-      </div>
-    );
-  }
 
   if (steps.length === 0) {
     return (

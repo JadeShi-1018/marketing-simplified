@@ -369,10 +369,10 @@ export interface AgentWorkflowTemplate {
   name: string;
   description?: string;
   category: TemplateCategory;
-  workflow_definition?: string;
-  workflow_name?: string;
+  /** Template's own steps configuration (fully independent from any workflow). */
+  steps_config?: AgentWorkflowStep[];
   workflow_step_count?: number;
-  /** Ordered list of step_type strings for each active step in the template's workflow. */
+  /** Ordered list of step_type strings for each step in the template. */
   workflow_step_types?: WorkflowStepType[];
   created_by: string;
   /** Set when shared at org level; all org members can see this template. */

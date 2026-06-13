@@ -658,14 +658,15 @@ class AgentPendingExternalApproval(TimeStampedModel):
 
 class AgentWorkflowTemplate(TimeStampedModel):
     """
-    Reusable workflow template that wraps an AgentWorkflowDefinition.
+    Reusable workflow template that stores workflow steps configuration.
 
-    Templates provide a named, categorized, shareable abstraction layer on top of
-    workflow definitions. The same template can be applied to multiple projects,
-    enabling consistent "Agent takes care of the project" behavior.
+    Templates provide a named, categorized, shareable abstraction for workflow blueprints.
+    The same template can be applied to multiple projects, enabling consistent
+    "Agent takes care of the project" behavior.
 
-    When created, the template clones the source workflow definition + steps to
-    ensure isolation (changes to the template don't affect other workflows).
+    Templates are completely independent - they store their own steps configuration.
+    Creating a template from a workflow copies the steps (no dependency).
+    Applying a template creates a new workflow with copied steps (no dependency).
 
     Visibility is determined by:
       - organization: if set, all members of that org can see this template (org section)
@@ -692,12 +693,21 @@ class AgentWorkflowTemplate(TimeStampedModel):
         help_text='Predefined category for organizing templates',
     )
 
-    # References a cloned workflow definition (project=None, is_system=False)
+    # Template stores its own steps configuration (fully independent)
+    steps_config = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Array of step configurations: [{"step_type": "...", "name": "...", "order": 0, "config": {...}}, ...]',
+    )
+
+    # DEPRECATED: Legacy field, will be removed after data migration
     workflow_definition = models.ForeignKey(
         AgentWorkflowDefinition,
         on_delete=models.PROTECT,
         related_name='templates',
-        help_text='Cloned workflow owned by this template',
+        help_text='DEPRECATED: Legacy cloned workflow, being replaced by steps_config',
+        null=True,
+        blank=True,
     )
 
     created_by = models.ForeignKey(
