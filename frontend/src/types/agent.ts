@@ -383,6 +383,8 @@ export interface AgentWorkflowTemplate {
   applied_project_count?: number;
   /** Example phrases / scenarios describing when to use this template. */
   use_cases?: string[];
+  /** True if this template is shared to the current active project (annotated field). */
+  is_shared_to_current_project?: boolean;
   created_at: string;
   updated_at?: string;
 }

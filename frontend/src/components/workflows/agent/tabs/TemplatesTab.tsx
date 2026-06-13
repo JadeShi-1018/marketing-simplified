@@ -9,6 +9,7 @@ import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
 import { AgentAPI } from "@/lib/api/agentApi"
 import { useAuthStore } from "@/lib/authStore"
 import { isTemplateOwner } from "@/components/agent/templates/templateOwnership"
+import { useAgentWorkflowProjectParams } from "../hooks/useAgentWorkflows"
 import TemplateCard from "../cards/TemplateCard"
 import { brandChipActive, brandChipInactive } from "../workflowBrandClasses"
 import { cn } from "@/lib/utils"
@@ -48,6 +49,7 @@ function SectionHeading({
 
 export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
   const user = useAuthStore((s) => s.user)
+  const { projectParams } = useAgentWorkflowProjectParams()
 
   const [templates, setTemplates] = useState<AgentWorkflowTemplate[]>([])
   const [loading, setLoading] = useState(true)
@@ -59,9 +61,12 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
   const fetchTemplates = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await AgentAPI.listTemplates(
-        categoryFilter !== "all" ? { category: categoryFilter } : undefined
-      )
+      // Pass current project ID to filter templates by visibility
+      const params = {
+        ...(categoryFilter !== "all" && { category: categoryFilter }),
+        ...(projectParams && { project_id: projectParams.project_id }),
+      }
+      const data = await AgentAPI.listTemplates(params)
       setTemplates(data)
     } catch {
       toast.error("Failed to load templates")
@@ -69,7 +74,7 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
     } finally {
       setLoading(false)
     }
-  }, [categoryFilter])
+  }, [categoryFilter, projectParams])
 
   useEffect(() => {
     fetchTemplates()
@@ -85,13 +90,16 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
     )
   }, [templates, search])
 
-  // Three groups: org → project → private
-  const orgTemplates = filtered.filter((t) => !!t.organization)
-  const projectTemplates = filtered.filter((t) => !t.organization && (t.project_list?.length ?? 0) > 0)
-  const privateTemplates = filtered.filter((t) => !t.organization && !(t.project_list?.length))
-
   const userId = user?.id
   const isOwner = (t: AgentWorkflowTemplate) => isTemplateOwner(t, userId)
+
+  // Three groups: org → project → private
+  // Note: A template can appear in both Project and Private sections
+  const orgTemplates = filtered.filter((t) => !!t.organization)
+  // Project templates: shared to current active project (regardless of ownership)
+  const projectTemplates = filtered.filter((t) => !t.organization && t.is_shared_to_current_project)
+  // Private templates: created by current user (regardless of sharing)
+  const privateTemplates = filtered.filter((t) => !t.organization && isOwner(t))
 
   const handleDeleteTemplate = async () => {
     if (!deletingTemplate) return

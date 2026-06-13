@@ -1029,21 +1029,54 @@ class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_queryset(self):
-        from core.models import ProjectMember
+        """
+        Return templates visible to current user based on:
+        1. Created by user (all templates, always visible regardless of sharing)
+        2. Shared at organization level
+        3. Shared to user's current active project (from X-Active-Project header)
+        """
+        from django.db.models import Q, Exists, OuterRef
+        from core.models import ProjectMember, Project
+
         user = self.request.user
         qs = AgentWorkflowTemplate.objects.filter(is_deleted=False)
 
-        # Visibility: private (creator) OR org-shared OR project-shared (M2M)
-        user_project_ids = ProjectMember.objects.filter(
-            user=user, is_active=True
-        ).values_list('project_id', flat=True)
-        visibility_q = Q(organization__isnull=True, projects__isnull=True, created_by=user)
+        # Get current active project from X-Active-Project header
+        project = _get_user_project(self.request)
+
+        # Build visibility filter
+        # 1. All templates created by user (always visible, regardless of sharing)
+        visibility_q = Q(created_by=user)
+
+        # 2. Organization-level sharing
         if hasattr(user, 'organization') and user.organization:
             visibility_q |= Q(organization=user.organization)
-        if user_project_ids:
-            visibility_q |= Q(projects__in=user_project_ids)
+
+        # 3. Project-level sharing (only for current active project)
+        if project:
+            # Verify user is actually a member of this project
+            is_member = ProjectMember.objects.filter(
+                user=user,
+                project=project,
+                is_active=True
+            ).exists()
+
+            if is_member:
+                visibility_q |= Q(projects=project)  # M2M lookup
 
         qs = qs.filter(visibility_q)
+
+        # Annotate whether template is shared to current project
+        # This helps frontend decide whether to show in "Project" or "Private" section
+        if project and self.action == 'list':
+            qs = qs.annotate(
+                is_shared_to_current_project=Exists(
+                    Project.objects.filter(
+                        id=project.id,
+                        workflow_templates=OuterRef('pk'),
+                    )
+                )
+            )
 
         # Category filter
         category = self.request.query_params.get('category')

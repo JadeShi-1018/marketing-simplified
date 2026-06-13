@@ -260,6 +260,8 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
     organization_name = serializers.CharField(source='organization.name', read_only=True)
     # Read-only project info (list of {id, name})
     project_list = serializers.SerializerMethodField()
+    # Annotated field: whether template is shared to current active project
+    is_shared_to_current_project = serializers.BooleanField(read_only=True, required=False)
     source_workflow_id = serializers.UUIDField(write_only=True, required=False)
     organization_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
     # Write: list of project IDs (integers or UUIDs); null/[] clears all
@@ -279,6 +281,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
             'organization', 'organization_name',
             'project_list',
             'applied_project_count',
+            'is_shared_to_current_project',
             'use_cases',
             'source_workflow_id', 'organization_id', 'project_ids',
             'created_at', 'updated_at',
@@ -286,6 +289,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'created_by',
             'organization',
+            'is_shared_to_current_project',
             'created_at', 'updated_at',
         ]
 

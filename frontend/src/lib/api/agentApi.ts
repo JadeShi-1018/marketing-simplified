@@ -523,11 +523,18 @@ export const AgentAPI = {
   listTemplates: async (params?: {
     category?: string;
     search?: string;
-    project_id?: string;
+    project_id?: number;
   }): Promise<AgentWorkflowTemplate[]> => {
+    // Extract project_id for header, keep other params for query
+    const { project_id, ...queryParams } = params || {};
+
+    const headers = project_id
+      ? { 'X-Active-Project': String(project_id) }
+      : {};
+
     const response = await api.get<AgentWorkflowTemplate[] | { results?: AgentWorkflowTemplate[] }>(
       '/api/agent/templates/',
-      { params }
+      { params: queryParams, headers }
     );
     const data = response.data;
     return Array.isArray(data) ? data : (data.results || []);
