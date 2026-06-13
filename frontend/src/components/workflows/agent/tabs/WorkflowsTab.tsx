@@ -92,8 +92,9 @@ export default function WorkflowsTab({ onCreateClick, refreshKey }: WorkflowsTab
       toast.success("Workflow deleted")
       setDeletingWorkflow(null)
       fetchWorkflows()
-    } catch {
-      toast.error("Failed to delete workflow")
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.detail || "Failed to delete workflow"
+      toast.error(errorMsg)
     }
   }
 

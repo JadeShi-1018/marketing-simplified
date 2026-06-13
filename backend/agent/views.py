@@ -628,17 +628,21 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
     def get_queryset(self):
         project = _get_user_project(self.request)
         qs = AgentWorkflowDefinition.objects.filter(is_deleted=False)
+
+        # For list action, exclude template workflows (they should only appear in templates tab)
+        # For retrieve action, include template workflows (needed for template preview)
+        include_template_workflows = self.action != 'list'
+
         if project:
-            qs = qs.filter(
-                Q(is_system=True) |
-                Q(project=project, is_system=False, created_by=self.request.user) |
-                Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
-            )
+            filters = Q(is_system=True) | Q(project=project, is_system=False, created_by=self.request.user)
+            if include_template_workflows:
+                filters |= Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
+            qs = qs.filter(filters)
         else:
-            qs = qs.filter(
-                Q(is_system=True) |
-                Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
-            )
+            filters = Q(is_system=True)
+            if include_template_workflows:
+                filters |= Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
+            qs = qs.filter(filters)
         return qs.order_by('-is_system', '-is_default', '-created_at')
 
     def perform_create(self, serializer):
@@ -662,6 +666,14 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
                 {"detail": "System workflows cannot be deleted."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        # Prevent deleting workflows that are used by templates
+        if instance.templates.filter(is_deleted=False).exists():
+            return Response(
+                {"detail": "Cannot delete workflow that is used by active templates. Delete the template first."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         instance.is_deleted = True
         instance.save()
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
   Background,
   BackgroundVariant,
@@ -41,9 +41,10 @@ interface CanvasInnerProps {
   steps: AgentWorkflowStep[];
   onCreateWorkflow: () => void;
   onCancel: () => void;
+  isCreating: boolean;
 }
 
-function CanvasInner({ template, steps, onCreateWorkflow, onCancel }: CanvasInnerProps) {
+function CanvasInner({ template, steps, onCreateWorkflow, onCancel, isCreating }: CanvasInnerProps) {
   const { fitView } = useReactFlow();
 
   // Fit view on mount
@@ -102,6 +103,7 @@ function CanvasInner({ template, steps, onCreateWorkflow, onCancel }: CanvasInne
           template={template}
           onCreateWorkflow={onCreateWorkflow}
           onCancel={onCancel}
+          isCreating={isCreating}
         />
       </div>
 
@@ -158,6 +160,7 @@ export default function TemplatePreviewCanvas({ template, onBack }: TemplatePrev
   const [steps, setSteps] = useState<AgentWorkflowStep[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
 
   // Fetch workflow steps
   useEffect(() => {
@@ -181,26 +184,50 @@ export default function TemplatePreviewCanvas({ template, onBack }: TemplatePrev
   }, [template.workflow_definition]);
 
   const handleCreateWorkflow = useCallback(async () => {
+    // Prevent duplicate clicks
+    if (creatingRef.current || creating) {
+      console.warn("[CREATE] Already creating workflow, ignoring duplicate call");
+      return;
+    }
+
     if (!projectParams?.project_id) {
       toast.error("Project ID is required");
       return;
     }
 
+    creatingRef.current = true;
     setCreating(true);
+
     try {
+      console.log("[CREATE] Starting workflow creation from template:", template.id);
+      console.log("[CREATE] Project ID:", projectParams.project_id);
+
       const newWorkflow = await AgentAPI.applyTemplate(template.id, {
         project_id: projectParams.project_id,
+        name: template.name, // Use template name as initial workflow name
       });
+
+      console.log("[CREATE] Created workflow:", newWorkflow);
+      console.log("[CREATE] Workflow ID:", newWorkflow.id);
+
+      if (!newWorkflow.id) {
+        throw new Error("Created workflow has no ID");
+      }
+
       toast.success("Workflow created successfully");
-      // Navigate to the new workflow canvas
-      router.push(`/workflows/${newWorkflow.id}`);
+
+      // Navigate to the new workflow canvas with new=1 parameter
+      const targetUrl = `/workflows/${newWorkflow.id}?new=1`;
+      console.log("[CREATE] Navigating to:", targetUrl);
+      router.push(targetUrl);
     } catch (err) {
-      console.error("Failed to create workflow:", err);
+      console.error("[CREATE] Failed to create workflow:", err);
       toast.error("Failed to create workflow");
+      creatingRef.current = false; // Reset on error
     } finally {
       setCreating(false);
     }
-  }, [template.id, projectParams, router]);
+  }, [template.id, template.name, projectParams, router, creating]);
 
   if (loading) {
     return (
@@ -233,8 +260,9 @@ export default function TemplatePreviewCanvas({ template, onBack }: TemplatePrev
       <CanvasInner
         template={template}
         steps={steps}
-        onCreateWorkflow={creating ? () => {} : handleCreateWorkflow}
+        onCreateWorkflow={handleCreateWorkflow}
         onCancel={onBack}
+        isCreating={creating}
       />
     </ReactFlowProvider>
   );

@@ -77,11 +77,21 @@ export default function TemplateCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const category = CATEGORY_CONFIG[template.category] ?? CATEGORY_CONFIG.other
-  const { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers } = useHoverCard()
+  const { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers, hide } = useHoverCard()
 
   const handleCardClick = () => {
     // Navigate to template preview page
     router.push(`/workflows/templates/${template.id}/preview`)
+  }
+
+  const handleEdit = () => {
+    hide()
+    onEdit?.()
+  }
+
+  const handleDelete = () => {
+    hide()
+    onDelete?.()
   }
 
   useEffect(() => {
@@ -108,8 +118,8 @@ export default function TemplateCard({
           projectList={template.project_list}
           onPreview={handleCardClick}
           onApply={onApply}
-          onEdit={onEdit}
-          onDelete={onDelete}
+          onEdit={onEdit ? handleEdit : undefined}
+          onDelete={onDelete ? handleDelete : undefined}
         />
       </HoverCardPortal>
 
