@@ -4,6 +4,7 @@ from .views import (
     AgentSessionViewSet,
     AgentWorkflowDefinitionViewSet,
     AgentConfigStatusView,
+    GenerationOutputsCatalogView,
     ChatView,
     SpreadsheetListView,
     DataReportListView,
@@ -53,6 +54,7 @@ urlpatterns = [
     path('upload-analyze/', FileUploadAnalyzeView.as_view(), name='agent-upload-analyze'),
     path('anomalies/latest/', AnomalyLatestView.as_view(), name='agent-anomaly-latest'),
     path('config/status/', AgentConfigStatusView.as_view(), name='agent-config-status'),
+    path('generation-outputs/', GenerationOutputsCatalogView.as_view(), name='agent-generation-outputs'),
 
     # Webhook receiver
     path('webhooks/<uuid:workflow_id>/', WebhookReceiverView.as_view(), name='agent-webhook-receiver'),

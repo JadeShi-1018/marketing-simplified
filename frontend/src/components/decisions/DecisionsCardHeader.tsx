@@ -3,7 +3,6 @@
 import { FilePenLine, Loader2 } from 'lucide-react';
 
 interface Props {
-  projectName?: string | null;
   decisionCount: number;
   role?: string | null;
   canCreate: boolean;
@@ -12,7 +11,6 @@ interface Props {
 }
 
 export default function DecisionsCardHeader({
-  projectName,
   decisionCount,
   role,
   canCreate,
@@ -23,7 +21,7 @@ export default function DecisionsCardHeader({
     <div className="flex flex-col items-stretch gap-3 border-b border-gray-100 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-4">
       <div className="min-w-0">
         <h2 className="text-[15px] font-semibold text-gray-900">
-          {projectName || 'No project selected'}
+          Decision
         </h2>
         <p className="mt-0.5 text-xs text-gray-500">
           {decisionCount} decision{decisionCount === 1 ? '' : 's'}

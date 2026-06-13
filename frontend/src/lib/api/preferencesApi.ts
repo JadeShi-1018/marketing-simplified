@@ -1,5 +1,6 @@
 import axios from 'axios';
-import { resolveApiBaseUrl } from '../api';
+import type { AxiosError, InternalAxiosRequestConfig } from 'axios';
+import { readPersistedAuthState, refreshAccessToken, resolveApiBaseUrl } from '../api';
 import {
   UserPreferences,
   UserPreferencesUpdate,
@@ -9,6 +10,8 @@ import {
 } from '../../types/preferences';
 
 const API_BASE_URL = resolveApiBaseUrl();
+
+type RetriableRequestConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -21,21 +24,15 @@ const api = axios.create({
 // Request interceptor to add auth token
 api.interceptors.request.use(
   (config) => {
-    // Get token from Zustand store instead of localStorage
-    const token = typeof window !== 'undefined' ? localStorage.getItem('auth-storage') : null;
-    let parsedToken = null;
-
-    if (token) {
-      try {
-        const authData = JSON.parse(token);
-        parsedToken = authData.state?.token;
-      } catch (error) {
-        console.warn('Failed to parse auth storage:', error);
-      }
-    }
+    const authData = readPersistedAuthState();
+    const parsedToken = authData?.state?.token;
+    const organizationToken = authData?.state?.organizationAccessToken;
 
     if (parsedToken) {
       config.headers.Authorization = `Bearer ${parsedToken}`;
+    }
+    if (organizationToken) {
+      config.headers['X-Organization-Token'] = organizationToken;
     }
     return config;
   },
@@ -45,12 +42,18 @@ api.interceptors.request.use(
 // Response interceptor to handle errors
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      // Clear auth data and redirect to login on unauthorized requests
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('auth-storage');
-        window.location.href = '/login';
+  async (error: AxiosError) => {
+    const config = error.config as RetriableRequestConfig | undefined;
+
+    if (error.response?.status === 401 && typeof window !== 'undefined' && config && !config._retry) {
+      const refreshToken = readPersistedAuthState()?.state?.refreshToken;
+      if (refreshToken) {
+        config._retry = true;
+        const accessToken = await refreshAccessToken(refreshToken);
+        if (accessToken) {
+          config.headers.Authorization = `Bearer ${accessToken}`;
+          return api(config);
+        }
       }
     }
     return Promise.reject(error);

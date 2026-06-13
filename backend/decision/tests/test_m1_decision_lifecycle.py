@@ -76,6 +76,37 @@ def _make_commit_ready_payload():
 
 
 @pytest.mark.django_db
+def test_commit_requires_only_title():
+    user, project = _create_user_with_project()
+    client = _client_for(user, project)
+
+    create_resp = client.post("/api/decisions/drafts/", {"title": "Title only"}, format="json")
+    assert create_resp.status_code == 201
+    decision_id = create_resp.data["id"]
+
+    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    assert commit_resp.status_code == 200
+    decision = Decision.objects.get(pk=decision_id)
+    assert decision.status == Decision.Status.COMMITTED
+
+
+@pytest.mark.django_db
+def test_commit_rejects_missing_title():
+    user, project = _create_user_with_project()
+    client = _client_for(user, project)
+
+    create_resp = client.post("/api/decisions/drafts/", {"title": "Temporary"}, format="json")
+    assert create_resp.status_code == 201
+    decision_id = create_resp.data["id"]
+    Decision.objects.filter(pk=decision_id).update(title="")
+
+    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    assert commit_resp.status_code == 400
+    field_errors = commit_resp.data["error"]["details"]["fieldErrors"]
+    assert field_errors == [{"field": "title", "message": "Title is required before commit."}]
+
+
+@pytest.mark.django_db
 def test_commit_review_archive_happy_path():
     """Assert draft -> commit -> review lifecycle succeeds with correct statuses and transitions."""
     user, project = _create_user_with_project()
@@ -147,3 +178,34 @@ def test_commit_review_archive_happy_path():
         decision=decision,
         transition_method="review",
     ).count() == 1
+
+
+@pytest.mark.django_db
+def test_patch_committed_decision_content():
+    user, project = _create_user_with_project()
+    client = _client_for(user, project)
+
+    create_resp = client.post("/api/decisions/drafts/", {"title": "Original"}, format="json")
+    assert create_resp.status_code == 201
+    decision_id = create_resp.data["id"]
+
+    client.patch(
+        f"/api/decisions/drafts/{decision_id}/",
+        _make_commit_ready_payload(),
+        format="json",
+    )
+    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    assert commit_resp.status_code == 200
+
+    amend_resp = client.patch(
+        f"/api/decisions/{decision_id}/",
+        {"title": "Amended title", "contextSummary": "Updated context"},
+        format="json",
+    )
+    assert amend_resp.status_code == 200
+    assert amend_resp.data["title"] == "Amended title"
+    assert amend_resp.data["contextSummary"] == "Updated context"
+
+    decision = Decision.objects.get(pk=decision_id)
+    assert decision.status == Decision.Status.COMMITTED
+    assert decision.title == "Amended title"

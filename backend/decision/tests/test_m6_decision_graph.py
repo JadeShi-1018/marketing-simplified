@@ -198,7 +198,12 @@ def test_graph_endpoint_returns_nodes_and_edges():
         project_seq=2,
     )
 
-    DecisionEdge.objects.create(from_decision=decision_a, to_decision=decision_b, created_by=user)
+    DecisionEdge.objects.create(
+        from_decision=decision_a,
+        to_decision=decision_b,
+        created_by=user,
+        edge_type=DecisionEdge.EdgeType.FOLLOW_UP,
+    )
 
     client = _client_for(user)
     resp = client.get(f"/api/core/projects/{project.id}/decisions/graph/")
@@ -206,5 +211,85 @@ def test_graph_endpoint_returns_nodes_and_edges():
     node_ids = {node["id"] for node in resp.data["nodes"]}
     assert decision_a.id in node_ids
     assert decision_b.id in node_ids
+    node_a = next(node for node in resp.data["nodes"] if node["id"] == decision_a.id)
+    assert node_a["projectId"] == project.id
+    assert node_a["projectName"] == project.name
     edges = resp.data["edges"]
-    assert {"from": decision_a.id, "to": decision_b.id} in edges
+    assert {"from": decision_a.id, "to": decision_b.id, "edgeType": "FOLLOW_UP"} in edges
+
+
+@pytest.mark.django_db
+def test_connections_put_creates_related_storyline_edge():
+    organization = Organization.objects.create(name="Test Org", email_domain="test.com")
+    user = _make_user("creator@test.com", organization)
+    project = _create_project(organization, user, "Project A")
+    ProjectMember.objects.create(user=user, project=project, role="member", is_active=True)
+
+    decision_a = Decision.objects.create(
+        title="A",
+        status=Decision.Status.COMMITTED,
+        author=user,
+        project=project,
+        project_seq=10,
+    )
+    decision_b = Decision.objects.create(
+        title="B",
+        status=Decision.Status.COMMITTED,
+        author=user,
+        project=project,
+        project_seq=11,
+    )
+
+    client = _client_for(user)
+    resp = client.put(
+        f"/api/decisions/{decision_a.id}/connections/?project_id={project.id}",
+        {"connectedDecisionSeqs": [decision_b.project_seq]},
+        format="json",
+    )
+    assert resp.status_code == 200
+    edge = DecisionEdge.objects.get(from_decision=decision_a, to_decision=decision_b)
+    assert edge.edge_type == DecisionEdge.EdgeType.RELATED
+
+
+@pytest.mark.django_db
+def test_connections_put_is_idempotent_when_follow_up_edge_exists():
+    organization = Organization.objects.create(name="Test Org", email_domain="test.com")
+    user = _make_user("creator@test.com", organization)
+    project = _create_project(organization, user, "Project A")
+    ProjectMember.objects.create(user=user, project=project, role="member", is_active=True)
+
+    decision_a = Decision.objects.create(
+        title="A",
+        status=Decision.Status.COMMITTED,
+        author=user,
+        project=project,
+        project_seq=10,
+    )
+    decision_b = Decision.objects.create(
+        title="B",
+        status=Decision.Status.COMMITTED,
+        author=user,
+        project=project,
+        project_seq=11,
+    )
+
+    DecisionEdge.objects.create(
+        from_decision=decision_a,
+        to_decision=decision_b,
+        created_by=user,
+        edge_type=DecisionEdge.EdgeType.FOLLOW_UP,
+    )
+
+    client = _client_for(user)
+    resp = client.put(
+        f"/api/decisions/{decision_a.id}/connections/?project_id={project.id}",
+        {"connectedDecisionIds": [decision_b.id]},
+        format="json",
+    )
+    assert resp.status_code == 200
+    edge = DecisionEdge.objects.get(from_decision=decision_a, to_decision=decision_b)
+    assert edge.edge_type == DecisionEdge.EdgeType.RELATED
+    assert DecisionEdge.objects.filter(
+        from_decision=decision_a,
+        to_decision=decision_b,
+    ).count() == 1

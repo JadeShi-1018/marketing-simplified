@@ -15,7 +15,7 @@ from notifications.action_urls import decision_action_url
 from .models import CommitRecord, Decision, DecisionEdge, Review, Signal
 from calendars.models import CalendarEvent
 from .permissions import DecisionPermission
-from decision.services import invalid_state_response, validate_decision_edge
+from decision.services import infer_decision_topic, invalid_state_response, normalize_decision_topic, validate_decision_edge
 from .serializers import (
     CreateReviewSerializer,
     CommittedReviewSerializer,
@@ -94,6 +94,7 @@ class DecisionDraftViewSet(
                 from_decision=parent,
                 to_decision=decision,
                 created_by=self.request.user,
+                edge_type=DecisionEdge.EdgeType.FOLLOW_UP,
             )
 
     def perform_create(self, serializer):
@@ -134,7 +135,11 @@ class DecisionDraftViewSet(
                 .get("max_seq")
             )
             next_seq = (max_seq or 0) + 1
-
+            existing_topics = set(
+                Decision.objects.filter(project=project, is_deleted=False)
+                .exclude(topic="")
+                .values_list("topic", flat=True)
+            )
             decision = serializer.save(
                 author=self.request.user,
                 last_edited_by=self.request.user,
@@ -142,6 +147,9 @@ class DecisionDraftViewSet(
                 project_seq=next_seq,
             )
 
+            if not decision.topic or decision.topic == "other":
+                decision.topic = infer_decision_topic(decision.title, existing_topics=existing_topics)
+                decision.save(update_fields=["topic"])
             if origin_meeting is not None:
                 MeetingDecisionOrigin.objects.create(
                     meeting=origin_meeting,
@@ -253,6 +261,7 @@ class DecisionDraftViewSet(
 
 
 class DecisionViewSet(
+    mixins.UpdateModelMixin,
     mixins.DestroyModelMixin,
     viewsets.ReadOnlyModelViewSet,
 ):
@@ -322,6 +331,46 @@ class DecisionViewSet(
         serializer = self.get_serializer(decision)
         return Response(serializer.data)
 
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {"detail": "Use PATCH for partial updates."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        """Amend committed/reviewed decision content without changing lifecycle status."""
+        decision = self.get_object()
+        if decision.status not in (
+            Decision.Status.COMMITTED,
+            Decision.Status.REVIEWED,
+        ):
+            return invalid_state_response(
+                current_status=decision.status,
+                allowed_statuses=[
+                    Decision.Status.COMMITTED,
+                    Decision.Status.REVIEWED,
+                ],
+                suggested_action="Use PATCH /api/decisions/drafts/{id}/ for draft decisions.",
+            )
+        serializer = DecisionDraftSerializer(
+            decision,
+            data=request.data,
+            partial=True,
+            context=self.get_serializer_context(),
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.validated_data.pop("parentDecisionIds", None)
+        try:
+            with transaction.atomic():
+                serializer.save(last_edited_by=request.user)
+        except ValidationError as exc:
+            return Response(exc.message_dict, status=status.HTTP_400_BAD_REQUEST)
+        response_serializer = DecisionCommittedSerializer(
+            decision,
+            context=self.get_serializer_context(),
+        )
+        return Response(response_serializer.data)
+
     def get_serializer_class(self):
         if self.action == 'list':
             return DecisionListSerializer
@@ -371,6 +420,8 @@ class DecisionViewSet(
             }
             edge_list.append(
                 {
+                    "from_id": edge.from_decision_id,
+                    "to_id": edge.to_decision_id,
                     "from_seq": edge.from_decision.project_seq,
                     "to_seq": edge.to_decision.project_seq,
                 }
@@ -445,82 +496,126 @@ class DecisionViewSet(
 
         serializer = DecisionConnectionsUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        requested_ids = list(serializer.validated_data.get("connectedDecisionIds") or [])
         requested_seqs = list(serializer.validated_data.get("connectedDecisionSeqs") or [])
 
+        if requested_ids and requested_seqs:
+            return Response(
+                {"detail": "Use connectedDecisionIds or connectedDecisionSeqs, not both."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(requested_ids) != len(set(requested_ids)):
+            return Response(
+                {"detail": "Duplicate connectedDecisionIds are not allowed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if len(requested_seqs) != len(set(requested_seqs)):
             return Response(
                 {"detail": "Duplicate connectedDecisionSeqs are not allowed."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        requested_seqs = [seq for seq in requested_seqs if seq != decision.project_seq]
-
-        targets = list(
-            Decision.objects.filter(
-                project_id=decision.project_id,
-                project_seq__in=requested_seqs,
+        use_id_targets = "connectedDecisionIds" in serializer.validated_data
+        if use_id_targets:
+            requested_ids = [target_id for target_id in requested_ids if target_id != decision.id]
+            visible_project_ids = ProjectMember.objects.filter(
+                user=request.user,
+                is_active=True,
+                project__organization=decision.project.organization,
+                project__is_deleted=False,
+            ).values_list("project_id", flat=True)
+            target_qs = Decision.objects.filter(
+                id__in=requested_ids,
+                project_id__in=visible_project_ids,
                 is_deleted=False,
             )
-        )
-        if len(targets) != len(requested_seqs):
-            return Response(
-                {"detail": "One or more connectedDecisionSeqs are invalid for this project."},
-                status=status.HTTP_400_BAD_REQUEST,
+            if request.user.is_superuser:
+                target_qs = Decision.objects.filter(
+                    id__in=requested_ids,
+                    project__organization=decision.project.organization,
+                    project__is_deleted=False,
+                    is_deleted=False,
+                )
+            targets = list(target_qs)
+            if len(targets) != len(requested_ids):
+                return Response(
+                    {"detail": "One or more connectedDecisionIds are invalid or not visible."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            requested_seqs = [seq for seq in requested_seqs if seq != decision.project_seq]
+            targets = list(
+                Decision.objects.filter(
+                    project_id=decision.project_id,
+                    project_seq__in=requested_seqs,
+                    is_deleted=False,
+                )
             )
+            if len(targets) != len(requested_seqs):
+                return Response(
+                    {"detail": "One or more connectedDecisionSeqs are invalid for this project."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         desired_pairs = set()
         for target in targets:
-            if target.project_seq < decision.project_seq:
+            if target.id < decision.id:
                 desired_pairs.add((target.id, decision.id))
             else:
                 desired_pairs.add((decision.id, target.id))
 
-        existing_edges = list(
-            DecisionEdge.objects.filter(
-                Q(from_decision=decision) | Q(to_decision=decision),
+        existing_edges_qs = DecisionEdge.objects.filter(
+            Q(from_decision=decision) | Q(to_decision=decision),
+            edge_type=DecisionEdge.EdgeType.RELATED,
+        )
+        if not use_id_targets:
+            existing_edges_qs = existing_edges_qs.filter(
                 from_decision__project_id=decision.project_id,
                 to_decision__project_id=decision.project_id,
             )
-        )
+        existing_edges = list(existing_edges_qs)
         existing_pairs = {(edge.from_decision_id, edge.to_decision_id): edge for edge in existing_edges}
+
+        all_incident_edges = list(
+            DecisionEdge.objects.filter(Q(from_decision=decision) | Q(to_decision=decision))
+        )
+        all_directed_pairs = {
+            (edge.from_decision_id, edge.to_decision_id): edge for edge in all_incident_edges
+        }
 
         edges_to_delete = [
             edge for pair, edge in existing_pairs.items() if pair not in desired_pairs
         ]
-        edges_to_add = [pair for pair in desired_pairs if pair not in existing_pairs]
-
-        base_edges = DecisionEdge.objects.filter(
-            from_decision__project_id=decision.project_id,
-            to_decision__project_id=decision.project_id,
-        )
-        if edges_to_delete:
-            base_edges = base_edges.exclude(pk__in=[edge.pk for edge in edges_to_delete])
-
-        adjacency = {}
-        for edge in base_edges:
-            adjacency.setdefault(edge.from_decision_id, set()).add(edge.to_decision_id)
-
-        for from_id, to_id in edges_to_add:
-            if self._has_path(adjacency, to_id, from_id):
-                return Response(
-                    {"detail": "Cycle detected. Connections must remain acyclic."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            adjacency.setdefault(from_id, set()).add(to_id)
+        edges_to_add: list[tuple[int, int]] = []
+        edges_to_upgrade: list[DecisionEdge] = []
+        for pair in desired_pairs:
+            if pair in existing_pairs:
+                continue
+            existing_directed = all_directed_pairs.get(pair)
+            if existing_directed is not None:
+                if existing_directed.edge_type != DecisionEdge.EdgeType.RELATED:
+                    edges_to_upgrade.append(existing_directed)
+                continue
+            edges_to_add.append(pair)
 
         try:
             with transaction.atomic():
                 if edges_to_delete:
                     DecisionEdge.objects.filter(pk__in=[edge.pk for edge in edges_to_delete]).delete()
+                for edge in edges_to_upgrade:
+                    edge.edge_type = DecisionEdge.EdgeType.RELATED
+                    edge.save(update_fields=["edge_type", "updated_at"])
                 for from_id, to_id in edges_to_add:
                     DecisionEdge.objects.create(
                         from_decision_id=from_id,
                         to_decision_id=to_id,
                         created_by=request.user,
+                        edge_type=DecisionEdge.EdgeType.RELATED,
                     )
         except IntegrityError:
             return Response(
-                {"detail": "Duplicate edge detected."},
+                {"detail": "This link already exists or could not be saved."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -941,3 +1036,58 @@ class DecisionViewSet(
             )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["post"], url_path="move-project")
+    def move_project(self, request, pk=None):
+        decision = self.get_object()
+        target_project_id = request.data.get("projectId") or request.data.get("project_id")
+        try:
+            target_project_id = int(target_project_id)
+        except (TypeError, ValueError):
+            return Response({"projectId": "Target project is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_project = Project.objects.filter(pk=target_project_id, is_deleted=False).first()
+        if not target_project:
+            return Response({"projectId": "Invalid target project."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if target_project.organization_id != decision.project.organization_id:
+            return Response({"projectId": "Target project must be in the same organization."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not request.user.is_superuser:
+            membership = ProjectMember.objects.filter(
+                user=request.user,
+                project=target_project,
+                is_active=True,
+            ).first()
+            if not membership:
+                return Response({"detail": "You are not a member of the target project."}, status=status.HTTP_403_FORBIDDEN)
+
+        if decision.project_id == target_project.id:
+            return Response(self.get_serializer(decision).data)
+
+        with transaction.atomic():
+            target_project = Project.objects.select_for_update().get(pk=target_project.id)
+            max_seq = (
+                Decision.objects.filter(project=target_project)
+                .aggregate(max_seq=Max("project_seq"))
+                .get("max_seq")
+            )
+            DecisionEdge.objects.filter(Q(from_decision=decision) | Q(to_decision=decision)).delete()
+            decision.project = target_project
+            decision.project_seq = (max_seq or 0) + 1
+            decision.last_edited_by = request.user
+            decision.save(update_fields=["project", "project_seq", "last_edited_by", "updated_at"])
+
+        serializer = self.get_serializer(decision)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="move-topic")
+    def move_topic(self, request, pk=None):
+        decision = self.get_object()
+        topic = normalize_decision_topic(request.data.get("topic"))
+        if decision.topic == topic:
+            return Response(self.get_serializer(decision).data)
+        decision.topic = topic
+        decision.last_edited_by = request.user
+        decision.save(update_fields=["topic", "last_edited_by", "updated_at"])
+        return Response(self.get_serializer(decision).data, status=status.HTTP_200_OK)

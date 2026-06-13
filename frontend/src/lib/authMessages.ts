@@ -37,3 +37,10 @@ export function isNetworkError(error: any): boolean {
     message.includes('failed to fetch')
   );
 }
+
+/** True when auth validation should keep the persisted session (backend down, timeout, etc.). */
+export function isRetryableAuthError(error: any): boolean {
+  if (isNetworkError(error)) return true;
+  const status = error?.response?.status;
+  return status === undefined || status === null || status >= 500;
+}

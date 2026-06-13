@@ -15,6 +15,7 @@ import {
   UpdateTemplateRequest,
   WorkflowTriggerLog,
   WorkflowTriggerConfig,
+  GenerationOutputKey,
 } from '@/types/agent';
 
 /** Build auth headers for SSE fetch requests (mirrors Axios interceptor logic). */
@@ -195,6 +196,7 @@ export const AgentAPI = {
   uploadAndAnalyze: (
     file: File,
     sessionId: string | null,
+    generationOutputs: GenerationOutputKey[],
     userContext: string | null,
     onEvent: (event: SSEEvent) => void,
     onError?: (error: Error) => void,
@@ -210,6 +212,7 @@ export const AgentAPI = {
     const formData = new FormData();
     formData.append('file', file);
     if (sessionId) formData.append('session_id', sessionId);
+    formData.append('generation_outputs', JSON.stringify(generationOutputs));
     if (userContext) formData.append('user_context', userContext);
 
     const baseURL =

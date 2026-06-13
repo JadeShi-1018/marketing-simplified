@@ -6,7 +6,7 @@ from meetings.knowledge_links import serialize_origin_meeting
 from meetings.services import validate_meeting_for_origin_link
 
 from .models import CommitRecord, Decision, DecisionEdge, DecisionStateTransition, Option, Review, Signal
-from .services import generate_signal_text
+from .services import decision_topic_label, generate_signal_text, infer_decision_topic, normalize_decision_topic
 
 
 class OptionSerializer(serializers.ModelSerializer):
@@ -222,6 +222,8 @@ class DecisionListSerializer(serializers.ModelSerializer):
     committedAt = serializers.DateTimeField(source="committed_at", allow_null=True)
     projectId = serializers.IntegerField(source="project_id", allow_null=True)
     projectName = serializers.CharField(source="project.name", allow_null=True)
+    topic = serializers.CharField(read_only=True)
+    topicLabel = serializers.SerializerMethodField()
     projectSeq = serializers.IntegerField(source="project_seq")
     selectedOptionText = serializers.SerializerMethodField()
     hasReviews = serializers.SerializerMethodField()
@@ -244,6 +246,8 @@ class DecisionListSerializer(serializers.ModelSerializer):
             "committedAt",
             "projectId",
             "projectName",
+            "topic",
+            "topicLabel",
             "hasReviews",
             "createdByAgent",
             "agentSessionId",
@@ -253,6 +257,10 @@ class DecisionListSerializer(serializers.ModelSerializer):
         selected_option = obj.options.filter(is_selected=True).first()
         return selected_option.text if selected_option else None
 
+    def get_topicLabel(self, obj):
+        labels = self.context.get("topic_labels") or {}
+        return labels.get(obj.topic) or decision_topic_label(obj.topic)
+
     def get_hasReviews(self, obj):
         return obj.reviews.exists()
 
@@ -261,8 +269,69 @@ class DecisionGraphNodeSerializer(serializers.ModelSerializer):
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     updatedAt = serializers.DateTimeField(source="updated_at", read_only=True)
     projectId = serializers.IntegerField(source="project_id", read_only=True)
+    projectName = serializers.CharField(source="project.name", read_only=True, allow_null=True)
+    projectTheme = serializers.SerializerMethodField()
+    projectSubtitle = serializers.SerializerMethodField()
     projectSeq = serializers.IntegerField(source="project_seq", read_only=True)
     riskLevel = serializers.CharField(source="risk_level", read_only=True, allow_null=True)
+    topic = serializers.CharField(read_only=True)
+    topicLabel = serializers.SerializerMethodField()
+
+    OBJECTIVE_LABELS = {
+        "awareness": "Awareness",
+        "consideration": "Consideration",
+        "conversions": "Conversions",
+        "sales": "Sales",
+        "leads": "Lead generation",
+        "traffic": "Traffic",
+        "engagement": "Engagement",
+        "retention": "Retention",
+        "tiktok_growth": "TikTok Growth",
+        "meta_retargeting": "Meta Retargeting",
+        "google_search": "Google Search",
+        "email_lifecycle": "Email Lifecycle",
+        "landing_page_cro": "Landing Page CRO",
+        "influencer_ugc": "Influencer / UGC",
+    }
+    PROJECT_TYPE_LABELS = {
+        "paid_social": "Paid social",
+        "paid_search": "Paid search",
+        "programmatic": "Programmatic",
+        "influencer_ugc": "Influencer / UGC",
+        "cross_channel": "Cross-channel",
+        "performance": "Performance",
+        "brand_campaigns": "Brand campaigns",
+        "app_acquisition": "App acquisition",
+    }
+
+    def _label_list(self, values, labels):
+        if not isinstance(values, list):
+            return []
+        return [labels.get(value, str(value).replace("_", " ").title()) for value in values]
+
+    def get_projectTheme(self, obj):
+        project = obj.project
+        objective_labels = self._label_list(getattr(project, "objectives", []), self.OBJECTIVE_LABELS)
+        if objective_labels:
+            return " + ".join(objective_labels[:2])
+        type_labels = self._label_list(getattr(project, "project_type", []), self.PROJECT_TYPE_LABELS)
+        if type_labels:
+            return " + ".join(type_labels[:2])
+        return project.name if project else None
+
+    def get_projectSubtitle(self, obj):
+        project = obj.project
+        if not project:
+            return None
+        type_labels = self._label_list(getattr(project, "project_type", []), self.PROJECT_TYPE_LABELS)
+        if type_labels:
+            return " + ".join(type_labels[:2])
+        description = (project.description or "").strip()
+        return description[:80] if description else None
+
+    def get_topicLabel(self, obj):
+        labels = self.context.get("topic_labels") or {}
+        return labels.get(obj.topic) or decision_topic_label(obj.topic)
 
     class Meta:
         model = Decision
@@ -274,19 +343,26 @@ class DecisionGraphNodeSerializer(serializers.ModelSerializer):
             "createdAt",
             "updatedAt",
             "projectId",
+            "projectName",
+            "projectTheme",
+            "projectSubtitle",
             "projectSeq",
+            "topic",
+            "topicLabel",
         ]
 
 
 class DecisionEdgeSerializer(serializers.ModelSerializer):
     from_ = serializers.IntegerField(source="from_decision_id", read_only=True)
     to = serializers.IntegerField(source="to_decision_id", read_only=True)
+    edgeType = serializers.CharField(source="edge_type", read_only=True)
 
     class Meta:
         model = DecisionEdge
         fields = [
             "from_",
             "to",
+            "edgeType",
         ]
 
     def to_representation(self, instance):
@@ -294,6 +370,7 @@ class DecisionEdgeSerializer(serializers.ModelSerializer):
         return {
             "from": data.get("from_"),
             "to": data.get("to"),
+            "edgeType": data.get("edgeType"),
         }
 
 
@@ -313,6 +390,8 @@ class DecisionDraftSerializer(serializers.ModelSerializer):
         source="confidence", required=False, allow_null=True
     )
     reasoning = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    topic = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    topicLabel = serializers.SerializerMethodField()
     signals = DraftSignalSerializer(many=True, required=False)
     options = DraftOptionSerializer(many=True, required=False)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
@@ -411,7 +490,27 @@ class DecisionDraftSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         signals_data = validated_data.pop("signals", None)
         options_data = validated_data.pop("options", None)
+        should_infer_topic = "topic" not in validated_data and "title" in validated_data
+        if "topic" in validated_data:
+            validated_data["topic"] = normalize_decision_topic(validated_data.get("topic"))
         instance = super().update(instance, validated_data)
+        if should_infer_topic or not instance.topic or instance.topic == "other":
+            existing_topics = set()
+            if instance.project_id:
+                existing_topics = set(
+                    Decision.objects.filter(project_id=instance.project_id, is_deleted=False)
+                    .exclude(pk=instance.pk)
+                    .exclude(topic="")
+                    .values_list("topic", flat=True)
+                )
+            inferred = infer_decision_topic(
+                instance.title,
+                instance.topic or "other",
+                existing_topics=existing_topics,
+            )
+            if inferred != "other" and inferred != instance.topic:
+                instance.topic = inferred
+                instance.save(update_fields=["topic"])
 
         if signals_data is not None:
             instance.signals.all().delete()
@@ -434,6 +533,10 @@ class DecisionDraftSerializer(serializers.ModelSerializer):
 
         return instance
 
+    def get_topicLabel(self, obj):
+        labels = self.context.get("topic_labels") or {}
+        return labels.get(obj.topic) or decision_topic_label(obj.topic)
+
     class Meta:
         model = Decision
         fields = [
@@ -443,6 +546,8 @@ class DecisionDraftSerializer(serializers.ModelSerializer):
             "riskLevel",
             "confidenceScore",
             "reasoning",
+            "topic",
+            "topicLabel",
             "signals",
             "options",
             "createdAt",
@@ -600,6 +705,7 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
     projectSeq = serializers.IntegerField(source="project_seq", read_only=True)
     createdByAgent = serializers.BooleanField(source="created_by_agent", read_only=True)
     agentSessionId = serializers.UUIDField(source="agent_session_id", read_only=True, allow_null=True)
+    topicLabel = serializers.SerializerMethodField()
     signals = CommittedSignalSerializer(many=True, read_only=True)
     options = CommittedOptionSerializer(many=True, read_only=True)
     reviews = CommittedReviewSerializer(many=True, read_only=True)
@@ -616,6 +722,8 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
             "riskLevel",
             "confidenceScore",
             "reasoning",
+            "topic",
+            "topicLabel",
             "createdAt",
             "createdBy",
             "committedAt",
@@ -633,6 +741,9 @@ class DecisionCommittedSerializer(serializers.ModelSerializer):
             "originMeeting",
         ]
 
+    def get_topicLabel(self, obj):
+        labels = self.context.get("topic_labels") or {}
+        return labels.get(obj.topic) or decision_topic_label(obj.topic)
 class DecisionCommitActionSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     validation_snapshot = serializers.JSONField(required=False, allow_null=True)
@@ -643,6 +754,12 @@ class DecisionConnectionsUpdateSerializer(serializers.Serializer):
     connectedDecisionSeqs = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         allow_empty=True,
+        required=False,
+    )
+    connectedDecisionIds = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=True,
+        required=False,
     )
 
 

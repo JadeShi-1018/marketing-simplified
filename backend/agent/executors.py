@@ -6,6 +6,7 @@ the logic for that particular action.
 """
 import logging
 import os
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -53,38 +54,65 @@ class AnalyzeDataExecutor(BaseStepExecutor):
             return StepResult(success=False, error='No spreadsheet_data in input')
 
         try:
+            from .generation_registry import (
+                GenerationValidationError,
+                filter_sse_analysis_payload,
+                normalize_generation_outputs,
+            )
+
             user_id = str(self.orchestrator.user.id)
             success_criteria = (
                 input_data.get('success_criteria')
                 or (self.workflow_run.success_criteria if self.workflow_run.success_criteria else None)
             )
-            user_context = self.workflow_run.user_context or None
+            user_context = cache.get(f"agent:context:{self.workflow_run.id}")
+            generation_outputs = input_data.get('generation_outputs')
+            requested = frozenset(normalize_generation_outputs(generation_outputs))
+
             analysis = _run_analysis(
                 spreadsheet_data,
                 user_id=user_id,
                 success_criteria=success_criteria,
                 column_mapping=input_data.get('column_mapping'),
                 user_context=user_context,
+                generation_outputs=list(requested),
             )
 
             self.workflow_run.analysis_result = analysis
             self.workflow_run.save(update_fields=['analysis_result'])
 
-            anomalies = analysis.get('anomalies', [])
-            content = f"Found {len(anomalies)} anomalies in the data."
+            tasks = analysis.get('recommended_tasks', [])
+            tree = analysis.get('recommended_decision_tree') or {}
+            tree_nodes = tree.get('nodes') or []
+            parts = []
+            if tasks:
+                parts.append(f"{len(tasks)} recommended task(s)")
+            if tree_nodes:
+                parts.append(f"{len(tree_nodes)} decision node(s)")
+            if parts:
+                content = f"Found {' and '.join(parts)}."
+            else:
+                content = "Analysis complete."
+
+            sse_data = filter_sse_analysis_payload(analysis, requested)
+            sse_events = [{
+                'type': 'analysis',
+                'content': content,
+                'data': sse_data,
+            }]
 
             return StepResult(
                 success=True,
                 output_data={
                     'analysis_result': analysis,
                     'spreadsheet_data': spreadsheet_data,
+                    'generation_outputs': list(requested),
                 },
-                sse_events=[{
-                    'type': 'analysis',
-                    'content': content,
-                    'data': analysis,
-                }],
+                sse_events=sse_events,
             )
+        except GenerationValidationError as e:
+            logger.warning("AnalyzeDataExecutor validation failed: %s", e)
+            return StepResult(success=False, error=str(e))
         except Exception as e:
             logger.exception("AnalyzeDataExecutor failed")
             return StepResult(success=False, error=str(e))
@@ -128,10 +156,64 @@ class CallLLMExecutor(BaseStepExecutor):
 
 
 class CreateDecisionExecutor(BaseStepExecutor):
-    """Legacy step type: agent workflows no longer persist Decision records."""
+    """Creates Decision tree from analysis recommended_decision_tree via the approval gate."""
 
     def execute(self, input_data):
-        return StepResult(success=True, output_data=input_data, sse_events=[])
+        from .approval_gate import KIND_DECISION_TREE, request_external_commit
+
+        analysis = input_data.get('analysis_result')
+        if not analysis:
+            return StepResult(success=False, error='No analysis_result in input')
+
+        try:
+            tree = analysis.get('recommended_decision_tree') or {}
+            nodes = tree.get('nodes') or []
+            if not nodes:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=[{
+                        'type': 'text',
+                        'content': 'No decision nodes to create.',
+                    }],
+                )
+
+            draft = {'recommended_decision_tree': tree}
+            commit_context = {
+                'input_data': input_data,
+                'analysis_result': analysis,
+            }
+            gate = request_external_commit(
+                orchestrator=self.orchestrator,
+                workflow_run=self.workflow_run,
+                step_execution=self.step_execution,
+                kind=KIND_DECISION_TREE,
+                draft=draft,
+                commit_context=commit_context,
+            )
+
+            if gate.paused:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=gate.sse_events,
+                    pause_external_approval=True,
+                )
+
+            wf = gate.workflow_run_patch or {}
+            created_ids = wf.get('created_decisions') or []
+            self.workflow_run.created_decisions = created_ids
+            self.workflow_run.save(update_fields=['created_decisions'])
+
+            base_out = gate.output_data or {**input_data, 'analysis_result': analysis}
+            return StepResult(
+                success=True,
+                output_data={**base_out, 'created_decision_ids': created_ids},
+                sse_events=gate.sse_events,
+            )
+        except Exception as e:
+            logger.exception("CreateDecisionExecutor failed")
+            return StepResult(success=False, error=str(e))
 
 
 class CreateTasksExecutor(BaseStepExecutor):
@@ -145,6 +227,30 @@ class CreateTasksExecutor(BaseStepExecutor):
             return StepResult(success=False, error='No analysis_result in input')
 
         try:
+            # Gate only applies when anomalies were detected: they must be
+            # reviewed + confirmed first. Zero-anomaly analyses proceed unchanged.
+            had_anomalies = bool(analysis.get('anomalies'))
+            if had_anomalies and not analysis.get('anomalies_confirmed'):
+                return StepResult(
+                    success=False,
+                    error='Anomalies must be confirmed before creating tasks.',
+                )
+
+            # All-excluded: anomalies existed but none were included -> no-op
+            # success so the workflow completes cleanly. Zero-detected-anomaly
+            # runs are NOT skipped (existing behaviour preserved).
+            reviewed = analysis.get('reviewed_anomalies') or []
+            included_anomalies = [a for a in reviewed if a.get('included', True)]
+            if had_anomalies and not included_anomalies:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=[{
+                        'type': 'text',
+                        'content': 'All anomalies were excluded; no tasks were created.',
+                    }],
+                )
+
             tasks_data = analysis.get('recommended_tasks', [])
             if not tasks_data:
                 return StepResult(success=False, error='No recommended_tasks in analysis.')
@@ -155,6 +261,8 @@ class CreateTasksExecutor(BaseStepExecutor):
                 'input_data': input_data,
                 'analysis_result': analysis,
                 'decision_id': decision.id if decision else None,
+                'included_anomalies': included_anomalies,
+                'reviewed_anomalies': reviewed,
             }
             gate = request_external_commit(
                 orchestrator=self.orchestrator,

@@ -15,7 +15,7 @@ export default function DecisionStatusPill({ status }: { status?: DecisionStatus
   const token = (status && STATUS_TOKEN[status]) || STATUS_TOKEN.DRAFT;
   return (
     <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium ${token.bg} ${token.text}`}
+      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${token.bg} ${token.text}`}
     >
       <span aria-hidden="true" className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current opacity-70" />
       {token.label}
