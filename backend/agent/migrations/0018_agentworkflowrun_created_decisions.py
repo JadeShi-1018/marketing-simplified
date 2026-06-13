@@ -22,7 +22,6 @@ def ensure_created_decisions_column(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('agent', '0017_remove_agentworkflowrun_user_context'),
         ('agent', '0016_agentworkflowrun_generation_outputs_requested'),
     ]
 
