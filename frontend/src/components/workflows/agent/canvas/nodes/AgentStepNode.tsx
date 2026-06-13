@@ -11,9 +11,10 @@ export interface AgentStepNodeData {
   step: LocalStep
   isSelected: boolean
   hasNext: boolean
-  onSelect: () => void
-  onAddAfter: (e: React.MouseEvent) => void
-  onDelete: () => void
+  isPreviewMode?: boolean  // Preview mode: no interactions
+  onSelect?: () => void
+  onAddAfter?: (e: React.MouseEvent) => void
+  onDelete?: () => void
 }
 
 const AgentStepNode = memo(function AgentStepNode({
@@ -21,7 +22,7 @@ const AgentStepNode = memo(function AgentStepNode({
 }: {
   data: AgentStepNodeData
 }) {
-  const { step, isSelected, hasNext, onSelect, onAddAfter, onDelete } = data
+  const { step, isSelected, hasNext, isPreviewMode, onSelect, onAddAfter, onDelete } = data
   const meta = getStepMeta(step.step_type)
   const Icon = meta.icon
 
@@ -38,38 +39,53 @@ const AgentStepNode = memo(function AgentStepNode({
 
       {/* The circular node */}
       <div className="relative">
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onSelect()
-          }}
-          className={cn(
-            "flex h-[72px] w-[72px] items-center justify-center rounded-full shadow-lg transition-all duration-150",
-            meta.bgClass,
-            isSelected
-              ? "ring-4 ring-white ring-offset-2 ring-offset-slate-200 shadow-xl scale-110"
-              : "hover:shadow-xl hover:scale-105"
-          )}
-        >
-          <Icon className="h-7 w-7 text-white" strokeWidth={1.8} />
-        </button>
+        {isPreviewMode ? (
+          // Preview mode: non-interactive div
+          <div
+            className={cn(
+              "flex h-[72px] w-[72px] items-center justify-center rounded-full shadow-lg",
+              meta.bgClass
+            )}
+          >
+            <Icon className="h-7 w-7 text-white" strokeWidth={1.8} />
+          </div>
+        ) : (
+          // Edit mode: interactive button
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelect?.()
+            }}
+            className={cn(
+              "flex h-[72px] w-[72px] items-center justify-center rounded-full shadow-lg transition-all duration-150",
+              meta.bgClass,
+              isSelected
+                ? "ring-4 ring-white ring-offset-2 ring-offset-slate-200 shadow-xl scale-110"
+                : "hover:shadow-xl hover:scale-105"
+            )}
+          >
+            <Icon className="h-7 w-7 text-white" strokeWidth={1.8} />
+          </button>
+        )}
 
-        {/* Delete button — top right, appears on hover */}
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete()
-          }}
-          className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow transition group-hover:opacity-100 hover:bg-red-600"
-          aria-label="Delete step"
-        >
-          <X className="h-3 w-3" />
-        </button>
+        {/* Delete button — only show in edit mode */}
+        {!isPreviewMode && onDelete && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+            className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white opacity-0 shadow transition group-hover:opacity-100 hover:bg-red-600"
+            aria-label="Delete step"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        )}
 
-        {/* Unsaved indicator */}
-        {(step._isTemp || step._isDirty) && (
+        {/* Unsaved indicator — only show in edit mode */}
+        {!isPreviewMode && (step._isTemp || step._isDirty) && (
           <span
             className="absolute -left-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-white bg-amber-400"
             title="Unsaved changes"
@@ -90,8 +106,8 @@ const AgentStepNode = memo(function AgentStepNode({
         style={{ right: -6, top: 36 }}
       />
 
-      {/* + button — only show when this is the last node (no next node) */}
-      {!hasNext && (
+      {/* + button — only show in edit mode when this is the last node */}
+      {!isPreviewMode && !hasNext && onAddAfter && (
         <button
           type="button"
           onClick={(e) => {

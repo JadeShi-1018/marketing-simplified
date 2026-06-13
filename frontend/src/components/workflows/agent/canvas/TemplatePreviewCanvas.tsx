@@ -11,7 +11,7 @@ import ReactFlow, {
   type Node,
 } from "reactflow";
 import "reactflow/dist/style.css";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, PanelLeftOpen } from "lucide-react";
 import { useRouter } from "next/navigation";
 import toast from "react-hot-toast";
 import { AgentAPI } from "@/lib/api/agentApi";
@@ -21,6 +21,7 @@ import { getStepMeta } from "./canvasStepMeta";
 import AgentStepNode, { type AgentStepNodeData } from "./nodes/AgentStepNode";
 import AgentStepEdge, { type AgentStepEdgeData } from "./edges/AgentStepEdge";
 import TemplateInfoDrawer from "../templates/TemplateInfoDrawer";
+import { cn } from "@/lib/utils";
 
 // Node and edge type registry
 const nodeTypes = {
@@ -46,6 +47,10 @@ interface CanvasInnerProps {
 
 function CanvasInner({ template, steps, onCreateWorkflow, onCancel, isCreating }: CanvasInnerProps) {
   const { fitView } = useReactFlow();
+  const [drawerOpen, setDrawerOpen] = useState(true);
+
+  // Drawer width constant
+  const DRAWER_WIDTH = "33.333333%";
 
   // Fit view on mount
   useEffect(() => {
@@ -55,7 +60,7 @@ function CanvasInner({ template, steps, onCreateWorkflow, onCancel, isCreating }
     return () => clearTimeout(timer);
   }, [fitView]);
 
-  // ── Derive RF nodes (read-only, no selection, no add button) ───────────────
+  // ── Derive RF nodes (preview mode - no interactions) ───────────────
   const rfNodes: Node[] = useMemo(() => {
     return steps.map((step, idx): Node<AgentStepNodeData> => ({
       id: step.id,
@@ -67,8 +72,10 @@ function CanvasInner({ template, steps, onCreateWorkflow, onCancel, isCreating }
         step,
         isSelected: false,
         hasNext: idx < steps.length - 1,
-        onDelete: undefined, // No delete in preview mode
-        onInsertAfter: undefined, // No insert in preview mode
+        isPreviewMode: true, // Enable preview mode
+        onDelete: undefined,
+        onAddAfter: undefined,
+        onSelect: undefined,
       },
     }));
   }, [steps]);
@@ -97,18 +104,8 @@ function CanvasInner({ template, steps, onCreateWorkflow, onCancel, isCreating }
 
   return (
     <div className="relative h-full w-full">
-      {/* Left sidebar - Template Info Drawer */}
-      <div className="absolute left-0 top-0 z-20 h-full">
-        <TemplateInfoDrawer
-          template={template}
-          onCreateWorkflow={onCreateWorkflow}
-          onCancel={onCancel}
-          isCreating={isCreating}
-        />
-      </div>
-
-      {/* React Flow canvas (with left offset for drawer) */}
-      <div className="h-full w-full pl-[33.333333%]">
+      {/* Canvas area - fullscreen, independent of drawer */}
+      <div className="absolute inset-0">
         <ReactFlow
           nodes={rfNodes}
           edges={rfEdges}
@@ -119,31 +116,46 @@ function CanvasInner({ template, steps, onCreateWorkflow, onCancel, isCreating }
           nodesDraggable={false}
           nodesConnectable={false}
           elementsSelectable={false}
+          nodesFocusable={false}
+          edgesFocusable={false}
           panOnScroll
           zoomOnScroll
           minZoom={0.3}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
-          // Required to keep pointer-events on nodes
-          onNodeClick={() => {}}
         >
           <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="#cbd5e1" />
         </ReactFlow>
       </div>
 
-      {/* Top bar with template name (read-only) */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between px-4 py-3 pl-[calc(33.333333%+1rem)]">
-        <div className="pointer-events-auto">
-          <div className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 shadow-sm">
-            <span className="text-sm font-semibold text-slate-800">
-              {template.workflow_name || "Template Workflow"}
-            </span>
-            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-              Preview
-            </span>
-          </div>
-        </div>
+      {/* Template Info Drawer - independent, collapsible */}
+      <div
+        className={cn(
+          "absolute left-0 top-0 h-full bg-white shadow-xl transition-transform duration-300 z-30",
+          drawerOpen ? "translate-x-0" : "-translate-x-full"
+        )}
+        style={{ width: DRAWER_WIDTH }}
+      >
+        <TemplateInfoDrawer
+          template={template}
+          onCreateWorkflow={onCreateWorkflow}
+          onCancel={onCancel}
+          isCreating={isCreating}
+          onClose={() => setDrawerOpen(false)}
+        />
       </div>
+
+      {/* Expand button - shown when drawer is closed */}
+      {!drawerOpen && (
+        <button
+          type="button"
+          onClick={() => setDrawerOpen(true)}
+          className="absolute left-4 top-4 z-40 flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-[#3CCED7] to-[#A6E661] shadow-lg hover:shadow-xl transition"
+          aria-label="Open template info"
+        >
+          <PanelLeftOpen className="h-5 w-5 text-white" />
+        </button>
+      )}
     </div>
   );
 }

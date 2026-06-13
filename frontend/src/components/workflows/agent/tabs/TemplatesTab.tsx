@@ -173,7 +173,7 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
                   <TemplateCard
                     key={t.id}
                     template={t}
-                    onEdit={() => setEditingTemplate(t)}
+                    onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
                     onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
                     isOwner={isOwner(t)}
                   />
@@ -191,7 +191,7 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
                   <TemplateCard
                     key={t.id}
                     template={t}
-                    onEdit={() => setEditingTemplate(t)}
+                    onEdit={isOwner(t) ? () => setEditingTemplate(t) : undefined}
                     onDelete={isOwner(t) ? () => setDeletingTemplate(t) : undefined}
                     isOwner={isOwner(t)}
                   />

@@ -418,7 +418,7 @@ export function TemplateHoverContent({
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onPreview() }}
-              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-gradient-to-br from-[#3CCED7] to-[#A6E661] py-1.5 text-xs font-medium text-white shadow-sm transition hover:shadow-md"
             >
               <Eye className="h-3.5 w-3.5" />
               View Template

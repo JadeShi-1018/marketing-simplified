@@ -1,6 +1,6 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
+import { Sparkles, X } from "lucide-react";
 import type { AgentWorkflowTemplate } from "@/types/agent";
 
 interface TemplateInfoDrawerProps {
@@ -8,6 +8,7 @@ interface TemplateInfoDrawerProps {
   onCreateWorkflow: () => void;
   onCancel: () => void;
   isCreating?: boolean;
+  onClose?: () => void;
 }
 
 export default function TemplateInfoDrawer({
@@ -15,11 +16,24 @@ export default function TemplateInfoDrawer({
   onCreateWorkflow,
   onCancel,
   isCreating = false,
+  onClose,
 }: TemplateInfoDrawerProps) {
   return (
-    <div className="flex h-full w-1/3 flex-col bg-gradient-to-br from-[#3CCED7] to-[#A6E661]">
+    <div className="relative flex h-full w-full flex-col bg-gradient-to-br from-[#3CCED7] to-[#A6E661]">
+      {/* Close button - top right */}
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-colors hover:bg-white/20"
+          aria-label="Close drawer"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      )}
+
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto p-6">
+      <div className="flex-1 overflow-y-auto p-6 pt-14">
         {/* Template Name - Largest text */}
         <div className="mb-6 border-b border-white/20 pb-6">
           <h1 className="text-[34px] font-bold leading-tight text-white">
