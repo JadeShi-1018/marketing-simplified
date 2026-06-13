@@ -2,6 +2,7 @@
 
 import { MoreHorizontal, Pencil, Trash2 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import type { AgentWorkflowTemplate, TemplateCategory } from "@/types/agent"
 import { Building2, FolderKanban, Lock } from "lucide-react"
 import StepIconStack from "./StepIconStack"
@@ -72,10 +73,16 @@ export default function TemplateCard({
   onDelete,
   isOwner,
 }: TemplateCardProps) {
+  const router = useRouter()
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const category = CATEGORY_CONFIG[template.category] ?? CATEGORY_CONFIG.other
   const { cardRef, isVisible, style, onMouseEnter, onMouseLeave, hoverCardHandlers } = useHoverCard()
+
+  const handleCardClick = () => {
+    // Navigate to template preview page
+    router.push(`/workflows/templates/${template.id}/preview`)
+  }
 
   useEffect(() => {
     if (!menuOpen) return
@@ -99,6 +106,7 @@ export default function TemplateCard({
           organization={template.organization}
           organizationName={template.organization_name}
           projectList={template.project_list}
+          onPreview={handleCardClick}
           onApply={onApply}
           onEdit={onEdit}
           onDelete={onDelete}
@@ -109,7 +117,8 @@ export default function TemplateCard({
         ref={cardRef}
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
-        className="group flex flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-150 hover:border-violet-200 hover:shadow-md"
+        onClick={handleCardClick}
+        className="group flex cursor-pointer flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm transition-all duration-150 hover:border-violet-200 hover:shadow-md"
       >
         {/* Top row: icons + menu */}
         <div className="flex items-start justify-between gap-3">

@@ -631,10 +631,14 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
         if project:
             qs = qs.filter(
                 Q(is_system=True) |
-                Q(project=project, is_system=False, created_by=self.request.user)
+                Q(project=project, is_system=False, created_by=self.request.user) |
+                Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
             )
         else:
-            qs = qs.filter(is_system=True)
+            qs = qs.filter(
+                Q(is_system=True) |
+                Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
+            )
         return qs.order_by('-is_system', '-is_default', '-created_at')
 
     def perform_create(self, serializer):

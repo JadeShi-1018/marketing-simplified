@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { Bookmark, Pencil, Play, PlusCircle, Trash2, Clock, Zap, Calendar } from "lucide-react"
+import { Bookmark, Pencil, Play, PlusCircle, Trash2, Clock, Zap, Calendar, Eye } from "lucide-react"
 import { getStepMeta } from "../canvas/canvasStepMeta"
 import { brandBtnSm } from "../workflowBrandClasses"
 import { Building2, FolderKanban, Lock } from "lucide-react"
@@ -310,6 +310,7 @@ interface TemplateHoverContentProps {
   organization?: string
   organizationName?: string
   projectList?: TemplateProjectInfo[]
+  onPreview?: () => void
   onApply?: () => void
   onEdit?: () => void
   onDelete?: () => void
@@ -323,6 +324,7 @@ export function TemplateHoverContent({
   organization,
   organizationName,
   projectList,
+  onPreview,
   onApply,
   onEdit,
   onDelete,
@@ -364,49 +366,64 @@ export function TemplateHoverContent({
   return (
     <>
       <FlowDiagram stepTypes={stepTypes} />
-      <div className="flex flex-1 flex-col gap-2 px-5 py-4">
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-sm font-semibold leading-snug text-slate-800">{name}</p>
-          {(onEdit || onDelete) && (
-            <div className="flex shrink-0 items-center gap-1">
-              {onEdit && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onEdit() }}
-                  className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
-                  aria-label="Edit template"
-                  title="Edit template"
-                >
-                  <Pencil className="h-3.5 w-3.5" />
-                  Edit
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); onDelete() }}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 hover:text-red-700"
-                  aria-label="Delete template"
-                  title="Delete template"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
+      <div className="flex min-h-0 flex-1 flex-col">
+        {/* Scrollable content area */}
+        <div className="flex-1 overflow-y-auto px-5 pt-4">
+          <div className="flex items-start justify-between gap-2">
+            <p className="text-sm font-semibold leading-snug text-slate-800">{name}</p>
+            {(onEdit || onDelete) && (
+              <div className="flex shrink-0 items-center gap-1">
+                {onEdit && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onEdit() }}
+                    className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50"
+                    aria-label="Edit template"
+                    title="Edit template"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onDelete() }}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-red-500 transition hover:bg-red-50 hover:text-red-700"
+                    aria-label="Delete template"
+                    title="Delete template"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          {description ? (
+            <p className="mt-2 text-xs leading-relaxed text-slate-500">{description}</p>
+          ) : (
+            <p className="mt-2 text-xs italic text-slate-400">No description</p>
           )}
-        </div>
-        {description ? (
-          <p className="line-clamp-3 text-xs leading-relaxed text-slate-500">{description}</p>
-        ) : (
-          <p className="text-xs italic text-slate-400">No description</p>
-        )}
-        <div className="mt-auto space-y-2 border-t border-slate-100 pt-2">
-          <div className="flex flex-wrap gap-1.5">
+          <div className="mt-3 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2">
             <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${CATEGORY_STYLE[category] ?? "bg-gray-100 text-gray-600"}`}>
               {CATEGORY_LABEL[category] ?? category}
             </span>
             {scopeBadges}
           </div>
+        </div>
+
+        {/* Fixed bottom buttons */}
+        <div className="space-y-2 border-t border-slate-100 bg-white px-5 pb-4 pt-3">
+          {onPreview && (
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onPreview() }}
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 py-1.5 text-xs font-medium text-blue-700 transition hover:bg-blue-100"
+            >
+              <Eye className="h-3.5 w-3.5" />
+              View Template
+            </button>
+          )}
           {onApply && (
             <button
               type="button"
