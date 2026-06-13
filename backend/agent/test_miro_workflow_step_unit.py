@@ -203,6 +203,7 @@ def test_create_miro_board_executor_persists_board_and_snapshot(mock_create_boar
     assert result.sse_events[0]["type"] == "miro_board_created"
 
 
+@patch("agent.models.AgentPendingExternalApproval.objects.filter")
 @patch("agent.miro_board_service.create_board_from_snapshot")
 @patch("agent.miro_generation.call_gemini_miro_generator")
 @patch("agent.miro_generation.build_miro_generation_context_from_run")
@@ -210,6 +211,7 @@ def test_generate_miro_board_for_workflow_run_updates_run(
     mock_build_context,
     mock_call_gemini,
     mock_create_board,
+    mock_pending_filter,
 ):
     workflow_run = _WorkflowRunStub()
     orchestrator = _OrchestratorStub()
@@ -218,6 +220,7 @@ def test_generate_miro_board_for_workflow_run_updates_run(
     board = type("BoardStub", (), {"id": "board-legacy-1", "title": "Agent Miro - Analysis session"})()
     persisted_snapshot = _materialize_snapshot_ids(_test_snapshot(), _persisted_id_map())
     mock_create_board.return_value = (board, persisted_snapshot)
+    mock_pending_filter.return_value.update.return_value = 0
 
     snapshot, created_board = _generate_miro_board_for_workflow_run(orchestrator, workflow_run)
 

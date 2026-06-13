@@ -5,7 +5,7 @@ from core.models import Organization, Project, ProjectMember
 from decision.models import Decision
 from task.models import Task
 
-from .approval_gate import KIND_TASK, request_external_commit, resolve_pending
+from .approval_gate import KIND_DECISION_TREE, KIND_TASK, request_external_commit, resolve_pending
 from .models import AgentPendingExternalApproval, AgentSession, AgentWorkflowRun
 from .services import AgentOrchestrator
 
@@ -75,6 +75,40 @@ def test_request_external_commit_auto_creates_tasks(approval_org_project_user):
     assert data['created_tasks'][0]['summary'] == 'T1'
     assert isinstance(data['created_tasks'][0]['task_id'], int)
     assert not AgentPendingExternalApproval.objects.filter(session=session).exists()
+
+
+@pytest.mark.django_db
+def test_request_external_commit_auto_creates_decision_tree(approval_org_project_user):
+    _org, project, user = approval_org_project_user
+    session = AgentSession.objects.create(user=user, project=project, approval_required=False)
+    wf = AgentWorkflowRun.objects.create(session=session, status='analyzing')
+    orch = AgentOrchestrator(user, project, session)
+    tree = {
+        'nodes': [
+            {'ref': 'root', 'layer': 0, 'title': 'Root decision', 'parent_refs': []},
+            {'ref': 'child', 'layer': 1, 'title': 'Child decision', 'parent_refs': ['root']},
+        ],
+    }
+    draft = {'recommended_decision_tree': tree}
+    ctx = {
+        'input_data': {'analysis_result': {'recommended_decision_tree': tree}},
+        'analysis_result': {'recommended_decision_tree': tree},
+    }
+    gate = request_external_commit(
+        orchestrator=orch,
+        workflow_run=wf,
+        step_execution=None,
+        kind=KIND_DECISION_TREE,
+        draft=draft,
+        commit_context=ctx,
+    )
+    assert gate.paused is False
+    assert len(gate.workflow_run_patch.get('created_decisions', [])) == 2
+    ev = next((e for e in gate.sse_events if e.get('type') == 'decision_draft'), None)
+    assert ev is not None
+    data = ev.get('data') or {}
+    assert len(data.get('decision_ids', [])) == 2
+    assert len(data.get('created_decisions', [])) == 2
 
 
 @pytest.mark.django_db

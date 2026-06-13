@@ -53,7 +53,19 @@ export interface AgentMessage {
 
 export interface AgentMessageData {
   anomalies?: AnomalyItem[];
+  reviewed_anomalies?: AnomalyItem[];
+  anomalies_confirmed?: boolean;
   decision_id?: number;
+  decision_ids?: number[];
+  created_decisions?: Array<{
+    ref: string;
+    decision_id: number;
+    title: string;
+    layer: number;
+  }>;
+  recommended_decision_tree?: {
+    nodes: Array<Record<string, unknown>>;
+  };
   task_ids?: number[];
   created_tasks?: Array<{ index: number; task_id: number; summary: string }>;
   board_id?: string;
@@ -70,12 +82,27 @@ export interface AgentMessageData {
   original_filename?: string;
   row_count?: number;
   column_count?: number;
+  generation_outputs?: GenerationOutputKey[];
+  calendar_events?: SuggestedCalendarEvent[];
   step_order?: number;
   step_name?: string;
   total_steps?: number;
 }
 
+export interface SuggestedCalendarEvent {
+  title: string;
+  start_datetime: string;
+  end_datetime: string;
+  location?: string;
+  description?: string;
+}
+
 // ==================== SSE Stream Types ====================
+
+export type GenerationOutputKey =
+  | 'recommended_tasks'
+  | 'recommended_decision_tree'
+  | 'miro_board';
 
 export type SSEEventType =
   | 'text'
@@ -89,9 +116,11 @@ export type SSEEventType =
   | 'miro_status'
   | 'file_uploaded'
   | 'calendar_invite'
+  | 'calendar_events'
   | 'calendar_updated'
   | 'step_progress'
   | 'column_mapping'
+  | 'anomalies_confirmed'
   | 'done'
   | 'error';
 
@@ -105,12 +134,13 @@ export interface SSEEvent {
 
 export type AgentAction =
   | 'analyze'
+  | 'create_decisions'
   | 'create_tasks'
   | 'generate_miro'
-  | 'distribute_message'
   | 'start_follow_up'
   | 'cancel_follow_up'
   | 'confirm_columns'
+  | 'confirm_anomalies'
   | 'resolve_external_approval';
 
 export interface CalendarContextPayload {
@@ -139,6 +169,7 @@ export interface AgentChatRequest {
   approval_decision?: 'approve' | 'reject';
   approval_draft?: Record<string, unknown>;
   user_context?: string;
+  reviewed_anomalies?: ReviewedAnomaly[];
 }
 
 // ==================== Analysis Types ====================
@@ -146,6 +177,7 @@ export interface AgentChatRequest {
 export type AnomalySeverity = 'critical' | 'warning' | 'info';
 
 export interface AnomalyItem {
+  id: string;
   metric: string;
   movement: string;
   severity: AnomalySeverity;
@@ -154,6 +186,16 @@ export interface AnomalyItem {
   change_percent: number;
   campaign?: string | null;
   ad_set?: string | null;
+  description: string;
+  /** Present on reviewed anomalies after confirmation. */
+  included?: boolean;
+}
+
+/** Per-anomaly review decision sent to the backend on confirm_anomalies. */
+export interface ReviewedAnomaly {
+  id: string;
+  included: boolean;
+  severity: AnomalySeverity;
   description: string;
 }
 
@@ -196,9 +238,26 @@ export interface ImportedCSVFile {
 
 // ==================== Analysis Result Types ====================
 
+export interface RecommendedDecisionTreeNode {
+  ref: string;
+  layer: number;
+  title: string;
+  parent_refs: string[];
+  context_summary?: string;
+  reasoning?: string;
+  risk_level?: 'LOW' | 'MEDIUM' | 'HIGH';
+  confidence?: number;
+  topic?: string;
+}
+
 export interface AnalysisResult {
   anomalies: AnomalyItem[];
+  reviewed_anomalies?: AnomalyItem[];
+  anomalies_confirmed?: boolean;
   recommended_tasks?: RecommendedTask[];
+  recommended_decision_tree?: {
+    nodes: RecommendedDecisionTreeNode[];
+  };
 }
 
 export interface RecommendedTask {
@@ -212,7 +271,9 @@ export interface RecommendedTask {
 
 export interface WorkflowStepState {
   analysisComplete: boolean;
+  anomaliesConfirmed: boolean;
   tasksCreated: boolean;
+  decisionsCreated: boolean;
 }
 
 // ==================== Workflow Types ====================

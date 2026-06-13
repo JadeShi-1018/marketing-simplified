@@ -1203,17 +1203,6 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       const newTileTasks: Array<() => Promise<void>> = [];
       let willSendSheetDimensions = wantSheetDimensions;
 
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.debug('[SpreadsheetGrid][RangeLoad]', {
-          sheetId,
-          viewport: { startRow, endRow, startColumn, endColumn },
-          tileCount: tiles.length,
-          force,
-          wantSheetDimensions,
-        });
-      }
-
       for (const tile of tiles) {
         const rangeKey = makeRangeKey(tile);
         const cacheHit = !force && !!loadedRanges && loadedRanges.has(rangeKey);
