@@ -11,8 +11,8 @@ class Migration(migrations.Migration):
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
         ('core', '0001_initial'),
-        ('experience_group', '0003_unique_name_per_project'),
-        ('csm', '0005_csm_notification_and_is_creator'),
+        ('experience_group', '0001_initial'),
+        ('csm', '0001_initial'),
     ]
 
     operations = [
