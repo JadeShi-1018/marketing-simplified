@@ -132,16 +132,18 @@ class TestSubmitRequest:
     ):
         TicketFormField.objects.create(
             form=default_form, field_key='invoice', label='Invoice',
-            field_type=TicketFormField.FieldType.FILE, sort_order=10, max_file_size_mb=25,
+            field_type=TicketFormField.FieldType.FILE, sort_order=10, max_file_size_mb=1,
         )
-        upload = SimpleUploadedFile('big.pdf', b'x', content_type='application/pdf')
-        upload.size = 26 * 1024 * 1024
         payload = {
             'answers': json.dumps(_answers(
                 project=support_project.id,
                 work_type=work_type.id,
             )),
-            'invoice': upload,
+            'invoice': SimpleUploadedFile(
+                'big.pdf',
+                b'x' * (1024 * 1024 + 1),
+                content_type='application/pdf',
+            ),
         }
         response = member_client.post(_submit_url(experience_group.id), payload, format='multipart')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
