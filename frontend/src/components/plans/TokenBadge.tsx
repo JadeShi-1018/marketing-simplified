@@ -41,12 +41,12 @@ export default function TokenBadge({ projectId }: TokenBadgeProps) {
 
   const dotColor =
     isUnlimited
-      ? 'bg-green-500'
+      ? 'bg-[#3CCED7]'
       : pct > 100
       ? 'bg-red-500'
       : pct > 80
-      ? 'bg-orange-400'
-      : 'bg-green-500';
+      ? 'bg-amber-500'
+      : 'bg-[#3CCED7]';
 
   return (
     <div className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-700">

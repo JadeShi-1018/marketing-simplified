@@ -55,8 +55,8 @@ export default function TokenProgressBar({ projectId }: TokenProgressBarProps) {
     !isUnlimited && tokens_used > monthly_token_quota!
       ? 'bg-red-500'
       : pct > 80
-      ? 'bg-orange-400'
-      : 'bg-green-500';
+      ? 'bg-amber-500'
+      : 'bg-[#3CCED7]';
 
   const hasOverage = overage_tokens > 0;
   const overageCostCents =
@@ -70,7 +70,7 @@ export default function TokenProgressBar({ projectId }: TokenProgressBarProps) {
         <span className="font-medium text-gray-700">Project: {project_name}</span>
         <span>
           {isUnlimited ? (
-            <span className="text-green-600">Unlimited</span>
+            <span className="text-[#3CCED7]">Unlimited</span>
           ) : (
             <>
               {formatTokens(tokens_used)} / {formatTokens(monthly_token_quota)}
@@ -87,7 +87,7 @@ export default function TokenProgressBar({ projectId }: TokenProgressBarProps) {
       </div>
 
       {hasOverage && (
-        <p className="text-xs text-red-500">
+        <p className="text-xs text-amber-600">
           Overage: {formatTokens(overage_tokens)}
           {overageCostCents !== null && (
             <span> ≈ ${(overageCostCents / 100).toFixed(2)}</span>

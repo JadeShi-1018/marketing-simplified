@@ -18,8 +18,8 @@ function getConfig(code: QuotaErrorCode): ModalConfig {
     case 'TOKEN_QUOTA_EXCEEDED':
       return {
         icon: (
-          <div className="rounded-full bg-orange-50 p-3">
-            <Zap className="h-8 w-8 text-orange-500" />
+          <div className="rounded-full bg-amber-50 p-3">
+            <Zap className="h-8 w-8 text-amber-600" />
           </div>
         ),
         title: 'Monthly quota exceeded',
@@ -53,8 +53,17 @@ function getConfig(code: QuotaErrorCode): ModalConfig {
 
 export default function UpgradeModal() {
   const [code, setCode] = useState<QuotaErrorCode | null>(null);
+  const [closing, setClosing] = useState(false);
   const router = useRouter();
   const modalRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<number | null>(null);
+
+  const clearCloseTimer = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      window.clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -64,19 +73,36 @@ export default function UpgradeModal() {
         detail.code === 'SINGLE_CALL_TOO_LARGE' ||
         detail.code === 'PROJECT_HAS_NO_ORG'
       ) {
+        // A re-fired quota error must win over any in-flight close animation,
+        // otherwise the stale close timer unmounts the re-opened modal.
+        clearCloseTimer();
+        setClosing(false);
         setCode(detail.code as QuotaErrorCode);
       }
     };
     window.addEventListener('quota:error', handler);
-    return () => window.removeEventListener('quota:error', handler);
-  }, []);
+    return () => {
+      window.removeEventListener('quota:error', handler);
+      clearCloseTimer();
+    };
+  }, [clearCloseTimer]);
 
-  const handleClose = useCallback(() => setCode(null), []);
+  // Fade out before unmounting; duration matches the transition classes below.
+  const handleClose = useCallback(() => {
+    clearCloseTimer();
+    setClosing(true);
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null;
+      setClosing(false);
+      setCode(null);
+    }, 200);
+  }, [clearCloseTimer]);
 
+  // Navigate first — the close animation must never pre-empt the action.
   const handleUpgrade = useCallback(() => {
-    setCode(null);
     router.push('/subscription');
-  }, [router]);
+    handleClose();
+  }, [router, handleClose]);
 
   // Focus trap + Escape-to-close
   useEffect(() => {
@@ -120,9 +146,16 @@ export default function UpgradeModal() {
 
   const { icon, title, body, cta } = getConfig(code);
 
+  // z-layer scale (shared across the app's overlay surfaces):
+  //   z-[100]    tooltips / popovers (e.g. PlanCard feature tooltip)
+  //   z-50       in-page modals (ConfirmModal, InviteMembersModal)
+  //   z-[10001]  global interrupt modals (this quota modal — must beat app chrome)
+  //   z-[10002]  onboarding intro (sits above the quota modal)
   return (
     <div
-      className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/60"
+      className={`fixed inset-0 z-[10001] flex items-center justify-center bg-black/60 animate-in fade-in duration-200 ease-out transition-opacity motion-reduce:animate-none motion-reduce:transition-none ${
+        closing ? 'pointer-events-none opacity-0' : 'opacity-100'
+      }`}
       role="dialog"
       aria-modal="true"
       aria-labelledby="upgrade-modal-title"
@@ -130,7 +163,9 @@ export default function UpgradeModal() {
     >
       <div
         ref={modalRef}
-        className="relative w-full max-w-sm rounded-xl bg-white p-6 shadow-xl"
+        className={`relative w-full max-w-sm rounded-xl bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-200 ease-out transition-[opacity,transform] motion-reduce:animate-none motion-reduce:transition-none ${
+          closing ? 'opacity-0 scale-95' : 'opacity-100 scale-100'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <button
