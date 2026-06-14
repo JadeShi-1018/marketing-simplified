@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ('core', '0006_org_stripe_customer'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ('agent', '0017_remove_agentworkflowrun_user_context'),
+        ('agent', '0001_initial'),
         ('stripe_meta', '0004_seed_token_plans'),
     ]
 

@@ -37,8 +37,8 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('core', '0006_org_stripe_customer'),
-        ('access_control', '0002_initial'),
-        ('csm', '0005_csm_notification_and_is_creator'),
+        ('access_control', '0001_initial'),
+        ('csm', '0001_initial'),
     ]
 
     operations = [
