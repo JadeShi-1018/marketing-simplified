@@ -1,54 +1,46 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { Loader2 } from 'lucide-react';
 import DecisionsCardHeader from './DecisionsCardHeader';
 import DecisionsGraphSection from './DecisionsGraphSection';
-import DecisionsFilterBar, { type SortDir, type SortField } from './DecisionsFilterBar';
-import DecisionsTable from './DecisionsTable';
 import DecisionsEmptyState from './DecisionsEmptyState';
 import DecisionDeleteDialog from './DecisionDeleteDialog';
+import { readDecisionMapUrlState } from '@/components/decisions/decisionMapUrlState';
 import { DecisionAPI } from '@/lib/api/decisionApi';
 import type {
+  DecisionGraphEdge,
   DecisionGraphNode,
   DecisionGraphResponse,
   DecisionListItem,
 } from '@/types/decision';
 
-const ALL = '__all__';
-const PAGE_SIZE = 20;
-
 interface Props {
   projectId: number | null;
-  projectName?: string | null;
   role?: string | null;
   canCreate: boolean;
   canDelete: boolean;
-  onNavigateToDecision: (id: number) => void;
+  onNavigateToDecision: (id: number, projectId?: number | null) => void;
 }
 
 export default function DecisionsPageCard({
   projectId,
-  projectName,
   role,
   canCreate,
   canDelete,
   onNavigateToDecision,
 }: Props) {
+  const searchParams = useSearchParams();
+  const mapFullscreen = readDecisionMapUrlState(searchParams).fullscreen;
   const [items, setItems] = useState<DecisionListItem[]>([]);
   const [graph, setGraph] = useState<DecisionGraphResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState(ALL);
-  const [riskFilter, setRiskFilter] = useState(ALL);
-  const [sortField, setSortField] = useState<SortField>('updatedAt');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
-  const [page, setPage] = useState(1);
   const [pendingDelete, setPendingDelete] = useState<DecisionListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
-
+  const [createRequestKey, setCreateRequestKey] = useState(0);
   useEffect(() => {
     if (!projectId) {
       setItems([]);
@@ -61,7 +53,7 @@ export default function DecisionsPageCard({
       try {
         const [listRes, graphRes] = await Promise.all([
           DecisionAPI.listDecisions(projectId),
-          DecisionAPI.getDecisionGraph(projectId).catch(() => null),
+          DecisionAPI.getDecisionGraph(projectId, { scope: 'project' }).catch(() => null),
         ]);
         if (cancelled) return;
         setItems(listRes.items ?? []);
@@ -85,46 +77,7 @@ export default function DecisionsPageCard({
     };
   }, [projectId]);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    let result = items;
-    if (q) {
-      result = result.filter((d) => (d.title || '').toLowerCase().includes(q));
-    }
-    if (statusFilter !== ALL) {
-      result = result.filter((d) => d.status === statusFilter);
-    }
-    if (riskFilter !== ALL) {
-      result = result.filter((d) => d.riskLevel === riskFilter);
-    }
-    const dir = sortDir === 'asc' ? 1 : -1;
-    const resolveSortKey = (item: DecisionListItem): string | number | null => {
-      if (sortField === 'updatedAt') {
-        return item.updatedAt ?? item.lastEditedAt ?? item.committedAt ?? item.createdAt ?? null;
-      }
-      return ((item as any)[sortField] ?? null) as string | number | null;
-    };
-    result = [...result].sort((a, b) => {
-      const av = resolveSortKey(a);
-      const bv = resolveSortKey(b);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (av < bv) return -1 * dir;
-      if (av > bv) return 1 * dir;
-      return 0;
-    });
-    return result;
-  }, [items, search, statusFilter, riskFilter, sortField, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const paginated = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return filtered.slice(start, start + PAGE_SIZE);
-  }, [filtered, currentPage]);
-
-  const handleCreate = async () => {
+  const handleCreateFullPage = async () => {
     if (!projectId || creating) return;
     setCreating(true);
     try {
@@ -132,7 +85,7 @@ export default function DecisionsPageCard({
       if (draft.id == null) {
         throw new Error('Draft created without id');
       }
-      onNavigateToDecision(draft.id);
+      onNavigateToDecision(draft.id, projectId);
     } catch (err) {
       const detail =
         (err as any)?.response?.data?.detail ||
@@ -144,11 +97,17 @@ export default function DecisionsPageCard({
     }
   };
 
+  const handleCreateInTree = () => {
+    if (!projectId || creating) return;
+    setCreateRequestKey((key) => key + 1);
+  };
+
   const handleDelete = async () => {
     if (!pendingDelete || !projectId) return;
+    const deleteProjectId = pendingDelete.projectId ?? projectId;
     setDeleting(true);
     try {
-      await DecisionAPI.deleteDecision(pendingDelete.id, projectId);
+      await DecisionAPI.deleteDecision(pendingDelete.id, deleteProjectId);
       toast.success('Decision deleted');
       setItems((prev) => prev.filter((d) => d.id !== pendingDelete.id));
       setGraph((prev) =>
@@ -156,10 +115,10 @@ export default function DecisionsPageCard({
           ? {
               nodes: prev.nodes.filter((n) => n.id !== pendingDelete.id),
               edges: prev.edges.filter(
-                (e) => e.from !== pendingDelete.id && e.to !== pendingDelete.id
+                (e) => e.from !== pendingDelete.id && e.to !== pendingDelete.id,
               ),
             }
-          : prev
+          : prev,
       );
       setPendingDelete(null);
     } catch (err) {
@@ -174,96 +133,94 @@ export default function DecisionsPageCard({
     }
   };
 
-  const decisionCount = items.length;
-  const hasItems = decisionCount > 0;
+  const graphDecisionCount = graph?.nodes.length ?? 0;
+  const graphTopicCount = graph?.topics?.length ?? 0;
+  const decisionCount = graphDecisionCount || items.length;
+  const hasItems = decisionCount > 0 || graphTopicCount > 0;
+  const hasGraphItems = graphDecisionCount > 0 || graphTopicCount > 0;
+  const showGraphSection = hasItems || mapFullscreen;
   const graphNodeForDelete = (node: DecisionGraphNode) => {
     const listItem = items.find((i) => i.id === node.id);
-    if (listItem) setPendingDelete(listItem);
+    setPendingDelete(
+      listItem ?? {
+        id: node.id,
+        title: node.title,
+        status: node.status,
+        riskLevel: node.riskLevel,
+        projectId: node.projectId,
+        projectSeq: node.projectSeq,
+        createdAt: node.createdAt,
+        updatedAt: node.updatedAt,
+      },
+    );
+  };
+
+  const refreshGraph = async (opts?: {
+    fullReload?: boolean;
+    nodePatch?: { id: number } & Partial<DecisionGraphNode>;
+    edges?: DecisionGraphEdge[];
+  }) => {
+    if (!projectId) return;
+    if (opts?.edges && !opts.fullReload) {
+      setGraph((prev) => (prev ? { ...prev, edges: opts.edges! } : prev));
+      return;
+    }
+    if (opts?.nodePatch && !opts.fullReload) {
+      const { id, ...patch } = opts.nodePatch;
+      setGraph((prev) =>
+        prev
+          ? {
+              ...prev,
+              nodes: prev.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
+            }
+          : prev,
+      );
+      setItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+      );
+      return;
+    }
+    try {
+      const graphRes = await DecisionAPI.getDecisionGraph(projectId, { scope: 'project' });
+      setGraph(graphRes ?? null);
+      const listRes = await DecisionAPI.listDecisions(projectId);
+      setItems(listRes.items ?? []);
+    } catch {
+      // Non-blocking; panel already saved
+    }
   };
 
   return (
     <>
       <section className="overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-100 sm:rounded-xl">
         <DecisionsCardHeader
-          projectName={projectName}
           decisionCount={decisionCount}
           role={role}
           canCreate={canCreate}
           creating={creating}
-          onCreate={handleCreate}
+          onCreate={handleCreateFullPage}
         />
 
-        {loading && !hasItems ? (
+        {loading && !hasItems && !mapFullscreen ? (
           <div className="flex items-center justify-center px-3 py-12 text-gray-500 sm:px-6 sm:py-16">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             Loading decisions…
           </div>
-        ) : !hasItems ? (
-          <DecisionsEmptyState onCreate={handleCreate} canCreate={canCreate} />
-        ) : (
-          <>
-            <DecisionsGraphSection
-              graph={graph}
-              projectId={projectId}
-              canEdit={canDelete}
-              onEditDecision={(node) => onNavigateToDecision(node.id)}
-              onCreateDecision={handleCreate}
-              onDeleteDecision={graphNodeForDelete}
-            />
-            <DecisionsFilterBar
-              search={search}
-              onSearchChange={(v) => {
-                setSearch(v);
-                setPage(1);
-              }}
-              statusFilter={statusFilter}
-              onStatusFilterChange={(v) => {
-                setStatusFilter(v);
-                setPage(1);
-              }}
-              riskFilter={riskFilter}
-              onRiskFilterChange={(v) => {
-                setRiskFilter(v);
-                setPage(1);
-              }}
-              sortField={sortField}
-              onSortFieldChange={setSortField}
-              sortDir={sortDir}
-              onSortDirToggle={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-            />
-            <DecisionsTable
-              items={paginated}
-              onRowClick={onNavigateToDecision}
-              onDelete={setPendingDelete}
-              canDelete={canDelete}
-            />
-            {filtered.length > PAGE_SIZE && (
-              <div className="flex flex-wrap items-center justify-center gap-2 border-t border-gray-100 px-3 py-3 text-sm sm:justify-end sm:px-5">
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage <= 1}
-                  aria-label="Previous page"
-                  className="inline-flex h-8 items-center rounded-md border border-gray-200 bg-white px-3 text-gray-700 transition hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Prev
-                </button>
-                <span className="text-[12px] text-gray-500">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage >= totalPages}
-                  aria-label="Next page"
-                  className="inline-flex h-8 items-center rounded-md border border-gray-200 bg-white px-3 text-gray-700 transition hover:border-gray-300 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </>
-        )}
+        ) : !hasItems && !mapFullscreen ? (
+          <DecisionsEmptyState onCreate={handleCreateFullPage} canCreate={canCreate} />
+        ) : showGraphSection ? (
+          <DecisionsGraphSection
+            graph={graph}
+            projectId={projectId}
+            canEdit={canDelete}
+            onEditDecision={(node) => onNavigateToDecision(node.id, node.projectId ?? projectId)}
+            canCreate={canCreate}
+            onDeleteDecision={graphNodeForDelete}
+            onOpenFullPage={onNavigateToDecision}
+            createRequestKey={createRequestKey}
+            onDecisionUpdated={refreshGraph}
+          />
+        ) : null}
       </section>
 
       <DecisionDeleteDialog

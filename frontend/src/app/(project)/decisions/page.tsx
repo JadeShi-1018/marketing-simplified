@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
@@ -42,7 +42,13 @@ function DecisionsV2Content() {
   const user = useAuthStore((s) => s.user);
 
   const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
-  const projectName = activeProject?.name ?? null;
+
+  useEffect(() => {
+    if (!projectId || projectIdParam) return;
+    const params = new URLSearchParams(searchParams?.toString() ?? '');
+    params.set('project_id', String(projectId));
+    router.replace(`/decisions?${params.toString()}`, { scroll: false });
+  }, [projectId, projectIdParam, router, searchParams]);
 
   const role = useMemo(() => {
     if (!user) return null;
@@ -58,8 +64,9 @@ function DecisionsV2Content() {
   const canCreate = roleLevel <= EDIT_MAX_LEVEL;
   const canDelete = roleLevel <= EDIT_MAX_LEVEL;
 
-  const navigateToDecision = (id: number) => {
-    const qs = projectId ? `?project_id=${projectId}` : '';
+  const navigateToDecision = (id: number, targetProjectId?: number | null) => {
+    const resolvedProjectId = targetProjectId ?? projectId;
+    const qs = resolvedProjectId ? `?project_id=${resolvedProjectId}` : '';
     router.push(`/decisions/${id}${qs}`);
   };
 
@@ -74,7 +81,6 @@ function DecisionsV2Content() {
         </header>
         <DecisionsPageCard
           projectId={projectId}
-          projectName={projectName}
           role={role}
           canCreate={canCreate}
           canDelete={canDelete}

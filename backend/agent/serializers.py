@@ -132,9 +132,9 @@ class ChatInputSerializer(serializers.Serializer):
     file_id = serializers.UUIDField(required=False, allow_null=True)
     action = serializers.ChoiceField(
         choices=[
-            'analyze', 'create_tasks', 'generate_miro',
-            'distribute_message', 'start_follow_up', 'cancel_follow_up',
-            'confirm_columns',
+            'analyze', 'create_decisions', 'create_tasks', 'generate_miro',
+            'start_follow_up', 'cancel_follow_up',
+            'confirm_columns', 'confirm_anomalies',
             'resolve_external_approval',
         ],
         required=False,
@@ -152,12 +152,21 @@ class ChatInputSerializer(serializers.Serializer):
     # User-approved column mapping for confirm_columns action.
     # Format: {original_header: canonical_name or "unknown"}
     column_mapping = serializers.JSONField(required=False, allow_null=True)
+    # Reviewed anomaly list for confirm_anomalies action.
+    # Format: [{id, included, severity, description}, ...] covering every anomaly.
+    reviewed_anomalies = serializers.JSONField(required=False, allow_null=True)
     user_context = serializers.CharField(
         required=False,
         allow_null=True,
         allow_blank=True,
         max_length=500,
     )
+
+
+class UploadAnalyzeInputSerializer(serializers.Serializer):
+    """Multipart fields for POST /api/agent/upload-analyze/."""
+    session_id = serializers.UUIDField(required=False, allow_null=True)
+    generation_outputs = serializers.JSONField(required=False, allow_null=True)
 
 
 class AgentWorkflowStepSerializer(serializers.ModelSerializer):

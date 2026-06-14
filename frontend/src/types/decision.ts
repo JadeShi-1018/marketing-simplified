@@ -101,6 +101,8 @@ export interface DecisionSignalDraft {
 export interface DecisionDraftResponse {
   id?: number;
   title?: string | null;
+  topic?: string | null;
+  topicLabel?: string | null;
   projectSeq?: number | null;
   contextSummary?: string | null;
   riskLevel?: DecisionRiskLevel | null;
@@ -125,6 +127,8 @@ export interface DecisionCommittedResponse {
   id: number;
   status: DecisionStatus;
   title?: string | null;
+  topic?: string | null;
+  topicLabel?: string | null;
   projectSeq?: number | null;
   contextSummary?: string | null;
   riskLevel?: DecisionRiskLevel | null;
@@ -153,6 +157,8 @@ export interface DecisionListItem {
   riskLevel?: DecisionRiskLevel | null;
   confidenceScore?: number | null;
   projectId?: number | null;
+  topic?: string | null;
+  topicLabel?: string | null;
   projectSeq?: number | null;
   updatedAt?: string | null;
   createdAt?: string | null;
@@ -177,17 +183,30 @@ export interface DecisionGraphNode {
   createdAt: string;
   updatedAt: string;
   projectId?: number | null;
+  projectName?: string | null;
+  projectTheme?: string | null;
+  projectSubtitle?: string | null;
+  topic?: string | null;
+  topicLabel?: string | null;
   riskLevel?: DecisionRiskLevel | null;
 }
 
 export interface DecisionGraphEdge {
   from: number;
   to: number;
+  edgeType?: 'FOLLOW_UP' | 'RELATED' | null;
+}
+
+export interface DecisionGraphTopic {
+  topic: string;
+  title: string;
+  defaultTitle?: string | null;
 }
 
 export interface DecisionGraphResponse {
   nodes: DecisionGraphNode[];
   edges: DecisionGraphEdge[];
+  topics?: DecisionGraphTopic[];
 }
 
 export interface DecisionConnectionItem {
