@@ -33,13 +33,11 @@ class TriggerExecutionServiceTests(TestCase):
         # Create test organization and project
         self.organization = Organization.objects.create(
             name='Test Org',
-            owner=self.user,
         )
 
         self.project = Project.objects.create(
             name='Test Project',
             organization=self.organization,
-            created_by=self.user,
         )
 
         # Create test workflow
@@ -88,8 +86,8 @@ class TriggerExecutionServiceTests(TestCase):
         )
         self.assertIsNone(result, "101st trigger should be rate limited")
 
-        # Check log shows "skipped"
-        log = WorkflowTriggerLog.objects.filter(workflow=self.workflow).last()
+        # Check the most recent log shows "skipped" (explicit ordering)
+        log = WorkflowTriggerLog.objects.filter(workflow=self.workflow).order_by('-created_at').first()
         self.assertEqual(log.status, 'skipped')
         self.assertIn('rate limit', log.error_message.lower())
 
@@ -117,8 +115,8 @@ class TriggerExecutionServiceTests(TestCase):
         )
         self.assertIsNone(result2, "Duplicate trigger should be skipped")
 
-        # Check log
-        log = WorkflowTriggerLog.objects.filter(workflow=self.workflow).last()
+        # Check the most recent log (explicit ordering)
+        log = WorkflowTriggerLog.objects.filter(workflow=self.workflow).order_by('-created_at').first()
         self.assertEqual(log.status, 'skipped')
         self.assertIn('duplicate', log.error_message.lower())
 
@@ -165,27 +163,22 @@ class TriggerExecutionServiceTests(TestCase):
 
     def test_polling_condition_evaluation(self):
         """Test polling trigger condition evaluation."""
-        # Set up workflow with polling conditions
+        # Set up workflow with polling conditions for external service
         self.workflow.trigger_config = {
             'trigger_type': 'polling',
             'polling': {
                 'interval_minutes': 15,
-                'data_sources': ['spreadsheet'],
-                'conditions': [
-                    {
-                        'type': 'spreadsheet_upload',
-                        'project_id': self.project.id,
-                    }
-                ]
+                'data_sources': ['google_sheets'],
+                'conditions': []  # External polling events pass unconditionally
             }
         }
         self.workflow.save()
 
-        # Matching context should trigger
+        # External service event should trigger (google_sheets.modified is in _EXTERNAL_POLLING_EVENTS)
         context_match = {
-            'event_type': 'spreadsheet.uploaded',
-            'project_id': self.project.id,
-            'file_id': '123',
+            'event_type': 'google_sheets.modified',
+            'sheet_id': '123',
+            'modified_range': 'A1:Z100',
         }
 
         result = TriggerExecutionService.execute_workflow_trigger(
@@ -195,15 +188,15 @@ class TriggerExecutionServiceTests(TestCase):
             user=self.user,
             project=self.project,
         )
-        self.assertIsNotNone(result, "Matching conditions should trigger")
+        self.assertIsNotNone(result, "External polling event should trigger")
 
-        # Non-matching context should be skipped
+        # Non-external event should be skipped
         context_no_match = {
             'event_type': 'task.created',
             'task_id': 456,
         }
 
-        # Reset rate limit by creating new state
+        # Reset rate limit and deduplication by deleting state
         WorkflowTriggerState.objects.filter(workflow=self.workflow).delete()
 
         result2 = TriggerExecutionService.execute_workflow_trigger(
@@ -213,7 +206,7 @@ class TriggerExecutionServiceTests(TestCase):
             user=self.user,
             project=self.project,
         )
-        self.assertIsNone(result2, "Non-matching conditions should skip")
+        self.assertIsNone(result2, "Non-external polling event should skip")
 
     def test_instant_filter_evaluation(self):
         """Test instant trigger filter evaluation."""
@@ -310,6 +303,8 @@ class TriggerExecutionServiceTests(TestCase):
 
     def test_nonexistent_workflow_returns_none(self):
         """Test that triggering a non-existent workflow returns None."""
+        initial_log_count = WorkflowTriggerLog.objects.count()
+
         result = TriggerExecutionService.execute_workflow_trigger(
             workflow_id='00000000-0000-0000-0000-000000000000',
             trigger_type='manual',
@@ -319,10 +314,9 @@ class TriggerExecutionServiceTests(TestCase):
         )
         self.assertIsNone(result)
 
-        # Check error log created
-        log = WorkflowTriggerLog.objects.latest('created_at')
-        self.assertEqual(log.status, 'failed')
-        self.assertIn('not found', log.error_message.lower())
+        # No log should be created since workflow doesn't exist (foreign key constraint)
+        final_log_count = WorkflowTriggerLog.objects.count()
+        self.assertEqual(initial_log_count, final_log_count, "No log should be created for non-existent workflow")
 
     def test_trigger_count_resets_after_hour(self):
         """Test that trigger count resets after an hour."""

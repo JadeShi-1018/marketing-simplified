@@ -1206,6 +1206,7 @@ class WorkflowEngineTests(TestCase):
             'await_confirmation', 'custom_api',
             'detect_columns', 'normalize_data',
             'generate_criteria',
+            'loop', 'merge', 'if_else',  # Flow control step types
         }
         self.assertEqual(set(EXECUTOR_REGISTRY.keys()), expected)
 

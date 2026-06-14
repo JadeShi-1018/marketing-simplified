@@ -175,7 +175,8 @@ class TriggerExecutionService:
             return False
 
         state.trigger_count_last_hour += 1
-        state.save()
+        # Only update rate limit fields to avoid overwriting other fields
+        state.save(update_fields=['trigger_count_last_hour', 'trigger_count_reset_at'])
         return True
 
     @staticmethod
@@ -208,7 +209,8 @@ class TriggerExecutionService:
         # Update state with new hash
         state.last_checked_data_hash = context_hash
         state.last_polling_check = timezone.now()
-        state.save()
+        # Only update deduplication fields to avoid overwriting other fields
+        state.save(update_fields=['last_checked_data_hash', 'last_polling_check'])
 
         return False
 
@@ -265,18 +267,11 @@ class TriggerExecutionService:
 
         Polling now monitors external services (Zoom, Google Sheets, Linear, Notion).
         The handler already verifies a change exists before calling execute_workflow_trigger,
-        so external service events always pass here.  An empty conditions list also
-        passes unconditionally (the common case for all new polling configs).
+        so external service events always pass here.
         """
-        if not conditions:
-            return True  # No conditions = always trigger
-
-        # External service events: the handler already confirmed the change
+        # Polling only supports external service events
         event_type = trigger_context.get('event_type', '')
-        if event_type in TriggerExecutionService._EXTERNAL_POLLING_EVENTS:
-            return True
-
-        return False
+        return event_type in TriggerExecutionService._EXTERNAL_POLLING_EVENTS
 
     @staticmethod
     def _evaluate_instant_filters(
@@ -311,6 +306,9 @@ class TriggerExecutionService:
         state.last_successful_trigger = timezone.now()
         state.last_trigger_type = trigger_type
 
+        # Track which fields to update
+        update_fields = ['last_successful_trigger', 'last_trigger_type']
+
         # Update next scheduled run for scheduled triggers
         if trigger_type == 'scheduled':
             cron_expr = workflow.trigger_config.get('scheduled', {}).get('cron_expression')
@@ -319,11 +317,14 @@ class TriggerExecutionService:
                     from croniter import croniter
                     iter = croniter(cron_expr, timezone.now())
                     state.next_scheduled_run = iter.get_next(datetime)
+                    update_fields.append('next_scheduled_run')
                 except Exception:
                     logger.exception(f"Invalid cron expression: {cron_expr}")
                     state.next_scheduled_run = timezone.now() + timedelta(days=1)
+                    update_fields.append('next_scheduled_run')
 
-        state.save()
+        # Only update specific fields to avoid overwriting rate limit and deduplication fields
+        state.save(update_fields=update_fields)
 
     @staticmethod
     def _create_trigger_log(
@@ -337,14 +338,22 @@ class TriggerExecutionService:
     ):
         """Create a trigger log entry for audit and debugging."""
         try:
-            WorkflowTriggerLog.objects.create(
-                workflow_id=workflow_id,
-                trigger_type=trigger_type,
-                status=status,
-                trigger_context=trigger_context,
-                workflow_run_id=workflow_run_id,
-                error_message=error_message,
-                execution_time_ms=execution_time_ms,
-            )
+            # Try to get the workflow, but allow None if it doesn't exist
+            try:
+                workflow = AgentWorkflowDefinition.objects.get(id=workflow_id)
+            except AgentWorkflowDefinition.DoesNotExist:
+                workflow = None
+
+            # Only create log if workflow exists (foreign key constraint)
+            if workflow:
+                WorkflowTriggerLog.objects.create(
+                    workflow=workflow,
+                    trigger_type=trigger_type,
+                    status=status,
+                    trigger_context=trigger_context,
+                    workflow_run_id=workflow_run_id,
+                    error_message=error_message,
+                    execution_time_ms=execution_time_ms,
+                )
         except Exception:
             logger.exception("Failed to create trigger log")
