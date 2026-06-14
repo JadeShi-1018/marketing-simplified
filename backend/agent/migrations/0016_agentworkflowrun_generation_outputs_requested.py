@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('agent', '0015_alter_agentpendingexternalapproval_kind_and_more'),
+        ('agent', '0001_initial'),
     ]
 
     operations = [

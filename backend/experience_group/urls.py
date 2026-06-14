@@ -22,4 +22,14 @@ urlpatterns = [
         ExperienceGroupViewSet.as_view({'get': 'preview'}),
         name='experience-group-preview',
     ),
+    path(
+        'experience-groups/<int:pk>/request-form/',
+        ExperienceGroupViewSet.as_view({'get': 'request_form'}),
+        name='experience-group-request-form',
+    ),
+    path(
+        'experience-groups/<int:pk>/submit-request/',
+        ExperienceGroupViewSet.as_view({'post': 'submit_request'}),
+        name='experience-group-submit-request',
+    ),
 ]
