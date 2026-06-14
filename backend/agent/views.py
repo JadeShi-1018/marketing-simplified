@@ -13,6 +13,8 @@ from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from stripe_meta.exceptions import QuotaError
+
 
 class EventStreamRenderer(BaseRenderer):
     """Renderer that accepts text/event-stream for SSE endpoints."""
@@ -36,6 +38,7 @@ from .serializers import (
     AgentSessionListSerializer,
     AgentSessionDetailSerializer,
     ChatInputSerializer,
+    UploadAnalyzeInputSerializer,
     AgentWorkflowDefinitionListSerializer,
     AgentWorkflowDefinitionDetailSerializer,
     AgentWorkflowStepSerializer,
@@ -43,6 +46,7 @@ from .serializers import (
     AgentWorkflowRunSerializer,
     StepReorderSerializer,
 )
+from .generation_registry import GenerationValidationError, get_catalog, normalize_generation_outputs
 from .services import AgentOrchestrator
 from . import data_service
 
@@ -158,8 +162,8 @@ class ChatView(EnglishResponseMixin, APIView):
 
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
-            'create_tasks', 'generate_miro',
-            'distribute_message', 'confirm_columns', 'confirm_anomalies',
+            'create_decisions', 'create_tasks', 'generate_miro',
+            'confirm_columns', 'confirm_anomalies',
             'resolve_external_approval',
         }
 
@@ -185,26 +189,6 @@ class ChatView(EnglishResponseMixin, APIView):
             project=project,
             session=session,
         )
-
-        # Pre-flight quota check — reject before SSE headers are committed so the
-        # client receives a proper HTTP status code rather than a mid-stream abort.
-        try:
-            from stripe_meta.exceptions import QuotaError
-            from stripe_meta.services import resolve_charging_org, check_quota_or_402
-            _org = resolve_charging_org(session)
-            _allowed, _err_payload = check_quota_or_402(_org, 1)
-            if not _allowed:
-                return Response(_err_payload, status=status.HTTP_402_PAYMENT_REQUIRED)
-        except QuotaError as _qe:
-            _http_status = (
-                status.HTTP_409_CONFLICT
-                if _qe.code == 'PROJECT_HAS_NO_ORG'
-                else status.HTTP_402_PAYMENT_REQUIRED
-            )
-            return Response(
-                {'code': _qe.code, 'message': _qe.message, **_qe.payload},
-                status=_http_status,
-            )
 
         def event_stream():
             assistant_content_parts = []
@@ -276,6 +260,20 @@ class ChatView(EnglishResponseMixin, APIView):
                         )
                         continue
 
+                    if chunk_type == 'decision_draft':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        if content or data:
+                            AgentMessage.objects.create(
+                                session=session,
+                                role='assistant',
+                                content=content or 'Decision drafts created.',
+                                message_type='decision_draft',
+                                metadata=data or {},
+                            )
+                        continue
+
                     # Miro status is persisted separately (_create_agent_status_message in the
                     # orchestrator). Do not merge its text into the prior assistant bubble or
                     # the final flush — that would duplicate the same line in chat history.
@@ -301,11 +299,6 @@ class ChatView(EnglishResponseMixin, APIView):
 
                     if chunk_type == 'done':
                         _flush_message()
-            except QuotaError as e:
-                _flush_message()
-                error_data = json.dumps({'code': e.code, **e.payload})
-                yield f"event: error\ndata: {error_data}\n\n"
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
             except Exception:
                 logger.exception("Error during agent SSE stream")
                 _flush_message()
@@ -447,8 +440,6 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
     renderer_classes = [EventStreamRenderer, JSONRenderer]
 
     def post(self, request):
-        from stripe_meta.exceptions import QuotaError
-
         project = _get_user_project(request)
         if not project:
             return Response(
@@ -485,8 +476,20 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+        upload_fields = UploadAnalyzeInputSerializer(data=request.data)
+        upload_fields.is_valid(raise_exception=True)
+        try:
+            generation_outputs = normalize_generation_outputs(
+                upload_fields.validated_data.get('generation_outputs')
+            )
+        except GenerationValidationError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Create or reuse session
-        session_id = request.data.get('session_id')
+        session_id = upload_fields.validated_data.get('session_id') or request.data.get('session_id')
         user_context = request.data.get('user_context') or None
         if session_id:
             try:
@@ -525,17 +528,25 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                     "original_filename": result['original_filename'],
                     "row_count": result['row_count'],
                     "column_count": result['column_count'],
+                    "generation_outputs": generation_outputs,
                 },
             }
             yield f"data: {json.dumps(file_event)}\n\n"
 
             # Route through the workflow engine (column detection + analysis).
             assistant_content_parts = []
-            assistant_metadata = {"file_id": result['id']}
+            assistant_metadata = {
+                "file_id": result['id'],
+                "generation_outputs": generation_outputs,
+            }
             last_message_type = 'text'
 
             try:
-                for chunk in orchestrator.handle_message("", file_id=result['id'], user_context=user_context):
+                for chunk in orchestrator.handle_message(
+                    "",
+                    file_id=result['id'],
+                    generation_outputs=generation_outputs,
+                    user_context=user_context):
                     chunk_type = chunk.get('type', 'text')
                     content = chunk.get('content', '')
                     data = chunk.get('data')
@@ -551,9 +562,14 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                         assistant_metadata.update(data)
 
                     yield f"data: {json.dumps(chunk, default=str)}\n\n"
-            except QuotaError as e:
-                quota_payload = json.dumps({'code': e.code, 'message': e.message, **e.payload})
+            except QuotaError as exc:
+                quota_payload = json.dumps(
+                    {'code': exc.code, 'message': exc.message, **exc.payload}
+                )
                 yield f"data: {quota_payload}\n\n"
+            except GenerationValidationError as exc:
+                logger.warning("FileUploadAnalyzeView validation error: %s", exc)
+                yield f"data: {json.dumps({'type': 'error', 'content': str(exc)})}\n\n"
             except Exception:
                 logger.exception("FileUploadAnalyzeView workflow error")
                 yield f"data: {json.dumps({'type': 'error', 'content': 'An internal error occurred. Please try again.'})}\n\n"
@@ -819,6 +835,14 @@ class WorkflowRunDetailView(EnglishResponseMixin, APIView):
             executions, many=True,
         ).data
         return Response(run_data)
+
+
+class GenerationOutputsCatalogView(EnglishResponseMixin, APIView):
+    """GET /api/agent/generation-outputs/ — catalog of tickable generation outputs."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({'outputs': get_catalog()})
 
 
 class AgentConfigStatusView(EnglishResponseMixin, APIView):

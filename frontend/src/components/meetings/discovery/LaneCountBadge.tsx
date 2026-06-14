@@ -1,15 +1,11 @@
 'use client';
 
-import { useEffect } from 'react';
-
 type LaneCountBadgeProps = {
   /** Badge A — filtered count in lane. */
   visible?: number;
   /** Badge B — lane total without discovery filters. */
   total?: number;
   loading: boolean;
-  /** For dev-only console (e.g. "incoming meetings"). */
-  debugLabel?: string;
 };
 
 /**
@@ -20,16 +16,7 @@ export function LaneCountBadge({
   visible,
   total,
   loading,
-  debugLabel,
 }: LaneCountBadgeProps) {
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'production') return;
-    console.log('LaneCountBadge props', debugLabel ?? '(lane)', {
-      visible,
-      total,
-    });
-  }, [debugLabel, visible, total]);
-
   const hasAB =
     typeof visible === 'number' &&
     typeof total === 'number' &&

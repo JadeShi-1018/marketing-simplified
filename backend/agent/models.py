@@ -504,6 +504,7 @@ class AgentWorkflowRun(TimeStampedModel):
     current_step_order = models.PositiveIntegerField(null=True, blank=True)
     analysis_result = models.JSONField(null=True, blank=True)
     created_tasks = models.JSONField(default=list, blank=True)
+    created_decisions = models.JSONField(default=list, blank=True)
     miro_snapshot = models.JSONField(null=True, blank=True)
     miro_board = models.ForeignKey(
         'miro.Board',
@@ -513,6 +514,11 @@ class AgentWorkflowRun(TimeStampedModel):
         related_name='agent_workflow_runs',
     )
     success_criteria = models.JSONField(null=True, blank=True)
+    generation_outputs_requested = models.JSONField(
+        null=True,
+        blank=True,
+        help_text='User-selected generation outputs for this run (upload-analyze).',
+    )
     error_message = models.TextField(null=True, blank=True)
     chat_follow_up_started = models.BooleanField(default=False)
     chat_followed_up = models.BooleanField(default=False)

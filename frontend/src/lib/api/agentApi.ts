@@ -10,6 +10,7 @@ import {
   AgentWorkflowDefinition,
   AgentWorkflowStep,
   AgentWorkflowRun,
+  GenerationOutputKey,
 } from '@/types/agent';
 
 const QUOTA_CODES = new Set(['TOKEN_QUOTA_EXCEEDED', 'SINGLE_CALL_TOO_LARGE', 'PROJECT_HAS_NO_ORG']);
@@ -218,6 +219,7 @@ export const AgentAPI = {
   uploadAndAnalyze: (
     file: File,
     sessionId: string | null,
+    generationOutputs: GenerationOutputKey[],
     userContext: string | null,
     onEvent: (event: SSEEvent) => void,
     onError?: (error: Error) => void,
@@ -233,6 +235,7 @@ export const AgentAPI = {
     const formData = new FormData();
     formData.append('file', file);
     if (sessionId) formData.append('session_id', sessionId);
+    formData.append('generation_outputs', JSON.stringify(generationOutputs));
     if (userContext) formData.append('user_context', userContext);
 
     const baseURL =

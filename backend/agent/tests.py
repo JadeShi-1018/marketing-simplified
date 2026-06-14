@@ -1276,6 +1276,50 @@ class WorkflowEngineTests(TestCase):
         self.assertIn('task_created', types)
         self.assertEqual(run.status, 'completed')
 
+    def test_create_decisions_action_commits_from_analysis_for_workflow_run(self):
+        """create_decisions action should commit decision tree from stored analysis."""
+        from decision.models import Decision
+
+        self.session.approval_required = False
+        self.session.save(update_fields=['approval_required'])
+
+        analysis = _test_analysis_data()
+        analysis['recommended_decision_tree'] = {
+            'nodes': [
+                {
+                    'ref': 'root',
+                    'layer': 0,
+                    'title': 'Shift budget to search?',
+                    'parent_refs': [],
+                },
+            ],
+        }
+        run = AgentWorkflowRun.objects.create(
+            session=self.session,
+            workflow_definition=self.workflow,
+            status='awaiting_confirmation',
+            current_step_order=7,
+            analysis_result=analysis,
+            created_decisions=[],
+        )
+
+        chunks = list(self.orchestrator.handle_message(
+            'create_decisions',
+            action='create_decisions',
+        ))
+        types = [c.get('type') for c in chunks]
+        self.assertIn('decision_draft', types)
+
+        run.refresh_from_db()
+        self.assertTrue(run.created_decisions)
+        self.assertTrue(
+            Decision.objects.filter(
+                project=self.project,
+                title='Shift budget to search?',
+                created_by_agent=True,
+            ).exists()
+        )
+
     def test_create_tasks_action_commits_from_analysis_for_workflow_run(self):
         """create_tasks action should commit tasks from stored analysis, not pause again."""
         from task.models import Task
@@ -1983,6 +2027,77 @@ class GeminiAnalysisPromptInjectionTests(TestCase):
         call_args = mock_gemini.call_args[0]
         system_prompt = call_args[1]
         self.assertNotIn('User Context', system_prompt)
+
+    @patch('agent.gemini_client.call_gemini_json')
+    def test_decision_tree_in_system_prompt_when_requested(self, mock_gemini):
+        from agent.services import _call_gemini_analysis
+
+        mock_gemini.return_value = {
+            'recommended_decision_tree': {'nodes': []},
+        }
+
+        _call_gemini_analysis(
+            {'name': 'test', 'sheets': []},
+            user_id='1',
+            generation_outputs=['recommended_decision_tree'],
+        )
+
+        system_prompt = mock_gemini.call_args[1]['system_prompt']
+        self.assertIn('recommended_decision_tree', system_prompt)
+        self.assertIn('parent_refs', system_prompt)
+
+
+class RunAnalysisValidationRetryTests(TestCase):
+    @patch('agent.gemini_client._get_api_key', return_value='fake-key')
+    @patch('agent.services._call_gemini_analysis')
+    def test_retries_on_validation_error_then_succeeds(self, mock_call, _mock_key):
+        from agent.services import _run_analysis
+
+        invalid = {
+            'recommended_decision_tree': {
+                'nodes': [{'ref': 'a', 'layer': 0, 'title': 'Root'}],
+            },
+        }
+        valid = {
+            'recommended_decision_tree': {
+                'nodes': [{'ref': 'a', 'layer': 0, 'title': 'Root', 'parent_refs': []}],
+            },
+        }
+        mock_call.side_effect = [invalid, valid]
+
+        result = _run_analysis(
+            {'name': 'test', 'sheets': []},
+            generation_outputs=['recommended_decision_tree'],
+        )
+
+        self.assertEqual(mock_call.call_count, 2)
+        self.assertIsNone(mock_call.call_args_list[0].kwargs.get('validation_feedback'))
+        self.assertIn(
+            'parent_refs',
+            mock_call.call_args_list[1].kwargs['validation_feedback'],
+        )
+        self.assertEqual(result['recommended_decision_tree']['nodes'][0]['parent_refs'], [])
+
+    @patch('agent.gemini_client._get_api_key', return_value='fake-key')
+    @patch('agent.services._call_gemini_analysis')
+    def test_raises_after_max_validation_retries(self, mock_call, _mock_key):
+        from agent.generation_registry import GenerationValidationError
+        from agent.services import _ANALYSIS_VALIDATION_MAX_ATTEMPTS, _run_analysis
+
+        invalid = {
+            'recommended_decision_tree': {
+                'nodes': [{'ref': 'a', 'layer': 0, 'title': 'Root'}],
+            },
+        }
+        mock_call.return_value = invalid
+
+        with self.assertRaises(GenerationValidationError):
+            _run_analysis(
+                {'name': 'test', 'sheets': []},
+                generation_outputs=['recommended_decision_tree'],
+            )
+
+        self.assertEqual(mock_call.call_count, _ANALYSIS_VALIDATION_MAX_ATTEMPTS)
 
 
 class AnalyzeDataExecutorUserContextTests(TestCase):
