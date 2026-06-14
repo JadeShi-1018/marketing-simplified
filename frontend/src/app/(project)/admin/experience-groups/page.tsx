@@ -7,8 +7,10 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import Modal from '@/components/ui/Modal';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { ExperienceGroup, ExperienceGroupListItem, CreateExperienceGroupData } from '@/types/experienceGroup';
-import { Plus, Pencil, Trash2, Send, Eye, AlertCircle, X, Users } from 'lucide-react';
+import Link from 'next/link';
+import { Plus, Pencil, Trash2, Send, Eye, AlertCircle, X, Users, FileText, Settings } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { PORTAL_SUBMIT_BUTTON_CLASS } from '@/components/ticket-form/constants';
 
 // ── Create Form ───────────────────────────────────────────────────────────────
 
@@ -426,7 +428,7 @@ const ExperienceGroupsPage: React.FC = () => {
   };
 
   const handlePreview = (id: number) => {
-    window.open(`/admin/experience-groups/${id}/preview`, '_blank');
+    window.open(`/admin/experience-groups/${id}/preview?project=${projectId}`, '_blank');
   };
 
   return (
@@ -442,13 +444,34 @@ const ExperienceGroupsPage: React.FC = () => {
                 Manage distinct support configurations for different customer segments.
               </p>
             </div>
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors"
-            >
-              <Plus className="h-4 w-4" />
-              New Group
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {projectValid && (
+                <>
+                  <Link
+                    href={`/admin/csm/settings?project=${projectId}`}
+                    className="flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    <Settings className="h-4 w-4" aria-hidden />
+                    CSM Settings
+                  </Link>
+                  <Link
+                    href={`/admin/ticket-forms?project=${projectId}`}
+                    className="flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    <FileText className="h-4 w-4" />
+                    Ticket Forms
+                  </Link>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsCreateModalOpen(true)}
+                className={`gap-2 ${PORTAL_SUBMIT_BUTTON_CLASS}`}
+              >
+                <Plus className="h-4 w-4" aria-hidden />
+                New Group
+              </button>
+            </div>
           </div>
 
           {/* Action-level error */}

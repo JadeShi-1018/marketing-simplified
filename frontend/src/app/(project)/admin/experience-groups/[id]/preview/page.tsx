@@ -1,19 +1,30 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { ExperienceGroup } from '@/types/experienceGroup';
-import LoadingSpinner from '@/components/ui/LoadingSpinner';
-import { AlertCircle, Eye } from 'lucide-react';
+import type { RequestFormResponse } from '@/types/ticketForm';
+import DynamicFormRenderer from '@/components/ticket-form/DynamicFormRenderer';
+import PortalPageShell from '@/components/ticket-form/portal/PortalPageShell';
+import PortalBrandingRow from '@/components/ticket-form/portal/PortalBrandingRow';
+import PortalPreviewSkeleton from '@/components/ticket-form/portal/PortalPreviewSkeleton';
+import { AlertCircle } from 'lucide-react';
 
 const PreviewPage: React.FC = () => {
   const params = useParams();
+  const searchParams = useSearchParams();
   const id = Number(params.id);
+  const projectId = searchParams.get('project');
 
   const [data, setData] = useState<(ExperienceGroup & { is_preview: boolean }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [formSchema, setFormSchema] = useState<RequestFormResponse | null>(null);
+  const [formLoading, setFormLoading] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formSubmitted, setFormSubmitted] = useState(false);
 
   const fetchPreview = useCallback(async () => {
     setLoading(true);
@@ -28,28 +39,51 @@ const PreviewPage: React.FC = () => {
     }
   }, [id]);
 
+  const fetchRequestForm = useCallback(async () => {
+    setFormLoading(true);
+    setFormError(null);
+    try {
+      const res = await ExperienceGroupAPI.getRequestForm(id);
+      setFormSchema(res.data);
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 404) {
+        setFormError('Configure a default ticket form for this project.');
+      } else {
+        setFormError('Failed to load request form.');
+      }
+      setFormSchema(null);
+    } finally {
+      setFormLoading(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     fetchPreview();
-  }, [fetchPreview]);
+    fetchRequestForm();
+  }, [fetchPreview, fetchRequestForm]);
+
+  const ticketFormsHref = projectId
+    ? `/admin/ticket-forms?project=${projectId}`
+    : '/admin/ticket-forms';
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen gap-3 bg-gray-50">
-        <LoadingSpinner />
-        <p className="text-sm text-gray-500">Loading preview...</p>
-      </div>
+      <PortalPageShell>
+        <PortalPreviewSkeleton />
+      </PortalPageShell>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 p-8">
-        <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-200 rounded-lg max-w-md w-full">
-          <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+      <div className="flex min-h-screen flex-col items-center justify-center bg-gray-50 p-8">
+        <div className="flex w-full max-w-md items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-4">
+          <AlertCircle className="h-5 w-5 shrink-0 text-red-600" />
           <p className="text-sm text-red-700">{error || 'Preview unavailable.'}</p>
           <button
             onClick={fetchPreview}
-            className="ml-auto px-3 py-1.5 text-sm text-red-700 border border-red-300 rounded-lg hover:bg-red-100"
+            className="ml-auto rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-100"
           >
             Retry
           </button>
@@ -59,63 +93,35 @@ const PreviewPage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <PortalPageShell>
+      {!formSubmitted && <PortalBrandingRow name={data.name} />}
 
-      {/* Preview mode banner */}
-      <div className="sticky top-0 z-50 flex items-center justify-center gap-2 px-4 py-2.5 bg-yellow-400 text-yellow-900 text-sm font-medium">
-        <Eye className="h-4 w-4" />
-        Preview Mode — Not visible to customers
-      </div>
-
-      {/* Simulated customer portal */}
-      <div className="max-w-2xl mx-auto px-4 py-12 flex flex-col gap-8">
-
-        {/* Header */}
-        <div className="text-center flex flex-col gap-2">
-          <h1 className="text-3xl font-bold text-gray-900">{data.name}</h1>
-          {data.description && (
-            <p className="text-gray-500">{data.description}</p>
-          )}
-        </div>
-
-        {/* Knowledge base placeholder */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Knowledge Base</h2>
-          <div className="h-10 bg-gray-100 rounded-lg flex items-center px-4 text-sm text-gray-400">
-            Search articles...
+      {formLoading ? (
+        <PortalPreviewSkeleton showBrandingSkeleton={false} />
+      ) : formError ? (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p>{formError}</p>
+            <a
+              href={ticketFormsHref}
+              className="mt-1 inline-block text-xs text-[#2ab5be] hover:underline"
+            >
+              Open Ticket Forms admin →
+            </a>
           </div>
-          <p className="text-xs text-gray-400 italic">
-            Articles will appear here once Spaces are configured.
-          </p>
         </div>
-
-        {/* Contact form placeholder */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Submit a Request</h2>
-          <p className="text-xs text-gray-400 italic">
-            A request form will appear here once a Default Form is configured.
-          </p>
-        </div>
-
-        {/* Live chat placeholder */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-3">
-          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Live Chat</h2>
-          <p className="text-xs text-gray-400 italic">
-            Live chat will be available once a Support Channel is assigned.
-          </p>
-        </div>
-
-        {/* Config summary */}
-        <div className="bg-gray-100 border border-gray-200 rounded-xl p-4 text-xs text-gray-500 flex flex-col gap-1.5">
-          <p className="font-medium text-gray-600 mb-1">Preview Config</p>
-          <p>Status: <span className="font-mono">{data.status}</span></p>
-          {data.published_at && (
-            <p>Last published: {new Date(data.published_at).toLocaleString()}</p>
-          )}
-          <p>Showing draft content: {data.draft_snapshot ? 'Yes' : 'No'}</p>
-        </div>
-      </div>
-    </div>
+      ) : formSchema ? (
+        <DynamicFormRenderer
+          experienceGroupId={id}
+          schema={formSchema}
+          projectId={projectId ? Number(projectId) : undefined}
+          variant="portal"
+          onSubmitted={() => setFormSubmitted(true)}
+          onSubmitAnother={() => setFormSubmitted(false)}
+        />
+      ) : null}
+    </PortalPageShell>
   );
 };
 
