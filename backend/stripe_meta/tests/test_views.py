@@ -240,6 +240,71 @@ class SubscriptionViewsTest(StripeViewsTestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class PaymentViewsTest(StripeViewsTestCase):
+    """Test cases for invoice history."""
+
+    @patch('stripe_meta.services.stripe.Invoice.list')
+    def test_list_payments_success(self, invoice_list):
+        self.organization.stripe_customer_id = 'cus_test_123'
+        self.organization.save(update_fields=['stripe_customer_id'])
+        invoice_list.return_value.data = [
+            {
+                'id': 'in_123',
+                'number': 'INV-0001',
+                'created': 1717977600,
+                'amount_paid': 9400,
+                'currency': 'aud',
+                'status': 'paid',
+                'description': 'Team subscription',
+                'hosted_invoice_url': 'https://invoice.stripe.test/in_123',
+                'invoice_pdf': 'https://invoice.stripe.test/in_123.pdf',
+            },
+        ]
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 200)
+        invoice_list.assert_called_once_with(customer='cus_test_123', limit=24)
+        self.assertEqual(response.json(), [{
+            'id': 'in_123',
+            'number': 'INV-0001',
+            'created': '2024-06-10T00:00:00+00:00',
+            'amount_paid_cents': 9400,
+            'currency': 'AUD',
+            'status': 'paid',
+            'description': 'Team subscription',
+            'hosted_invoice_url': 'https://invoice.stripe.test/in_123',
+            'invoice_pdf': 'https://invoice.stripe.test/in_123.pdf',
+        }])
+
+    @patch('stripe_meta.services.stripe.Invoice.list')
+    def test_list_payments_without_customer_returns_empty(self, invoice_list):
+        self.organization.stripe_customer_id = ''
+        self.organization.save(update_fields=['stripe_customer_id'])
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        invoice_list.assert_not_called()
+
+    def test_list_payments_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_list_payments_without_organization(self):
+        self.user.organization = None
+        self.user.save(update_fields=['organization'])
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()['code'], 'NO_ORG')
+
+
 class CheckoutViewsTest(StripeViewsTestCase):
     """Test cases for checkout-related views"""
     

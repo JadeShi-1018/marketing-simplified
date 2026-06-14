@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone as datetime_timezone
 
 import stripe
 from django.db import transaction
@@ -10,6 +11,43 @@ from stripe_meta.exceptions import QuotaError
 from stripe_meta.models import UsageMonthly, Subscription
 
 logger = logging.getLogger(__name__)
+
+
+class InvoiceHistoryError(Exception):
+    """Raised when Stripe invoice history cannot be loaded."""
+
+
+def list_org_invoices(organization):
+    """Return the organization's recent Stripe invoices as plain dictionaries."""
+    customer_id = getattr(organization, 'stripe_customer_id', None)
+    if not customer_id:
+        return []
+
+    try:
+        invoices = stripe.Invoice.list(customer=customer_id, limit=24)
+    except stripe.StripeError as exc:
+        logger.warning(
+            "Unable to load Stripe invoices for organization %s",
+            getattr(organization, 'id', '<unknown>'),
+        )
+        raise InvoiceHistoryError('Unable to load invoice history') from exc
+
+    return [
+        {
+            'id': invoice.get('id'),
+            'number': invoice.get('number'),
+            'created': datetime.fromtimestamp(
+                invoice.get('created'), tz=datetime_timezone.utc,
+            ).isoformat() if invoice.get('created') else None,
+            'amount_paid_cents': invoice.get('amount_paid', 0),
+            'currency': invoice.get('currency', '').upper(),
+            'status': invoice.get('status'),
+            'description': invoice.get('description'),
+            'hosted_invoice_url': invoice.get('hosted_invoice_url'),
+            'invoice_pdf': invoice.get('invoice_pdf'),
+        }
+        for invoice in invoices.data
+    ]
 
 
 def resolve_charging_org(agent_session):

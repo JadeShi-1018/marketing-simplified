@@ -17,6 +17,7 @@ urlpatterns = [
     # GET & POST /subscription
     path('subscription/', views.get_subscription, name='get_subscription'),
     path('subscription/cancel/', views.cancel_subscription, name='cancel_subscription'),
+    path('payments/', views.list_payments, name='list_payments'),
 
     # Checkout endpoints
     # POST /checkout
