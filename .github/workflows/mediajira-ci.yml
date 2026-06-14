@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, prod-preview]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   block:
     runs-on: ubuntu-latest
@@ -150,6 +154,9 @@ jobs:
     needs: block
     if: always() && needs.block.result != 'failure'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -157,6 +164,12 @@ jobs:
           fetch-depth: 1
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       # Build backend image with cache
       - name: Build backend image
         uses: docker/build-push-action@v5
@@ -164,8 +177,11 @@ jobs:
           context: ./backend
           tags: mediajira-backend:${{ github.sha }}
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache,mode=max
+
+      - name: Free disk space before frontend build
+        run: docker buildx prune -af --keep-storage 2GB
 
       # Build frontend image with cache
       - name: Build frontend image
@@ -174,8 +190,8 @@ jobs:
           context: ./frontend
           tags: mediajira-frontend:${{ github.sha }}
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/frontend:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/frontend:cache,mode=max
 
       - name: Prune buildx cache
         run: docker buildx prune -af --keep-storage 4GB
@@ -215,6 +231,9 @@ jobs:
     needs: block
     if: always() && needs.block.result != 'failure'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -222,23 +241,29 @@ jobs:
           fetch-depth: 1
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      # Rebuild images using cache from build job (fast due to GHA cache)
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # Rebuild images using cache from registry (no 10GB GHA limit)
       - name: Build backend image
         uses: docker/build-push-action@v5
         with:
           context: ./backend
           tags: mediajira-backend:${{ github.sha }}
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache,mode=max
       - name: Build frontend image
         uses: docker/build-push-action@v5
         with:
           context: ./frontend
           tags: mediajira-frontend:${{ github.sha }}
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/frontend:cache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/frontend:cache,mode=max
 
       # Create a CI environment file with the necessary environment variables
       # Django secret key is generated based on the current commit hash
@@ -359,10 +384,21 @@ jobs:
             python manage.py migrate teams&&
             python manage.py makemigrations user_preferences&&
             python manage.py migrate user_preferences&&
-            echo 'Running tests...' &&
-            python manage.py test --verbosity=2 &&
             echo 'Running pytest tests...' &&
             pytest -v
+           "
+
+      # Run tests that are excluded from the parallel run above.
+      # These file-upload integration tests and asset scan Celery tasks share
+      # resources (file storage, scanner state) and are not safe under xdist,
+      # so the parallel run --ignores them (see backend/pytest.ini). They were
+      # part of the suite before SMP-555 (executed by `manage.py test`), so we
+      # run them serially here to avoid a coverage regression.
+      - name: Run serial backend tests (excluded from parallel run)
+        run: |
+          docker compose exec backend sh -c "
+            echo 'Running serial backend tests...' &&
+            pytest -v -o addopts='' --ds=backend.settings --timeout=300 metric_upload/tests/integration asset/tests/test_tasks.py
            "
 
       # Run frontend tests in container

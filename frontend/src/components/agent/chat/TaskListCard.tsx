@@ -109,7 +109,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />
-          <AgentMessageBoardText target="Generating…" partId={`${messageId}-status-generating`} blockId={blockId} />
+          Generating…
         </span>
       )
     }
@@ -117,7 +117,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
           <Clock className="h-3 w-3" />
-          <AgentMessageBoardText target="Awaiting approval" partId={`${messageId}-status-awaiting`} blockId={blockId} />
+          Awaiting approval
         </span>
       )
     }
@@ -125,7 +125,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600">
           <CheckCircle2 className="h-3 w-3" />
-          <AgentMessageBoardText target="Generated" partId={`${messageId}-status-generated`} blockId={blockId} />
+          Generated
         </span>
       )
     }
@@ -133,7 +133,7 @@ export function TaskListCard({
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] text-destructive">
           <AlertCircle className="h-3 w-3" />
-          <AgentMessageBoardText target="Failed" partId={`${messageId}-status-failed`} blockId={blockId} />
+          Failed
         </span>
       )
     }
