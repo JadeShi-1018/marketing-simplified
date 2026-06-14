@@ -15,6 +15,87 @@ logger = logging.getLogger(__name__)
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
+def settle_overage_for_org(org, ym):
+    """
+    Report any unreported overage for ONE organization's UsageMonthly row for
+    month ``ym`` to Stripe and advance overage_reported_tokens.
+
+    Delta-based: overage_reported_tokens tracks tokens already credited to Stripe
+    (units x 1M). Each call reports ceil(unreported delta / 1M) units, so partial
+    megatokens are billed as a full unit rather than dropped (bounded overbilling
+    < 1 unit per org-month; self-corrects because later growth must first exceed
+    the credited amount).
+
+    Idempotency — two layers, so the monthly batch (prior month) and the
+    cancellation paths (current month) can both call this without double-charging:
+      1. Local: delta <= 0 (everything already credited) skips the row.
+      2. Remote: identifier f'{org}-{ym}-overage-{credited_before}' — a rerun of
+         the same delta reuses the identifier and Stripe dedups it; a legitimate
+         later delta has an advanced baseline and is accepted.
+
+    Returns True when a meter event was reported (or idempotently credited),
+    False on any clean skip (no usage row / zero delta / missing customer id).
+    """
+    usage = UsageMonthly.objects.filter(
+        organization=org, year_month=ym,
+    ).first()
+
+    if not usage:
+        return False
+
+    delta = usage.overage_tokens - usage.overage_reported_tokens
+    if delta <= 0:
+        return False
+
+    units = -(-delta // 1_000_000)   # ceil division, integer-only
+
+    cid = org.stripe_customer_id
+    if not cid:
+        logger.error(
+            'settle_overage_for_org: org %s has no stripe_customer_id — skipping',
+            org.id,
+        )
+        return False
+
+    credited_before = usage.overage_reported_tokens
+
+    def _mark_reported():
+        usage.overage_reported_tokens = credited_before + units * 1_000_000
+        usage.overage_reported_at = timezone.now()
+        usage.save(update_fields=['overage_reported_tokens', 'overage_reported_at'])
+
+    try:
+        stripe.billing.MeterEvent.create(
+            event_name='token_overage',
+            payload={'value': str(units), 'stripe_customer_id': cid},
+            identifier=f'{org.id}-{ym}-overage-{credited_before}',
+            timestamp=int(timezone.now().timestamp()),
+        )
+        _mark_reported()
+        return True
+    except stripe.InvalidRequestError as e:
+        if 'already exists' in str(e):
+            # Stripe idempotency hit: this exact delta was already received on a
+            # prior run whose local update failed. Apply the same local credit.
+            _mark_reported()
+            logger.info(
+                'settle_overage_for_org: idempotent hit for org %s — marking reported',
+                org.id,
+            )
+            return True
+        logger.exception(
+            'settle_overage_for_org: overage report failed for org %s',
+            org.id,
+        )
+        return False
+    except Exception:
+        logger.exception(
+            'settle_overage_for_org: overage report failed for org %s',
+            org.id,
+        )
+        return False
+
+
 @shared_task
 def report_overage_to_stripe():
     """
@@ -23,17 +104,8 @@ def report_overage_to_stripe():
     so the target month is always closed before reporting — no late-month usage
     can accrue after the report.
 
-    Delta-based: overage_reported_tokens tracks tokens already credited to Stripe
-    (units x 1M). Each run reports ceil(unreported delta / 1M) units, so partial
-    megatokens are billed as a full unit rather than dropped (bounded overbilling
-    < 1 unit per org-month; self-corrects because later growth must first exceed
-    the credited amount).
-
-    Idempotency — two layers:
-      1. Local: delta <= 0 (everything already credited) skips the row.
-      2. Remote: identifier f'{org}-{ym}-overage-{credited_before}' — a rerun of
-         the same delta reuses the identifier and Stripe dedups it; a legitimate
-         later delta has an advanced baseline and is accepted.
+    Delegates the per-org reporting to settle_overage_for_org (shared with the
+    cancellation-time settlement) so there is exactly one reporting code path.
     """
     today = timezone.now().date()
     prev_month_last_day = today.replace(day=1) - timedelta(days=1)
@@ -43,61 +115,31 @@ def report_overage_to_stripe():
         Subscription.objects.filter(is_active=True, is_internal=False)
         .select_related('plan', 'organization')
     ):
-        usage = UsageMonthly.objects.filter(
-            organization=sub.organization, year_month=ym,
-        ).first()
+        settle_overage_for_org(sub.organization, ym)
 
-        if not usage:
-            continue
 
-        delta = usage.overage_tokens - usage.overage_reported_tokens
-        if delta <= 0:
-            continue
+@shared_task
+def settle_final_overage(org_id, ym):
+    """
+    Settle an organization's accrued overage for month ``ym`` at subscription
+    cancellation / downgrade / period-end deletion, while the metered
+    subscription is still billable (a deleted Stripe sub can no longer be
+    metered, so the monthly batch — which only sees active subs — would drop
+    the final partial month).
 
-        units = -(-delta // 1_000_000)   # ceil division, integer-only
+    Dispatched async (.delay) from cancel_subscription, the switch_plan downgrade
+    branch, and handle_subscription_deleted. Idempotent via settle_overage_for_org
+    (delta + Stripe identifier dedup), so the cancel-time and period-end calls
+    never double-charge — the second call's delta is <= 0.
+    """
+    from core.models import Organization
 
-        cid = sub.organization.stripe_customer_id
-        if not cid:
-            logger.error(
-                'report_overage_to_stripe: org %s has no stripe_customer_id — skipping',
-                sub.organization_id,
-            )
-            continue
+    org = Organization.objects.filter(id=org_id).first()
+    if not org:
+        logger.warning('settle_final_overage: org %s not found — skipping', org_id)
+        return
 
-        credited_before = usage.overage_reported_tokens
-
-        def _mark_reported(usage, credited_before, units):
-            usage.overage_reported_tokens = credited_before + units * 1_000_000
-            usage.overage_reported_at = timezone.now()
-            usage.save(update_fields=['overage_reported_tokens', 'overage_reported_at'])
-
-        try:
-            stripe.billing.MeterEvent.create(
-                event_name='token_overage',
-                payload={'value': str(units), 'stripe_customer_id': cid},
-                identifier=f'{sub.organization_id}-{ym}-overage-{credited_before}',
-                timestamp=int(timezone.now().timestamp()),
-            )
-            _mark_reported(usage, credited_before, units)
-        except stripe.InvalidRequestError as e:
-            if 'already exists' in str(e):
-                # Stripe idempotency hit: this exact delta was already received on a
-                # prior run whose local update failed. Apply the same local credit.
-                _mark_reported(usage, credited_before, units)
-                logger.info(
-                    'report_overage_to_stripe: idempotent hit for org %s — marking reported',
-                    sub.organization_id,
-                )
-            else:
-                logger.exception(
-                    'report_overage_to_stripe: overage report failed for org %s',
-                    sub.organization_id,
-                )
-        except Exception:
-            logger.exception(
-                'report_overage_to_stripe: overage report failed for org %s',
-                sub.organization_id,
-            )
+    settle_overage_for_org(org, ym)
 
 
 def _send_alert_email(org, tier: str, cost_cents: int, revenue_cents: int) -> None:

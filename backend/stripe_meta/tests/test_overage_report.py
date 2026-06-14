@@ -20,7 +20,11 @@ from django.contrib.auth import get_user_model
 
 from core.models import Organization
 from stripe_meta.models import Plan, Subscription, UsageMonthly
-from stripe_meta.tasks import report_overage_to_stripe
+from stripe_meta.tasks import (
+    report_overage_to_stripe,
+    settle_overage_for_org,
+    settle_final_overage,
+)
 
 User = get_user_model()
 
@@ -31,6 +35,11 @@ def previous_ym() -> str:
     """Previous calendar month in 'YYYY-MM' — same formula as the task."""
     today = timezone.now().date()
     return (today.replace(day=1) - timedelta(days=1)).strftime('%Y-%m')
+
+
+def current_ym() -> str:
+    """Current calendar month in 'YYYY-MM' — the cancellation-settle target."""
+    return timezone.now().strftime('%Y-%m')
 
 
 class OverageReportTestBase(TestCase):
@@ -308,3 +317,165 @@ class ReportOverageIdempotentConflictTest(OverageReportTestBase):
         self.usage.refresh_from_db()
         self.assertEqual(self.usage.overage_reported_tokens, 0)
         self.assertIsNone(self.usage.overage_reported_at)
+
+
+# ---------------------------------------------------------------------------
+# Cancellation-time final-overage settlement (SMP-560 Task 3)
+#
+# settle_overage_for_org is the shared per-org reporting body extracted from the
+# monthly task; the cancel/downgrade/period-end paths call it for the CURRENT
+# month via the settle_final_overage task. These lock the partial-month delta,
+# double-settle no-op, residual capture, and clean-skip behaviour.
+# ---------------------------------------------------------------------------
+
+class SettleOverageHelperBase(TestCase):
+    """Team org with stripe_customer_id and a partial CURRENT-month usage row."""
+
+    def setUp(self):
+        Plan.objects.all().delete()
+        self.org = Organization.objects.create(
+            name='Settle Org', slug='settle-org',
+            stripe_customer_id='cus_settle_test',
+        )
+        self.plan = Plan.objects.create(
+            name='Team',
+            stripe_price_id='price_team_base',
+            stripe_overage_price_id='price_team_overage',
+            overage_price_cents_per_1m=100,
+            monthly_token_quota=5_000_000,
+            included_seats=3,
+            base_price_cents=4900,
+        )
+        self.sub = Subscription.objects.create(
+            organization=self.org,
+            plan=self.plan,
+            stripe_subscription_id='sub_settle',
+            start_date=timezone.now(),
+            end_date=timezone.now() + timedelta(days=30),
+            is_active=True,
+            is_internal=False,
+        )
+        self.ym = current_ym()
+        self.usage = UsageMonthly.objects.create(
+            organization=self.org,
+            year_month=self.ym,
+            tokens_used=6_200_000,
+            overage_tokens=1_200_000,
+        )
+
+
+class SettleOverageForOrgTest(SettleOverageHelperBase):
+
+    def test_partial_month_reports_delta_and_advances(self):
+        """Partial current month: reports ceil(1.2M)=2 units, credits 2M, sets ts."""
+        with patch(METER_EVENT_PATH) as mock_create:
+            result = settle_overage_for_org(self.org, self.ym)
+
+        self.assertTrue(result)
+        mock_create.assert_called_once()
+        kw = mock_create.call_args[1]
+        self.assertEqual(kw['payload']['value'], '2')
+        self.assertEqual(kw['payload']['stripe_customer_id'], 'cus_settle_test')
+        self.assertEqual(kw['identifier'], f'{self.org.id}-{self.ym}-overage-0')
+        self.usage.refresh_from_db()
+        self.assertEqual(self.usage.overage_reported_tokens, 2_000_000)
+        self.assertIsNotNone(self.usage.overage_reported_at)
+
+    def test_double_settle_is_noop(self):
+        """Second settle of the same month (cancel-time then delete-time) → delta
+        <= 0 → no second meter event, returns False."""
+        with patch(METER_EVENT_PATH) as mock_create:
+            first = settle_overage_for_org(self.org, self.ym)
+            second = settle_overage_for_org(self.org, self.ym)
+
+        mock_create.assert_called_once()
+        self.assertTrue(first)
+        self.assertFalse(second)
+        self.usage.refresh_from_db()
+        self.assertEqual(self.usage.overage_reported_tokens, 2_000_000)
+
+    def test_residual_growth_reports_only_new_delta(self):
+        """Overage grows between cancel-time and period-end → the delete-time
+        settle reports only the unreported delta with an advanced baseline."""
+        with patch(METER_EVENT_PATH) as mock_create:
+            settle_overage_for_org(self.org, self.ym)        # 1.2M → credits 2M
+            self.usage.refresh_from_db()
+            self.usage.overage_tokens = 3_300_000            # delta vs 2M = 1.3M → 2 units
+            self.usage.save(update_fields=['overage_tokens'])
+            settle_overage_for_org(self.org, self.ym)
+
+        self.assertEqual(mock_create.call_count, 2)
+        second = mock_create.call_args_list[1][1]
+        self.assertEqual(second['payload']['value'], '2')
+        self.assertEqual(
+            second['identifier'], f'{self.org.id}-{self.ym}-overage-2000000',
+        )
+        self.usage.refresh_from_db()
+        self.assertEqual(self.usage.overage_reported_tokens, 4_000_000)
+
+    def test_zero_overage_skips_cleanly(self):
+        """No overage → no meter event, returns False."""
+        self.usage.overage_tokens = 0
+        self.usage.save(update_fields=['overage_tokens'])
+        with patch(METER_EVENT_PATH) as mock_create:
+            result = settle_overage_for_org(self.org, self.ym)
+        mock_create.assert_not_called()
+        self.assertFalse(result)
+
+    def test_no_usage_row_skips_cleanly(self):
+        """No UsageMonthly row for the month → no meter event, returns False."""
+        self.usage.delete()
+        with patch(METER_EVENT_PATH) as mock_create:
+            result = settle_overage_for_org(self.org, self.ym)
+        mock_create.assert_not_called()
+        self.assertFalse(result)
+
+    def test_no_customer_id_skips_with_error_log(self):
+        """Missing stripe_customer_id → logger.error, no Stripe call, returns False."""
+        self.org.stripe_customer_id = None
+        self.org.save(update_fields=['stripe_customer_id'])
+        with patch(METER_EVENT_PATH) as mock_create:
+            with self.assertLogs('stripe_meta.tasks', level=logging.ERROR):
+                result = settle_overage_for_org(self.org, self.ym)
+        mock_create.assert_not_called()
+        self.assertFalse(result)
+
+
+class SettleFinalOverageTaskTest(SettleOverageHelperBase):
+
+    def test_task_settles_current_month_for_org(self):
+        """settle_final_overage resolves the org by id and delegates to the helper."""
+        with patch(METER_EVENT_PATH) as mock_create:
+            settle_final_overage(self.org.id, self.ym)
+        mock_create.assert_called_once()
+        self.assertEqual(mock_create.call_args[1]['payload']['value'], '2')
+        self.usage.refresh_from_db()
+        self.assertEqual(self.usage.overage_reported_tokens, 2_000_000)
+
+    def test_task_missing_org_is_clean_noop(self):
+        """Unknown org id → WARNING log, no meter event, no exception."""
+        with patch(METER_EVENT_PATH) as mock_create:
+            with self.assertLogs('stripe_meta.tasks', level=logging.WARNING):
+                settle_final_overage(999_999_999, self.ym)
+        mock_create.assert_not_called()
+
+
+class MonthlyBatchAndSettleShareOnePathTest(OverageReportTestBase):
+    """The monthly batch (prior month, active subs) and the cancel-time settle
+    (current month) report through the same helper with distinct identifiers —
+    confirms there is no second, divergent reporting path."""
+
+    def test_batch_and_current_month_settle_are_independent(self):
+        current = current_ym()
+        UsageMonthly.objects.create(
+            organization=self.org, year_month=current,
+            tokens_used=7_000_000, overage_tokens=2_000_000,
+        )
+        with patch(METER_EVENT_PATH) as mock_create:
+            settle_overage_for_org(self.org, current)   # cancel-time (current month)
+            report_overage_to_stripe()                  # monthly batch (prior month)
+
+        self.assertEqual(mock_create.call_count, 2)
+        idents = {c[1]['identifier'] for c in mock_create.call_args_list}
+        self.assertIn(f'{self.org.id}-{current}-overage-0', idents)
+        self.assertIn(f'{self.org.id}-{self.ym}-overage-0', idents)

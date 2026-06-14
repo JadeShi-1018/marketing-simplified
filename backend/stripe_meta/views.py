@@ -13,12 +13,18 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .permissions import HasValidOrganizationToken, IsOrganizationAdmin
-from .services import get_active_real_subscription, get_seat_availability
+from .services import (
+    InvoiceHistoryError,
+    get_active_real_subscription,
+    get_seat_availability,
+    list_org_invoices,
+)
 from .models import Plan, Subscription, UsageDaily, UsageMonthly, Payment, StripeWebhookEvent
 from .serializers import (
-    PlanSerializer, SubscriptionSerializer, UsageDailySerializer, CheckoutSessionSerializer, 
+    PlanSerializer, SubscriptionSerializer, UsageDailySerializer, CheckoutSessionSerializer,
     OrganizationSerializer, CreateOrganizationSerializer, OrganizationUserSerializer
 )
+from .tasks import settle_final_overage
 from rest_framework.pagination import PageNumberPagination
 from django.db import transaction
 from core.models import Organization, CustomUser, Project
@@ -43,6 +49,27 @@ def list_plans(request):
             {'error': str(e), 'code': 'PLANS_RETRIEVAL_ERROR'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_payments(request):
+    """List recent Stripe invoices for the authenticated user's organization."""
+    organization = getattr(request.user, 'organization', None)
+    if not organization:
+        return Response(
+            {'error': 'Organization not found', 'code': 'NO_ORG'},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    try:
+        return Response(list_org_invoices(organization))
+    except InvoiceHistoryError as exc:
+        return Response(
+            {'error': str(exc), 'code': 'INVOICE_HISTORY_ERROR'},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated, HasValidOrganizationToken, IsOrganizationAdmin])
@@ -170,7 +197,15 @@ def switch_plan(request):
             )
             # DON'T update local subscription - webhook will handle it
             # The subscription.updated webhook will update the plan when downgrade completes
-            
+
+            # Settle accrued overage before the Team metered item goes away on
+            # downgrade — same idempotent helper, current month.
+            settle_ym = timezone.now().strftime('%Y-%m')
+            settle_org_id = current_subscription.organization_id
+            transaction.on_commit(
+                lambda org_id=settle_org_id, ym=settle_ym: settle_final_overage.delay(org_id, ym)
+            )
+
             return Response({
                 'requested': True
             })
@@ -234,6 +269,16 @@ def cancel_subscription(request):
 
         subscription.cancel_at_period_end = True
         subscription.save(update_fields=['cancel_at_period_end'])
+
+        # Settle accrued overage now, while the sub is still alive and meterable.
+        # A period-end cancel goes is_active=False before the monthly batch runs,
+        # so its final partial month would otherwise be dropped. on_commit so we
+        # only settle if the cancel actually persisted; the helper is idempotent.
+        settle_ym = timezone.now().strftime('%Y-%m')
+        settle_org_id = subscription.organization_id
+        transaction.on_commit(
+            lambda org_id=settle_org_id, ym=settle_ym: settle_final_overage.delay(org_id, ym)
+        )
 
         return Response({'success': True, 'cancel_at': period_end})
 
@@ -1254,6 +1299,16 @@ def handle_subscription_deleted(subscription_data, event_id=None):
 
     org = subscription.organization
     org_id = subscription.organization_id
+
+    # Option (b): idempotently re-settle any overage accrued between the cancel
+    # request and this period-end deletion. Best-effort billing (the Stripe sub
+    # may already be gone) but fully settles our local ledger; delta + Stripe
+    # identifier dedup means it never double-charges what cancel-time reported.
+    settle_ym = timezone.now().strftime('%Y-%m')
+    transaction.on_commit(
+        lambda org_id=org_id, ym=settle_ym: settle_final_overage.delay(org_id, ym)
+    )
+
     subscription.is_active = False
     subscription.save()
 
