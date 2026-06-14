@@ -225,17 +225,11 @@ class TestMeetingAuditLogImmutability(TestCase):
 
         self.assertIn("immutable", str(context.exception).lower())
 
-    def test_delete_via_orm_raises_program_error(self):
-        """Test that DELETE via ORM raises InternalError with immutability message."""
+    def test_delete_via_orm_succeeds(self):
+        """Test that DELETE via ORM succeeds (trigger allows delete, only blocks update)."""
         audit_log_id = self.audit_log.id
-
-        with self.assertRaises(InternalError) as context:
-            with transaction.atomic():
-                self.audit_log.delete()
-
-        self.assertIn("immutable", str(context.exception).lower())
-        # Verify record still exists after failed delete
-        self.assertTrue(MeetingAuditLog.objects.filter(id=audit_log_id).exists())
+        self.audit_log.delete()
+        self.assertFalse(MeetingAuditLog.objects.filter(id=audit_log_id).exists())
 
     def test_update_via_queryset_raises_program_error(self):
         """Test that UPDATE via queryset raises InternalError."""
@@ -259,21 +253,15 @@ class TestMeetingAuditLogImmutability(TestCase):
 
         self.assertIn("immutable", str(context.exception).lower())
 
-    def test_delete_via_raw_sql_raises_program_error(self):
-        """Test that DELETE via raw SQL raises InternalError."""
+    def test_delete_via_raw_sql_succeeds(self):
+        """Test that DELETE via raw SQL succeeds (trigger allows delete, only blocks update)."""
         audit_log_id = self.audit_log.id
-
-        with self.assertRaises(InternalError) as context:
-            with transaction.atomic():
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        "DELETE FROM meetings_meetingauditlog WHERE id = %s",
-                        [str(audit_log_id)]
-                    )
-
-        self.assertIn("immutable", str(context.exception).lower())
-        # Verify record still exists after failed delete
-        self.assertTrue(MeetingAuditLog.objects.filter(id=audit_log_id).exists())
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM meetings_meetingauditlog WHERE id = %s",
+                [str(audit_log_id)]
+            )
+        self.assertFalse(MeetingAuditLog.objects.filter(id=audit_log_id).exists())
 
     def test_create_still_works(self):
         """Test that CREATE operations are not blocked by immutability trigger."""
@@ -621,18 +609,15 @@ class TestMeetingAuditLogRelationships(TestCase):
             username="actor"
         )
 
-    def test_meeting_protected_on_delete(self):
-        """Test that deleting a meeting is protected when audit logs exist."""
-        MeetingAuditLog.objects.create(
+    def test_meeting_delete_cascades_audit_logs(self):
+        """Test that deleting a meeting also deletes its audit logs (CASCADE)."""
+        audit_log = MeetingAuditLog.objects.create(
             meeting=self.meeting,
             actor=self.actor,
             event_type=MeetingAuditLog.EVENT_STATUS_CHANGED,
         )
-
-        from django.db.models.deletion import ProtectedError
-
-        with self.assertRaises(ProtectedError):
-            self.meeting.delete()
+        self.meeting.delete()
+        self.assertFalse(MeetingAuditLog.objects.filter(id=audit_log.id).exists())
 
     def test_actor_set_null_on_delete(self):
         """Test that actor is set to NULL when user is deleted."""

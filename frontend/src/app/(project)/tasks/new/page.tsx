@@ -186,21 +186,17 @@ export default function CreateTaskPage() {
   const handleTypeChange = useCallback(
     async (newType: string) => {
       if (newType === type) return;
+      const currentSummary = summary;
       await saveNow();
       suspend();
-      let draft: Record<string, unknown> | null = null;
-      try {
-        draft = await TaskAPI.getAutosave(newType);
-      } catch {
-        draft = null;
-      }
-      hydrateForm(draft);
+      hydrateForm(null);
+      if (currentSummary) setSummary(currentSummary);
       setType(newType);
       // Give the setType-induced re-render time to complete before re-enabling
       // the autosave debounce, so we don't immediately persist stale state.
       setTimeout(() => resume(), 100);
     },
-    [type, saveNow, suspend, resume, hydrateForm],
+    [type, summary, saveNow, suspend, resume, hydrateForm],
   );
 
   // Trigger autosave whenever form state changes (only once a type is selected).
@@ -209,20 +205,6 @@ export default function CreateTaskPage() {
     save(formSnapshot);
   }, [formSnapshot, save, type]);
 
-  // On window focus: refresh from the server draft (last-write-wins).
-  useEffect(() => {
-    if (!type) return;
-    const onFocus = async () => {
-      try {
-        const draft = await TaskAPI.getAutosave(type);
-        if (draft) hydrateForm(draft);
-      } catch {
-        // silent — focus refresh is best-effort
-      }
-    };
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
-  }, [type, hydrateForm]);
 
   useEffect(() => {
     setTaskTypesLoading(true);
