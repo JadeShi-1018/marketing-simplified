@@ -1,25 +1,34 @@
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Skeleton } from '@/components/ui/skeleton';
-import PlanCard from '@/components/plans/PlanCard';
+import FeatureComparisonTable from '@/components/plans/FeatureComparisonTable';
+import OrderHistory from '@/components/plans/OrderHistory';
+import PlanCardsRow from '@/components/plans/PlanCardsRow';
+import PricingFAQ from '@/components/plans/PricingFAQ';
+import SubscriptionUsageCard from '@/components/plans/SubscriptionUsageCard';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import usePlan from '@/hooks/usePlan';
 import { useAuthStore } from '@/lib/authStore';
+import { Check, X } from 'lucide-react';
+import { formatTokens } from '@/lib/format';
 import toast from 'react-hot-toast';
 
+// Which plan tier gets the "recommended" emphasis (teal ring + lift). Frontend-only
+// constant — matched against plan.name — so it needs no DB field or serializer change.
 function SubscriptionSkeleton() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-      {Array.from({ length: 3 }).map((_, i) => (
-        <div key={i} className="rounded-2xl border border-gray-200 bg-white p-6 space-y-4">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+      {Array.from({ length: 2 }).map((_, i) => (
+        <div key={i} className="rounded-xl border border-gray-200 bg-white p-6 space-y-4">
           <Skeleton className="h-5 w-24" />
           <Skeleton className="h-4 w-40" />
           <Skeleton className="h-10 w-32 mt-2" />
           <Skeleton className="h-10 w-full rounded-lg" />
-          <div className="pt-4 space-y-2 border-t border-gray-100">
+          <div className="pt-4 space-y-2 border-t border-gray-200">
             <Skeleton className="h-4 w-44" />
             <Skeleton className="h-4 w-40" />
             <Skeleton className="h-4 w-36" />
@@ -53,10 +62,11 @@ function ManageSeatsBlock({
   const [previewing, setPreviewing] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
+  const [seatsJustUpdated, setSeatsJustUpdated] = useState(false);
 
   if (isFree) {
     return (
-      <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 text-sm text-gray-600">
+      <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-5 text-sm text-gray-600">
         Upgrade to Team to manage seats.
       </div>
     );
@@ -94,6 +104,9 @@ function ManageSeatsBlock({
       toast.success(`Seats updated to ${result.seat_count}.`);
       setInputValue(String(result.seat_count + 1));
       setConfirmState(null);
+      // Brief inline highlight on the seat stat so the change is felt, not just toasted.
+      setSeatsJustUpdated(true);
+      window.setTimeout(() => setSeatsJustUpdated(false), 2000);
     } catch (err: any) {
       const code = err?.response?.data?.code;
       if (code === 'SEAT_COUNT_NOT_INCREASED') {
@@ -118,15 +131,21 @@ function ManageSeatsBlock({
     previewExtra !== null ? baseCents + previewExtra * extraSeatCents : null;
 
   return (
-    <div className="mb-6 rounded-xl border border-[#3CCED7]/30 bg-white px-5 py-4">
+    <div className="mb-6 rounded-xl border border-[#3CCED7]/30 bg-white p-5 animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
       <div className="mb-3 text-sm font-semibold text-gray-800">Manage Seats</div>
-      <div className="rounded-lg bg-gray-50 p-3 flex flex-wrap items-center gap-6 text-sm text-gray-600">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-gray-600">
         <div>
           <span className="font-medium text-gray-900">{subscription.member_count}</span>{' '}
           member{subscription.member_count !== 1 ? 's' : ''}
         </div>
         <div>
-          <span className="font-medium text-gray-900">{subscription.seat_count}</span>{' '}
+          <span
+            className={`font-medium text-gray-900 transition-colors duration-300 ${
+              seatsJustUpdated ? 'rounded bg-[#3CCED7]/15 px-1.5 py-0.5' : ''
+            }`}
+          >
+            {subscription.seat_count}
+          </span>{' '}
           purchased seat{subscription.seat_count !== 1 ? 's' : ''}
         </div>
         <div>
@@ -146,23 +165,23 @@ function ManageSeatsBlock({
               value={inputValue}
               onChange={(e) => { setInputValue(e.target.value); setConfirmState(null); }}
               disabled={confirming}
-              className="w-24 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#3CCED7] focus:outline-none disabled:opacity-50"
+              className="w-24 rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:ring-offset-1 disabled:opacity-50"
             />
             <button
               onClick={handlePreview}
               disabled={previewing || confirming}
-              className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2bb8c1] disabled:opacity-50"
+              className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white transition-colors duration-200 ease-out hover:bg-[#2AB5BD] disabled:opacity-50"
             >
               {previewing ? 'Calculating…' : 'Purchase seats'}
             </button>
             {previewTotal !== null && !confirmState && (
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-gray-500">
                 ≈ ${(previewTotal / 100).toFixed(2)}/mo
               </span>
             )}
           </div>
           {confirmState && (
-            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm">
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm animate-in fade-in slide-in-from-top-2 duration-200 ease-out motion-reduce:animate-none">
               <div className="font-medium text-gray-800 mb-1">
                 Confirm purchase — {confirmState.seat_count} seats
               </div>
@@ -181,14 +200,14 @@ function ManageSeatsBlock({
                 <button
                   onClick={handleConfirm}
                   disabled={confirming}
-                  className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2bb8c1] disabled:opacity-50"
+                  className="rounded-lg bg-[#3CCED7] px-4 py-1.5 text-sm font-medium text-white transition-colors duration-200 ease-out hover:bg-[#2AB5BD] disabled:opacity-50"
                 >
                   {confirming ? 'Processing…' : 'Confirm purchase'}
                 </button>
                 <button
                   onClick={() => setConfirmState(null)}
                   disabled={confirming}
-                  className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                  className="rounded-lg border border-gray-300 bg-white px-4 py-1.5 text-sm font-medium text-gray-700 transition-colors duration-200 ease-out hover:bg-gray-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -202,7 +221,18 @@ function ManageSeatsBlock({
 }
 
 function SubscriptionV2Content() {
-  const { plans, loading, error, handleSubscribe, subscription, previewSeatPurchase, purchaseSeats, cancelSubscription } = usePlan();
+  const {
+    plans,
+    loading,
+    error,
+    handleSubscribe,
+    subscription,
+    previewSeatPurchase,
+    purchaseSeats,
+    cancelSubscription,
+    fetchPayments,
+    fetchOrgTokenSummary,
+  } = usePlan();
   const user = useAuthStore((s) => s.user);
   const currentPlanId = user?.organization?.plan_id ?? null;
   const isOrgAdmin = !!user?.roles?.includes('Organization Admin');
@@ -210,6 +240,28 @@ function SubscriptionV2Content() {
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelScheduledDate, setCancelScheduledDate] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [showUpgradeSuccess, setShowUpgradeSuccess] = useState(false);
+
+  // Returning from Stripe Checkout (success_url carries ?checkout=success): show a
+  // deliberate success state instead of silently landing back on the page. The ref
+  // guard + router.replace ensure it fires exactly once and the param is stripped.
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const checkoutHandled = useRef(false);
+  useEffect(() => {
+    if (searchParams.get('checkout') === 'success' && !checkoutHandled.current) {
+      checkoutHandled.current = true;
+      setShowUpgradeSuccess(true);
+      router.replace('/subscription');
+    }
+  }, [searchParams, router]);
+
+  // Auto-dismiss the success banner after a beat; it's also manually dismissable.
+  useEffect(() => {
+    if (!showUpgradeSuccess) return;
+    const t = setTimeout(() => setShowUpgradeSuccess(false), 8000);
+    return () => clearTimeout(t);
+  }, [showUpgradeSuccess]);
 
   useEffect(() => {
     if (subscription?.cancel_at_period_end && subscription.end_date) {
@@ -226,14 +278,17 @@ function SubscriptionV2Content() {
   const currentPlan = plans.find((p) => p.id === currentPlanId) ?? null;
   const isPaidPlan = currentPlan ? currentPlan.base_price_cents > 0 : false;
 
-  const currentPlanPrice = currentPlan
-    ? currentPlan.base_price_cents === 0
-      ? 'Free'
-      : `$${(currentPlan.base_price_cents / 100).toFixed(0)}/mo`
-    : null;
-
   const activePlans = plans.filter((p) => !p.is_archived);
   const displayCurrency = currentPlan?.currency ?? activePlans[0]?.currency ?? 'USD';
+
+  // For the post-checkout success banner: prefer the freshly-fetched subscription's
+  // plan (reflects the upgrade the moment the webhook lands); fall back to the
+  // org's current plan. Stays null until either resolves, so the banner can show
+  // graceful "activating…" copy if we beat the webhook back to the page.
+  const upgradedPlanName = subscription?.plan?.name ?? currentPlan?.name ?? null;
+  const upgradedPlan = upgradedPlanName
+    ? plans.find((p) => p.name === upgradedPlanName) ?? null
+    : null;
 
   const currentMonthlyCents = subscription
     ? (subscription.plan.base_price_cents ?? 0) +
@@ -269,29 +324,88 @@ function SubscriptionV2Content() {
     <DashboardLayout>
       <div className="p-6">
         <div className="mx-auto max-w-5xl">
+          {/* Post-checkout success moment — on-brand, dismissable, auto-clears. */}
+          {showUpgradeSuccess && (
+            <div className="mb-6 overflow-hidden rounded-xl border border-[#3CCED7]/40 bg-gradient-to-r from-[#3CCED7]/10 to-[#A6E661]/10 p-5 animate-in fade-in slide-in-from-top-2 duration-300 ease-out motion-reduce:animate-none">
+              <div className="flex items-start gap-4">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] shadow-sm">
+                  <Check className="h-5 w-5 text-white" strokeWidth={3} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-base font-semibold text-gray-900">
+                    {upgradedPlanName ? `Welcome to ${upgradedPlanName} 🎉` : 'Payment successful 🎉'}
+                  </div>
+                  <p className="mt-0.5 text-sm text-gray-600">
+                    {upgradedPlanName ? (
+                      <>
+                        Your {upgradedPlanName} plan is active
+                        {upgradedPlan && (
+                          <>
+                            {' — '}
+                            {formatTokens(upgradedPlan.monthly_token_quota)} tokens/month,{' '}
+                            {upgradedPlan.included_seats} seat
+                            {upgradedPlan.included_seats === 1 ? '' : 's'} included
+                          </>
+                        )}
+                        .
+                      </>
+                    ) : (
+                      'Your new plan is being activated and will appear here shortly.'
+                    )}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowUpgradeSuccess(false)}
+                  aria-label="Dismiss"
+                  className="flex-shrink-0 rounded text-gray-400 transition-colors duration-200 ease-out hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:ring-offset-1"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Header */}
           <div className="mb-6">
-            <h1 className="text-xl font-semibold text-gray-900">Subscription</h1>
+            <h1 className="text-2xl font-semibold text-gray-900">Plans &amp; Billing</h1>
             <p className="mt-1 text-sm text-gray-500">
-              Choose the plan that fits your team. Upgrade or downgrade anytime.
+              Manage seats and usage, review invoices, or choose the right plan for your team.
             </p>
           </div>
 
+          {/* Seat management band */}
+          {subscription && (
+            <ManageSeatsBlock
+              subscription={subscription}
+              isOrgAdmin={isOrgAdmin}
+              previewSeatPurchase={previewSeatPurchase}
+              purchaseSeats={purchaseSeats}
+            />
+          )}
+
           {/* Current plan banner */}
+          <div className="mb-6 grid gap-6 lg:grid-cols-2">
           {currentPlan ? (
-            <div className="mb-6 rounded-xl border border-[#3CCED7]/30 bg-gradient-to-r from-[#3CCED7]/5 to-[#A6E661]/5 px-5 py-4">
+            <div className="rounded-xl border border-[#3CCED7]/30 bg-gradient-to-br from-[#3CCED7]/5 to-[#A6E661]/5 p-6 shadow-sm animate-in fade-in duration-200 ease-out motion-reduce:animate-none">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-[#3CCED7]">
                     Current Plan
                   </div>
-                  <div className="mt-0.5 text-base font-semibold text-gray-900">
+                  <div className="mt-1 text-2xl font-semibold text-gray-900">
                     {currentPlan.name}
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm text-gray-500">{currentPlanPrice}</div>
+                  <div className="text-2xl font-semibold text-gray-950">
+                    {currentPlan.base_price_cents === 0 ? '$0' : `$${(currentMonthlyCents / 100).toFixed(0)}`}
+                  </div>
+                  <div className="text-xs text-gray-500">{displayCurrency} / month</div>
                 </div>
+              </div>
+              <div className="mt-5 rounded-lg border border-white/80 bg-white/70 p-4 text-sm text-gray-600">
+                <div className="flex justify-between"><span>Seats</span><span className="font-medium text-gray-900">{subscription?.seat_count ?? currentPlan.included_seats}</span></div>
+                <div className="mt-2 flex justify-between"><span>Monthly tokens</span><span className="font-medium text-gray-900">{formatTokens(currentPlan.monthly_token_quota)}</span></div>
               </div>
               {isPaidPlan && (
                 <div className="mt-3 flex items-center justify-between border-t border-[#3CCED7]/20 pt-3">
@@ -309,7 +423,7 @@ function SubscriptionV2Content() {
                   {isOrgAdmin && !cancelScheduledDate && (
                     <button
                       onClick={() => setShowCancelConfirm(true)}
-                      className="ml-4 rounded-md border border-red-200 px-3 py-1 text-xs text-red-500 hover:bg-red-50 whitespace-nowrap"
+                      className="ml-4 rounded-lg border border-red-200 px-3 py-1 text-xs text-red-600 transition-colors duration-200 ease-out hover:bg-red-50 whitespace-nowrap"
                     >
                       Cancel subscription
                     </button>
@@ -318,12 +432,16 @@ function SubscriptionV2Content() {
               )}
             </div>
           ) : !loading && !error && activePlans.length > 0 ? (
-            <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4">
+            <div className="mb-6 rounded-xl border border-gray-200 bg-gray-50 p-5">
               <div className="text-sm text-gray-700">
                 You don&apos;t have an active subscription yet. Pick a plan below to get started.
               </div>
             </div>
-          ) : null}
+          ) : <Skeleton className="h-64 w-full rounded-xl" />}
+            <SubscriptionUsageCard fetchSummary={fetchOrgTokenSummary} />
+          </div>
+
+          {isPaidPlan && <div className="mb-10"><OrderHistory fetchPayments={fetchPayments} hideWhenEmpty /></div>}
 
           <ConfirmModal
             isOpen={showCancelConfirm}
@@ -337,66 +455,52 @@ function SubscriptionV2Content() {
             loading={cancelling}
           />
 
-          {/* Manage Seats */}
-          {subscription && (
-            <ManageSeatsBlock
-              subscription={subscription}
-              isOrgAdmin={isOrgAdmin}
-              previewSeatPurchase={previewSeatPurchase}
-              purchaseSeats={purchaseSeats}
-            />
-          )}
-
           {/* Error */}
           {error && (
-            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+            <div className="mb-6 rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">
               {error}
             </div>
           )}
 
-          {/* Plans grid */}
-          {loading ? (
-            <SubscriptionSkeleton />
-          ) : activePlans.length === 0 && !error ? (
-            <div className="rounded-xl border border-dashed border-gray-300 py-12 text-center">
-              <p className="text-sm text-gray-500">No plans available at the moment.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {activePlans.map((plan, index, arr) => {
-                const isCurrent = plan.id === currentPlanId;
-                const isPopular = index === arr.length - 2;
-                const ctaText = currentPlanId
-                  ? isCurrent ? 'Current plan' : 'Switch plan'
-                  : 'Subscribe now';
-                return (
-                  <PlanCard
-                    key={plan.id}
-                    name={plan.name}
-                    description={plan.desc ?? `Professional ${plan.name.toLowerCase()} plan for your organization.`}
-                    basePriceCents={plan.base_price_cents}
-                    monthlyTokenQuota={plan.monthly_token_quota}
-                    includedSeats={plan.included_seats}
-                    extraSeatPriceCents={plan.extra_seat_price_cents ?? 0}
-                    overagePriceCentsPer1m={plan.overage_price_cents_per_1m}
-                    currency={plan.currency}
-                    badge={isPopular && !isCurrent ? 'Popular' : undefined}
-                    ctaText={ctaText}
-                    planId={plan.id}
-                    stripePriceId={plan.stripe_price_id ?? undefined}
-                    onSubscribe={handleSubscribe}
-                    isCurrentPlan={isCurrent}
-                    canManagePlans={isOrgAdmin}
-                    variant="card"
-                  />
-                );
-              })}
-            </div>
-          )}
-
-          <p className="mt-6 text-xs text-gray-400">
-            All prices in {displayCurrency}. Billing is handled securely by Stripe.
-          </p>
+          {/* Plans + pricing note — wrapped in ONE centered max-w-3xl column so the
+              caption aligns directly under the cards (sharing their left/right edges).
+              The banner and Manage Seats above intentionally stay at max-w-5xl. */}
+          <div className="space-y-12">
+            <section>
+              <div className="mb-5">
+                <h2 className="text-xl font-semibold text-gray-950">
+                  {isPaidPlan ? 'Your plan entitlements' : 'Choose the plan that fits your team'}
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  {isPaidPlan
+                    ? 'Review your current Team pricing and the Free fallback.'
+                    : 'Upgrade when you need more seats, tokens, and billing tools.'}
+                </p>
+              </div>
+              {loading ? (
+                <SubscriptionSkeleton />
+              ) : activePlans.length === 0 && !error ? (
+                <div className="rounded-xl border border-dashed border-gray-300 py-12 text-center">
+                  <p className="text-sm text-gray-500">No plans available at the moment.</p>
+                </div>
+              ) : (
+                <PlanCardsRow
+                  plans={activePlans}
+                  currentPlanId={currentPlanId}
+                  currentSeatCount={subscription?.seat_count}
+                  canManagePlans={isOrgAdmin}
+                  onSelect={handleSubscribe}
+                  ctaForPlan={(_, isCurrent) => isCurrent ? 'Current plan' : currentPlanId ? 'Switch plan' : 'Upgrade to Team'}
+                  secondary={isPaidPlan}
+                />
+              )}
+            </section>
+            <FeatureComparisonTable plans={activePlans} />
+            <PricingFAQ />
+            <p className="mt-6 text-xs text-gray-500">
+              All prices in {displayCurrency}. Billing is handled securely by Stripe.
+            </p>
+          </div>
         </div>
       </div>
     </DashboardLayout>
@@ -421,7 +525,9 @@ function SubscriptionV2Skeleton() {
           <Skeleton className="h-6 w-40" />
           <Skeleton className="h-4 w-96" />
           <Skeleton className="h-20 w-full rounded-xl" />
-          <SubscriptionSkeleton />
+          <div className="mx-auto max-w-3xl">
+            <SubscriptionSkeleton />
+          </div>
         </div>
       </div>
     </DashboardLayout>

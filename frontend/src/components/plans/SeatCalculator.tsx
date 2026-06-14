@@ -8,6 +8,8 @@ interface SeatCalculatorProps {
   extraSeatPriceCents: number;
   /** Called whenever the seat count changes. Receives new seat count. */
   onSeatsChange?: (seats: number) => void;
+  initialSeats?: number;
+  showTotal?: boolean;
 }
 
 function formatDollars(cents: number): string {
@@ -19,8 +21,10 @@ export default function SeatCalculator({
   includedSeats,
   extraSeatPriceCents,
   onSeatsChange,
+  initialSeats,
+  showTotal = true,
 }: SeatCalculatorProps) {
-  const [seats, setSeats] = useState(includedSeats);
+  const [seats, setSeats] = useState(initialSeats ?? includedSeats);
 
   const extraSeats = Math.max(0, seats - includedSeats);
   const totalCents = basePriceCents + extraSeats * extraSeatPriceCents;
@@ -59,12 +63,14 @@ export default function SeatCalculator({
         )}
       </div>
 
-      <div className="flex items-baseline gap-1 pt-1">
-        <span className="text-xl font-semibold text-gray-900">
-          {formatDollars(totalCents)}
-        </span>
-        <span className="text-sm text-gray-500">/mo</span>
-      </div>
+      {showTotal && (
+        <div className="flex items-baseline gap-1 pt-1">
+          <span className="text-xl font-semibold text-gray-900">
+            {formatDollars(totalCents)}
+          </span>
+          <span className="text-sm text-gray-500">/mo</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 
 function PlansPageContent() {
   const renderLayout = (content: React.ReactNode) => (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex flex-col">
+    <div className="min-h-screen bg-gradient-to-br from-[#3CCED7]/5 via-white to-[#A6E661]/5 flex flex-col">
       <style jsx global>{`
         @keyframes scale {
           0% { opacity: 0; transform: scale(1.015) translateZ(0); }
@@ -20,7 +20,7 @@ function PlansPageContent() {
             <div className="flex items-center">
               <div className="flex-shrink-0">
                 <Link href="/">
-                  <h1 className="text-2xl font-bold text-indigo-600 cursor-pointer">Marketing Simplified</h1>
+                  <h1 className="text-2xl font-bold text-[#3CCED7] cursor-pointer">Marketing Simplified</h1>
                 </Link>
               </div>
             </div>

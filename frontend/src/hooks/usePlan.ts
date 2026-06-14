@@ -3,7 +3,7 @@ import api, { authAPI } from '@/lib/api';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/authStore';
 
-interface Plan {
+export interface Plan {
   id: number;
   name: string;
   desc: string | null;
@@ -11,6 +11,7 @@ interface Plan {
   // Token-billing schema
   base_price_cents: number;
   monthly_token_quota: number | null;  // null = unlimited
+  max_tokens_per_call?: number | null;
   included_seats: number;
   extra_seat_price_cents: number | null;
   overage_price_cents_per_1m: number | null;  // null = hard block
@@ -20,6 +21,26 @@ interface Plan {
   max_team_members?: number | null;
   max_previews_per_day?: number | null;
   max_tasks_per_day?: number | null;
+}
+
+export interface Payment {
+  id: string;
+  number: string | null;
+  created: string | null;
+  amount_paid_cents: number;
+  currency: string;
+  status: string | null;
+  description: string | null;
+  hosted_invoice_url: string | null;
+  invoice_pdf: string | null;
+}
+
+export interface OrgTokenSummary {
+  tokens_used: number;
+  overage_tokens: number;
+  monthly_token_quota: number | null;
+  overage_price_cents_per_1m: number | null;
+  currency: string;
 }
 
 interface SwitchPlanResponse {
@@ -68,6 +89,8 @@ interface UsePlanReturn {
   handleSubscribe: (planId: number, seatCount?: number) => Promise<void>;
   previewSeatPurchase: (newSeatCount: number) => Promise<PreviewSeatsResponse>;
   purchaseSeats: (newSeatCount: number, prorationDate?: number) => Promise<PurchaseSeatsResponse>;
+  fetchPayments: () => Promise<Payment[]>;
+  fetchOrgTokenSummary: () => Promise<OrgTokenSummary>;
 }
 
 export default function usePlan(enabled = true): UsePlanReturn {
@@ -129,7 +152,7 @@ export default function usePlan(enabled = true): UsePlanReturn {
       const response = await api.post('/api/stripe/checkout/', {
         plan_id: planId,
         seat_count: seatCount,
-        success_url: `${baseUrl}/subscription`,
+        success_url: `${baseUrl}/subscription?checkout=success`,
         cancel_url: `${baseUrl}/subscription`
       });
 
@@ -291,6 +314,16 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
+  const fetchPayments = async (): Promise<Payment[]> => {
+    const response = await api.get('/api/stripe/payments/');
+    return response.data.results ?? response.data;
+  };
+
+  const fetchOrgTokenSummary = async (): Promise<OrgTokenSummary> => {
+    const response = await api.get('/api/stripe/org-token-summary/');
+    return response.data;
+  };
+
   useEffect(() => {
     if (!enabled) return;
     fetchPlans();
@@ -310,5 +343,7 @@ export default function usePlan(enabled = true): UsePlanReturn {
     handleSubscribe,
     previewSeatPurchase,
     purchaseSeats,
+    fetchPayments,
+    fetchOrgTokenSummary,
   };
 }
