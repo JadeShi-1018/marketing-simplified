@@ -362,15 +362,17 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation = self.get_object()
         customer_user = CustomerUser.objects.filter(user=request.user, is_active=True).first()
 
+        image = request.FILES.get('image')
         msg = ConversationMessage.objects.create(
             conversation=conversation,
             sender_type='agent',
             sender_agent=customer_user,
             content=request.data.get('content', ''),
-            rich_body=request.data.get('rich_body'),
+            rich_body=request.data.get('rich_body') if not image else None,
+            image=image,
         )
 
-        payload = ConversationMessageSerializer(msg).data
+        payload = ConversationMessageSerializer(msg, context={'request': request}).data
 
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
@@ -381,7 +383,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         from portal.serializers import PortalMessageSerializer
         async_to_sync(channel_layer.group_send)(
             f'portal_conversation_{conversation.id}',
-            {'type': 'conversation.message', 'message': PortalMessageSerializer(msg).data},
+            {'type': 'conversation.message', 'message': PortalMessageSerializer(msg, context={'request': request}).data},
         )
         # Broadcast conversation_updated so all agents' lists refresh
         conversation.refresh_from_db()

@@ -112,15 +112,24 @@ class CsmNotificationSerializer(serializers.ModelSerializer):
 class ConversationMessageSerializer(serializers.ModelSerializer):
     sender_agent_name = serializers.SerializerMethodField()
     sender_agent_email = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ConversationMessage
         fields = [
             'id', 'conversation', 'sender_type',
             'sender_agent', 'sender_agent_name', 'sender_agent_email',
-            'content', 'rich_body', 'created_at',
+            'content', 'rich_body', 'image_url', 'created_at',
         ]
         read_only_fields = ['id', 'created_at', 'conversation', 'sender_agent']
+
+    def get_image_url(self, obj):
+        if obj.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
+        return None
 
     def get_sender_agent_name(self, obj):
         if not obj.sender_agent:

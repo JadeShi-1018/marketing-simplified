@@ -43,14 +43,15 @@ export function ConversationList({ conversations, loading, onClaimed }: Conversa
     setClaimingId(conv.id);
     try {
       const ticket = await CsmConversationAPI.claim(conv.id);
-      // Optimistic update: mark conversation as claimed in store immediately
       const ticketSummary: TicketSummary = {
         id: ticket.id,
         status: ticket.status,
         status_display: ticket.status_display,
         assigned_to_name: ticket.assigned_to_name,
       };
-      updateConversation({ ...conv, status: 'active', ticket: ticketSummary });
+      // Fetch updated conversation so queue_organisation_id is refreshed in store
+      const updatedConv = await CsmConversationAPI.get(conv.id);
+      updateConversation({ ...updatedConv, ticket: ticketSummary });
       toast.success('Claimed — ticket created');
       onClaimed?.();
     } catch (err: unknown) {

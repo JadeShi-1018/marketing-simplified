@@ -245,6 +245,7 @@ class ConversationMessage(models.Model):
     )
     content = models.TextField(blank=True)
     rich_body = models.JSONField(null=True, blank=True)
+    image = models.ImageField(upload_to='conversation_images/', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

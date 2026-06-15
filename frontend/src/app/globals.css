@@ -682,3 +682,31 @@ input[type="password"]::-webkit-contacts-auto-fill-button {
 .glow-brand:hover {
   box-shadow: 0 0 30px rgba(60, 206, 215, 0.4), 0 0 60px rgba(166, 230, 97, 0.15);
 }
+
+/* ── Tiptap editor shared styles ─────────────────────────────────────────── */
+.csm-editor .ProseMirror {
+  outline: none;
+}
+.csm-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #9ca3af;
+  pointer-events: none;
+  height: 0;
+}
+/* Rich text in white / light bubbles */
+.csm-rich-light p  { margin: 0; }
+.csm-rich-light ul,
+.csm-rich-light ol { margin: 2px 0; padding-left: 1.25rem; }
+.csm-rich-light li { margin: 0; }
+.csm-rich-light strong { font-weight: 600; }
+.csm-rich-light em    { font-style: italic; }
+/* Rich text in coloured bubbles (white text) */
+.csm-rich-dark p  { margin: 0; color: #fff; }
+.csm-rich-dark ul,
+.csm-rich-dark ol { margin: 2px 0; padding-left: 1.25rem; color: #fff; }
+.csm-rich-dark li { margin: 0; color: #fff; }
+.csm-rich-dark li::marker { color: rgba(255,255,255,0.7); }
+.csm-rich-dark strong { font-weight: 600; color: #fff; }
+.csm-rich-dark em    { font-style: italic; color: #fff; }
+.csm-rich-dark a  { color: rgba(255,255,255,0.85); text-decoration: underline; }

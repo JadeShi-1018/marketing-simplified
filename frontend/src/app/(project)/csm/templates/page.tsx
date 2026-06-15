@@ -199,15 +199,15 @@ function HistoryModal({
     new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <div>
             <h2 className="font-semibold text-gray-900">Edit History</h2>
-            <p className="text-xs text-gray-400 mt-0.5">#{template.id} {template.title}</p>
+            <p className="text-xs text-gray-400 mt-0.5">#{template.id} · {template.title}</p>
           </div>
-          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 rounded">
-            <X size={18} />
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+            <X size={16} />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-4">
@@ -246,7 +246,7 @@ function HistoryModal({
                       {entry.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
                           {entry.tags.map((tag) => (
-                            <span key={tag} className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-500 rounded-full">
+                            <span key={tag} className="inline-flex items-center gap-0.5 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full font-medium">
                               <Tag size={8} />
                               {tag}
                             </span>
@@ -280,49 +280,52 @@ function TemplateCard({
   onHistory: (t: QuickReplyTemplate) => void;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 hover:border-gray-300 transition-colors">
-      <div className="flex items-start justify-between gap-3 mb-2">
-        <h3 className="font-medium text-gray-900 text-sm leading-snug">{template.title}</h3>
-        <div className="flex gap-1 shrink-0">
+    <div className="group bg-white rounded-xl border border-gray-200 p-4 hover:border-blue-200 hover:shadow-md transition-all duration-200 flex flex-col gap-3">
+      {/* Row 1: title + hover actions */}
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="font-semibold text-gray-900 text-sm leading-snug flex-1 min-w-0">{template.title}</h3>
+        <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={() => onHistory(template)}
-            className="p-1.5 text-gray-400 hover:text-purple-500 rounded transition-colors"
+            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-violet-500 hover:bg-violet-50 rounded-lg transition-colors"
             title="Edit history"
           >
             <History size={14} />
           </button>
           <button
             onClick={() => onEdit(template)}
-            className="p-1.5 text-gray-400 hover:text-gray-700 rounded transition-colors"
+            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
             title="Edit"
           >
             <Pencil size={14} />
           </button>
           <button
             onClick={() => onDelete(template.id)}
-            className="p-1.5 text-gray-400 hover:text-red-500 rounded transition-colors"
+            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
             title="Delete"
           >
             <Trash2 size={14} />
           </button>
         </div>
       </div>
-      <p className="text-xs text-gray-500 line-clamp-3 mb-3 leading-relaxed">{template.content}</p>
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        {template.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1">
-            {template.tags.map((tag) => (
-              <span
-                key={tag}
-                className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full"
-              >
-                <Tag size={10} />
-                {tag}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+
+      {/* Row 2: content preview */}
+      <p className="text-xs text-gray-500 line-clamp-3 leading-relaxed flex-1">{template.content}</p>
+
+      {/* Row 3: tags */}
+      {template.tags.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {template.tags.map((tag) => (
+            <span
+              key={tag}
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full font-medium"
+            >
+              <Tag size={9} />
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -411,80 +414,92 @@ function TemplateModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+        {/* Modal header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
-          <h2 className="font-semibold text-gray-900">{initial ? 'Edit Template' : 'New Template'}</h2>
-          <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 rounded">
-            <X size={18} />
+          <div>
+            <h2 className="font-semibold text-gray-900">{initial ? 'Edit Template' : 'New Template'}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{initial ? `Editing #${initial.id}` : 'Fill in the details below'}</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+            <X size={16} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4 px-6 py-5 overflow-y-auto flex-1">
-          {/* Title */}
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Title *</label>
-            <input
-              value={form.title}
-              onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
-              placeholder="e.g. Greeting, Refund Policy, …"
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
-            />
-          </div>
 
-          {/* Rich-text content */}
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Content *</label>
-            <RichTextEditor
-              content={form.content}
-              onChange={(plain, json) => setForm((p) => ({ ...p, content: plain, rich_body: json }))}
-              placeholder="The reply text that will be inserted into the composer…"
-            />
-          </div>
-
-          {/* Team scoping */}
-          {teams.length > 0 && (
+        {/* Modal body */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="flex flex-col gap-5 px-6 py-5 overflow-y-auto flex-1">
+            {/* Title */}
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">
-                Visible to team <span className="font-normal text-gray-400">(leave blank for everyone)</span>
-              </label>
-              <select
-                value={form.team ?? ''}
-                onChange={(e) => setForm((p) => ({ ...p, team: e.target.value ? Number(e.target.value) : null }))}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 bg-white"
-              >
-                <option value="">All agents</option>
-                {teams.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Title <span className="text-red-400">*</span></label>
+              <input
+                value={form.title}
+                onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
+                placeholder="e.g. Welcome Greeting, Refund Policy…"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition"
+              />
             </div>
-          )}
 
-          {/* Tags */}
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Tags <span className="font-normal text-gray-400">(optional)</span>
-            </label>
-            <TagInput
-              value={form.tags}
-              onChange={(tags) => setForm((p) => ({ ...p, tags }))}
-              suggestions={allTags}
-            />
+            {/* Rich-text content */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Content <span className="text-red-400">*</span></label>
+              <RichTextEditor
+                content={form.content}
+                onChange={(plain, json) => setForm((p) => ({ ...p, content: plain, rich_body: json }))}
+                placeholder="The reply text that will be inserted into the composer…"
+              />
+            </div>
+
+            {/* Team scoping */}
+            {teams.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Visible to team <span className="font-normal text-gray-400 ml-1">(leave blank = all agents)</span>
+                </label>
+                <select
+                  value={form.team ?? ''}
+                  onChange={(e) => setForm((p) => ({ ...p, team: e.target.value ? Number(e.target.value) : null }))}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white transition"
+                >
+                  <option value="">All agents</option>
+                  {teams.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Tags */}
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                Tags <span className="font-normal text-gray-400 ml-1">(optional)</span>
+              </label>
+              <TagInput
+                value={form.tags}
+                onChange={(tags) => setForm((p) => ({ ...p, tags }))}
+                suggestions={allTags}
+              />
+            </div>
+
+            {error && (
+              <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+            )}
           </div>
 
-          {error && <p className="text-sm text-red-500">{error}</p>}
-          <div className="flex justify-end gap-2 pt-1 shrink-0">
+          {/* Modal footer */}
+          <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-2xl shrink-0">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm text-gray-500 hover:text-gray-700"
+              className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100 transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
               {saving ? 'Saving…' : initial ? 'Save Changes' : 'Create Template'}
             </button>

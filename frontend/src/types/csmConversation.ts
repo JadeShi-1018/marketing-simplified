@@ -11,6 +11,7 @@ export interface ConversationMessage {
   sender_agent_email: string | null;
   content: string;
   rich_body: object | null;
+  image_url: string | null;
   created_at: string;
 }
 

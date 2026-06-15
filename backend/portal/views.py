@@ -10,7 +10,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
 from customer.models import Customer
-from csm.models import Conversation, ConversationMessage
+from csm.models import Conversation, ConversationMessage, Queue
 from .serializers import (
     PortalRegisterSerializer,
     PortalConversationSerializer,
@@ -90,9 +90,13 @@ class PortalConversationViewSet(
         if not message_text:
             return Response({'detail': 'message is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        queue = None
+        if customer.organisation:
+            queue = Queue.objects.filter(organisation=customer.organisation).first()
+
         conversation = Conversation.objects.create(
             customer=customer,
-            queue=None,        # unassigned; routing logic (P2) assigns to queue
+            queue=queue,
             status='pending',
             channel='web',
             tags=[subject] if subject else [],
@@ -125,19 +129,21 @@ class PortalConversationViewSet(
         """POST /api/portal/conversations/{id}/messages/ — customer sends a reply."""
         conversation = self.get_object()
         content = request.data.get('content', '').strip()
-        if not content:
-            return Response({'detail': 'content is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        image = request.FILES.get('image')
+        if not content and not image:
+            return Response({'detail': 'content or image is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
         msg = ConversationMessage.objects.create(
             conversation=conversation,
             sender_type='customer',
             content=content,
+            image=image,
         )
 
-        portal_payload = PortalMessageSerializer(msg).data
+        portal_payload = PortalMessageSerializer(msg, context={'request': request}).data
 
         from csm.serializers import ConversationSerializer, ConversationMessageSerializer
-        agent_payload = ConversationMessageSerializer(msg).data
+        agent_payload = ConversationMessageSerializer(msg, context={'request': request}).data
 
         channel_layer = get_channel_layer()
         # Broadcast new message to agents watching this conversation thread

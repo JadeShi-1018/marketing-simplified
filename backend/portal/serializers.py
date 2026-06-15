@@ -47,11 +47,20 @@ class PortalRegisterSerializer(serializers.Serializer):
 
 class PortalMessageSerializer(serializers.ModelSerializer):
     sender_name = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ConversationMessage
-        fields = ['id', 'sender_type', 'sender_name', 'content', 'rich_body', 'created_at']
+        fields = ['id', 'sender_type', 'sender_name', 'content', 'rich_body', 'image_url', 'created_at']
         read_only_fields = ['id', 'sender_type', 'sender_name', 'created_at']
+
+    def get_image_url(self, obj):
+        if obj.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
+        return None
 
     def get_sender_name(self, obj):
         if obj.sender_type == 'agent' and obj.sender_agent:

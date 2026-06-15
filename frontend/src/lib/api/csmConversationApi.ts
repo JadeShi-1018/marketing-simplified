@@ -47,8 +47,17 @@ export default class CsmConversationAPI {
 
   static async sendMessage(
     conversationId: number,
-    payload: SendMessagePayload
+    payload: SendMessagePayload & { image?: File | null }
   ): Promise<ConversationMessage> {
+    if (payload.image) {
+      const form = new FormData();
+      if (payload.content) form.append('content', payload.content);
+      form.append('image', payload.image);
+      const res = await api.post<ConversationMessage>(`${BASE}/${conversationId}/messages/`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data;
+    }
     const res = await api.post<ConversationMessage>(`${BASE}/${conversationId}/messages/`, payload);
     return res.data;
   }

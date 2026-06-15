@@ -7,7 +7,7 @@ import Placeholder from '@tiptap/extension-placeholder';
 import CsmConversationAPI, { QuickReplyTemplateAPI } from '@/lib/api/csmConversationApi';
 import { useCsmConversationStore } from '@/lib/csmConversationStore';
 import type { QuickReplyTemplate } from '@/types/csmConversation';
-import { Tag, Search, X } from 'lucide-react';
+import { Tag, Search, X, Bold, Italic, List, ListOrdered, LayoutTemplate, ImagePlus } from 'lucide-react';
 
 interface ConversationComposerProps {
   conversationId: number;
@@ -174,7 +174,23 @@ export function ConversationComposer({
 }: ConversationComposerProps) {
   const [sending, setSending] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const imageInputRef = React.useRef<HTMLInputElement>(null);
   const addMessage = useCsmConversationStore((s) => s.addMessage);
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    if (!file) return;
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+  };
+
+  const clearImage = () => {
+    setImageFile(null);
+    setImagePreview(null);
+    if (imageInputRef.current) imageInputRef.current.value = '';
+  };
 
   const editor = useEditor({
     extensions: [
@@ -209,24 +225,27 @@ export function ConversationComposer({
   const handleSend = useCallback(async () => {
     if (!editor) return;
     const plainText = editor.getText().trim();
-    if (!plainText || sending) return;
+    if (!plainText && !imageFile) return;
+    if (sending) return;
 
     const richBody = editor.getJSON();
     setSending(true);
     try {
       const msg = await CsmConversationAPI.sendMessage(conversationId, {
         content: plainText,
-        rich_body: richBody,
+        rich_body: imageFile ? null : richBody,
+        image: imageFile,
       });
       addMessage(conversationId, msg);
       editor.commands.clearContent(true);
+      clearImage();
       onTyping?.(false);
     } catch (err) {
       console.error('Failed to send message', err);
     } finally {
       setSending(false);
     }
-  }, [editor, sending, conversationId, addMessage, onTyping]);
+  }, [editor, sending, conversationId, addMessage, onTyping, imageFile]);
 
   const handleInsertTemplate = useCallback((template: QuickReplyTemplate) => {
     if (!editor) return;
@@ -251,32 +270,113 @@ export function ConversationComposer({
         />
       )}
 
-      <div className="flex items-end gap-2 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2">
-        {/* Template button */}
-        <button
-          type="button"
-          onClick={() => setShowTemplates((v) => !v)}
-          title="Insert template"
-          className={`shrink-0 transition-colors mb-1 ${showTemplates ? 'text-blue-500' : 'text-gray-400 hover:text-blue-500'}`}
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h12M4 14h8M4 18h6" />
-          </svg>
-        </button>
-
-        {/* Tiptap editor */}
-        <div className="flex-1 min-w-0">
-          <EditorContent editor={editor} />
+      <div className="rounded-xl border border-gray-200 overflow-hidden bg-white shadow-sm">
+        {/* Formatting toolbar */}
+        <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-gray-100 bg-gray-50">
+          {(
+            [
+              { cmd: 'toggleBold', active: 'bold', icon: <Bold size={14} />, title: 'Bold' },
+              { cmd: 'toggleItalic', active: 'italic', icon: <Italic size={14} />, title: 'Italic' },
+            ] as const
+          ).map(({ cmd, active, icon, title }) => (
+            <button
+              key={cmd}
+              type="button"
+              title={title}
+              onMouseDown={(e) => { e.preventDefault(); editor?.chain().focus()[cmd]().run(); }}
+              className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+                editor?.isActive(active)
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {icon}
+            </button>
+          ))}
+          <div className="w-px h-4 bg-gray-200 mx-1" />
+          {(
+            [
+              { cmd: 'toggleBulletList', active: 'bulletList', icon: <List size={14} />, title: 'Bullet list' },
+              { cmd: 'toggleOrderedList', active: 'orderedList', icon: <ListOrdered size={14} />, title: 'Ordered list' },
+            ] as const
+          ).map(({ cmd, active, icon, title }) => (
+            <button
+              key={cmd}
+              type="button"
+              title={title}
+              onMouseDown={(e) => { e.preventDefault(); editor?.chain().focus()[cmd]().run(); }}
+              className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+                editor?.isActive(active)
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              {icon}
+            </button>
+          ))}
+          <div className="flex-1" />
+          {/* Image upload button */}
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            title="Attach image"
+            className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+              imageFile ? 'bg-green-100 text-green-700' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            <ImagePlus size={14} />
+          </button>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={handleImageSelect}
+          />
+          {/* Template button */}
+          <button
+            type="button"
+            onClick={() => setShowTemplates((v) => !v)}
+            title="Insert quick reply template"
+            className={`w-7 h-7 flex items-center justify-center rounded transition-colors ${
+              showTemplates ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            <LayoutTemplate size={14} />
+          </button>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSend}
-          disabled={sending}
-          className="shrink-0 mb-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {sending ? 'Sending…' : 'Send'}
-        </button>
+        {/* Image preview */}
+        {imagePreview && (
+          <div className="px-3 pb-2 flex items-start gap-2">
+            <div className="relative inline-block">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={imagePreview} alt="preview" className="max-h-32 max-w-[200px] rounded-lg object-cover border border-gray-200" />
+              <button
+                type="button"
+                onClick={clearImage}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-gray-700 text-white rounded-full flex items-center justify-center hover:bg-red-500 transition-colors"
+              >
+                <X size={10} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Editor + Send */}
+        <div className="flex items-end gap-2 px-3 py-2.5">
+          <div className="flex-1 min-w-0">
+            <EditorContent editor={editor} />
+          </div>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={sending}
+            className="shrink-0 rounded-lg bg-brand-agent px-4 py-1.5 text-xs font-medium text-white hover:bg-brand-agent-dark disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {sending ? 'Sending…' : 'Send'}
+          </button>
+        </div>
       </div>
     </div>
   );

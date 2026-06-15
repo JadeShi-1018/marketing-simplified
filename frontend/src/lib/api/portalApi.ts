@@ -36,7 +36,16 @@ export default class PortalAPI {
     return res.data;
   }
 
-  static async sendMessage(conversationId: number, content: string) {
+  static async sendMessage(conversationId: number, content: string, image?: File | null) {
+    if (image) {
+      const form = new FormData();
+      if (content) form.append('content', content);
+      form.append('image', image);
+      const res = await api.post(`${BASE}/conversations/${conversationId}/messages/`, form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return res.data;
+    }
     const res = await api.post(`${BASE}/conversations/${conversationId}/messages/`, { content });
     return res.data;
   }
