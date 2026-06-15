@@ -152,6 +152,8 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     const hasDraftTasks = Array.isArray(draftTasks) && draftTasks.length > 0
     type =
       hasPersistedAnalysisPayload(m.data) || hasDraftTasks ? "analysis" : "approval_request"
+  } else if (m.message_type === "confirmation_request") {
+    type = "confirmation_request"
   }
 
   const draftRecommendedTasks = (
@@ -321,6 +323,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const router = useRouter()
   const { setActiveView, floatingChat, toggleMaximize, setFloatingSessionId } = useAgentLayout()
   const [sessionId, setSessionIdState] = useState<string | null>(null)
+  const [projectId, setProjectId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [hasStarted, setHasStarted] = useState(false)
@@ -616,6 +619,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   const applySessionState = useCallback((session: Awaited<ReturnType<typeof AgentAPI.getSession>>) => {
     setSessionId(String(session.id))
+    setProjectId(session.project_id ? String(session.project_id) : null)
 
     // Restore messages and back-fill recommendedTasks onto analysis messages when needed.
     const restored = session.messages.map(restoreMessage)
@@ -1023,6 +1027,7 @@ setStepState({
       invalidateActiveStreams()
       resetTransientChatUiState()
       setSessionId(null)
+      setProjectId(null)
       sessionStorage.removeItem("agent-session-calendar-context")
       setMessages([])
       setSessionCalendarContext(null)
@@ -1243,11 +1248,11 @@ setStepState({
             (event.data.calendar_events as SuggestedCalendarEvent[] | undefined) ?? []
           updateMessage(aiMsgId, { calendarEvents: events })
         } else if (event.type === "confirmation_request") {
-          // If column mapping already shown, don't overwrite the card — just
-          // silently wait for user confirmation via ColumnMappingCard buttons.
           if (!columnMappingReceived) {
-            contentParts.push(event.content || "")
-            updateMessage(aiMsgId, { content: contentParts.join("\n") })
+            updateMessage(aiMsgId, {
+              content: event.content || "Please confirm to continue.",
+              type: "confirmation_request",
+            })
           }
         } else if (event.type === "approval_request" && event.data) {
           const d = event.data as Record<string, unknown>
@@ -1622,11 +1627,26 @@ setStepState({
     abortRef.current?.abort()
   }, [setSessionId])
 
-  /** Handle text message send */
+  /** Resume a workflow paused at await_confirmation (Continue button). */
+  const handleResumeWorkflow = useCallback((confirmMessageId: string) => {
+    void handleSendMessageRef.current?.(
+      "",
+      undefined,
+      undefined,
+      undefined,
+      "resume_workflow",
+      confirmMessageId,
+    )
+  }, [])
+
+  /** Handle text message send. Pass workflowId when user confirms an AI-matched workflow. */
   const handleSendMessage = useCallback(async (
     text: string,
     calendarContext?: Record<string, unknown>,
     userContext?: string,
+    workflowId?: string,
+    action?: AgentAction,
+    reuseAiMsgId?: string,
   ) => {
     setHasStarted(true)
     // Use provided context or fall back to the session-level calendar context
@@ -1635,8 +1655,11 @@ setStepState({
       setSessionCalendarContext(calendarContext)
     }
 
-    const userMsgId = `user-${Date.now()}`
-    addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    const isResumeOnly = action === "resume_workflow"
+    if (!isResumeOnly && text.trim()) {
+      const userMsgId = `user-${Date.now()}`
+      addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    }
 
     // Create session if needed
     let sid = sessionId
@@ -1659,8 +1682,15 @@ setStepState({
       }
     }
 
-    const aiMsgId = `ai-${Date.now()}`
-    addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    const aiMsgId = reuseAiMsgId ?? `ai-${Date.now()}`
+    if (reuseAiMsgId) {
+      updateMessage(reuseAiMsgId, {
+        content: "Continuing workflow…",
+        type: "text",
+      })
+    } else {
+      addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    }
 
     setIsStreaming(true)
     setStepProgress([])
@@ -1671,7 +1701,9 @@ setStepState({
     abortRef.current = AgentAPI.sendMessage(
       sid!,
       {
-        message: text,
+        message: isResumeOnly ? "Continue" : text,
+        ...(workflowId ? { workflow_id: workflowId } : {}),
+        ...(action ? { action } : {}),
         ...(effectiveCalendarContext ? { calendar_context: effectiveCalendarContext as any } : {}),
         user_context: userContext || undefined,
       },
@@ -1729,6 +1761,14 @@ setStepState({
               approval: pending,
             })
           }
+          return
+        }
+
+        if (event.type === "confirmation_request") {
+          updateMessage(aiMsgId, {
+            content: event.content || "Please confirm to continue.",
+            type: "confirmation_request",
+          })
           return
         }
 
@@ -1891,9 +1931,7 @@ setStepState({
       () => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        void refreshSession(requestSessionId)
-        void refreshFollowUpState(requestSessionId)
-        // Attach final step progress to the message
+        // Attach final step progress before refresh (refresh reloads messages from DB)
         setStepProgress((prev) => {
           if (prev.length > 0) {
             const final = prev.map((s) => ({
@@ -1906,6 +1944,8 @@ setStepState({
           return prev
         })
         setIsStreaming(false)
+        void refreshSession(requestSessionId)
+        void refreshFollowUpState(requestSessionId)
         if (embeddedInFloating) {
           window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
           void AgentAPI.updateSession(requestSessionId, { last_read_at: new Date().toISOString() }).catch(() => {
@@ -2359,6 +2399,7 @@ setStepState({
         {...({
           messages,
           sessionId,
+          projectId,
           requestedGenerationOutputs,
           isStreaming,
           showRevisitThinkingBubble,
@@ -2392,6 +2433,7 @@ setStepState({
           onConfirmColumns: handleConfirmColumns,
           onConfirmAnomalies: handleConfirmAnomalies,
           onReupload: handleReupload,
+          onResumeWorkflow: handleResumeWorkflow,
           latestAnalysisMessageId,
           showFollowUpToggle: followUpAvailable || followUpStarted,
           followUpActive: followUpStarted,

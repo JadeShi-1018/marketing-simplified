@@ -159,6 +159,14 @@ export default function DashboardSidebar() {
   const { logout } = useAuth();
   const { toggle: toggleAgentPanel, isOpen: isAgentPanelOpen } = useAgentSidePanelStore();
 
+  const handleAgentNav = (href: string) => {
+    if (href === AGENT_PANEL_NAV_HREF) {
+      toggleAgentPanel();
+      return;
+    }
+    router.push(href);
+  };
+
   const userDisplayName = useMemo(() => {
     if (!user) return null;
     const full = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
@@ -352,7 +360,7 @@ export default function DashboardSidebar() {
                                 className={`gap-2 px-2 py-1.5 text-[13px] [&>svg]:size-3.5 ${
                                   childIsActive ? 'text-[#3CCED7]' : ''
                                 }`}
-                                onSelect={() => router.push(child.href)}
+                                onSelect={() => handleAgentNav(child.href)}
                               >
                                 <child.icon className="text-gray-500" />
                                 <span>{child.label}</span>
@@ -394,7 +402,7 @@ export default function DashboardSidebar() {
                         return (
                           <button
                             key={child.href}
-                            onClick={() => router.push(child.href)}
+                            onClick={() => handleAgentNav(child.href)}
                             className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-[13px] transition-colors ${
                               childIsActive
                                 ? 'bg-[#3CCED7]/8 text-[#3CCED7] font-medium'

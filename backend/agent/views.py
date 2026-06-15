@@ -7,6 +7,7 @@ from django.db.models import Max, Q, OuterRef, Prefetch, Subquery
 from django.http import StreamingHttpResponse
 from django.utils.translation import activate as activate_language
 from rest_framework import viewsets, status
+from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import BaseRenderer, JSONRenderer
@@ -33,6 +34,7 @@ from spreadsheet.models import Spreadsheet
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowDefinition,
     AgentWorkflowStep, AgentWorkflowRun, AgentStepExecution,
+    AgentWorkflowTemplate, WorkflowTriggerLog,
 )
 from .serializers import (
     AgentSessionListSerializer,
@@ -45,6 +47,9 @@ from .serializers import (
     AgentStepExecutionSerializer,
     AgentWorkflowRunSerializer,
     StepReorderSerializer,
+    AgentWorkflowTemplateSerializer,
+    WorkflowTriggerLogSerializer,
+    TriggerConfigUpdateSerializer,
 )
 from .generation_registry import GenerationValidationError, get_catalog, normalize_generation_outputs
 from .services import AgentOrchestrator
@@ -163,8 +168,8 @@ class ChatView(EnglishResponseMixin, APIView):
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
             'create_decisions', 'create_tasks', 'generate_miro',
-            'confirm_columns', 'confirm_anomalies',
-            'resolve_external_approval',
+            'distribute_message', 'confirm_columns', 'confirm_anomalies',
+            'resume_workflow', 'resolve_external_approval',
         }
 
         # Auto-generate title from first real user message
@@ -258,6 +263,20 @@ class ChatView(EnglishResponseMixin, APIView):
                             message_type='approval_request',
                             metadata=data or {},
                         )
+                        continue
+
+                    if chunk_type == 'confirmation_request':
+                        _flush_message()
+                        sse_data = json.dumps(chunk, default=str)
+                        yield f"data: {sse_data}\n\n"
+                        if content:
+                            AgentMessage.objects.create(
+                                session=session,
+                                role='assistant',
+                                content=content,
+                                message_type='confirmation_request',
+                                metadata=data or {},
+                            )
                         continue
 
                     if chunk_type == 'decision_draft':
@@ -659,10 +678,21 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
     def get_queryset(self):
         project = _get_user_project(self.request)
         qs = AgentWorkflowDefinition.objects.filter(is_deleted=False)
+
+        # For list action, exclude template workflows (they should only appear in templates tab)
+        # For retrieve action, include template workflows (needed for template preview)
+        include_template_workflows = self.action != 'list'
+
         if project:
-            qs = qs.filter(Q(project=project) | Q(is_system=True))
+            filters = Q(is_system=True) | Q(project=project, is_system=False, created_by=self.request.user)
+            if include_template_workflows:
+                filters |= Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
+            qs = qs.filter(filters)
         else:
-            qs = qs.filter(is_system=True)
+            filters = Q(is_system=True)
+            if include_template_workflows:
+                filters |= Q(project__isnull=True, is_system=False, created_by=self.request.user)  # Template workflows
+            qs = qs.filter(filters)
         return qs.order_by('-is_system', '-is_default', '-created_at')
 
     def perform_create(self, serializer):
@@ -686,9 +716,82 @@ class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet
                 {"detail": "System workflows cannot be deleted."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+
+        # Prevent deleting workflows that are used by templates
+        if instance.templates.filter(is_deleted=False).exists():
+            return Response(
+                {"detail": "Cannot delete workflow that is used by active templates. Delete the template first."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         instance.is_deleted = True
         instance.save()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'])
+    def duplicate(self, request, pk=None):
+        """Clone a workflow (system or custom) into a new project-scoped draft."""
+        source = self.get_object()
+        project = _get_user_project(request)
+        if not project:
+            return Response(
+                {'detail': 'An active project is required to duplicate a workflow.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        custom_name = (request.data.get('name') or '').strip()
+        new_workflow = _clone_workflow_definition(
+            source,
+            project=project,
+            created_by=request.user,
+            name=custom_name or f"{source.name} (Copy)",
+            status='draft',
+        )
+        serializer = AgentWorkflowDefinitionDetailSerializer(new_workflow)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def trigger_manual(self, request, pk=None):
+        """POST /api/agent/workflows/{id}/trigger_manual/ - Manually trigger a workflow."""
+        from .trigger_handlers import ManualHandler
+
+        workflow = self.get_object()
+        project = _get_user_project(request)
+
+        success = ManualHandler.trigger_manual(
+            workflow_id=str(workflow.id),
+            user=request.user,
+            project=project,
+        )
+
+        if success:
+            return Response({'message': 'Workflow triggered successfully.'})
+        else:
+            return Response(
+                {'detail': 'Failed to trigger workflow.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=['patch'])
+    def update_trigger_config(self, request, pk=None):
+        """PATCH /api/agent/workflows/{id}/update_trigger_config/ - Update trigger configuration."""
+        workflow = self.get_object()
+
+        if workflow.is_system:
+            return Response(
+                {'detail': 'Cannot modify system workflow triggers.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = TriggerConfigUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        if 'trigger_config' in serializer.validated_data:
+            workflow.trigger_config = serializer.validated_data['trigger_config']
+
+        workflow.save()
+
+        return Response(AgentWorkflowDefinitionDetailSerializer(workflow).data)
 
 
 def _get_workflow_or_404(request, workflow_id):
@@ -774,6 +877,32 @@ class WorkflowStepView(EnglishResponseMixin, APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class WorkflowStepDetailView(EnglishResponseMixin, APIView):
+    """PATCH a single step within a workflow definition."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, workflow_id, step_id):
+        workflow, err = _get_workflow_or_404(request, workflow_id)
+        if err:
+            return err
+        if workflow.is_system:
+            return Response(
+                {"detail": "Cannot modify system workflow steps."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            step = workflow.steps.get(id=step_id, is_deleted=False)
+        except AgentWorkflowStep.DoesNotExist:
+            return Response(
+                {"detail": "Step not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = AgentWorkflowStepSerializer(step, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class StepReorderView(EnglishResponseMixin, APIView):
     """POST reorder steps within a workflow."""
     permission_classes = [IsAuthenticated]
@@ -801,9 +930,19 @@ class StepReorderView(EnglishResponseMixin, APIView):
             )
         from django.db import transaction
         with transaction.atomic():
-            # Use negative values to avoid unique_together conflict
+            # Phase 1: move all reordered steps to a safe high-offset zone so that
+            # the final sequential assignment (phase 2) does not conflict with any
+            # remaining active steps.  We cannot use negative values because
+            # PositiveIntegerField enforces a DB-level CHECK (order >= 0).
+            max_existing = (
+                workflow.steps.aggregate(m=Max('order'))['m'] or 0
+            )
+            temp_base = max_existing + len(step_ids) + 1000
             for idx, step_id in enumerate(step_ids):
-                AgentWorkflowStep.objects.filter(id=step_id).update(order=-(idx + 1))
+                AgentWorkflowStep.objects.filter(id=step_id).update(
+                    order=temp_base + idx + 1
+                )
+            # Phase 2: assign final sequential 1-based positions
             for idx, step_id in enumerate(step_ids, start=1):
                 AgentWorkflowStep.objects.filter(id=step_id).update(order=idx)
 
@@ -811,6 +950,30 @@ class StepReorderView(EnglishResponseMixin, APIView):
         return Response(
             AgentWorkflowStepSerializer(updated_steps, many=True).data,
         )
+
+
+class WorkflowRunListView(EnglishResponseMixin, APIView):
+    """GET recent workflow runs for a workflow definition."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, workflow_id):
+        workflow, err = _get_workflow_or_404(request, workflow_id)
+        if err:
+            return err
+
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(limit, 50))
+
+        runs = AgentWorkflowRun.objects.filter(
+            workflow_definition_id=workflow.id,
+            session__user=request.user,
+            is_deleted=False,
+        ).order_by('-created_at')[:limit]
+
+        return Response(AgentWorkflowRunSerializer(runs, many=True).data)
 
 
 class WorkflowRunDetailView(EnglishResponseMixin, APIView):
@@ -861,3 +1024,313 @@ class AgentConfigStatusView(EnglishResponseMixin, APIView):
             val = getattr(django_settings, settings_attr, None) or os.environ.get(env_var, '')
             result[key] = bool(val and val.strip())
         return Response(result)
+
+
+def _clone_workflow_definition(
+    source_workflow,
+    *,
+    project=None,
+    created_by=None,
+    name=None,
+    status='active',
+):
+    """
+    Clone a workflow definition and all its steps.
+
+    Returns a new AgentWorkflowDefinition with:
+    - project as provided (None for template-owned copies)
+    - is_system=False
+    - is_default=False
+    - All steps cloned with same order and config
+    """
+    from django.db import transaction
+
+    with transaction.atomic():
+        # Clone workflow definition
+        new_workflow = AgentWorkflowDefinition.objects.create(
+            name=name or f"{source_workflow.name} (Copy)",
+            description=source_workflow.description,
+            project=project,
+            is_default=False,
+            is_system=False,
+            status=status,
+            created_by=created_by or source_workflow.created_by,
+        )
+
+        # Clone all steps
+        source_steps = source_workflow.steps.filter(is_deleted=False).order_by('order')
+        for step in source_steps:
+            AgentWorkflowStep.objects.create(
+                workflow=new_workflow,
+                name=step.name,
+                step_type=step.step_type,
+                order=step.order,
+                config=step.config.copy() if step.config else {},
+                description=step.description,
+            )
+
+        return new_workflow
+
+
+class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
+    """
+    ViewSet for managing workflow templates.
+
+    - LIST: Filter by category, search, and optionally project_id (for is_applied annotation).
+            Visibility: creator (private) + org members + project members.
+    - CREATE: Clone source workflow and create template
+    - UPDATE: Only creator can update
+    - DELETE: Soft-delete (creator only)
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = AgentWorkflowTemplateSerializer
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        """
+        Return templates visible to current user based on:
+        1. Created by user (all templates, always visible regardless of sharing)
+        2. Shared at organization level
+        3. Shared to user's current active project (from X-Active-Project header)
+        """
+        from django.db.models import Q, Exists, OuterRef
+        from core.models import ProjectMember, Project
+
+        user = self.request.user
+        qs = AgentWorkflowTemplate.objects.filter(is_deleted=False)
+
+        # Get current active project from X-Active-Project header
+        project = _get_user_project(self.request)
+
+        # Build visibility filter
+        # 1. All templates created by user (always visible, regardless of sharing)
+        visibility_q = Q(created_by=user)
+
+        # 2. Organization-level sharing
+        if hasattr(user, 'organization') and user.organization:
+            visibility_q |= Q(organization=user.organization)
+
+        # 3. Project-level sharing (only for current active project)
+        if project:
+            # Verify user is actually a member of this project
+            is_member = ProjectMember.objects.filter(
+                user=user,
+                project=project,
+                is_active=True
+            ).exists()
+
+            if is_member:
+                visibility_q |= Q(projects=project)  # M2M lookup
+
+        qs = qs.filter(visibility_q)
+
+        # Annotate whether template is shared to current project
+        # This helps frontend decide whether to show in "Project" or "Private" section
+        if project and self.action == 'list':
+            qs = qs.annotate(
+                is_shared_to_current_project=Exists(
+                    Project.objects.filter(
+                        id=project.id,
+                        workflow_templates=OuterRef('pk'),
+                    )
+                )
+            )
+
+        # Category filter
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category=category)
+
+        # Search by name
+        search = self.request.query_params.get('search', '').strip()
+        if search:
+            qs = qs.filter(name__icontains=search)
+
+        # Annotate is_applied_to_project when project_id is provided
+        apply_project_id = self.request.query_params.get('project_id')
+        if apply_project_id and self.action == 'list':
+            from django.db.models import Exists
+            from core.models import Project
+            qs = qs.annotate(
+                is_applied_to_project=Exists(
+                    Project.objects.filter(
+                        id=apply_project_id,
+                        workflow_templates=OuterRef('pk'),
+                    )
+                )
+            )
+
+        return qs.prefetch_related('projects').select_related(
+            'workflow_definition', 'created_by', 'organization'
+        ).distinct().order_by('-created_at')
+
+    def perform_create(self, serializer):
+        """
+        Create template by copying steps from source workflow.
+        Templates are now fully independent - no workflow_definition dependency.
+        """
+        source_workflow_id = serializer.validated_data.pop('source_workflow_id', None)
+
+        if not source_workflow_id:
+            # If no source specified, create empty template
+            steps_config = []
+        else:
+            # Get source workflow
+            try:
+                source_workflow = AgentWorkflowDefinition.objects.get(
+                    id=source_workflow_id,
+                    is_deleted=False
+                )
+            except AgentWorkflowDefinition.DoesNotExist:
+                from rest_framework.exceptions import ValidationError
+                raise ValidationError({'source_workflow_id': 'Source workflow not found.'})
+
+            # Copy steps configuration from source workflow
+            steps = source_workflow.steps.filter(is_deleted=False).order_by('order')
+            steps_config = []
+            for step in steps:
+                steps_config.append({
+                    'step_type': step.step_type,
+                    'name': step.name,
+                    'order': step.order,
+                    'config': step.config or {},
+                    'description': step.description or '',
+                })
+
+        # Create template (serializer.create() also sets the projects M2M)
+        serializer.save(
+            created_by=self.request.user,
+            steps_config=steps_config,
+        )
+
+    def perform_update(self, serializer):
+        """Only allow creator to update their templates."""
+        if serializer.instance.created_by != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You can only edit templates you created.')
+
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Soft-delete template (creator only)."""
+        # Only creator can delete
+        if instance.created_by != self.request.user:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('You can only delete templates you created.')
+
+        # Soft delete
+        instance.is_deleted = True
+        instance.save()
+
+    @action(detail=True, methods=['post'])
+    def apply(self, request, pk=None):
+        """
+        Apply template to create a new workflow in the current project.
+        Copies steps from template.steps_config to the new workflow.
+        """
+        template = self.get_object()
+        project = _get_user_project(request)
+
+        if not project:
+            return Response(
+                {'detail': 'An active project is required to apply a template.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get custom name from request
+        custom_name = (request.data.get('name') or '').strip()
+        workflow_name = custom_name or template.name
+
+        # Create new workflow
+        from django.db import transaction
+        with transaction.atomic():
+            new_workflow = AgentWorkflowDefinition.objects.create(
+                name=workflow_name,
+                description=template.description,
+                project=project,
+                is_default=False,
+                is_system=False,
+                status='draft',
+                created_by=request.user,
+            )
+
+            # Copy steps from template.steps_config
+            for step_config in template.steps_config:
+                AgentWorkflowStep.objects.create(
+                    workflow=new_workflow,
+                    step_type=step_config.get('step_type'),
+                    name=step_config.get('name'),
+                    order=step_config.get('order', 0),
+                    config=step_config.get('config', {}),
+                    description=step_config.get('description', ''),
+                )
+
+        serializer = AgentWorkflowDefinitionDetailSerializer(new_workflow)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class WorkflowTriggerLogViewSet(EnglishResponseMixin, viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only ViewSet for workflow trigger logs.
+    GET /api/agent/trigger-logs/?workflow_id={id}&limit=50
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = WorkflowTriggerLogSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        workflow_id = self.request.query_params.get('workflow_id')
+        limit = int(self.request.query_params.get('limit', 50))
+        limit = max(1, min(limit, 100))  # Clamp between 1-100
+
+        # Base queryset: user can only see logs for workflows they have access to
+        qs = WorkflowTriggerLog.objects.select_related('workflow', 'workflow_run')
+
+        # Filter by workflow ownership
+        project = _get_user_project(self.request)
+        if project:
+            # User can see logs for workflows in their project or system workflows
+            qs = qs.filter(
+                Q(workflow__is_system=True) |
+                Q(workflow__project=project, workflow__created_by=self.request.user)
+            )
+        else:
+            # Only system workflows if no project
+            qs = qs.filter(workflow__is_system=True)
+
+        # Filter by specific workflow if provided
+        if workflow_id:
+            qs = qs.filter(workflow_id=workflow_id)
+
+        return qs.order_by('-created_at')[:limit]
+
+
+class WebhookReceiverView(APIView):
+    """
+    Webhook receiver for external triggers.
+    POST /api/agent/webhooks/{workflow_id}/
+
+    Validates signature and triggers the workflow.
+    """
+    permission_classes = []  # Use signature-based authentication
+
+    def post(self, request, workflow_id):
+        """Handle incoming webhook."""
+        from .trigger_handlers import InstantHandler
+
+        payload = request.data
+        signature = request.headers.get('X-Webhook-Signature', '')
+
+        success = InstantHandler.handle_webhook(
+            workflow_id=workflow_id,
+            payload=payload,
+            signature=signature
+        )
+
+        if success:
+            return Response({'message': 'Webhook processed successfully'})
+        else:
+            return Response(
+                {'detail': 'Webhook validation failed'},
+                status=status.HTTP_400_BAD_REQUEST
+            )

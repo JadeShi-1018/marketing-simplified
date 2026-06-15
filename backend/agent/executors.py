@@ -73,6 +73,7 @@ class AnalyzeDataExecutor(BaseStepExecutor):
                 spreadsheet_data,
                 user_id=user_id,
                 success_criteria=success_criteria,
+                column_mapping=input_data.get('column_mapping'),
                 user_context=user_context,
                 generation_outputs=list(requested),
                 agent_session=self.orchestrator.session,
@@ -933,6 +934,18 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
             )
 
 
+class FlowControlExecutor(BaseStepExecutor):
+    """No-op pass-through for UI-only flow control steps (if_else, merge, loop).
+
+    These step types are rendered visually on the canvas but do not yet have
+    runtime execution logic.  The executor simply forwards input_data unchanged
+    so existing pipelines are not disrupted when flow-control steps are present.
+    """
+
+    def execute(self, input_data: dict) -> StepResult:
+        return StepResult(success=True, output_data=input_data, sse_events=[])
+
+
 # Executor registry — maps step_type to executor class
 EXECUTOR_REGISTRY = {
     'analyze_data': AnalyzeDataExecutor,
@@ -947,6 +960,10 @@ EXECUTOR_REGISTRY = {
     'detect_columns': DetectColumnsExecutor,
     'normalize_data': NormalizeDataExecutor,
     'generate_criteria': GenerateCriteriaExecutor,
+    # Flow-control types (UI canvas; no runtime logic yet)
+    'if_else': FlowControlExecutor,
+    'merge': FlowControlExecutor,
+    'loop': FlowControlExecutor,
 }
 
 

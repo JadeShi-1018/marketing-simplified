@@ -552,6 +552,11 @@ hr {
   background: #64748b;
 }
 
+/* Ticket form builder canvas: reserve scrollbar space so content padding stays symmetric. */
+.builder-canvas-scroll {
+  scrollbar-gutter: stable;
+}
+
 /* Slim, subtle scrollbar for task intelligence tab panels. */
 .task-tab-scrollbar {
   --task-scrollbar-thumb: #cbd5e1;

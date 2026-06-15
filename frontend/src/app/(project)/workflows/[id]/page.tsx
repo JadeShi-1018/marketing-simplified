@@ -1,8 +1,15 @@
-import WorkflowEditor from "@/components/workflows/WorkflowEditor";
+import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import AgentWorkflowCanvas from '@/components/workflows/agent/canvas/AgentWorkflowCanvas';
 
-export default function WorkflowEditPage({ params }: { params: { id: string } }) {
-  const workflowId = parseInt(params.id);
-
-  return <WorkflowEditor workflowId={workflowId} />;
+export default function WorkflowDetailPage({
+  params,
+}: {
+  params: { id: string }
+}) {
+  return (
+    <ProtectedRoute>
+      {/* Full-screen canvas — no DashboardLayout (sidebar excluded intentionally) */}
+      <AgentWorkflowCanvas workflowId={params.id} />
+    </ProtectedRoute>
+  );
 }
-

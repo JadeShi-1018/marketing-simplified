@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Bot } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { X, Bot, Settings } from 'lucide-react';
 import { AgentLayoutProvider } from './AgentLayoutContext';
 import { AgentChatPage } from './chat/AgentChatPage';
 import { useAgentSidePanelStore } from '@/lib/agentSidePanelStore';
@@ -16,6 +17,7 @@ const MIN_WIDTH = 340;
 const MAX_WIDTH = 560;
 
 export default function AgentSidePanel() {
+  const router = useRouter();
   const { isOpen, close } = useAgentSidePanelStore();
   const activeProjectId = useProjectStore((s) => s.activeProject?.id ?? null);
   const [width, setWidth] = useState(MAX_WIDTH);
@@ -174,6 +176,18 @@ export default function AgentSidePanel() {
                 }
               }}
             />
+            <button
+              type="button"
+              onClick={() => {
+                close();
+                router.push('/agent');
+              }}
+              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+              aria-label="Open workspace"
+              title="Workspace"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={close}
