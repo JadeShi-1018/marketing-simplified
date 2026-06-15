@@ -318,6 +318,13 @@ class ChatView(EnglishResponseMixin, APIView):
 
                     if chunk_type == 'done':
                         _flush_message()
+            except QuotaError as exc:
+                _flush_message()
+                quota_payload = json.dumps(
+                    {'code': exc.code, 'message': exc.message, **exc.payload}
+                )
+                yield f"data: {quota_payload}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
             except Exception:
                 logger.exception("Error during agent SSE stream")
                 _flush_message()
