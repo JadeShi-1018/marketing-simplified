@@ -17,13 +17,12 @@ User = get_user_model()
 
 class ExperimentListCreateViewTest(TestCase):
     """Test cases for experiment list/create API view"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.client = APIClient()
@@ -145,13 +144,12 @@ class ExperimentListCreateViewTest(TestCase):
 
 class ExperimentUpdateViewTest(TestCase):
     """Test cases for experiment update API view"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.client = APIClient()
@@ -275,13 +273,12 @@ class ExperimentUpdateViewTest(TestCase):
 
 class ScalingActionListCreateViewTest(TestCase):
     """Test cases for scaling action list/create API view"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.client = APIClient()
@@ -375,13 +372,12 @@ class ScalingActionListCreateViewTest(TestCase):
 
 class RollbackScalingActionViewTest(TestCase):
     """Test cases for rollback scaling action API view"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.client = APIClient()
@@ -466,13 +462,12 @@ class RollbackScalingActionViewTest(TestCase):
 
 class IngestExperimentMetricsViewTest(TestCase):
     """Test cases for ingest experiment metrics API view"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.client = APIClient()
