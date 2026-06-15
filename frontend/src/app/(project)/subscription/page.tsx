@@ -13,7 +13,7 @@ import SubscriptionUsageCard from '@/components/plans/SubscriptionUsageCard';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import usePlan from '@/hooks/usePlan';
 import { useAuthStore } from '@/lib/authStore';
-import { Check, X } from 'lucide-react';
+import { Check, Sparkles, Star, X } from 'lucide-react';
 import { formatTokens } from '@/lib/format';
 import toast from 'react-hot-toast';
 
@@ -396,12 +396,20 @@ function SubscriptionV2Content() {
                     {currentPlan.name}
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-2xl font-semibold text-gray-950">
-                    {currentPlan.base_price_cents === 0 ? '$0' : `$${(currentMonthlyCents / 100).toFixed(0)}`}
+                {currentPlan.base_price_cents === 0 ? (
+                  <div aria-hidden className="relative flex h-16 w-16 items-center justify-center rounded-full bg-[#3CCED7]/10 text-[#3CCED7]">
+                    <Star className="h-8 w-8" />
+                    <Sparkles className="absolute right-1 top-1 h-4 w-4" />
+                    <Sparkles className="absolute bottom-2 left-1 h-3 w-3" />
                   </div>
-                  <div className="text-xs text-gray-500">{displayCurrency} / month</div>
-                </div>
+                ) : (
+                  <div className="text-right">
+                    <div className="text-2xl font-semibold text-gray-950">
+                      {`$${(currentMonthlyCents / 100).toFixed(0)}`}
+                    </div>
+                    <div className="text-xs text-gray-500">{displayCurrency} / month</div>
+                  </div>
+                )}
               </div>
               <div className="mt-5 rounded-lg border border-white/80 bg-white/70 p-4 text-sm text-gray-600">
                 <div className="flex justify-between"><span>Seats</span><span className="font-medium text-gray-900">{subscription?.seat_count ?? currentPlan.included_seats}</span></div>

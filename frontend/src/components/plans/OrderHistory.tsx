@@ -33,7 +33,7 @@ export default function OrderHistory({
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-center gap-2">
-        <ReceiptText className="h-5 w-5 text-[#16a7b0]" />
+        <ReceiptText className="h-5 w-5 text-[#3CCED7]" />
         <h2 className="font-semibold text-gray-900">Order history</h2>
       </div>
       <div className="overflow-x-auto">
@@ -49,7 +49,7 @@ export default function OrderHistory({
                 <td className="px-3 py-3 text-gray-700">${(payment.amount_paid_cents / 100).toFixed(2)} {payment.currency}</td>
                 <td className="px-3 py-3"><Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">{payment.status || 'unknown'}</Badge></td>
                 <td className="px-3 py-3 text-right">
-                  {(payment.hosted_invoice_url || payment.invoice_pdf) && <a aria-label={`Download ${payment.number ?? payment.id}`} href={payment.hosted_invoice_url || payment.invoice_pdf || '#'} target="_blank" rel="noreferrer" className="inline-flex rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#16a7b0]"><Download className="h-4 w-4" /></a>}
+                  {(payment.hosted_invoice_url || payment.invoice_pdf) && <a aria-label={`Download ${payment.number ?? payment.id}`} href={payment.hosted_invoice_url || payment.invoice_pdf || '#'} target="_blank" rel="noreferrer" className="inline-flex rounded-lg p-2 text-gray-500 hover:bg-gray-100 hover:text-[#2AB5BD]"><Download className="h-4 w-4" /></a>}
                 </td>
               </tr>
             ))}

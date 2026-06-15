@@ -51,8 +51,16 @@ export default function SeatCalculator({
         max={50}
         value={seats}
         onChange={handleChange}
-        className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:ring-offset-2"
+        className="h-2 w-full cursor-pointer appearance-none rounded-lg accent-[#3CCED7] focus:outline-none focus:ring-2 focus:ring-[#3CCED7] focus:ring-offset-2 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-[#3CCED7] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[#3CCED7] [&::-webkit-slider-thumb]:shadow-sm"
       />
+
+      <div aria-hidden className="flex items-center justify-between px-0.5 text-[10px] font-medium text-gray-400">
+        <span>5</span>
+        <span>10</span>
+        <span>15</span>
+        <span>20</span>
+        <span>25+</span>
+      </div>
 
       <div className="flex items-center justify-between text-xs text-gray-500">
         <span>{includedSeats} included</span>

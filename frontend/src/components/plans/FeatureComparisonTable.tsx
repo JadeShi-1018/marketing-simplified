@@ -3,7 +3,7 @@ import type { Plan } from '@/hooks/usePlan';
 import { buildComparisonData, type ComparisonValue } from './comparisonData';
 
 function Value({ value }: { value: ComparisonValue }) {
-  if (value === true) return <Check aria-label="Included" className="mx-auto h-4 w-4 text-[#16a7b0]" />;
+  if (value === true) return <Check aria-label="Included" className="mx-auto h-4 w-4 stroke-[2.25] text-[#3CCED7]" />;
   if (value === false) return <Minus aria-label="Not included" className="mx-auto h-4 w-4 text-gray-300" />;
   return <span>{value}</span>;
 }
@@ -11,32 +11,40 @@ function Value({ value }: { value: ComparisonValue }) {
 export default function FeatureComparisonTable({ plans }: { plans: Plan[] }) {
   return (
     <section>
-      <div className="mb-5 text-center">
-        <h2 className="text-2xl font-semibold text-gray-950">Compare plans</h2>
-        <p className="mt-2 text-sm text-gray-500">The workspace is shared. Limits, seats, support, and billing tools scale with Team.</p>
-      </div>
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-[680px] w-full text-sm">
-          <thead className="bg-gray-50 text-gray-900">
+        <table className="w-full min-w-[760px] table-fixed text-xs text-gray-800">
+          <thead className="text-gray-900">
             <tr>
-              <th className="w-1/2 px-5 py-4 text-left font-semibold">Feature</th>
-              <th className="w-1/4 px-4 py-4 text-center font-semibold">Free</th>
-              <th className="w-1/4 bg-[#3CCED7]/5 px-4 py-4 text-center font-semibold">Team</th>
+              <th colSpan={2} className="w-[54%] px-5 py-3 text-left font-bold">What&apos;s included</th>
+              <th className="w-[23%] px-3 py-3 text-center font-bold">Free</th>
+              <th className="w-[23%] bg-[#3CCED7]/8 px-3 py-3 text-center font-bold">Team</th>
             </tr>
           </thead>
           <tbody>
-            {buildComparisonData(plans).flatMap((group) => [
-              <tr key={`${group.name}-heading`} className="border-t border-gray-200 bg-gray-50/70">
-                <th colSpan={3} className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">{group.name}</th>
-              </tr>,
-              ...group.rows.map((row) => (
-                <tr key={`${group.name}-${row.label}`} className="border-t border-gray-100">
-                  <td className="px-5 py-3 text-gray-700">{row.label}</td>
-                  <td className="px-4 py-3 text-center text-gray-600"><Value value={row.free} /></td>
-                  <td className="bg-[#3CCED7]/[0.025] px-4 py-3 text-center font-medium text-gray-800"><Value value={row.team} /></td>
+            {buildComparisonData(plans).flatMap((group) => {
+              const GroupIcon = group.icon;
+              return group.rows.map((row, rowIndex) => (
+                <tr key={`${group.name}-${row.label}`} className={rowIndex === 0 ? 'border-t border-gray-200' : 'border-t border-gray-100'}>
+                  {rowIndex === 0 && (
+                    <th
+                      rowSpan={group.rows.length}
+                      scope="rowgroup"
+                      className="w-[22%] border-r border-gray-200 px-5 py-2 text-left align-middle font-bold text-gray-900"
+                    >
+                      <span className="flex items-center gap-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#3CCED7]/[0.14] text-[#3CCED7]">
+                          <GroupIcon aria-hidden className="h-[22px] w-[22px] stroke-2" />
+                        </span>
+                        <span>{group.name}</span>
+                      </span>
+                    </th>
+                  )}
+                  <td className="w-[32%] border-r border-gray-100 px-5 py-1.5 font-medium text-gray-700">{row.label}</td>
+                  <td className="w-[23%] px-3 py-1.5 text-center font-medium text-gray-700"><Value value={row.free} /></td>
+                  <td className="w-[23%] bg-[#3CCED7]/[0.035] px-3 py-1.5 text-center font-semibold text-gray-900"><Value value={row.team} /></td>
                 </tr>
-              )),
-            ])}
+              ));
+            })}
           </tbody>
         </table>
       </div>

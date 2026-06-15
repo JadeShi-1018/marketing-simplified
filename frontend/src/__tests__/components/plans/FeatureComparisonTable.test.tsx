@@ -8,8 +8,12 @@ describe('FeatureComparisonTable', () => {
 
     expect(screen.getByText('Free')).toBeInTheDocument();
     expect(screen.getByText('Team')).toBeInTheDocument();
+    expect(screen.getByText('Core platform')).toBeInTheDocument();
+    expect(screen.getByText('Content & creation')).toBeInTheDocument();
+    expect(screen.getByText('Collaboration')).toBeInTheDocument();
+    expect(screen.getByText('Billing & admin')).toBeInTheDocument();
     expect(screen.getByText('Campaigns')).toBeInTheDocument();
-    expect(screen.getAllByLabelText('Included')).toHaveLength(22);
+    expect(screen.getAllByLabelText('Included')).toHaveLength(32);
     expect(screen.getByText('500K')).toBeInTheDocument();
     expect(screen.getByText('5M')).toBeInTheDocument();
   });

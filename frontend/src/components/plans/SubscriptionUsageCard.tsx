@@ -22,7 +22,7 @@ export default function SubscriptionUsageCard({ fetchSummary }: { fetchSummary: 
 
   return (
     <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
-      <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><BarChart3 className="h-5 w-5 text-[#16a7b0]" />Usage this month</div>
+      <div className="flex items-center gap-2 text-sm font-semibold text-gray-900"><BarChart3 className="h-5 w-5 text-[#3CCED7]" />Usage this month</div>
       <div className="mt-6 flex items-end justify-between gap-3">
         <div><span className="text-3xl font-semibold text-gray-950">{formatTokens(summary.tokens_used)}</span><span className="ml-2 text-sm text-gray-500">of {formatTokens(quota)} tokens</span></div>
         <span className="text-sm font-semibold text-gray-700">{percent}%</span>

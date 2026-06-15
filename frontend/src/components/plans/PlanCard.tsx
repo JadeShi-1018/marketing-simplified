@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Info, Check, Loader2 } from 'lucide-react';
+import { CircleCheck, Info, Loader2 } from 'lucide-react';
 import SeatCalculator from './SeatCalculator';
 import { formatTokens } from '@/lib/format';
 
@@ -147,7 +147,7 @@ export default function PlanCard({
 
       {/* Header */}
       <div className={`space-y-2 plan-card-title ${headerPad}`}>
-        <div className="text-2xl font-semibold text-gray-900">
+        <div className="text-2xl font-bold text-gray-950">
           {name}
         </div>
         <div className="text-sm font-normal text-gray-500">
@@ -157,7 +157,7 @@ export default function PlanCard({
 
       {/* Price */}
       <div className={`plan-card-price ${pricePad}`}>
-        <p className="text-3xl font-semibold leading-tight text-gray-900">
+        <p className="text-3xl font-bold leading-tight text-gray-950">
           {isFree ? (
             `$0 ${currency}`
           ) : (
@@ -209,8 +209,8 @@ export default function PlanCard({
             <ul className="space-y-2">
               <li className="flex items-center justify-between">
                 <div className="flex items-center">
-                  <Check className="w-5 h-5 text-[#3CCED7] mr-2" />
-                  <span className="text-base text-gray-900">
+                  <CircleCheck className="mr-2 h-[18px] w-[18px] shrink-0 stroke-[2] text-[#65B96E]" />
+                  <span className="text-sm font-medium text-gray-800">
                     Tokens/mo:{' '}
                     <span className="font-medium">{formatTokens(monthlyTokenQuota)}</span>
                   </span>
@@ -218,8 +218,8 @@ export default function PlanCard({
               </li>
               <li className="flex items-center justify-between">
                 <div className="flex items-center">
-                  <Check className="w-5 h-5 text-[#3CCED7] mr-2" />
-                  <span className="text-base text-gray-900">
+                  <CircleCheck className="mr-2 h-[18px] w-[18px] shrink-0 stroke-[2] text-[#65B96E]" />
+                  <span className="text-sm font-medium text-gray-800">
                     Seats included:{' '}
                     <span className="font-medium">{includedSeats}</span>
                   </span>
@@ -228,8 +228,8 @@ export default function PlanCard({
               {!isFree && extraSeatPriceCents !== null && extraSeatPriceCents > 0 && (
                 <li className="flex items-center justify-between">
                   <div className="flex items-center">
-                    <Check className="w-5 h-5 text-[#3CCED7] mr-2" />
-                    <span className="text-base text-gray-900">
+                    <CircleCheck className="mr-2 h-[18px] w-[18px] shrink-0 stroke-[2] text-[#65B96E]" />
+                    <span className="text-sm font-medium text-gray-800">
                       Extra seat:{' '}
                       <span className="font-medium">
                         ${(extraSeatPriceCents / 100).toFixed(0)}/mo
@@ -240,8 +240,8 @@ export default function PlanCard({
               )}
               <li className="flex items-center justify-between">
                 <div className="flex items-center">
-                  <Check className="w-5 h-5 text-[#3CCED7] mr-2" />
-                  <span className="text-base text-gray-900">
+                  <CircleCheck className="mr-2 h-[18px] w-[18px] shrink-0 stroke-[2] text-[#65B96E]" />
+                  <span className="text-sm font-medium text-gray-800">
                     Overage:{' '}
                     <span className="font-medium">
                       {overagePriceCentsPer1m
@@ -262,8 +262,8 @@ export default function PlanCard({
                 {categoryFeatures.map((feat, idx) => (
                   <li key={idx} className="flex items-center justify-between">
                     <div className="flex items-center">
-                      <Check className="w-5 h-5 text-[#3CCED7] mr-2" />
-                      <span className="text-base text-gray-900">
+                      <CircleCheck className="mr-2 h-[18px] w-[18px] shrink-0 stroke-[2] text-[#65B96E]" />
+                      <span className="text-sm font-medium text-gray-800">
                         {feat.label}: <span className="font-medium">{feat.value}</span>
                       </span>
                     </div>

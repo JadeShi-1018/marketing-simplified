@@ -1,5 +1,14 @@
 import type { Plan } from '@/hooks/usePlan';
 import { formatTokens } from '@/lib/format';
+import {
+  ChartNoAxesColumnIncreasing,
+  Files,
+  Gauge,
+  Headphones,
+  LayoutGrid,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 
 // TODO(PM): confirm any real per-module Free/Team gating.
 
@@ -13,6 +22,7 @@ export interface ComparisonRow {
 
 export interface ComparisonGroup {
   name: string;
+  icon: LucideIcon;
   rows: ComparisonRow[];
 }
 
@@ -53,33 +63,42 @@ export function buildComparisonData(plans: Plan[]): ComparisonGroup[] {
 
   return [
     {
-      name: 'Core workspace',
-      rows: moduleRows(['Campaigns', 'Tasks', 'Decisions', 'Meetings', 'Calendar', 'Docs', 'Messages']),
+      name: 'Core platform',
+      icon: LayoutGrid,
+      rows: moduleRows(['Campaigns', 'AI Agent', 'Meta Ads', 'Tasks', 'Decisions', 'Budget Pools', 'Spreadsheets']),
     },
     {
-      name: 'AI & Analytics',
-      rows: moduleRows(['AI Agent workflows', 'Spreadsheet analysis', 'Calendar Q&A']),
+      name: 'Content & creation',
+      icon: ChartNoAxesColumnIncreasing,
+      rows: moduleRows(['Variations Studio', 'Ads Draft', 'Email Draft', 'Notion']),
+    },
+    {
+      name: 'Collaboration',
+      icon: Users,
+      rows: moduleRows(['Meetings', 'Calendar', 'Messages', 'Miro']),
     },
     {
       name: 'Usage & limits',
+      icon: Gauge,
       rows: [
-        { label: 'Monthly tokens', free: formatTokens(free.monthly_token_quota), team: formatTokens(team.monthly_token_quota) },
-        { label: 'Max tokens per call', free: formatTokens(free.max_tokens_per_call ?? 50_000), team: formatTokens(team.max_tokens_per_call ?? 50_000) },
-        { label: 'Over-quota', free: 'Hard block', team: `$${((team.overage_price_cents_per_1m ?? 500) / 100).toFixed(0)} per 1M tokens` },
-      ],
-    },
-    {
-      name: 'Team & seats',
-      rows: [
-        { label: 'Seats included', free: String(free.included_seats), team: String(team.included_seats) },
-        { label: 'Extra seats', free: '—', team: `$${((team.extra_seat_price_cents ?? 900) / 100).toFixed(0)} per seat / month` },
-        { label: 'Seat management', free: false, team: true },
-        { label: 'Order history & billing', free: false, team: true },
+        { label: 'Monthly AI tokens', free: formatTokens(free.monthly_token_quota), team: formatTokens(team.monthly_token_quota) },
+        { label: 'Seats', free: String(free.included_seats), team: String(team.included_seats) },
+        { label: 'Overage', free: 'Hard limit', team: `$${((team.overage_price_cents_per_1m ?? 500) / 100).toFixed(0)} / 1M tokens` },
       ],
     },
     {
       name: 'Support',
-      rows: [{ label: 'Support level', free: 'Community support', team: 'Priority email support' }],
+      icon: Headphones,
+      rows: [{ label: 'Support level', free: 'Community', team: 'Priority email support' }],
+    },
+    {
+      name: 'Billing & admin',
+      icon: Files,
+      rows: [
+        { label: 'Invoices', free: 'Basic', team: 'Full' },
+        { label: 'Payment history', free: false, team: true },
+        { label: 'Usage reports', free: false, team: true },
+      ],
     },
   ];
 }

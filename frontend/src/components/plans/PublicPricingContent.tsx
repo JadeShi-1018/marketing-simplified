@@ -24,7 +24,7 @@ export default function PublicPricingContent() {
         <h2 className="text-2xl font-semibold text-gray-950">Ready to simplify your team&apos;s work?</h2>
         <p className="mt-2 text-sm text-gray-600">Start free, then add seats and AI capacity when your team is ready.</p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Link href="/login" className="rounded-lg border border-[#3CCED7] bg-white px-6 py-3 text-sm font-semibold text-[#159ea7]">Start for free</Link>
+          <Link href="/login" className="rounded-lg border border-[#3CCED7] bg-white px-6 py-3 text-sm font-semibold text-[#3CCED7]">Start for free</Link>
           <Link href="/login" className="rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-6 py-3 text-sm font-semibold text-gray-900 shadow-sm">Start Team</Link>
         </div>
       </section>
