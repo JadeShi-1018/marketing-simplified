@@ -1925,7 +1925,13 @@ setStepState({
       (error) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        if (error.message === "quota_error") {
+          // The global UpgradeModal already explains the block; drop the optimistic
+          // thinking placeholder instead of leaving an "Error: quota_error" bubble.
+          setMessages((prev) => prev.filter((m) => m.id !== aiMsgId))
+        } else {
+          updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        }
         setIsStreaming(false)
       },
       () => {
