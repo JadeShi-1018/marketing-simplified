@@ -194,6 +194,7 @@ export interface DecisionGraphNode {
 export interface DecisionGraphEdge {
   from: number;
   to: number;
+  edgeType?: 'FOLLOW_UP' | 'RELATED' | null;
 }
 
 export interface DecisionGraphTopic {

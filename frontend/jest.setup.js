@@ -75,6 +75,11 @@ global.ResizeObserver = class ResizeObserver {
   unobserve() {}
 }
 
+// structuredClone for dagre in Jest (older Node)
+if (typeof globalThis.structuredClone !== 'function') {
+  globalThis.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+}
+
 // Mock performance API
 global.performance = {
   now: jest.fn(() => Date.now()),

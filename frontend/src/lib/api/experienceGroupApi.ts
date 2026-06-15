@@ -5,6 +5,7 @@ import {
   CreateExperienceGroupData,
   UpdateExperienceGroupData,
 } from '@/types/experienceGroup';
+import type { RequestFormResponse, SubmitRequestResult, FormAnswers } from '@/types/ticketForm';
 
 const BASE = '/api/experience-groups';
 
@@ -29,4 +30,19 @@ export const ExperienceGroupAPI = {
 
   preview: (id: number) =>
     api.get<ExperienceGroup & { is_preview: boolean }>(`${BASE}/${id}/preview/`),
+
+  getRequestForm: (id: number) =>
+    api.get<RequestFormResponse>(`${BASE}/${id}/request-form/`),
+
+  submitRequest: (id: number, answers: FormAnswers, filesByField: Record<string, File[]>) => {
+    const formData = new FormData();
+    formData.append('answers', JSON.stringify(answers));
+    Object.entries(filesByField).forEach(([fieldKey, files]) => {
+      files.forEach((file) => formData.append(fieldKey, file));
+    });
+    return api.post<SubmitRequestResult>(`${BASE}/${id}/submit-request/`, formData, {
+      maxBodyLength: Infinity as number,
+      maxContentLength: Infinity as number,
+    });
+  },
 };

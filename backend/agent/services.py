@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import requests
+from django.core.cache import cache
 from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.utils import timezone as django_timezone
@@ -235,10 +236,25 @@ def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
     return column_summary, json.dumps(limited, default=str), criteria_text
 
 
-def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None):
+_ANALYSIS_VALIDATION_MAX_ATTEMPTS = 3
+
+
+def _call_gemini_analysis(
+    spreadsheet_data,
+    user_id=None,
+    success_criteria=None,
+    generation_outputs=None,
+    user_context=None,
+    validation_feedback=None,
+):
     """Call Gemini to analyze spreadsheet data."""
     from .gemini_client import call_gemini_json
+    from .generation_registry import (
+        build_analysis_prompt,
+        normalize_generation_outputs,
+    )
 
+    requested = frozenset(normalize_generation_outputs(generation_outputs))
     column_summary, cleaned_data, criteria_text = _preprocess_spreadsheet(
         spreadsheet_data, success_criteria
     )
@@ -248,15 +264,25 @@ def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None,
         if criteria_text
         else _NO_CRITERIA_BLOCK
     )
-    system_prompt = _ANALYSIS_SYSTEM_PROMPT.replace("{criteria_block}", criteria_block)
+    system_prompt = build_analysis_prompt(requested, criteria_block)
     if user_context:
         system_prompt += _CONTEXT_BLOCK_TEMPLATE.format(user_context=user_context)
     user_prompt = (
         f"Data summary: {column_summary}\n\n"
-        f"Analyze the following data and identify anomalies:\n\n{cleaned_data}"
+        f"Analyze the following data:\n\n{cleaned_data}"
     )
+    if validation_feedback:
+        user_prompt += (
+            f"\n\nYour previous JSON response failed validation: {validation_feedback}\n"
+            "Fix every issue and return ONLY the corrected JSON object."
+        )
 
-    logger.info("Calling Gemini for spreadsheet analysis user_id=%s", user_id)
+    logger.info(
+        "Calling Gemini for spreadsheet analysis user_id=%s outputs=%s attempt=%s",
+        user_id,
+        sorted(requested),
+        'retry' if validation_feedback else 'initial',
+    )
     return call_gemini_json(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -265,28 +291,137 @@ def _call_gemini_analysis(spreadsheet_data, user_id=None, success_criteria=None,
     )
 
 
-def _run_analysis(spreadsheet_data, user_id=None, success_criteria=None, user_context=None):
+def _assign_anomaly_ids(analysis):
+    """Assign a stable id to every anomaly so the frontend can reference them
+    across the review/confirmation round-trip.
+
+    - Idempotent: anomalies that already carry an ``id`` are left untouched, so
+      re-analysis or session restore never reshuffles ids.
+    - Zero-anomaly datasets are marked ``anomalies_confirmed=True`` so they do
+      not block the workflow waiting for a confirmation that has no card. This
+      preserves the existing downstream behaviour (tasks still flow from
+      ``recommended_tasks``); task creation is only skipped when anomalies were
+      detected and the user excluded all of them.
+    """
+    if not isinstance(analysis, dict):
+        return analysis
+
+    anomalies = analysis.get('anomalies') or []
+    for i, anomaly in enumerate(anomalies):
+        if isinstance(anomaly, dict) and not anomaly.get('id'):
+            anomaly['id'] = f"anom_{i}"
+
+    if not anomalies:
+        analysis['anomalies_confirmed'] = True
+
+    return analysis
+
+
+def _call_gemini_calendar_from_analysis(
+    spreadsheet_data,
+    analysis_result,
+    user_id=None,
+    success_criteria=None,
+    user_context=None,
+):
+    """Suggest calendar events from spreadsheet + analysis context."""
+    from .gemini_client import call_gemini_json
+    from .generation_registry import (
+        build_calendar_from_analysis_user_prompt,
+        calendar_from_analysis_system_prompt,
+        validate_calendar_events_response,
+    )
+
+    column_summary, cleaned_data, _criteria_text = _preprocess_spreadsheet(
+        spreadsheet_data, success_criteria
+    )
+    raw = call_gemini_json(
+        system_prompt=calendar_from_analysis_system_prompt(),
+        user_prompt=build_calendar_from_analysis_user_prompt(
+            column_summary, cleaned_data, analysis_result
+        ),
+        temperature=0.3,
+        timeout=120,
+    )
+    logger.info("Calling Gemini for calendar events user_id=%s", user_id)
+    return validate_calendar_events_response(raw)
+
+
+def _coerce_llm_analysis_for_requested(data, requested):
+    """Map Claude/legacy full analysis JSON to the requested analysis key set."""
+    from .generation_registry import analysis_keys_for_request, validate_analysis_response
+
+    expected = analysis_keys_for_request(requested)
+    if not expected:
+        return {}
+    subset = {}
+    if 'recommended_tasks' in expected:
+        subset['recommended_tasks'] = data.get('recommended_tasks', [])
+    if 'recommended_decision_tree' in expected:
+        subset['recommended_decision_tree'] = data.get(
+            'recommended_decision_tree',
+            {'nodes': []},
+        )
+    return validate_analysis_response(subset, requested)
+
+
+def _run_analysis(
+    spreadsheet_data,
+    user_id=None,
+    success_criteria=None,
+    generation_outputs=None,
+    user_context=None,
+):
     """Run analysis using Gemini, with Claude as fallback.
 
     Raises RuntimeError if no provider is configured or all providers fail.
+    Raises GenerationValidationError if the model JSON does not match the contract.
     """
+    from .generation_registry import (
+        GenerationValidationError,
+        normalize_generation_outputs,
+        validate_analysis_response,
+    )
+
+    requested = frozenset(normalize_generation_outputs(generation_outputs))
+
     # 1. Try Gemini (primary)
     from .gemini_client import _get_api_key as _gemini_key
     if _gemini_key():
-        try:
-            return _call_gemini_analysis(
-                spreadsheet_data, user_id,
-                success_criteria=success_criteria,
-                user_context=user_context,
-            )
-        except Exception as e:
-            logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
+        validation_feedback = None
+        for attempt in range(1, _ANALYSIS_VALIDATION_MAX_ATTEMPTS + 1):
+            try:
+                raw = _call_gemini_analysis(
+                    spreadsheet_data,
+                    user_id,
+                    success_criteria=success_criteria,
+                    user_context=user_context,
+                    generation_outputs=list(requested),
+                    validation_feedback=validation_feedback,
+                )
+                return _assign_anomaly_ids(validate_analysis_response(raw, requested))
+            except GenerationValidationError as exc:
+                if attempt >= _ANALYSIS_VALIDATION_MAX_ATTEMPTS:
+                    raise
+                validation_feedback = str(exc)
+                logger.warning(
+                    "Gemini analysis validation failed (attempt %s/%s): %s; retrying",
+                    attempt,
+                    _ANALYSIS_VALIDATION_MAX_ATTEMPTS,
+                    exc,
+                )
+            except Exception as e:
+                logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
+                break
 
     # 2. Try Claude API (fallback)
     client = _get_llm_client()
     if client:
         try:
-            return _call_llm(client, spreadsheet_data)
+            raw = _call_llm(client, spreadsheet_data)
+            return _assign_anomaly_ids(_coerce_llm_analysis_for_requested(raw, requested))
+        except GenerationValidationError:
+            raise
         except Exception as e:
             logger.error(f"LLM call failed: {e}")
 
@@ -471,54 +606,47 @@ def _call_gemini_chat(
 
 
 def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
-    """Generate Miro snapshot (Gemini), then persist (optionally via approval gate)."""
+    """Generate Miro snapshot (Gemini) and persist the board.
+
+    Legacy ``generate_miro`` is an explicit user action — clicking Generate Miro
+    counts as approval, so we never pause on a separate miro_board approval step.
+    """
+    from .approval_gate import KIND_MIRO_BOARD
     from .miro_generation import (
         build_miro_generation_context_from_run,
         call_gemini_miro_generator,
     )
-    from .approval_gate import KIND_MIRO_BOARD, request_external_commit
     from .miro_board_service import create_board_from_snapshot
+    from .models import AgentPendingExternalApproval
 
-    context = build_miro_generation_context_from_run(
-        session=orchestrator.session,
-        workflow_run=workflow_run,
-    )
-    snapshot = call_gemini_miro_generator(
-        context,
-        user_id=str(orchestrator.user.id),
-    )
-
-    # If approval isn't required for the session, persist immediately without gating.
-    if not bool(getattr(orchestrator.session, 'approval_required', False)):
-        board, persisted_snapshot = create_board_from_snapshot(
-            project=orchestrator.project,
+    snapshot = workflow_run.miro_snapshot
+    if not snapshot:
+        context = build_miro_generation_context_from_run(
             session=orchestrator.session,
             workflow_run=workflow_run,
-            snapshot=snapshot,
         )
-        workflow_run.miro_snapshot = persisted_snapshot
-        workflow_run.miro_board = board
-        workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
-        return persisted_snapshot, board
+        snapshot = call_gemini_miro_generator(
+            context,
+            user_id=str(orchestrator.user.id),
+        )
 
-    gate = request_external_commit(
-        orchestrator=orchestrator,
+    board, persisted_snapshot = create_board_from_snapshot(
+        project=orchestrator.project,
+        session=orchestrator.session,
         workflow_run=workflow_run,
-        step_execution=None,
-        kind=KIND_MIRO_BOARD,
-        draft={'snapshot': snapshot},
-        commit_context={
-            'workflow_run_id': str(workflow_run.id),
-            'merge_output': {},
-        },
+        snapshot=snapshot,
     )
-    if gate.paused:
-        workflow_run.miro_snapshot = snapshot
-        workflow_run.save(update_fields=['miro_snapshot', 'updated_at'])
-        return snapshot, None
+    workflow_run.miro_snapshot = persisted_snapshot
+    workflow_run.miro_board = board
+    workflow_run.save(update_fields=['miro_snapshot', 'miro_board'])
 
-    workflow_run.refresh_from_db()
-    return workflow_run.miro_snapshot, workflow_run.miro_board
+    AgentPendingExternalApproval.objects.filter(
+        workflow_run=workflow_run,
+        kind=KIND_MIRO_BOARD,
+        status='pending',
+    ).update(status='approved')
+
+    return persisted_snapshot, board
 
 
 def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
@@ -722,6 +850,9 @@ class AgentOrchestrator:
             if 'created_tasks' in wf_patch:
                 wr.created_tasks = wf_patch['created_tasks']
                 uf.append('created_tasks')
+            if 'created_decisions' in wf_patch:
+                wr.created_decisions = wf_patch['created_decisions']
+                uf.append('created_decisions')
             if wf_patch.get('miro_board_id'):
                 wr.miro_board = Board.objects.get(id=wf_patch['miro_board_id'])
                 uf.append('miro_board')
@@ -739,11 +870,20 @@ class AgentOrchestrator:
                        action=None, file_id=None, calendar_context=None,
                        workflow_id=None, column_mapping=None,
                        approval_id=None, approval_decision=None,
-                       approval_draft=None, user_context=None):
+                       approval_draft=None, generation_outputs=None, user_context=None,
+                       reviewed_anomalies=None):
         """Main entry point. Routes calendar context first, then workflow engine or legacy logic.
 
         Yields SSE chunks as dicts.
         """
+        if action == 'confirm_anomalies':
+            latest_run = self.session.workflow_runs.filter(
+                is_deleted=False
+            ).order_by('-created_at').first()
+            yield from self.confirm_anomalies(latest_run, reviewed_anomalies)
+            yield {"type": "done"}
+            return
+
         if action == 'resolve_external_approval':
             if not approval_id or not approval_decision:
                 yield {'type': 'error', 'content': 'approval_id and approval_decision are required.'}
@@ -761,6 +901,25 @@ class AgentOrchestrator:
         if calendar_context:
             yield from self.answer_calendar_question(message, calendar_context)
             yield {"type": "done"}
+            return
+
+        if action == 'create_decisions':
+            latest_run = self.session.workflow_runs.filter(
+                is_deleted=False
+            ).order_by('-created_at').first()
+
+            if latest_run and self._workflow_run_analysis(latest_run).get(
+                'recommended_decision_tree', {}
+            ).get('nodes'):
+                yield from self.create_decisions_from_analysis(latest_run)
+                yield {'type': 'done'}
+                return
+            if latest_run and latest_run.workflow_definition:
+                yield from self._resume_workflow(latest_run)
+                yield {'type': 'done'}
+                return
+            yield {'type': 'error', 'content': 'No analysis found to create decisions from.'}
+            yield {'type': 'done'}
             return
 
         # --- Resume a paused workflow ---
@@ -807,15 +966,6 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
-        if action == 'distribute_message':
-            latest_run = self.session.workflow_runs.filter(
-                analysis_result__isnull=False,
-                is_deleted=False,
-            ).order_by('-created_at').first()
-            yield from self._distribute_message(latest_run)
-            yield {"type": "done"}
-            return
-
         if action == 'start_follow_up':
             latest_run = self.session.workflow_runs.filter(
                 status='awaiting_confirmation',
@@ -845,6 +995,7 @@ class AgentOrchestrator:
                     file_id=file_id,
                     spreadsheet_id=spreadsheet_id,
                     csv_filename=csv_filename,
+                    generation_outputs=generation_outputs,
                     user_context=user_context,
                 )
                 yield {"type": "done"}
@@ -1369,60 +1520,6 @@ class AgentOrchestrator:
             "data": {"workflow_run_id": str(workflow_run.id)},
         }
 
-    def _distribute_message(self, workflow_run):
-        """Send analysis summary + tasks to all project members via bot private chat."""
-        if not workflow_run or not workflow_run.analysis_result:
-            yield {"type": "error", "content": "No analysis found to distribute."}
-            return
-
-        project = self.session.project
-        sender = self.session.user
-
-        # Build summary message
-        analysis = workflow_run.analysis_result
-        anomalies = analysis.get("anomalies", [])
-        tasks = analysis.get("recommended_tasks", [])
-
-        lines = [f"📊 Analysis Summary — {project.name}"]
-        lines.append("")
-
-        if anomalies:
-            lines.append("⚠️ Anomalies detected:")
-            for a in anomalies[:5]:
-                lines.append(f"  • {a.get('description', str(a))}")
-
-        if tasks:
-            lines.append("")
-            lines.append("✅ Recommended Tasks:")
-            for t in tasks[:5]:
-                priority = t.get("priority", "")
-                title = t.get("title") or t.get("summary", "")
-                lines.append(f"  • [{priority}] {title}" if priority else f"  • {title}")
-
-        content = "\n".join(lines)
-
-        # Get all active project members except the sender
-        members = _serialize_project_members(project, excluded_users=[sender])
-        if not members:
-            yield {"type": "text", "content": "No other project members to notify."}
-            return
-
-        forwards = [{"username": m["username"], "content": content} for m in members]
-        from .approval_gate import KIND_DISTRIBUTE_BULK, request_external_commit
-
-        gate = request_external_commit(
-            orchestrator=self,
-            workflow_run=workflow_run,
-            step_execution=None,
-            kind=KIND_DISTRIBUTE_BULK,
-            draft={'forwards': forwards, 'body': content},
-            commit_context={},
-        )
-        for ev in gate.sse_events:
-            yield ev
-        if gate.paused:
-            return
-
     def _workflow_run_analysis(self, workflow_run):
         """Return analysis payload for a run, including completed step output."""
         analysis = workflow_run.analysis_result
@@ -1442,6 +1539,156 @@ class AgentOrchestrator:
 
         return analysis if isinstance(analysis, dict) else {}
 
+    def confirm_anomalies(self, workflow_run, reviewed_anomalies):
+        """Persist the user's reviewed anomaly list and unlock task creation.
+
+        Guard order is deliberate: the already-confirmed no-op runs BEFORE any
+        payload validation so a reload/retry that sends a partial or stale
+        payload no-ops cleanly instead of raising a validation error.
+        """
+        # 1. Missing run/analysis.
+        analysis = self._workflow_run_analysis(workflow_run) if workflow_run else {}
+        if not workflow_run or not isinstance(analysis, dict) or not analysis:
+            yield {"type": "error", "content": "No analysis to confirm."}
+            return
+
+        # 2. Already confirmed -> safe idempotent no-op (before validation).
+        if analysis.get('anomalies_confirmed'):
+            yield {
+                "type": "anomalies_confirmed",
+                "content": "Anomalies already confirmed.",
+                "data": analysis,
+                "already_confirmed": True,
+            }
+            return
+
+        stored = analysis.get('anomalies') or []
+        existing_by_id = {a.get('id'): a for a in stored if isinstance(a, dict)}
+
+        payload = reviewed_anomalies if isinstance(reviewed_anomalies, list) else []
+        payload_ids = [
+            entry.get('id') for entry in payload if isinstance(entry, dict)
+        ]
+
+        # 3. Completeness check (atomic): payload ids must exactly equal the
+        #    stored anomaly id set -- reject on unknown / missing / duplicate.
+        stored_ids = set(existing_by_id.keys())
+        payload_id_set = set(payload_ids)
+        unknown = sorted(i for i in payload_id_set if i not in stored_ids)
+        missing = sorted(i for i in stored_ids if i not in payload_id_set)
+        duplicate = sorted({i for i in payload_ids if payload_ids.count(i) > 1})
+        if unknown or missing or duplicate:
+            yield {
+                "type": "error",
+                "content": (
+                    f"Anomaly review incomplete: unknown={unknown}, "
+                    f"missing={missing}, duplicate={duplicate}"
+                ),
+            }
+            return
+
+        # 4. Validate + merge each entry onto the full stored anomaly object.
+        valid_severities = {'critical', 'warning', 'info'}
+        merged = []
+        for entry in payload:
+            anomaly_id = entry.get('id')
+            base = dict(existing_by_id[anomaly_id])
+            severity = entry.get('severity')
+            if severity is not None:
+                if severity not in valid_severities:
+                    yield {
+                        "type": "error",
+                        "content": f"Invalid severity '{severity}' for {anomaly_id}.",
+                    }
+                    return
+                base['severity'] = severity
+            description = entry.get('description')
+            if description is not None:
+                if not isinstance(description, str):
+                    yield {
+                        "type": "error",
+                        "content": f"Invalid description for {anomaly_id}.",
+                    }
+                    return
+                base['description'] = description.strip()[:1000]
+            base['included'] = bool(entry.get('included', True))
+            merged.append(base)
+
+        # 5. Persist reviewed list + confirmation flag (keep original anomalies).
+        analysis['reviewed_anomalies'] = merged
+        analysis['anomalies_confirmed'] = True
+        workflow_run.analysis_result = analysis
+        workflow_run.save(update_fields=['analysis_result', 'updated_at'])
+
+        # Update the stored analysis message so a reload restores the same card
+        # in its locked, reviewed state (rather than an editable duplicate).
+        analysis_message = (
+            AgentMessage.objects
+            .filter(session=self.session, role='assistant', metadata__has_key='anomalies')
+            .order_by('-created_at')
+            .first()
+        )
+        if analysis_message:
+            meta = analysis_message.metadata or {}
+            meta['anomalies_confirmed'] = True
+            meta['reviewed_anomalies'] = merged
+            analysis_message.metadata = meta
+            analysis_message.save(update_fields=['metadata'])
+
+        included_count = sum(1 for a in merged if a.get('included'))
+        # 6. Emit confirmation with full merged objects so the UI can re-render.
+        yield {
+            "type": "anomalies_confirmed",
+            "content": f"Anomalies confirmed ({included_count} included).",
+            "data": analysis,
+        }
+
+    def create_decisions_from_analysis(self, workflow_run):
+        """Create Decision tree directly from analysis results."""
+        yield {'type': 'text', 'content': 'Creating decisions...'}
+
+        existing_decision_ids = getattr(workflow_run, 'created_decisions', []) or []
+        if existing_decision_ids:
+            yield {
+                'type': 'decision_draft',
+                'content': f'Decisions already created ({len(existing_decision_ids)}).',
+                'data': {
+                    'decision_ids': existing_decision_ids,
+                },
+            }
+            return
+
+        analysis = self._workflow_run_analysis(workflow_run)
+        tree = (analysis or {}).get('recommended_decision_tree') or {}
+        nodes = tree.get('nodes') or []
+        if not nodes:
+            yield {'type': 'text', 'content': 'No decision nodes found in analysis.'}
+            return
+
+        from .approval_gate import KIND_DECISION_TREE, request_external_commit
+
+        draft = {'recommended_decision_tree': tree}
+        commit_context = {
+            'input_data': {'analysis_result': analysis},
+            'analysis_result': analysis,
+        }
+        gate = request_external_commit(
+            orchestrator=self,
+            workflow_run=workflow_run,
+            step_execution=None,
+            kind=KIND_DECISION_TREE,
+            draft=draft,
+            commit_context=commit_context,
+        )
+        for ev in gate.sse_events:
+            yield ev
+        if gate.paused:
+            return
+
+        decision_ids = (gate.workflow_run_patch or {}).get('created_decisions') or []
+        workflow_run.created_decisions = decision_ids
+        workflow_run.save(update_fields=['created_decisions'])
+
     def create_tasks_from_analysis(self, workflow_run):
         """Create Tasks directly from analysis results, optionally linking to Decision if it exists."""
         yield {"type": "text", "content": "Creating tasks..."}
@@ -1460,6 +1707,28 @@ class AgentOrchestrator:
             return
 
         analysis = self._workflow_run_analysis(workflow_run)
+
+        # Gate only applies when anomalies were actually detected: they must be
+        # reviewed + confirmed first. Zero-anomaly analyses proceed unchanged.
+        had_anomalies = bool(analysis.get('anomalies'))
+        if had_anomalies and not analysis.get('anomalies_confirmed'):
+            yield {
+                "type": "error",
+                "content": "Anomalies must be confirmed before creating tasks.",
+            }
+            return
+
+        # All-excluded: anomalies were detected but the user included none ->
+        # skip task creation. Zero-detected-anomaly runs are NOT skipped.
+        reviewed = analysis.get('reviewed_anomalies') or []
+        included_anomalies = [a for a in reviewed if a.get('included', True)]
+        if had_anomalies and not included_anomalies:
+            yield {
+                "type": "text",
+                "content": "All anomalies were excluded; no tasks were created.",
+            }
+            return
+
         recommended_tasks = analysis.get("recommended_tasks", [])
         if not recommended_tasks:
             yield {"type": "error", "content": "No recommended tasks found in analysis."}
@@ -1473,6 +1742,8 @@ class AgentOrchestrator:
             'input_data': {'analysis_result': analysis},
             'analysis_result': analysis,
             'decision_id': decision.id if decision else None,
+            'included_anomalies': included_anomalies,
+            'reviewed_anomalies': reviewed,
         }
         gate = request_external_commit(
             orchestrator=self,
@@ -1569,13 +1840,17 @@ class AgentOrchestrator:
         return {}
 
     def _start_workflow(self, workflow_def, file_id=None, spreadsheet_id=None,
-                        csv_filename=None, user_context=None):
+                        csv_filename=None, generation_outputs=None, user_context=None):
         """Create a new WorkflowRun and execute steps."""
+        from .generation_registry import normalize_generation_outputs
+
+        outputs = normalize_generation_outputs(generation_outputs)
         input_data = self._prepare_input_data(
             file_id=file_id,
             spreadsheet_id=spreadsheet_id,
             csv_filename=csv_filename,
         )
+        input_data['generation_outputs'] = outputs
 
         workflow_run = AgentWorkflowRun.objects.create(
             session=self.session,
@@ -1583,14 +1858,79 @@ class AgentOrchestrator:
             status='analyzing',
             current_step_order=1,
             spreadsheet=input_data.get('spreadsheet'),
-            user_context=user_context or '',
+            generation_outputs_requested=outputs,
         )
+        if user_context:
+            cache.set(f"agent:context:{workflow_run.id}", user_context, 3600)
 
         yield from self._execute_steps(workflow_run, input_data)
+
+    def _emit_calendar_events_if_requested(self, workflow_run, input_data):
+        """After workflow steps, optionally call Gemini for calendar_events."""
+        from .generation_registry import (
+            GenerationValidationError,
+            normalize_generation_outputs,
+        )
+
+        outputs = input_data.get('generation_outputs')
+        if outputs is None:
+            outputs = getattr(workflow_run, 'generation_outputs_requested', None)
+        requested = frozenset(normalize_generation_outputs(outputs))
+        if 'calendar_events' not in requested:
+            return
+
+        spreadsheet_data = input_data.get('spreadsheet_data')
+        if not spreadsheet_data:
+            last_execution = workflow_run.step_executions.filter(
+                status='completed',
+            ).order_by('-step_order').first()
+            if last_execution and last_execution.output_data:
+                spreadsheet_data = last_execution.output_data.get('spreadsheet_data')
+
+        if not spreadsheet_data:
+            yield {
+                'type': 'error',
+                'content': 'Cannot suggest calendar events without spreadsheet data.',
+            }
+            return
+
+        try:
+            from .gemini_client import _get_api_key as _gemini_key
+            if not _gemini_key():
+                yield {
+                    'type': 'error',
+                    'content': 'Calendar AI is not configured. Please set GEMINI_API_KEY.',
+                }
+                return
+            result = _call_gemini_calendar_from_analysis(
+                spreadsheet_data,
+                workflow_run.analysis_result or {},
+                user_id=str(self.user.id),
+                success_criteria=workflow_run.success_criteria,
+            )
+            events = result.get('calendar_events', [])
+            yield {
+                'type': 'calendar_events',
+                'content': f'Suggested {len(events)} calendar event(s).',
+                'data': result,
+            }
+        except GenerationValidationError as exc:
+            logger.warning('Calendar generation validation failed: %s', exc)
+            yield {
+                'type': 'error',
+                'content': 'Calendar suggestions could not be validated. Please try again.',
+            }
+        except Exception:
+            logger.exception('Calendar generation from analysis failed')
+            yield {
+                'type': 'error',
+                'content': 'Failed to generate calendar suggestions. Please try again.',
+            }
 
     def _execute_steps(self, workflow_run, input_data):
         """Run steps in order. Pause on await_confirmation. Record AgentStepExecution."""
         from .executors import get_executor
+        from .generation_registry import normalize_generation_outputs, should_skip_workflow_step
         from django.utils import timezone as tz
 
         steps = workflow_run.workflow_definition.steps.filter(
@@ -1601,8 +1941,26 @@ class AgentOrchestrator:
             is_deleted=False
         ).count()
         current_data = input_data
+        requested = frozenset(
+            normalize_generation_outputs(input_data.get('generation_outputs'))
+        )
 
         for step in steps:
+            if should_skip_workflow_step(step.step_type, requested):
+                yield {
+                    'type': 'step_progress',
+                    'data': {
+                        'step_order': step.order,
+                        'step_name': step.name,
+                        'step_type': step.step_type,
+                        'status': 'skipped',
+                        'total_steps': total_steps,
+                    },
+                }
+                workflow_run.current_step_order = step.order + 1
+                workflow_run.save(update_fields=['current_step_order'])
+                continue
+
             execution = AgentStepExecution.objects.create(
                 workflow_run=workflow_run,
                 step=step,
@@ -1645,6 +2003,11 @@ class AgentOrchestrator:
 
                 for event in result.sse_events:
                     yield event
+
+                if step.step_type == 'analyze_data':
+                    yield from self._emit_calendar_events_if_requested(
+                        workflow_run, current_data
+                    )
 
                 # Pause on await_confirmation
                 if step.step_type == 'await_confirmation':
@@ -1702,16 +2065,14 @@ class AgentOrchestrator:
                 },
             ).exists()
 
-            if dup:
-                return 'already_started', locked, None
-
             _enqueue_miro_generation_for_workflow_run(self, locked)
-            _create_agent_status_message(
-                self.session,
-                MIRO_LEGACY_BG_QUEUED_MESSAGE,
-                event_type='miro_generation_started',
-                workflow_run_id=str(locked.id),
-            )
+            if not dup:
+                _create_agent_status_message(
+                    self.session,
+                    MIRO_LEGACY_BG_QUEUED_MESSAGE,
+                    event_type='miro_generation_started',
+                    workflow_run_id=str(locked.id),
+                )
             return 'started', locked, None
 
     def _resume_workflow(self, workflow_run, extra_input=None):

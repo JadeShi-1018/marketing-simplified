@@ -1,23 +1,29 @@
 #!/bin/bash
 set -e
 
-# Wait for sonarqube
-# until curl -u ${SONAR_USER}:${SONAR_PWD} -s http://sonarqube:9000/api/system/health | grep -q '"health":"GREEN"'; do
-#   echo "Waiting for SonarQube..."
-#   sleep 5
-# done
+# Stale .next cache in the Docker volume can cause webpack hydration errors.
+# Opt in only — clearing on every restart forces a full rebuild and nginx 502s.
+if [[ "${FRONTEND_CLEAR_NEXT:-}" == "1" ]]; then
+  echo "Clearing /app/.next (FRONTEND_CLEAR_NEXT=1)..."
+  rm -rf /app/.next/* /app/.next/.[!.]* 2>/dev/null || echo "Warning: could not fully clear /app/.next; continuing startup."
+fi
 
-# Load token
-# if [ -f /token/sonar.env ]; then
-#   export $(cat /token/sonar.env | xargs)
-# fi
+# The node_modules named volume hides image-baked deps on first run — install if missing.
+if [[ ! -d node_modules/next ]] || [[ ! -f node_modules/.package-lock.json ]]; then
+  echo "Installing frontend dependencies (node_modules volume empty or stale)..."
+  npm ci
+fi
 
-#Sonar scan
-# sonar-scanner \
-#   -Dsonar.projectKey=mediaJira_Frontend \
-#   -Dsonar.sources=/app \
-#   -Dsonar.host.url=http://sonarqube:9000 \
-#   -Dsonar.login=$SONAR_TOKEN || echo "Sonar scan skipped or failed"
+# Optional: set FRONTEND_RUN_MODE=production in .env for stable local QA via nginx :80
+if [[ "${FRONTEND_RUN_MODE:-dev}" == "production" ]]; then
+  echo "Starting frontend in production mode..."
+  if [[ ! -f /app/.next/BUILD_ID ]] || [[ "${FRONTEND_FORCE_REBUILD:-}" == "1" ]]; then
+    npm run build
+  else
+    echo "Reusing existing production build (.next/BUILD_ID). Set FRONTEND_FORCE_REBUILD=1 to rebuild."
+  fi
+  exec npm run start
+fi
 
-# Start frontend 
+echo "Starting frontend in dev mode..."
 exec npm run dev
