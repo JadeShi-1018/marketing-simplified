@@ -81,10 +81,7 @@ class SpreadsheetListView(APIView):
         if not project_id:
             raise ValidationError({'project_id': 'project_id is required'})
         
-        try:
-            project = Project.objects.get(id=project_id)
-        except Project.DoesNotExist:
-            raise NotFound({'error': 'Project not found', 'detail': f'No project with id {project_id} exists'})
+        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id))
         
         # Get queryset with select_related to avoid N+1 queries
         queryset = Spreadsheet.objects.filter(project=project, is_deleted=False).select_related('project')
@@ -126,10 +123,7 @@ class SpreadsheetListView(APIView):
         if not project_id:
             raise ValidationError({'project_id': 'project_id is required'})
         
-        try:
-            project = Project.objects.get(id=project_id)
-        except Project.DoesNotExist:
-            raise NotFound({'error': 'Project not found', 'detail': f'No project with id {project_id} exists'})
+        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id))
         
         serializer = SpreadsheetCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

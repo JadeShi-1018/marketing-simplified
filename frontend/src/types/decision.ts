@@ -101,6 +101,7 @@ export interface DecisionSignalDraft {
 
 export interface DecisionDraftResponse {
   id?: number;
+  slug?: string | null;
   title?: string | null;
   topic?: string | null;
   topicLabel?: string | null;

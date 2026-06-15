@@ -91,7 +91,7 @@ class SpreadsheetListViewTest(TestCase):
     def test_list_spreadsheets_success(self):
         """Test successful spreadsheet list retrieval"""
         url = '/api/spreadsheet/spreadsheets/'
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('results', response.data)
@@ -124,7 +124,7 @@ class SpreadsheetListViewTest(TestCase):
         
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'page': 1,
             'page_size': 10
         })
@@ -142,7 +142,7 @@ class SpreadsheetListViewTest(TestCase):
         
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'search': 'Searchable'
         })
         
@@ -156,7 +156,7 @@ class SpreadsheetListViewTest(TestCase):
         """Test spreadsheet list ordering by created_at"""
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'order_by': 'created_at'
         })
         
@@ -173,7 +173,7 @@ class SpreadsheetListViewTest(TestCase):
         """Test spreadsheet list ordering by name"""
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'order_by': 'name'
         })
         
@@ -191,7 +191,7 @@ class SpreadsheetListViewTest(TestCase):
         deleted_spreadsheet.save()
         
         url = '/api/spreadsheet/spreadsheets/'
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 2)  # Only non-deleted
@@ -200,7 +200,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_success(self):
         """Test successful spreadsheet creation"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': 'New Spreadsheet'}
         
         response = self.client.post(url, data, format='json')
@@ -240,7 +240,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_duplicate_name(self):
         """Test creating spreadsheet with duplicate name fails"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': 'Duplicate Name'}
         
         # Create first spreadsheet
@@ -254,7 +254,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_missing_name(self):
         """Test creating spreadsheet without name field"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {}
         
         response = self.client.post(url, data, format='json')
@@ -264,7 +264,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_empty_name(self):
         """Test creating spreadsheet with empty name"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': ''}
         
         response = self.client.post(url, data, format='json')
@@ -276,7 +276,7 @@ class SpreadsheetListViewTest(TestCase):
         """Test that authentication is required for creating spreadsheet"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': 'Unauthenticated'}
         
         response = self.client.post(url, data, format='json')
@@ -288,7 +288,7 @@ class SpreadsheetListViewTest(TestCase):
         self.client.logout()
         
         url = '/api/spreadsheet/spreadsheets/'
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 

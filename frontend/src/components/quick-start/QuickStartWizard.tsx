@@ -227,8 +227,8 @@ export default function QuickStartWizard() {
         projectName: project.name,
         summary: response.summary,
         enabledModules: { ...state.selectedModules },
-        spreadsheetId: response.created.spreadsheet_ids[0] ?? null,
-        miroBoardId: response.created.miro_board_ids[0] ?? null,
+        spreadsheetId: response.created.spreadsheet_slugs?.[0] ?? null,
+        miroBoardId: response.created.miro_board_slugs?.[0] ?? null,
         createdAt: Date.now(),
       });
       const parts = [

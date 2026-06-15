@@ -1,5 +1,10 @@
+import re
+
 from django.db import models
 from django.db import transaction
+from django.core.exceptions import ObjectDoesNotExist
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -32,6 +37,18 @@ class Campaign(SluggedResourceModelMixin, models.Model):
         on_delete=models.SET_NULL,
         related_name='mailchimp_drafts',
     )
+
+    def get_slug_source_value(self):
+        """This model has no own name field; the human-readable subject lives on the
+        related CampaignSettings (created after the draft). Derive the slug from it so
+        URLs read like ``/mailchimp/april-newsletter`` instead of ``campaign-<uuid8>``.
+        Returns "" before settings exist — the mixin then assigns the uuid placeholder,
+        which the post_save signal on CampaignSettings replaces once a subject arrives."""
+        try:
+            settings = self.settings
+        except ObjectDoesNotExist:
+            return ""
+        return (settings.subject_line or settings.title or "").strip()
 
     def __str__(self):
         return f"Campaign {self.id} - {self.status}"
@@ -77,6 +94,24 @@ class CampaignSettings(models.Model):
 
     def __str__(self):
         return f"Settings for {self.campaign.id}"
+
+
+# A slug shaped "campaign-<8 hex>" is the uuid placeholder the mixin assigns when no
+# readable source exists at first save. Once a subject arrives on CampaignSettings,
+# replace that placeholder — but keep an already-readable slug stable (link stability).
+_MAILCHIMP_PLACEHOLDER_SLUG = re.compile(r"^campaign-[0-9a-f]{8}$")
+
+
+@receiver(post_save, sender=CampaignSettings)
+def _set_campaign_slug_from_subject(sender, instance, **kwargs):
+    subject = (instance.subject_line or instance.title or "").strip()
+    if not subject:
+        return
+    campaign = instance.campaign
+    if campaign.slug and not _MAILCHIMP_PLACEHOLDER_SLUG.match(campaign.slug):
+        return  # already has a readable slug — keep it stable
+    campaign.slug = ""  # clear so the mixin regenerates from get_slug_source_value()
+    campaign.save(update_fields=["slug"])
 
 
 # ---------------------------

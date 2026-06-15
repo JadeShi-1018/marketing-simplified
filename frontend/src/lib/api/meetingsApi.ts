@@ -233,6 +233,7 @@ function normalizeMeetingListItem(raw: Record<string, unknown>): MeetingListItem
   const tags = raw.tags;
   return {
     id: Number(raw.id),
+    slug: typeof raw.slug === 'string' ? raw.slug : null,
     title: typeof raw.title === 'string' ? raw.title : '',
     summary: typeof raw.summary === 'string' ? raw.summary : '',
     scheduled_date:

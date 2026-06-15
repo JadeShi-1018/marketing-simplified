@@ -100,6 +100,20 @@ class EmailDraftAPITests(TestCase):
         self.assertEqual(response.data["id"], draft.id)
         self.assertEqual(response.data["name"], "Retrieve Draft")
 
+    def test_numeric_id_url_is_rejected(self):
+        """Resource lookups are slug-only — a numeric id must 404 (not resolve by pk)."""
+        draft = EmailDraft.objects.create(
+            name="Numeric Reject",
+            subject="Numeric Reject Subject",
+            status=self.status_draft,
+            user=self.user,
+        )
+
+        url = f"{DRAFTS_URL}{draft.id}/"
+        response = self.client.get(url, format="json")
+
+        self.assertEqual(response.status_code, 404)
+
     # ------------------------------------------------------------------ #
     # Update / PATCH
     # ------------------------------------------------------------------ #

@@ -399,6 +399,7 @@ class MeetingListSerializer(serializers.ModelSerializer):
         model = Meeting
         fields = [
             "id",
+            "slug",
             "title",
             "summary",
             "scheduled_date",

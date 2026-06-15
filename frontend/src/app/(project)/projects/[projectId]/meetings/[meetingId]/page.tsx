@@ -2914,7 +2914,7 @@ export default function MeetingWorkspacePage() {
                       rows={orderedArtifacts.map((a) => {
                         const href =
                           projectId
-                            ? meetingArtifactHref(projectId, a.artifact_type, a.artifact_id)
+                            ? meetingArtifactHref(projectId, a.artifact_type, a.artifact_id, artifactResources)
                             : null;
                         const rawT = normalizeMeetingArtifactType(a.artifact_type);
                         const kind: ArtifactKind =

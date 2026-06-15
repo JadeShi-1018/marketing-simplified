@@ -239,10 +239,10 @@ function NotionV2DetailContent() {
   const params = useParams<{ draftId: string }>();
   const router = useRouter();
   const draftIdParam = params?.draftId;
+  // Resource lookups are slug-only; keep the route value as an opaque string.
   const draftId = useMemo(() => {
-    if (!draftIdParam) return null;
-    const n = parseInt(draftIdParam, 10);
-    return Number.isFinite(n) && n > 0 ? n : null;
+    if (!draftIdParam || !draftIdParam.trim()) return null;
+    return draftIdParam;
   }, [draftIdParam]);
 
   const [isLoading, setIsLoading] = useState(true);

@@ -21,6 +21,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
   it('Discovery cards show generated decision and task counts from API payloads', () => {
     const row: MeetingListItem = {
       id: 1,
+      slug: 'weekly-sync',
       title: 'Weekly sync',
       summary: 'Notes',
       scheduled_date: null,
@@ -75,7 +76,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
     );
     expect(screen.getByRole('link', { name: /Full meeting workspace/i })).toHaveAttribute(
       'href',
-      '/projects/2/meetings/1#contextual-knowledge',
+      '/projects/2/meetings/weekly-sync#contextual-knowledge',
     );
   });
 

@@ -238,7 +238,19 @@ class CampaignViewSetCRUDTestCase(CampaignViewSetBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['name'], 'Test Campaign')
         self.assertEqual(response.data['id'], str(campaign.id))
-    
+
+    def test_retrieve_campaign_by_slug(self):
+        """Campaign resolves by slug (UUID pk still works; slug is the user-facing key)."""
+        campaign = self._create_campaign(name="Winter Sale Campaign")
+        self.assertTrue(campaign.slug)
+
+        url = f'/api/campaigns/{campaign.slug}/'
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['id'], str(campaign.id))
+        self.assertEqual(response.data['slug'], campaign.slug)
+
     def test_update_campaign(self):
         """Test updating a campaign"""
         campaign = self._create_campaign(name="Original Name")

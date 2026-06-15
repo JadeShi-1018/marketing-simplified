@@ -55,7 +55,7 @@ describe('QuickStartPostCreateChecklist', () => {
         decisions: false,
         miro: false,
       },
-      spreadsheetId: 12,
+      spreadsheetId: 'april-budget',
       miroBoardId: null,
       createdAt: Date.now(),
     });

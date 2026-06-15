@@ -27,7 +27,7 @@ export default function CampaignV2DetailPage() {
   const router = useRouter();
   const params = useParams();
   const searchParams = useSearchParams();
-  const campaignId = params?.id as string;
+  const campaignId = params?.slug as string;
   const projectIdParam = searchParams?.get('project_id');
   const activeProject = useProjectStore((s) => s.activeProject);
   const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;

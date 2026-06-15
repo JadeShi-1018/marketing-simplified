@@ -95,7 +95,7 @@ export const NotionDraftAPI = {
   },
 
   // Media upload API
-  uploadMedia: async (file: File, mediaType?: string, draftId?: number) => {
+  uploadMedia: async (file: File, mediaType?: string, draftId?: number | string) => {
     const formData = new FormData();
     formData.append('file', file);
     if (mediaType) {
@@ -113,7 +113,7 @@ export const NotionDraftAPI = {
   },
 
   // Web bookmark API
-  createWebBookmark: async (url: string, title?: string, description?: string, favicon?: string, draftId?: number) => {
+  createWebBookmark: async (url: string, title?: string, description?: string, favicon?: string, draftId?: number | string) => {
     const response = await api.post(toQuery('/web-bookmark/'), {
       url,
       title,

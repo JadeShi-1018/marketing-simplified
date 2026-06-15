@@ -704,6 +704,7 @@ class TestMeetingsKnowledgeListAPI(TestCase):
             set(row.keys()),
             {
                 "id",
+                "slug",
                 "title",
                 "summary",
                 "scheduled_date",

@@ -17,7 +17,12 @@ export function useProjectMembers(projectId: number | string | null | undefined)
   const latestProjectIdRef = useRef<number | string | null>(null);
 
   const fetchMembers = useCallback(async () => {
-    if (projectId == null || projectId === '') {
+    // Slug ids are strings; guard empty/null and any non-positive legacy numeric id.
+    if (
+      projectId == null ||
+      projectId === '' ||
+      (typeof projectId === 'number' && projectId <= 0)
+    ) {
       setMembers([]);
       return;
     }

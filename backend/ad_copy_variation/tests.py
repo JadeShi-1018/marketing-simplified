@@ -118,6 +118,19 @@ class AdCopyVariationCRUDTests(APITestCase):
         self.assertEqual(resp.data['hook'], 'retrieve hook')
         self.assertEqual(resp.data['source_mode'], 'custom')
 
+    def test_numeric_id_url_is_rejected(self):
+        """Resource lookups are slug-only — a numeric id must 404 (not resolve by pk)."""
+        row = AdCopyVariation.objects.create(
+            project=self.project,
+            creative=self.creative,
+            source_mode='custom',
+            hook='numeric reject',
+            created_by=self.user,
+        )
+        url = reverse('ad-copy-variation-detail', args=[row.id])
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_patch(self):
         row = AdCopyVariation.objects.create(
             project=self.project,

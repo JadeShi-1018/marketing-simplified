@@ -238,7 +238,7 @@ export default function TaskV2DetailPage() {
                 )}
                 {(task?.id || loading) && (
                   <EngagementPanel
-                    taskId={task?.id ?? 0}
+                    taskId={task?.slug ?? taskId ?? ''}
                     refreshKey={refreshKey}
                     loading={loading}
                   />

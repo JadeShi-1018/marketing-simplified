@@ -9,7 +9,7 @@ export interface QuickStartPostCreateGuide {
   projectName: string;
   summary: QuickStartConfirmSummary;
   enabledModules: QuickStartSelectedModules;
-  spreadsheetId: number | null;
+  spreadsheetId: string | null;
   miroBoardId: string | null;
   createdAt: number;
 }

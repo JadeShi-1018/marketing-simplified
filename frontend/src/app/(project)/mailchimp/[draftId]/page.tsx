@@ -133,9 +133,8 @@ export default function MailchimpDetailV2Page() {
   const params = useParams();
   const searchParams = useSearchParams();
   const draftIdParam = params?.draftId as string | undefined;
-  const parsedDraftId = draftIdParam ? Number.parseInt(draftIdParam, 10) : Number.NaN;
-  const draftId =
-    Number.isInteger(parsedDraftId) && parsedDraftId > 0 ? parsedDraftId : null;
+  // Resource lookups are slug-only; keep the route value as an opaque string.
+  const draftId = draftIdParam && draftIdParam.trim() ? draftIdParam : null;
   const hasInvalidDraftId = Boolean(draftIdParam) && draftId == null;
   const returnTo = searchParams.get('returnTo');
   const safeReturnTo =
@@ -1853,7 +1852,7 @@ export default function MailchimpDetailV2Page() {
   // Load email draft on mount or when draftId changes
   useEffect(() => {
     const loadEmailDraft = async () => {
-      if (!draftId || isNaN(draftId)) {
+      if (!draftId) {
         setLoadError("Invalid draft ID");
         return;
       }

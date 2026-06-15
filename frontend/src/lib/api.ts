@@ -306,7 +306,7 @@ api.interceptors.response.use(
     const status = error.response?.status;
     const config = error.config as RetriableRequestConfig | undefined;
     const url = config?.url;
-    const responseData = error.response?.data;
+    const responseData = error.response?.data as any;
 
     const isGoogleDocsUrl = typeof url === 'string' && url.startsWith('/api/google-docs/');
     const googleErrorMessage = responseData?.error;

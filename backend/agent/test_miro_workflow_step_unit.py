@@ -246,7 +246,7 @@ def test_create_tasks_from_analysis_creates_tasks_without_queueing_miro(mock_tas
 
     def _make_task(**kwargs):
         task_id = len(created) + 1
-        task = type("TaskStub", (), {"id": task_id, **kwargs})()
+        task = type("TaskStub", (), {"id": task_id, "slug": f"task-{task_id}", **kwargs})()
         created.append(task)
         return task
 

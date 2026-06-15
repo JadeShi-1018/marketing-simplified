@@ -8,7 +8,7 @@ export async function getConfig(): Promise<TrackingConfig> {
   return res.data;
 }
 
-export async function getTaskEngagement(taskId: number): Promise<EngagementData> {
+export async function getTaskEngagement(taskId: number | string): Promise<EngagementData> {
   const res = await api.get<EngagementData>(`${BASE}/tasks/${taskId}/engagement/`);
   return res.data;
 }

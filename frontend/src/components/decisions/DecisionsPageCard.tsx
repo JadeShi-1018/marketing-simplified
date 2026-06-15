@@ -85,7 +85,7 @@ export default function DecisionsPageCard({
       if (draft.id == null) {
         throw new Error('Draft created without id');
       }
-      onNavigateToDecision(draft.id, projectId);
+      onNavigateToDecision(draft.slug ?? draft.id, projectId);
     } catch (err) {
       const detail =
         (err as any)?.response?.data?.detail ||

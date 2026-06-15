@@ -40,7 +40,7 @@ interface PanelDraft {
 }
 
 interface Props {
-  decisionId: number;
+  decisionId: number | string;
   /** Slug of the decision; preferred for API lookups and URLs (slug-only backend). */
   decisionSlug?: string | null;
   projectId: number | string | null;
@@ -163,7 +163,7 @@ export default function DecisionTreeDetailPanel({
       nodePatch: fullReload
         ? undefined
         : {
-            id: decisionId,
+            id: committed?.id ?? detail.draft?.id ?? (typeof decisionId === 'number' ? decisionId : 0),
             title: localTitle.trim() || null,
             status: effectiveStatus ?? undefined,
             riskLevel: displayRisk ?? undefined,

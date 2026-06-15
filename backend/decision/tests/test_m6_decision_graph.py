@@ -282,7 +282,7 @@ def test_connections_put_is_idempotent_when_follow_up_edge_exists():
 
     client = _client_for(user)
     resp = client.put(
-        f"/api/decisions/{decision_a.id}/connections/?project_id={project.id}",
+        f"/api/decisions/{decision_a.slug}/connections/?project_id={project.id}",
         {"connectedDecisionIds": [decision_b.id]},
         format="json",
     )
