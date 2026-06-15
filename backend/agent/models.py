@@ -1,5 +1,6 @@
 import uuid
 from django.db import models
+from django.db.models import Q
 from django.conf import settings
 from core.models import TimeStampedModel
 
@@ -54,6 +55,8 @@ class AgentMessage(TimeStampedModel):
         ('decision_draft', 'Decision Draft'),
         ('task_created', 'Task Created'),
         ('confirmation_request', 'Confirmation Request'),
+        ('workflow_confirm', 'Workflow Confirm'),
+        ('workflow_choice', 'Workflow Choice'),
         ('approval_request', 'Approval Request'),
         ('follow_up_prompt', 'Follow-up Prompt'),
         ('error', 'Error'),
@@ -419,6 +422,38 @@ class AgentWorkflowDefinition(TimeStampedModel):
         related_name='created_workflow_definitions',
     )
 
+    # Trigger configuration fields
+    trigger_config = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="""
+        Trigger configuration JSON structure:
+        {
+            "trigger_type": "polling" | "instant" | "scheduled" | "manual",
+            "polling": {
+                "interval_minutes": 5 | 15 | 30 | 60,
+                "data_sources": ["spreadsheet", "task", "decision"],
+                "conditions": [{"type": "spreadsheet_upload", "project_id": 123}, ...]
+            },
+            "instant": {
+                "event_types": ["task.created", "task.status_changed", ...],
+                "webhook_enabled": true,
+                "webhook_secret": "auto_generated_uuid",
+                "filters": {"project_id": 123, "task_priority": ["HIGH", "CRITICAL"]}
+            },
+            "scheduled": {
+                "cron_expression": "0 9 * * 1",
+                "timezone": "UTC",
+                "enabled": true
+            },
+            "manual": {
+                "require_confirmation": true,
+                "allowed_users": [user_id_list] or "all"
+            }
+        }
+        """
+    )
+
     class Meta:
         ordering = ['-created_at']
 
@@ -440,6 +475,10 @@ class AgentWorkflowStep(TimeStampedModel):
         ('detect_columns', 'Detect Columns'),
         ('normalize_data', 'Normalize Data'),
         ('generate_criteria', 'Generate Criteria'),
+        # Flow control (UI-driven; executor is a no-op pass-through)
+        ('if_else', 'If - Else'),
+        ('merge', 'Merge'),
+        ('loop', 'Loop'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -456,7 +495,15 @@ class AgentWorkflowStep(TimeStampedModel):
 
     class Meta:
         ordering = ['order']
-        unique_together = [['workflow', 'order']]
+        # Partial unique index: only active (non-deleted) steps must have unique orders.
+        # Soft-deleted steps retain their order value without blocking future assignments.
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workflow', 'order'],
+                condition=Q(is_deleted=False),
+                name='unique_active_workflow_step_order',
+            )
+        ]
 
     def __str__(self):
         return f"{self.workflow.name} - Step {self.order}: {self.name}"
@@ -611,3 +658,222 @@ class AgentPendingExternalApproval(TimeStampedModel):
 
     def __str__(self):
         return f"PendingExternalApproval {self.id} ({self.kind}) {self.status}"
+
+
+class AgentWorkflowTemplate(TimeStampedModel):
+    """
+    Reusable workflow template that stores workflow steps configuration.
+
+    Templates provide a named, categorized, shareable abstraction for workflow blueprints.
+    The same template can be applied to multiple projects, enabling consistent
+    "Agent takes care of the project" behavior.
+
+    Templates are completely independent - they store their own steps configuration.
+    Creating a template from a workflow copies the steps (no dependency).
+    Applying a template creates a new workflow with copied steps (no dependency).
+
+    Visibility is determined by:
+      - organization: if set, all members of that org can see this template (org section)
+      - projects:     M2M — visible to members of any listed project (project section)
+      - both empty:   only the creator can see it (private section)
+    A template may appear in both org and project sections simultaneously.
+    """
+
+    CATEGORY_CHOICES = [
+        ('review', 'Review'),
+        ('optimization', 'Optimization'),
+        ('analysis', 'Analysis'),
+        ('reporting', 'Reporting'),
+        ('other', 'Other'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200, help_text='Template name, e.g. "Q4 Campaign Review"')
+    description = models.TextField(blank=True, default='')
+    category = models.CharField(
+        max_length=20,
+        choices=CATEGORY_CHOICES,
+        default='other',
+        help_text='Predefined category for organizing templates',
+    )
+
+    # Template stores its own steps configuration (fully independent)
+    steps_config = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Array of step configurations: [{"step_type": "...", "name": "...", "order": 0, "config": {...}}, ...]',
+    )
+
+    # DEPRECATED: Legacy field, will be removed after data migration
+    workflow_definition = models.ForeignKey(
+        AgentWorkflowDefinition,
+        on_delete=models.PROTECT,
+        related_name='templates',
+        help_text='DEPRECATED: Legacy cloned workflow, being replaced by steps_config',
+        null=True,
+        blank=True,
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='created_workflow_templates',
+    )
+
+    # Sharing: organization level — visible to all members of this org
+    organization = models.ForeignKey(
+        'core.Organization',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='workflow_templates',
+        help_text='If set, all members of this organization can see the template',
+    )
+
+    # Sharing: project level — M2M, visible to members of any listed project
+    projects = models.ManyToManyField(
+        'core.Project',
+        blank=True,
+        related_name='workflow_templates',
+        help_text='Members of any listed project can see this template',
+    )
+
+    use_cases = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            'Example scenarios / phrases describing when to use this template '
+            '(documentation for users; not used for automatic routing).'
+        ),
+    )
+
+    class Meta:
+        db_table = 'agent_workflow_template'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['category']),
+            models.Index(fields=['organization', 'is_deleted']),
+            models.Index(fields=['created_by', 'is_deleted']),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_category_display()})"
+
+
+class WorkflowTriggerLog(TimeStampedModel):
+    """
+    Records every trigger attempt (successful or failed) for audit and debugging.
+    Used for the trigger history timeline and monitoring dashboard.
+    """
+
+    TRIGGER_TYPE_CHOICES = [
+        ('polling', 'Polling'),
+        ('instant', 'Instant'),
+        ('scheduled', 'Scheduled'),
+        ('manual', 'Manual'),
+    ]
+
+    STATUS_CHOICES = [
+        ('triggered', 'Triggered'),
+        ('skipped', 'Skipped'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    workflow = models.ForeignKey(
+        AgentWorkflowDefinition,
+        on_delete=models.CASCADE,
+        related_name='trigger_logs',
+    )
+
+    trigger_type = models.CharField(max_length=20, choices=TRIGGER_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+
+    # Context about what caused the trigger
+    trigger_context = models.JSONField(
+        default=dict,
+        help_text="""
+        Context about what caused the trigger:
+        {
+            "event_type": "task.status_changed",
+            "task_id": 456,
+            "old_status": "TODO",
+            "new_status": "DONE",
+            "spreadsheet_id": 789,
+            "webhook_source": "zapier",
+            "manual_user_id": 123
+        }
+        """
+    )
+
+    # Generated workflow run (if successfully triggered)
+    workflow_run = models.ForeignKey(
+        'AgentWorkflowRun',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='trigger_log',
+    )
+
+    # Error message (if failed)
+    error_message = models.TextField(null=True, blank=True)
+
+    # Execution time in milliseconds
+    execution_time_ms = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['workflow', '-created_at']),
+            models.Index(fields=['trigger_type', 'status']),
+            models.Index(fields=['created_at']),  # For cleanup
+        ]
+
+    def __str__(self):
+        return f"{self.trigger_type} trigger for {self.workflow.name} - {self.status}"
+
+
+class WorkflowTriggerState(TimeStampedModel):
+    """
+    Maintains state for each workflow's trigger mechanism to enable:
+    - Idempotency: prevent duplicate triggers for the same event
+    - Deduplication: track last checked data hash for polling
+    - Scheduling: track next scheduled run time
+    """
+
+    workflow = models.OneToOneField(
+        AgentWorkflowDefinition,
+        on_delete=models.CASCADE,
+        related_name='trigger_state',
+        primary_key=True,
+    )
+
+    # Polling state
+    last_polling_check = models.DateTimeField(null=True, blank=True)
+    last_checked_data_hash = models.TextField(
+        blank=True,
+        default='',
+        help_text="Hash of the data checked in last polling cycle (for deduplication)"
+    )
+
+    # Scheduling state
+    next_scheduled_run = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Next scheduled execution time (computed from cron expression)"
+    )
+
+    # Last successful trigger
+    last_successful_trigger = models.DateTimeField(null=True, blank=True)
+    last_trigger_type = models.CharField(max_length=20, blank=True, default='')
+
+    # Rate limiting (prevent trigger spam)
+    trigger_count_last_hour = models.IntegerField(default=0)
+    trigger_count_reset_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'agent_workflow_trigger_state'
+
+    def __str__(self):
+        return f"TriggerState for {self.workflow.name}"

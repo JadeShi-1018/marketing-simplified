@@ -10,8 +10,14 @@ from core.models import Organization, Project, ProjectMember, CustomUser
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowRun,
     AgentWorkflowDefinition, AgentWorkflowStep, AgentStepExecution,
+    AgentWorkflowTemplate,
 )
-from .services import AgentOrchestrator, _forward_to_users
+from .services import (
+    AgentOrchestrator,
+    _forward_to_users,
+    _preprocess_spreadsheet,
+    _resolve_analysis_columns,
+)
 
 
 def _test_anomaly(**overrides):
@@ -1166,20 +1172,20 @@ class WorkflowEngineTests(TestCase):
         self.assertEqual(orders, [1, 2, 3])
 
     def test_default_workflow_lookup_system(self):
-        """System default is found when no project default exists."""
-        found = self.orchestrator._resolve_workflow()
+        """File upload path resolves to the system default workflow."""
+        found = self.orchestrator._resolve_workflow(file_id='test-file-trigger')
         self.assertEqual(found, self.workflow)
 
-    def test_default_workflow_lookup_project_priority(self):
-        """Project default takes priority over system default."""
-        project_wf = AgentWorkflowDefinition.objects.create(
+    def test_resolve_workflow_plain_text_returns_none(self):
+        """Chat without workflow_id does not auto-pick a workflow."""
+        AgentWorkflowDefinition.objects.create(
             name='Project Workflow',
             project=self.project,
             is_default=True,
             status='active',
         )
         found = self.orchestrator._resolve_workflow()
-        self.assertEqual(found, project_wf)
+        self.assertIsNone(found)
 
     def test_default_workflow_lookup_explicit_id(self):
         """Explicit workflow_id overrides all defaults."""
@@ -1200,6 +1206,7 @@ class WorkflowEngineTests(TestCase):
             'await_confirmation', 'custom_api',
             'detect_columns', 'normalize_data',
             'generate_criteria',
+            'loop', 'merge', 'if_else',  # Flow control step types
         }
         self.assertEqual(set(EXECUTOR_REGISTRY.keys()), expected)
 
@@ -1750,6 +1757,102 @@ class ColumnDetectionTests(TestCase):
         self.assertIn('done', types)
         # The normalize step should have emitted a text event
         self.assertIn('text', types)
+
+
+class AnalysisPreprocessTests(TestCase):
+    """Ensure analysis receives row data after column normalization."""
+
+    def test_resolve_analysis_columns_maps_display_names_to_canonical(self):
+        sheet_columns = ['campaign_name', 'amount_spent', 'roas']
+        key_cols = ['Campaign Name', 'Amount Spent (USD)', 'ROAS']
+        mapping = {
+            'Campaign Name': 'campaign_name',
+            'Amount Spent (USD)': 'amount_spent',
+            'ROAS': 'roas',
+        }
+        resolved = _resolve_analysis_columns(key_cols, sheet_columns, mapping)
+        self.assertEqual(resolved, ['campaign_name', 'amount_spent', 'roas'])
+
+    def test_preprocess_includes_rows_when_criteria_uses_display_headers(self):
+        spreadsheet_data = {
+            'name': 'test.csv',
+            'sheets': [{
+                'name': 'Sheet1',
+                'columns': ['amount_spent', 'roas'],
+                'rows': [
+                    {'amount_spent': 100, 'roas': 0.3},
+                    {'amount_spent': 200, 'roas': 5.0},
+                ],
+            }],
+        }
+        success_criteria = {
+            'schema_type': 'Meta Ads Performance',
+            'key_columns': ['Amount Spent (USD)', 'ROAS'],
+            'criteria': [],
+        }
+        column_mapping = {
+            'Amount Spent (USD)': 'amount_spent',
+            'ROAS': 'roas',
+        }
+
+        _summary, cleaned_data, _criteria_text = _preprocess_spreadsheet(
+            spreadsheet_data,
+            success_criteria,
+            column_mapping=column_mapping,
+        )
+
+        parsed = json.loads(cleaned_data)
+        self.assertEqual(len(parsed), 2)
+        self.assertIn('amount_spent', parsed[0])
+        self.assertIn('roas', parsed[0])
+
+
+class AgentWorkflowStepAPITest(APITestCase):
+    """POST /workflows/{id}/steps/ without order should auto-assign."""
+
+    def setUp(self):
+        from core.models import Organization, Project, ProjectMember
+
+        self.client = APIClient()
+        self.org = Organization.objects.create(name='Step Test Org')
+        self.user = CustomUser.objects.create_user(
+            email='stepapi@test.com',
+            username='stepapiuser',
+            password='testpass123',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.project = Project.objects.create(
+            name='Step Test Project',
+            organization=self.org,
+            owner=self.user,
+        )
+        ProjectMember.objects.create(
+            user=self.user,
+            project=self.project,
+            role='owner',
+            is_active=True,
+        )
+        self.workflow = AgentWorkflowDefinition.objects.create(
+            name='API Test Workflow',
+            project=self.project,
+            is_system=False,
+            status='draft',
+            created_by=self.user,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_create_step_without_order_auto_assigns(self):
+        url = f'/api/agent/workflows/{self.workflow.id}/steps/'
+        response = self.client.post(
+            url,
+            {'name': 'Analyze Data', 'step_type': 'analyze_data'},
+            format='json',
+            QUERY_STRING=f'project_id={self.project.id}',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data['order'], 1)
+        self.assertEqual(response.data['step_type'], 'analyze_data')
 
 
 class ChatInputSerializerUserContextTests(TestCase):

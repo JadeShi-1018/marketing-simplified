@@ -39,6 +39,7 @@ import {
   getMiroCardsAnchorMessageId,
   getMiroGenerateBlockId,
 } from "./agentMessageBoardBlockIds"
+import { WorkflowStepConfirmCard } from "./WorkflowStepConfirmCard"
 
 export type ChatMessageType =
   | "text"
@@ -52,6 +53,7 @@ export type ChatMessageType =
   | "calendar_invite"
   | "column_mapping"
   | "approval_request"
+  | "confirmation_request"
 
 export interface ChatMessage {
   id: string
@@ -84,6 +86,7 @@ export interface MessageListProps {
   onConfirmAnomalies?: (messageId: string, reviewed: ReviewedAnomaly[]) => void
   onReupload?: () => void
   sessionId?: string | null
+  projectId?: string
   approvalDisabled?: boolean
   approvalRequired?: boolean
   generatedTaskIndexes?: number[]
@@ -113,6 +116,7 @@ export interface MessageListProps {
   generatingDecisions?: boolean
   createdDecisionByRef?: Record<string, number>
   isStreaming?: boolean
+  onResumeWorkflow?: (confirmMessageId: string) => void
   showRevisitThinkingBubble?: boolean
   onRenderFinishChange?: (finished: boolean) => void
   requestedGenerationOutputs?: GenerationOutputKey[]
@@ -126,6 +130,7 @@ export function MessageList({
   onConfirmAnomalies,
   onReupload,
   sessionId,
+  projectId,
   approvalDisabled,
   approvalRequired,
   generatedTaskIndexes,
@@ -155,6 +160,7 @@ export function MessageList({
   generatingDecisions,
   createdDecisionByRef,
   isStreaming = false,
+  onResumeWorkflow,
   showRevisitThinkingBubble = false,
   onRenderFinishChange,
   requestedGenerationOutputs = DEFAULT_GENERATION_OUTPUTS,
@@ -516,6 +522,18 @@ export function MessageList({
                 </AgentMessageBoardBlock>
               )}
 
+
+              {/* Workflow step paused — await_confirmation */}
+              {message.role === "assistant" &&
+                message.type === "confirmation_request" && (
+                <AgentMessageBoardBlock blockId={`${message.id}-step-confirm`}>
+                  <WorkflowStepConfirmCard
+                    message={message.content || "Please confirm to continue."}
+                    onContinue={() => onResumeWorkflow?.(message.id)}
+                    disabled={isStreaming}
+                  />
+                </AgentMessageBoardBlock>
+              )}
 
               {/* Column mapping is handled silently — stored in DB, not shown to user */}
 

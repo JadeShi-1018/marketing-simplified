@@ -141,6 +141,7 @@ export type AgentAction =
   | 'cancel_follow_up'
   | 'confirm_columns'
   | 'confirm_anomalies'
+  | 'resume_workflow'
   | 'resolve_external_approval';
 
 export interface CalendarContextPayload {
@@ -278,6 +279,63 @@ export interface WorkflowStepState {
 
 // ==================== Workflow Types ====================
 
+// Trigger Types
+export type TriggerType = 'polling' | 'instant' | 'scheduled' | 'manual';
+
+export type TriggerStatus = 'triggered' | 'skipped' | 'failed';
+
+export type PollingExternalService = 'zoom' | 'google_sheets' | 'linear' | 'notion';
+
+export interface WorkflowTriggerConfig {
+  trigger_type: TriggerType;
+  polling?: {
+    interval_minutes: 5 | 15 | 30 | 60;
+    /** External services to monitor. Requires the service to be connected in Integrations. */
+    external_services: PollingExternalService[];
+  };
+  instant?: {
+    event_types: string[];
+    webhook_enabled: boolean;
+    webhook_secret?: string;
+    webhook_url?: string;
+    filters?: Record<string, unknown>;
+  };
+  scheduled?: {
+    cron_expression: string;
+    timezone: string;
+    enabled: boolean;
+  };
+  manual?: {
+    require_confirmation: boolean;
+  };
+}
+
+export interface WorkflowTriggerLog {
+  id: string;
+  workflow: string;
+  trigger_type: TriggerType;
+  status: TriggerStatus;
+  trigger_context: Record<string, unknown>;
+  workflow_run?: string;
+  error_message?: string;
+  execution_time_ms?: number;
+  created_at: string;
+}
+
+export interface WorkflowTriggerState {
+  id: string;
+  workflow: string;
+  last_successful_trigger?: string;
+  last_polling_check?: string;
+  next_scheduled_run?: string;
+  last_trigger_type?: TriggerType;
+  trigger_count_last_hour?: number;
+  trigger_count_reset_at?: string;
+  last_checked_data_hash?: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export type WorkflowStepType =
   | 'analyze_data'
   | 'call_dify'
@@ -288,7 +346,14 @@ export type WorkflowStepType =
   | 'custom_api'
   | 'await_confirmation'
   | 'detect_columns'
-  | 'normalize_data';
+  | 'normalize_data'
+  | 'generate_criteria'
+  | 'generate_miro_snapshot'
+  | 'create_miro_board'
+  // Flow control — rendered on canvas; no runtime execution yet
+  | 'if_else'
+  | 'merge'
+  | 'loop';
 
 export interface AgentWorkflowStep {
   id: string;
@@ -308,7 +373,11 @@ export interface AgentWorkflowDefinition {
   is_system: boolean;
   status: 'active' | 'draft' | 'archived';
   step_count?: number;
+  /** Ordered list of step_type strings for each active step (list endpoint only). */
+  step_types?: WorkflowStepType[];
   steps?: AgentWorkflowStep[];
+  trigger_config?: WorkflowTriggerConfig;
+  trigger_state?: WorkflowTriggerState;
   created_at: string;
   updated_at?: string;
 }
@@ -345,4 +414,61 @@ export interface AgentWorkflowRun {
   step_executions?: AgentStepExecution[];
   created_at: string;
   updated_at: string;
+}
+
+// ==================== Template Types ====================
+
+export type TemplateCategory = 'review' | 'optimization' | 'analysis' | 'reporting' | 'other';
+
+export interface TemplateProjectInfo {
+  id: number;
+  name: string;
+}
+
+export interface AgentWorkflowTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  category: TemplateCategory;
+  /** Template's own steps configuration (fully independent from any workflow). */
+  steps_config?: AgentWorkflowStep[];
+  workflow_step_count?: number;
+  /** Ordered list of step_type strings for each step in the template. */
+  workflow_step_types?: WorkflowStepType[];
+  created_by: string;
+  /** Set when shared at org level; all org members can see this template. */
+  organization?: string;
+  organization_name?: string;
+  /** List of projects this template is shared with (M2M). */
+  project_list?: TemplateProjectInfo[];
+  applied_project_count?: number;
+  /** Example phrases / scenarios describing when to use this template. */
+  use_cases?: string[];
+  /** True if this template is shared to the current active project (annotated field). */
+  is_shared_to_current_project?: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface CreateTemplateRequest {
+  source_workflow_id: string;
+  name: string;
+  description?: string;
+  category: TemplateCategory;
+  /** UUID of organization to share with (optional). */
+  organization_id?: string | null;
+  /** List of project IDs (integers) to share with. Empty array clears all. */
+  project_ids?: number[];
+  use_cases?: string[];
+}
+
+export interface UpdateTemplateRequest {
+  name?: string;
+  description?: string;
+  category?: TemplateCategory;
+  /** Pass null to remove org sharing, UUID to set. */
+  organization_id?: string | null;
+  /** Pass new list to replace. Empty array clears all. */
+  project_ids?: number[];
+  use_cases?: string[];
 }
