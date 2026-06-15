@@ -1,5 +1,10 @@
 from rest_framework import serializers
-from .models import Queue, QueueAgent, QueueTeam, CustomerUser, CsmNotification, Conversation, ConversationMessage, Ticket, QuickReplyTemplate, QuickReplyTemplateHistory
+from .models import (
+    Queue, QueueAgent, QueueTeam, CustomerUser, CsmNotification,
+    Conversation, ConversationMessage, Ticket, QuickReplyTemplate, QuickReplyTemplateHistory,
+    TicketForm, TicketFormField, TicketFormAssignment,
+    SupportProject, CsmWorkType,
+)
 
 
 class QueueSerializer(serializers.ModelSerializer):
@@ -278,3 +283,104 @@ class QuickReplyTemplateHistorySerializer(serializers.ModelSerializer):
             return None
         full = obj.edited_by.get_full_name()
         return full if full.strip() else obj.edited_by.email
+
+
+class TicketFormFieldSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketFormField
+        fields = [
+            'id', 'field_key', 'label', 'field_type', 'is_required',
+            'sort_order', 'options', 'field_config', 'help_text',
+            'max_files', 'max_file_size_mb',
+        ]
+        read_only_fields = ['id']
+
+
+class TicketFormListSerializer(serializers.ModelSerializer):
+    assignment_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = TicketForm
+        fields = [
+            'id', 'project', 'name', 'description',
+            'is_default', 'is_active', 'assignment_count',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'assignment_count']
+
+
+class TicketFormDetailSerializer(serializers.ModelSerializer):
+    fields = TicketFormFieldSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = TicketForm
+        fields = [
+            'id', 'project', 'name', 'description',
+            'is_default', 'is_active', 'fields',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'project', 'is_default', 'created_at', 'updated_at', 'fields']
+
+
+class TicketFormCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketForm
+        fields = ['name', 'description']
+
+
+class BulkFieldsSerializer(serializers.Serializer):
+    fields = serializers.ListField(child=serializers.DictField(), allow_empty=False)
+
+
+class TicketFormAssignmentSerializer(serializers.ModelSerializer):
+    experience_group_name = serializers.CharField(
+        source='experience_group.name', read_only=True, default=None,
+    )
+    support_project_name = serializers.CharField(
+        source='support_project.name', read_only=True, default=None,
+    )
+
+    class Meta:
+        model = TicketFormAssignment
+        fields = [
+            'id', 'form', 'experience_group', 'experience_group_name',
+            'support_project', 'support_project_name', 'created_at',
+        ]
+        read_only_fields = [
+            'id', 'form', 'experience_group', 'experience_group_name',
+            'support_project', 'support_project_name', 'created_at',
+        ]
+
+
+class ReplaceAssignmentsSerializer(serializers.Serializer):
+    experience_group_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list,
+    )
+    support_project_ids = serializers.ListField(
+        child=serializers.IntegerField(), required=False, default=list,
+    )
+
+
+class SupportProjectSerializer(serializers.ModelSerializer):
+    default_queue_name = serializers.CharField(
+        source='default_queue.name', read_only=True, default=None,
+    )
+
+    class Meta:
+        model = SupportProject
+        fields = ['id', 'name', 'is_archived', 'default_queue', 'default_queue_name']
+        read_only_fields = ['id', 'default_queue_name']
+
+
+class CsmWorkTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CsmWorkType
+        fields = ['id', 'name', 'sort_order', 'is_active']
+        read_only_fields = ['id']
+
+
+class WorkTypeReorderSerializer(serializers.Serializer):
+    ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+    )

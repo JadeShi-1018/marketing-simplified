@@ -450,6 +450,22 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': timedelta(minutes=1),
         'options': {'timezone': 'UTC'},
     },
+    # Agent workflow trigger tasks
+    'agent-check-polling-triggers': {
+        'task': 'agent.tasks.check_polling_triggers',
+        'schedule': timedelta(minutes=5),
+        'options': {'timezone': 'UTC'},
+    },
+    'agent-check-scheduled-triggers': {
+        'task': 'agent.tasks.check_scheduled_triggers',
+        'schedule': timedelta(minutes=1),
+        'options': {'timezone': 'UTC'},
+    },
+    'agent-cleanup-old-trigger-logs': {
+        'task': 'agent.tasks.cleanup_old_trigger_logs',
+        'schedule': crontab(hour=2, minute=0),
+        'options': {'timezone': 'UTC'},
+    },
 }
 
 # Shared secret for the platform-native cron endpoint that triggers the

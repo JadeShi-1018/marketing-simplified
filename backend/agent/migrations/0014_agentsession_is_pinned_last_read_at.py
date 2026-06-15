@@ -1,4 +1,7 @@
-from django.db import migrations, models
+# Placeholder migration - operations already in 0001_initial.py
+# This migration exists only to maintain the dependency chain for other apps.
+
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -8,18 +11,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='agentsession',
-            name='is_pinned',
-            field=models.BooleanField(default=False),
-        ),
-        migrations.AddField(
-            model_name='agentsession',
-            name='last_read_at',
-            field=models.DateTimeField(
-                blank=True,
-                null=True,
-                help_text='User read cursor; unread when assistant messages exist after this time.',
-            ),
-        ),
+        # Operations already applied in 0001_initial (compressed migration)
     ]

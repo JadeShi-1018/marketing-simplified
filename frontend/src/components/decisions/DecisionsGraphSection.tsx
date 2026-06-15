@@ -1,19 +1,41 @@
 'use client';
 
 import { ChevronRight, Loader2, Maximize2 } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import DecisionTree, { type DecisionTreeHandle } from '@/components/decisions/DecisionTree';
+import DecisionTree, { type DecisionTreeHandle, type DecisionTreeViewMode } from '@/components/decisions/DecisionTree';
 import DecisionFullscreenPanel from '@/components/decisions/DecisionFullscreenPanel';
 import DecisionTreeDetailPanel from '@/components/decisions/DecisionTreeDetailPanel';
 import DecisionTreeNavigator from '@/components/decisions/DecisionTreeNavigator';
+
+const DecisionTreeFlow = dynamic(() => import('@/components/decisions/DecisionTreeFlow'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-gray-500">
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      Loading graph…
+    </div>
+  ),
+});
 import {
   formatDecisionDayKey,
   type TimelineGranularity,
 } from '@/components/decisions/decisionTreeLayout';
 import { useDecisionGraphLinks } from '@/components/decisions/hooks/useDecisionGraphLinks';
+import { computeDecisionGraphStats } from '@/components/decisions/decisionGraphStats';
+import { hasSavedDecisionGraphLayout } from '@/components/decisions/decisionGraphLayoutStorage';
+import {
+  type DecisionMapMode,
+} from '@/components/decisions/decisionMapUrlState';
+import { useDecisionMapUrlState } from '@/components/decisions/hooks/useDecisionMapUrlState';
 import { DecisionAPI } from '@/lib/api/decisionApi';
 import type { DecisionGraphEdge, DecisionGraphNode, DecisionGraphResponse } from '@/types/decision';
+
+type DecisionGraphWindow = Window & {
+  __decisionGraphZoomIn?: () => void;
+  __decisionGraphZoomOut?: () => void;
+};
 
 interface Props {
   graph: DecisionGraphResponse | null;
@@ -42,24 +64,26 @@ export default function DecisionsGraphSection({
   createRequestKey = 0,
   onDecisionUpdated,
 }: Props) {
+  const { timelineMode, fullscreen, fullscreenSelectedId, updateMapUrl } = useDecisionMapUrlState();
+
   const [collapsed, setCollapsed] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [fullscreenSelectedId, setFullscreenSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [startInEditMode, setStartInEditMode] = useState(false);
   const [provisionalDecisionId, setProvisionalDecisionId] = useState<number | null>(null);
   const [focusDateKey, setFocusDateKey] = useState<string | null>(null);
   const [focusNodeId, setFocusNodeId] = useState<number | null>(null);
-  const [timelineMode, setTimelineMode] = useState<'auto' | TimelineGranularity>('auto');
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [viewResetKey, setViewResetKey] = useState(0);
+  const [layoutResetKey, setLayoutResetKey] = useState(0);
   const [embeddedZoomPercent, setEmbeddedZoomPercent] = useState(100);
   const [fullscreenZoomPercent, setFullscreenZoomPercent] = useState(100);
   const embeddedTreeRef = useRef<DecisionTreeHandle>(null);
   const fullscreenTreeRef = useRef<DecisionTreeHandle>(null);
   const nodes = useMemo(() => graph?.nodes ?? [], [graph?.nodes]);
   const serverEdges = useMemo(() => graph?.edges ?? [], [graph?.edges]);
+  const nodeCount = nodes.length;
   const topicCount = graph?.topics?.length ?? 0;
+  const mapDataReady = nodeCount > 0 || topicCount > 0;
 
   const links = useDecisionGraphLinks(
     projectId,
@@ -68,8 +92,35 @@ export default function DecisionsGraphSection({
     canEdit,
     (edges) => onDecisionUpdated?.({ edges }),
   );
+  const { handleAutoLinkSequence, linkingEnabled } = links;
+  const isGraphMode = timelineMode === 'tree';
+  const graphStats = useMemo(
+    () => computeDecisionGraphStats(nodes, links.edges),
+    [links.edges, nodes],
+  );
 
-  const nodeCount = nodes.length;
+  const autoLinkAttemptedRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isGraphMode || !canEdit || !linkingEnabled || nodes.length < 2) return;
+    if (serverEdges.length > 0) return;
+    if (hasSavedDecisionGraphLayout(projectId)) return;
+    if (!projectId) return;
+    if (autoLinkAttemptedRef.current === projectId) return;
+    autoLinkAttemptedRef.current = projectId;
+
+    void handleAutoLinkSequence().then((linked) => {
+      if (linked) setLayoutResetKey((key) => key + 1);
+    });
+  }, [
+    canEdit,
+    handleAutoLinkSequence,
+    isGraphMode,
+    linkingEnabled,
+    nodes.length,
+    projectId,
+    serverEdges.length,
+  ]);
+
   const selectedGraphNode = useMemo(
     () => nodes.find((n) => n.id === fullscreenSelectedId) ?? null,
     [nodes, fullscreenSelectedId],
@@ -77,13 +128,38 @@ export default function DecisionsGraphSection({
 
   const handleSelectNode = (id: number) => {
     setStartInEditMode(false);
-    setFullscreenSelectedId(id);
-    setFullscreen(true);
+    updateMapUrl({ fullscreen: true, decisionId: id });
+  };
+
+  const handleEditNodeInTree = (node: DecisionGraphNode) => {
+    setStartInEditMode(true);
+    updateMapUrl({ fullscreen: true, decisionId: node.id });
+  };
+
+  const handleDeleteNodeInTree = async (node: DecisionGraphNode) => {
+    if (!canEdit) return;
+    const title = node.title?.trim() || 'Untitled decision';
+    if (!window.confirm(`Delete "${title}"?`)) return;
+    try {
+      await DecisionAPI.deleteDecision(node.id, node.projectId ?? projectId ?? null);
+      toast.success('Decision deleted');
+      if (fullscreenSelectedId === node.id) {
+        updateMapUrl({ decisionId: null });
+        setStartInEditMode(false);
+      }
+      await onDecisionUpdated?.({ fullReload: true });
+    } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        (err as Error)?.message ||
+        'Failed to delete decision';
+      toast.error(detail);
+    }
   };
 
   const openFullscreenMap = () => {
     setSelectedTopic(null);
-    setFullscreen(true);
+    updateMapUrl({ fullscreen: true });
   };
 
   const handleTreeCreateDecision = useCallback(async () => {
@@ -94,8 +170,7 @@ export default function DecisionsGraphSection({
       if (draft.id == null) {
         throw new Error('Draft created without id');
       }
-      setFullscreen(true);
-      setFullscreenSelectedId(draft.id);
+      updateMapUrl({ fullscreen: true, decisionId: draft.id });
       setProvisionalDecisionId(draft.id);
       setStartInEditMode(true);
     } catch (err) {
@@ -107,7 +182,45 @@ export default function DecisionsGraphSection({
     } finally {
       setCreating(false);
     }
-  }, [canCreate, creating, projectId]);
+  }, [canCreate, creating, projectId, updateMapUrl]);
+
+  const handleTreeCreateChildDecision = useCallback(
+    async (parentNode: DecisionGraphNode) => {
+      if (!projectId || creating || !canCreate) return;
+      setCreating(true);
+      try {
+        const draft = await DecisionAPI.createDraft(projectId);
+        if (draft.id == null) {
+          throw new Error('Draft created without id');
+        }
+
+        const parentTopic = parentNode.topic || null;
+        await DecisionAPI.patchDraft(
+          draft.id,
+          {
+            ...(parentTopic ? { topic: parentTopic } : {}),
+            parentDecisionIds: [parentNode.id],
+          },
+          projectId,
+        );
+
+        toast.success('Follow-up decision added');
+        await onDecisionUpdated?.({ fullReload: true });
+        updateMapUrl({ fullscreen: true, decisionId: draft.id });
+        setProvisionalDecisionId(draft.id);
+        setStartInEditMode(true);
+      } catch (err) {
+        const detail =
+          (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+          (err as Error)?.message ||
+          'Failed to create child decision';
+        toast.error(detail);
+      } finally {
+        setCreating(false);
+      }
+    },
+    [canCreate, creating, onDecisionUpdated, projectId, updateMapUrl],
+  );
 
   const lastCreateRequestKey = useRef(createRequestKey);
   useEffect(() => {
@@ -135,18 +248,18 @@ export default function DecisionsGraphSection({
     setSelectedTopic(topic);
     setFocusDateKey(null);
     setFocusNodeId(null);
-    setTimelineMode('auto');
+    updateMapUrl({ mode: 'auto' });
     requestAnimationFrame(() => {
       embeddedTreeRef.current?.jumpToTopic(topic);
       fullscreenTreeRef.current?.jumpToTopic(topic);
     });
   };
 
-  const handleTimelineModeChange = (mode: 'auto' | TimelineGranularity) => {
+  const handleTimelineModeChange = (mode: DecisionMapMode) => {
     setSelectedTopic(mode === 'auto' ? selectedTopic : null);
     setFocusDateKey(null);
     setFocusNodeId(null);
-    setTimelineMode(mode);
+    updateMapUrl({ mode });
     setViewResetKey((key) => key + 1);
   };
 
@@ -226,21 +339,20 @@ export default function DecisionsGraphSection({
 
   const treeCommon = {
     nodes,
-    edges: links.edges,
+    edges: [],
     topics: graph?.topics ?? [],
     projectId,
     mode: 'viewer' as const,
     focusDateKey,
     focusNodeId,
-    timelineGranularity: timelineMode === 'auto' ? null : timelineMode,
+    timelineGranularity: timelineMode === 'auto' || timelineMode === 'tree' ? null : timelineMode,
+    viewMode: 'topics' as DecisionTreeViewMode,
     onEditDecision,
     onCreateDecision: canCreate ? handleTreeCreateDecision : undefined,
     canDelete: canEdit,
     onDelete: onDeleteDecision,
-    linkingEnabled: links.linkingEnabled,
-    linkingDisabled: links.linkingDisabled,
-    onCreateLink: links.handleCreateLink,
-    onRemoveLink: links.handleRemoveLink,
+    linkingEnabled: false,
+    linkingDisabled: true,
     onMoveDecisionToTopic: canEdit ? handleMoveDecisionToTopic : undefined,
     onRenameTopic: canEdit ? handleRenameTopic : undefined,
     onCreateTopic: canEdit ? handleCreateTopic : undefined,
@@ -253,21 +365,72 @@ export default function DecisionsGraphSection({
 
   const embeddedViewport = {
     zoomPercent: embeddedZoomPercent,
-    onZoomIn: () => embeddedTreeRef.current?.zoomIn(),
-    onZoomOut: () => embeddedTreeRef.current?.zoomOut(),
+    onZoomIn: () => {
+      if (isGraphMode && typeof window !== 'undefined') {
+        (window as DecisionGraphWindow).__decisionGraphZoomIn?.();
+        return;
+      }
+      embeddedTreeRef.current?.zoomIn();
+    },
+    onZoomOut: () => {
+      if (isGraphMode && typeof window !== 'undefined') {
+        (window as DecisionGraphWindow).__decisionGraphZoomOut?.();
+        return;
+      }
+      embeddedTreeRef.current?.zoomOut();
+    },
     onJumpToToday: () => embeddedTreeRef.current?.jumpToToday(),
     showToday: true,
   };
 
   const fullscreenViewport = {
     zoomPercent: fullscreenZoomPercent,
-    onZoomIn: () => fullscreenTreeRef.current?.zoomIn(),
-    onZoomOut: () => fullscreenTreeRef.current?.zoomOut(),
+    onZoomIn: () => {
+      if (isGraphMode && typeof window !== 'undefined') {
+        (window as DecisionGraphWindow).__decisionGraphZoomIn?.();
+        return;
+      }
+      fullscreenTreeRef.current?.zoomIn();
+    },
+    onZoomOut: () => {
+      if (isGraphMode && typeof window !== 'undefined') {
+        (window as DecisionGraphWindow).__decisionGraphZoomOut?.();
+        return;
+      }
+      fullscreenTreeRef.current?.zoomOut();
+    },
     onJumpToToday: () => fullscreenTreeRef.current?.jumpToToday(),
     showToday: true,
   };
 
-  const embeddedTree = (
+  const embeddedTree = isGraphMode ? (
+    <DecisionTreeFlow
+      ref={embeddedTreeRef}
+      nodes={nodes}
+      edges={links.edges}
+      projectId={projectId}
+      topics={graph?.topics ?? []}
+      canEdit={canEdit}
+      canCreate={canCreate}
+      focusNodeId={focusNodeId}
+      selectedNodeId={fullscreen ? fullscreenSelectedId : null}
+      linkingEnabled={links.linkingEnabled}
+      linkingDisabled={links.linkingDisabled}
+      onCreateDecision={canCreate ? handleTreeCreateDecision : undefined}
+      onCreateChildDecision={canCreate ? handleTreeCreateChildDecision : undefined}
+      onEditDecision={handleEditNodeInTree}
+      onDeleteDecision={handleDeleteNodeInTree}
+      onCreateTopic={canEdit ? handleCreateTopic : undefined}
+      onRenameTopic={canEdit ? handleRenameTopic : undefined}
+      onDeleteTopic={canEdit ? handleDeleteTopic : undefined}
+      onCreateLink={links.handleCreateLink}
+      onRemoveLink={links.handleRemoveLink}
+      onZoomPercentChange={setEmbeddedZoomPercent}
+      onSelectNode={handleSelectNode}
+      layoutResetKey={layoutResetKey}
+      viewportActive={!fullscreen}
+    />
+  ) : (
     <DecisionTree
       ref={embeddedTreeRef}
       {...treeCommon}
@@ -277,7 +440,34 @@ export default function DecisionsGraphSection({
     />
   );
 
-  const fullscreenTree = (
+  const fullscreenTree = isGraphMode ? (
+    <DecisionTreeFlow
+      ref={fullscreenTreeRef}
+      nodes={nodes}
+      edges={links.edges}
+      projectId={projectId}
+      topics={graph?.topics ?? []}
+      canEdit={canEdit}
+      canCreate={canCreate}
+      focusNodeId={focusNodeId}
+      selectedNodeId={fullscreen ? fullscreenSelectedId : null}
+      linkingEnabled={links.linkingEnabled}
+      linkingDisabled={links.linkingDisabled}
+      onCreateDecision={canCreate ? handleTreeCreateDecision : undefined}
+      onCreateChildDecision={canCreate ? handleTreeCreateChildDecision : undefined}
+      onEditDecision={handleEditNodeInTree}
+      onDeleteDecision={handleDeleteNodeInTree}
+      onCreateTopic={canEdit ? handleCreateTopic : undefined}
+      onRenameTopic={canEdit ? handleRenameTopic : undefined}
+      onDeleteTopic={canEdit ? handleDeleteTopic : undefined}
+      onCreateLink={links.handleCreateLink}
+      onRemoveLink={links.handleRemoveLink}
+      onZoomPercentChange={setFullscreenZoomPercent}
+      onSelectNode={handleSelectNode}
+      layoutResetKey={layoutResetKey}
+      viewportActive={fullscreen}
+    />
+  ) : (
     <DecisionTree
       ref={fullscreenTreeRef}
       {...treeCommon}
@@ -298,11 +488,14 @@ export default function DecisionsGraphSection({
     } catch {
       toast.error('Failed to discard unsaved decision');
     } finally {
-      setFullscreenSelectedId(null);
+      updateMapUrl(
+        opts?.closeFullscreen
+          ? { fullscreen: false, decisionId: null }
+          : { decisionId: null },
+      );
       setStartInEditMode(false);
       if (opts?.closeFullscreen) {
         setSelectedTopic(null);
-        setFullscreen(false);
       }
     }
   };
@@ -313,29 +506,96 @@ export default function DecisionsGraphSection({
       return;
     }
     setSelectedTopic(null);
-    setFullscreen(false);
-    setFullscreenSelectedId(null);
     setStartInEditMode(false);
+    updateMapUrl({ fullscreen: false, decisionId: null });
   };
 
-  if (nodeCount === 0 && topicCount === 0) {
+  if (!mapDataReady && !fullscreen) {
     return null;
   }
 
   const heightClass = nodeCount <= 2 && topicCount <= 2 ? 'h-[360px]' : 'h-[600px]';
 
+  const fullscreenPanel = (
+    <DecisionFullscreenPanel
+      open={fullscreen}
+      onClose={closeFullscreen}
+      onBack={closeFullscreen}
+      title="Decision Map"
+      splitLayout
+    >
+      {creating && fullscreenSelectedId == null ? (
+        <aside className="flex h-full w-[400px] shrink-0 flex-col items-center justify-center gap-2 border-r border-gray-200 bg-gray-50 text-sm text-gray-500">
+          <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+          Creating decision…
+        </aside>
+      ) : null}
+      {fullscreenSelectedId != null ? (
+        <DecisionTreeDetailPanel
+          key={fullscreenSelectedId}
+          decisionId={fullscreenSelectedId}
+          projectId={selectedGraphNode?.projectId ?? projectId ?? null}
+          graphNodeStatus={selectedGraphNode?.status ?? 'DRAFT'}
+          canEdit={canEdit}
+          startInEditMode={startInEditMode}
+          onStartInEditModeConsumed={() => setStartInEditMode(false)}
+          isProvisional={fullscreenSelectedId === provisionalDecisionId}
+          onProvisionalSaved={() => setProvisionalDecisionId(null)}
+          onDiscardProvisional={discardProvisionalDecision}
+          onClose={() => {
+            if (fullscreenSelectedId === provisionalDecisionId) {
+              void discardProvisionalDecision();
+              return;
+            }
+            setSelectedTopic(null);
+            setStartInEditMode(false);
+            updateMapUrl({ decisionId: null });
+          }}
+          onOpenFullPage={onOpenFullPage}
+          onUpdated={onDecisionUpdated}
+        />
+      ) : null}
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+        <div className="shrink-0 border-b border-gray-100 bg-gray-50/80 px-3 py-2">
+          <DecisionTreeNavigator
+            nodes={nodes}
+            topics={graph?.topics ?? []}
+            onJumpToDate={jumpToDate}
+            onJumpToNode={jumpToNode}
+            onJumpToTopic={jumpToTopic}
+            selectedTopic={selectedTopic}
+            viewport={fullscreenViewport}
+            timelineMode={timelineMode}
+            onTimelineModeChange={handleTimelineModeChange}
+          />
+        </div>
+        <div className="relative min-h-0 flex-1">
+          {!mapDataReady ? (
+            <div className="flex h-full min-h-[240px] items-center justify-center text-sm text-gray-500">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+              Loading decision map…
+            </div>
+          ) : (
+            <div className="absolute inset-0">{fullscreenTree}</div>
+          )}
+        </div>
+      </div>
+    </DecisionFullscreenPanel>
+  );
+
   return (
     <>
+      {mapDataReady && !fullscreen ? (
       <div className="border-b border-gray-100 px-5 py-4">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h3 className="min-w-0 text-[13px] font-semibold uppercase text-slate-900" style={{ letterSpacing: 0 }}>
-            Decision Tree
+            Decision Map
           </h3>
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={openFullscreenMap}
-              aria-label="Open decision tree fullscreen"
+              aria-label="Open decision map fullscreen"
               title="Fullscreen"
               className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
             >
@@ -345,7 +605,7 @@ export default function DecisionsGraphSection({
               type="button"
               onClick={() => setCollapsed((v) => !v)}
               aria-expanded={!collapsed}
-              aria-label={collapsed ? 'Expand decision tree' : 'Collapse decision tree'}
+              aria-label={collapsed ? 'Expand decision map' : 'Collapse decision map'}
               title={collapsed ? 'Expand' : 'Collapse'}
               className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
             >
@@ -355,70 +615,21 @@ export default function DecisionsGraphSection({
             </button>
           </div>
         </div>
+        {!collapsed && isGraphMode ? (
+          <p className="mb-2 text-[12px] text-slate-500">
+            {graphStats.nodeCount} decisions · {graphStats.edgeCount} links · {graphStats.rootCount} roots ·{' '}
+            {graphStats.orphanCount} standalone
+          </p>
+        ) : null}
         {!collapsed && (
           <>
             <div className={`relative w-full ${heightClass}`}>{embeddedTree}</div>
           </>
         )}
       </div>
+      ) : null}
 
-      <DecisionFullscreenPanel
-        open={fullscreen}
-        onClose={closeFullscreen}
-        onBack={closeFullscreen}
-        title="Decision Tree"
-        splitLayout
-      >
-        {creating && fullscreenSelectedId == null ? (
-          <aside className="flex h-full w-[400px] shrink-0 flex-col items-center justify-center gap-2 border-r border-gray-200 bg-gray-50 text-sm text-gray-500">
-            <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
-            Creating decision…
-          </aside>
-        ) : null}
-        {fullscreenSelectedId != null ? (
-          <DecisionTreeDetailPanel
-            key={fullscreenSelectedId}
-            decisionId={fullscreenSelectedId}
-            projectId={selectedGraphNode?.projectId ?? projectId ?? null}
-            graphNodeStatus={selectedGraphNode?.status ?? 'DRAFT'}
-            canEdit={canEdit}
-            startInEditMode={startInEditMode}
-            onStartInEditModeConsumed={() => setStartInEditMode(false)}
-            isProvisional={fullscreenSelectedId === provisionalDecisionId}
-            onProvisionalSaved={() => setProvisionalDecisionId(null)}
-            onDiscardProvisional={discardProvisionalDecision}
-            onClose={() => {
-              if (fullscreenSelectedId === provisionalDecisionId) {
-                void discardProvisionalDecision();
-                return;
-              }
-              setSelectedTopic(null);
-              setFullscreenSelectedId(null);
-              setStartInEditMode(false);
-            }}
-            onOpenFullPage={onOpenFullPage}
-            onUpdated={onDecisionUpdated}
-          />
-        ) : null}
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-white">
-          <div className="shrink-0 border-b border-gray-100 bg-gray-50/80 px-3 py-2">
-            <DecisionTreeNavigator
-              nodes={nodes}
-              topics={graph?.topics ?? []}
-              onJumpToDate={jumpToDate}
-              onJumpToNode={jumpToNode}
-              onJumpToTopic={jumpToTopic}
-              selectedTopic={selectedTopic}
-              viewport={fullscreenViewport}
-              timelineMode={timelineMode}
-              onTimelineModeChange={handleTimelineModeChange}
-            />
-          </div>
-          <div className="relative min-h-0 flex-1">
-            <div className="absolute inset-0">{fullscreenTree}</div>
-          </div>
-        </div>
-      </DecisionFullscreenPanel>
+      {fullscreenPanel}
     </>
   );
 }

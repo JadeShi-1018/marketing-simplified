@@ -577,15 +577,35 @@ class DecisionViewSet(
         existing_edges = list(existing_edges_qs)
         existing_pairs = {(edge.from_decision_id, edge.to_decision_id): edge for edge in existing_edges}
 
+        all_incident_edges = list(
+            DecisionEdge.objects.filter(Q(from_decision=decision) | Q(to_decision=decision))
+        )
+        all_directed_pairs = {
+            (edge.from_decision_id, edge.to_decision_id): edge for edge in all_incident_edges
+        }
+
         edges_to_delete = [
             edge for pair, edge in existing_pairs.items() if pair not in desired_pairs
         ]
-        edges_to_add = [pair for pair in desired_pairs if pair not in existing_pairs]
+        edges_to_add: list[tuple[int, int]] = []
+        edges_to_upgrade: list[DecisionEdge] = []
+        for pair in desired_pairs:
+            if pair in existing_pairs:
+                continue
+            existing_directed = all_directed_pairs.get(pair)
+            if existing_directed is not None:
+                if existing_directed.edge_type != DecisionEdge.EdgeType.RELATED:
+                    edges_to_upgrade.append(existing_directed)
+                continue
+            edges_to_add.append(pair)
 
         try:
             with transaction.atomic():
                 if edges_to_delete:
                     DecisionEdge.objects.filter(pk__in=[edge.pk for edge in edges_to_delete]).delete()
+                for edge in edges_to_upgrade:
+                    edge.edge_type = DecisionEdge.EdgeType.RELATED
+                    edge.save(update_fields=["edge_type", "updated_at"])
                 for from_id, to_id in edges_to_add:
                     DecisionEdge.objects.create(
                         from_decision_id=from_id,

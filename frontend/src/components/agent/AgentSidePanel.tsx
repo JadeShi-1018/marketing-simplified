@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Bot } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { X, Bot, Settings } from 'lucide-react';
 import { AgentLayoutProvider } from './AgentLayoutContext';
 import { AgentChatPage } from './chat/AgentChatPage';
 import { useAgentSidePanelStore } from '@/lib/agentSidePanelStore';
-import { ApprovalToggle } from './chat/ApprovalToggle';
+import { GenerationOutputsSettings } from './chat/GenerationOutputsSettings';
 import { AgentAPI } from '@/lib/api/agentApi';
 import { AgentMessageBoardRail } from './AgentMessageBoardRail';
 import { AgentPanelToggleIcon } from './AgentPanelToggleIcon';
@@ -14,6 +15,7 @@ const MIN_WIDTH = 340;
 const MAX_WIDTH = 560;
 
 export default function AgentSidePanel() {
+  const router = useRouter();
   const { isOpen, close } = useAgentSidePanelStore();
   const [width, setWidth] = useState(MAX_WIDTH);
   const [messageBoardsOpen, setMessageBoardsOpen] = useState(true);
@@ -150,27 +152,36 @@ export default function AgentSidePanel() {
             </button>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
-            <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="hidden text-[11px] font-medium text-gray-500 sm:inline">Approval</span>
-              <ApprovalToggle
-                sessionId={sessionId}
-                value={approvalRequired}
-                onChange={(next) => {
-                  setApprovalRequired(next);
-                  localStorage.setItem('agent-approval-required-default', String(next));
-                  if (sessionId) {
-                    window.dispatchEvent(
-                      new CustomEvent('agent:approval-changed', { detail: { sessionId, value: next } })
-                    );
-                    window.dispatchEvent(
-                      new CustomEvent('agent:session-state', {
-                        detail: { sessionId, approvalRequired: next },
-                      })
-                    );
-                  }
-                }}
-              />
-            </div>
+            <GenerationOutputsSettings
+              sessionId={sessionId}
+              approvalRequired={approvalRequired}
+              onApprovalChange={(next) => {
+                setApprovalRequired(next);
+                localStorage.setItem('agent-approval-required-default', String(next));
+                if (sessionId) {
+                  window.dispatchEvent(
+                    new CustomEvent('agent:approval-changed', { detail: { sessionId, value: next } })
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent('agent:session-state', {
+                      detail: { sessionId, approvalRequired: next },
+                    })
+                  );
+                }
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => {
+                close();
+                router.push('/agent');
+              }}
+              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+              aria-label="Open workspace"
+              title="Workspace"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={close}
