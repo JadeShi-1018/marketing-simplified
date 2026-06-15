@@ -159,16 +159,28 @@ class CsmConversationConsumer(AsyncWebsocketConsumer):
     def can_access_conversation(self, conversation_id: int) -> bool:
         from .models import Conversation, CustomerUser, QueueAgent
         try:
-            conv = Conversation.objects.select_related('queue').get(id=conversation_id)
+            conv = Conversation.objects.select_related('queue', 'customer').get(id=conversation_id)
         except Conversation.DoesNotExist:
             return False
 
         cu = CustomerUser.objects.filter(user=self.user, is_active=True).first()
-        if cu and cu.user_type in ('supervisor', 'admin'):
+        if not cu:
+            return False
+
+        if cu.user_type in ('supervisor', 'admin'):
+            # Supervisors/admins can only access conversations within their own org
+            if conv.queue is not None:
+                return conv.queue.organisation_id == cu.organisation_id
+            # Unassigned: match on customer organisation
+            if conv.customer and conv.customer.organisation_id:
+                return conv.customer.organisation_id == cu.organisation_id
             return True
 
-        # Unassigned conversation (queue=None) — any active agent can access
+        # Regular agents: must be assigned to the conversation's queue
         if conv.queue is None:
-            return cu is not None
+            # Unassigned: allow only if customer belongs to agent's org
+            if conv.customer and conv.customer.organisation_id:
+                return conv.customer.organisation_id == cu.organisation_id
+            return False
 
         return QueueAgent.objects.filter(user=self.user, queue=conv.queue).exists()

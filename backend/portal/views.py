@@ -11,6 +11,7 @@ from asgiref.sync import async_to_sync
 
 from customer.models import Customer
 from csm.models import Conversation, ConversationMessage, Queue
+from csm.serializers import ConversationSerializer, ConversationMessageSerializer
 from .serializers import (
     PortalRegisterSerializer,
     PortalConversationSerializer,
@@ -110,7 +111,6 @@ class PortalConversationViewSet(
 
         # Notify all online agents about the new conversation via WebSocket
         channel_layer = get_channel_layer()
-        from csm.serializers import ConversationSerializer
         async_to_sync(channel_layer.group_send)(
             'csm_new_conversations',
             {
@@ -127,11 +127,21 @@ class PortalConversationViewSet(
     @action(detail=True, methods=['post'])
     def messages(self, request, pk=None):
         """POST /api/portal/conversations/{id}/messages/ — customer sends a reply."""
+        customer = self._get_customer()
+        if not customer:
+            return Response({'detail': 'No customer profile found.'}, status=status.HTTP_403_FORBIDDEN)
         conversation = self.get_object()
+        if conversation.customer_id != customer.id:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
         content = request.data.get('content', '').strip()
         image = request.FILES.get('image')
         if not content and not image:
             return Response({'detail': 'content or image is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if image:
+            if not image.content_type.startswith('image/'):
+                return Response({'detail': 'File must be an image.'}, status=status.HTTP_400_BAD_REQUEST)
+            if image.size > 5 * 1024 * 1024:
+                return Response({'detail': 'Image must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
 
         msg = ConversationMessage.objects.create(
             conversation=conversation,
@@ -142,7 +152,6 @@ class PortalConversationViewSet(
 
         portal_payload = PortalMessageSerializer(msg, context={'request': request}).data
 
-        from csm.serializers import ConversationSerializer, ConversationMessageSerializer
         agent_payload = ConversationMessageSerializer(msg, context={'request': request}).data
 
         channel_layer = get_channel_layer()

@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
@@ -267,6 +268,12 @@ class CustomerUserViewSet(viewsets.ModelViewSet):
 
 
 
+class ConversationPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
+
 class ConversationViewSet(viewsets.ModelViewSet):
     """
     Agent conversation workspace endpoints.
@@ -280,6 +287,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     """
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    pagination_class = ConversationPagination
 
     def get_queryset(self):
         user = self.request.user
@@ -346,8 +354,6 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 if admin_org_ids:
                     queue = Queue.objects.filter(organisation_id__in=admin_org_ids).first()
             if not queue:
-                queue = Queue.objects.first()
-            if not queue:
                 return Response(
                     {'detail': 'No queue available. Please contact your administrator.'},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -404,6 +410,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
         customer_user = CustomerUser.objects.filter(user=request.user, is_active=True).first()
 
         image = request.FILES.get('image')
+        if image:
+            if not image.content_type.startswith('image/'):
+                return Response({'detail': 'File must be an image.'}, status=status.HTTP_400_BAD_REQUEST)
+            if image.size > 5 * 1024 * 1024:
+                return Response({'detail': 'Image must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
         msg = ConversationMessage.objects.create(
             conversation=conversation,
             sender_type='agent',
