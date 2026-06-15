@@ -12,6 +12,7 @@ import Layout from '@/components/layout/Layout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { ProjectAPI, type ProjectData } from '@/lib/api/projectApi';
 import WorkspaceDashboard from '@/components/projects/WorkspaceDashboard';
+import TokenProgressBar from '@/components/plans/TokenProgressBar';
 
 function parsePositiveProjectId(raw: string | undefined): number | null {
   if (!raw) return null;
@@ -106,6 +107,9 @@ export default function ProjectWorkspacePage() {
                 {project.description && (
                   <p className="mt-1 text-sm text-gray-500">{project.description}</p>
                 )}
+                <div className="mt-3 max-w-sm">
+                  <TokenProgressBar projectId={projectId} />
+                </div>
               </div>
 
               {/* Dashboard — three zones */}

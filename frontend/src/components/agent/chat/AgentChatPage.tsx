@@ -7,6 +7,7 @@ import { WelcomeScreen } from "./WelcomeScreen"
 import { MessageList, type ChatMessage } from "./MessageList"
 import { ChatInput } from "./ChatInput"
 import { ActionBar } from "./ActionBar"
+import OnboardingTokenIntro from "./OnboardingTokenIntro"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import { AgentAPI } from "@/lib/api/agentApi"
 import {
@@ -1924,7 +1925,13 @@ setStepState({
       (error) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        if (error.message === "quota_error") {
+          // The global UpgradeModal already explains the block; drop the optimistic
+          // thinking placeholder instead of leaving an "Error: quota_error" bubble.
+          setMessages((prev) => prev.filter((m) => m.id !== aiMsgId))
+        } else {
+          updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        }
         setIsStreaming(false)
       },
       () => {
@@ -2357,6 +2364,7 @@ setStepState({
 
   return (
     <div className="flex h-full flex-col">
+      <OnboardingTokenIntro />
       {!embeddedInFloating && (
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 shrink-0 bg-background">
           <h2 className="text-sm font-semibold truncate text-foreground">{sessionTitle}</h2>

@@ -336,6 +336,18 @@ api.interceptors.response.use(
         }
       }
     }
+
+    const quotaCode = responseData?.code;
+    if (
+      typeof window !== 'undefined' &&
+      (status === 402 || status === 409 || status === 422) &&
+      (quotaCode === 'TOKEN_QUOTA_EXCEEDED' ||
+        quotaCode === 'SINGLE_CALL_TOO_LARGE' ||
+        quotaCode === 'PROJECT_HAS_NO_ORG')
+    ) {
+      window.dispatchEvent(new CustomEvent('quota:error', { detail: { code: quotaCode } }));
+    }
+
     return Promise.reject(error);
   }
 );

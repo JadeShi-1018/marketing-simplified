@@ -10,6 +10,8 @@ import { GenerationOutputsSettings } from './chat/GenerationOutputsSettings';
 import { AgentAPI } from '@/lib/api/agentApi';
 import { AgentMessageBoardRail } from './AgentMessageBoardRail';
 import { AgentPanelToggleIcon } from './AgentPanelToggleIcon';
+import { useProjectStore } from '@/lib/projectStore';
+import TokenBadge from '@/components/plans/TokenBadge';
 
 const MIN_WIDTH = 340;
 const MAX_WIDTH = 560;
@@ -17,6 +19,7 @@ const MAX_WIDTH = 560;
 export default function AgentSidePanel() {
   const router = useRouter();
   const { isOpen, close } = useAgentSidePanelStore();
+  const activeProjectId = useProjectStore((s) => s.activeProject?.id ?? null);
   const [width, setWidth] = useState(MAX_WIDTH);
   const [messageBoardsOpen, setMessageBoardsOpen] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -138,6 +141,9 @@ export default function AgentSidePanel() {
             <span className="hidden shrink-0 rounded-full bg-[#3CCED7]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#3CCED7] sm:inline">
               AI
             </span>
+            {activeProjectId !== null && (
+              <TokenBadge projectId={activeProjectId} />
+            )}
             <button
               type="button"
               onClick={() => setMessageBoardsOpen((open) => !open)}

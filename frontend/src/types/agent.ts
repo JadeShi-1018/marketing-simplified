@@ -338,6 +338,7 @@ export interface WorkflowTriggerState {
 
 export type WorkflowStepType =
   | 'analyze_data'
+  /** @deprecated Executor returns error if stepped; legacy DB records may still reference this value. */
   | 'call_dify'
   | 'call_llm'
   /** @deprecated No longer created from the UI; legacy workflows may still list this step. */

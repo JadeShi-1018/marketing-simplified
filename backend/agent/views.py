@@ -14,6 +14,9 @@ from rest_framework.renderers import BaseRenderer, JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from stripe_meta.exceptions import QuotaError
+from stripe_meta.services import check_quota_or_402, resolve_charging_org
+
 
 class EventStreamRenderer(BaseRenderer):
     """Renderer that accepts text/event-stream for SSE endpoints."""
@@ -162,6 +165,26 @@ class ChatView(EnglishResponseMixin, APIView):
         approval_decision = serializer.validated_data.get('approval_decision')
         approval_draft = serializer.validated_data.get('approval_draft')
         reviewed_anomalies = serializer.validated_data.get('reviewed_anomalies')
+
+        # Pre-flight quota gate for plain user messages (no pipeline action):
+        # hard-block Free orgs at the cap *before* persisting or streaming so that
+        # ordinary chat — including chitchat that never reaches call_llm — surfaces
+        # the upgrade modal. Action requests (create_tasks, generate_miro, …) are
+        # exempt here: those that do call the LLM are still covered by the in-stream
+        # QuotaError handler below; those that only persist drafts stay usable.
+        # The probe size of 1 token just asks "is there any headroom left?" — Team
+        # plans always pass (metered overage), only Free at the cap is blocked.
+        if not action:
+            try:
+                charging_org = resolve_charging_org(session)
+            except QuotaError as exc:  # orphan project (PROJECT_HAS_NO_ORG), fail-closed
+                return Response(
+                    {'code': exc.code, 'message': exc.message, **exc.payload},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            allowed, quota_payload = check_quota_or_402(charging_org, 1)
+            if not allowed:
+                return Response(quota_payload, status=status.HTTP_402_PAYMENT_REQUIRED)
 
         should_persist_user_message = action not in {
             'start_follow_up', 'cancel_follow_up',
@@ -316,6 +339,13 @@ class ChatView(EnglishResponseMixin, APIView):
 
                     if chunk_type == 'done':
                         _flush_message()
+            except QuotaError as exc:
+                _flush_message()
+                quota_payload = json.dumps(
+                    {'code': exc.code, 'message': exc.message, **exc.payload}
+                )
+                yield f"data: {quota_payload}\n\n"
+                yield f"data: {json.dumps({'type': 'done'})}\n\n"
             except Exception:
                 logger.exception("Error during agent SSE stream")
                 _flush_message()
@@ -579,6 +609,11 @@ class FileUploadAnalyzeView(EnglishResponseMixin, APIView):
                         assistant_metadata.update(data)
 
                     yield f"data: {json.dumps(chunk, default=str)}\n\n"
+            except QuotaError as exc:
+                quota_payload = json.dumps(
+                    {'code': exc.code, 'message': exc.message, **exc.payload}
+                )
+                yield f"data: {quota_payload}\n\n"
             except GenerationValidationError as exc:
                 logger.warning("FileUploadAnalyzeView validation error: %s", exc)
                 yield f"data: {json.dumps({'type': 'error', 'content': str(exc)})}\n\n"

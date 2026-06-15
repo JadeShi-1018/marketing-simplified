@@ -978,10 +978,10 @@ class CalendarAgentTests(TestCase):
     # ------------------------------------------------------------------ #
 
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.gemini_client.call_gemini')
-    def test_handle_message_routes_to_calendar_when_context_provided(self, mock_call_gemini):
+    @patch('agent.llm_client.call_llm')
+    def test_handle_message_routes_to_calendar_when_context_provided(self, mock_call_llm):
         """handle_message with calendar_context skips general chat and calls Gemini calendar."""
-        mock_call_gemini.return_value = '{"answer": "You have 1 event.", "create_events": []}'
+        mock_call_llm.return_value = {'text': '{"answer": "You have 1 event.", "create_events": []}', 'usage': {'input': 10, 'output': 20}}
 
         calendar_context = {'type': 'calendar', 'calendarIds': [], 'currentView': 'week'}
         chunks = list(self.orchestrator.handle_message(
@@ -991,7 +991,7 @@ class CalendarAgentTests(TestCase):
         types = [c['type'] for c in chunks]
         self.assertIn('text', types)
         self.assertIn('done', types)
-        self.assertTrue(mock_call_gemini.called)
+        self.assertTrue(mock_call_llm.called)
 
     @patch('agent.services.requests.post')
     def test_handle_message_without_calendar_context_skips_calendar(self, mock_post):
@@ -1057,10 +1057,10 @@ class CalendarAgentTests(TestCase):
     # ------------------------------------------------------------------ #
 
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.gemini_client.call_gemini')
-    def test_answer_calendar_question_yields_text_chunk(self, mock_call_gemini):
+    @patch('agent.llm_client.call_llm')
+    def test_answer_calendar_question_yields_text_chunk(self, mock_call_llm):
         """A successful Gemini response yields a text chunk with the answer."""
-        mock_call_gemini.return_value = '{"answer": "You have 2 events this week.", "create_events": []}'
+        mock_call_llm.return_value = {'text': '{"answer": "You have 2 events this week.", "create_events": []}', 'usage': {'input': 10, 'output': 20}}
 
         self._make_calendar_and_event(days_offset=1)
         context = {'type': 'calendar', 'calendarIds': []}
@@ -1069,14 +1069,14 @@ class CalendarAgentTests(TestCase):
         self.assertTrue(len(text_chunks) > 0)
 
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.gemini_client.call_gemini')
-    def test_answer_calendar_question_creates_event_from_dify(self, mock_call_gemini):
+    @patch('agent.llm_client.call_llm')
+    def test_answer_calendar_question_creates_event_from_dify(self, mock_call_llm):
         """When Gemini returns create_events, the events are created in the DB."""
         from calendars.models import Calendar as CalendarModel, Event as EventModel
         CalendarModel.objects.create(
             organization=self.org, owner=self.user, name='My Calendar',
         )
-        mock_call_gemini.return_value = json.dumps({
+        mock_call_llm.return_value = {'text': json.dumps({
             'answer': 'I have scheduled a meeting for you.',
             'create_events': [{
                 'title': 'AI Scheduled Meeting',
@@ -1084,7 +1084,7 @@ class CalendarAgentTests(TestCase):
                 'start_datetime': '2026-04-01T10:00:00+00:00',
                 'end_datetime': '2026-04-01T11:00:00+00:00',
             }]
-        })
+        }), 'usage': {'input': 10, 'output': 20}}
 
         before_count = EventModel.objects.filter(organization=self.org).count()
         context = {'type': 'calendar', 'calendarIds': []}
@@ -1093,10 +1093,10 @@ class CalendarAgentTests(TestCase):
         self.assertEqual(after_count, before_count + 1)
 
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.gemini_client.call_gemini')
-    def test_answer_calendar_question_dify_error_yields_error_chunk(self, mock_call_gemini):
+    @patch('agent.llm_client.call_llm')
+    def test_answer_calendar_question_dify_error_yields_error_chunk(self, mock_call_llm):
         """A Gemini error yields an error chunk without raising."""
-        mock_call_gemini.side_effect = Exception('Network timeout')
+        mock_call_llm.side_effect = Exception('Network timeout')
         context = {'type': 'calendar', 'calendarIds': []}
         chunks = list(self.orchestrator.answer_calendar_question('What is on my calendar?', context))
         error_chunks = [c for c in chunks if c['type'] == 'error']
@@ -2047,52 +2047,88 @@ class OrchestratorUserContextThreadingTests(TestCase):
 
 
 class GeminiAnalysisPromptInjectionTests(TestCase):
-    @patch('agent.gemini_client.call_gemini_json')
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        from stripe_meta.models import Plan, Subscription
+
+        Plan.objects.all().delete()
+
+        self.org = Organization.objects.create(name='PromptInjectionOrg', slug='prompt-injection-org')
+        self.user = CustomUser.objects.create_user(
+            email='injection@test.com', username='injectionuser', password='pass',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.plan = Plan.objects.create(
+            name='InjectionTestPlan',
+            monthly_token_quota=10_000_000,
+            max_tokens_per_call=None,
+            base_price_cents=0,
+        )
+        Subscription.objects.create(
+            organization=self.org,
+            plan=self.plan,
+            stripe_subscription_id=f'sub_injection_{self.org.id}',
+            start_date=timezone.now(),
+            end_date=timezone.now() + timedelta(days=365 * 10),
+            is_active=True,
+            is_internal=True,
+        )
+        self.project = Project.objects.create(
+            name='InjectionProject', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(user=self.user, project=self.project)
+
+    @patch('agent.llm_client._call_gemini')
     def test_no_context_prompt_unchanged(self, mock_gemini):
         from agent.services import _call_gemini_analysis
-        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+        mock_gemini.return_value = {'text': json.dumps({'anomalies': [], 'recommended_tasks': []}), 'usage': {'input': 10, 'output': 20}}
 
         _call_gemini_analysis(
             {'name': 'test', 'sheets': []},
             user_id='1',
             user_context=None,
+            agent_session=self.session,
         )
 
-        call_kwargs = mock_gemini.call_args[1]
-        system_prompt = call_kwargs['system_prompt']
+        call_args = mock_gemini.call_args[0]
+        system_prompt = call_args[1]
         self.assertNotIn('User Context', system_prompt)
 
-    @patch('agent.gemini_client.call_gemini_json')
+    @patch('agent.llm_client._call_gemini')
     def test_context_appended_to_system_prompt(self, mock_gemini):
         from agent.services import _call_gemini_analysis
-        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+        mock_gemini.return_value = {'text': json.dumps({'anomalies': [], 'recommended_tasks': []}), 'usage': {'input': 10, 'output': 20}}
 
         _call_gemini_analysis(
             {'name': 'test', 'sheets': []},
             user_id='1',
             user_context='Focus on ROAS for EU region',
+            agent_session=self.session,
         )
 
-        call_kwargs = mock_gemini.call_args[1]
-        system_prompt = call_kwargs['system_prompt']
+        call_args = mock_gemini.call_args[0]
+        system_prompt = call_args[1]
         self.assertIn('User Context', system_prompt)
         self.assertIn('Focus on ROAS for EU region', system_prompt)
         self.assertIn('defer to their stated goals', system_prompt)
         self.assertIn('Still surface critical anomalies', system_prompt)
 
-    @patch('agent.gemini_client.call_gemini_json')
+    @patch('agent.llm_client._call_gemini')
     def test_empty_context_prompt_unchanged(self, mock_gemini):
         from agent.services import _call_gemini_analysis
-        mock_gemini.return_value = {'anomalies': [], 'recommended_tasks': []}
+        mock_gemini.return_value = {'text': json.dumps({'anomalies': [], 'recommended_tasks': []}), 'usage': {'input': 10, 'output': 20}}
 
         _call_gemini_analysis(
             {'name': 'test', 'sheets': []},
             user_id='1',
             user_context='',
+            agent_session=self.session,
         )
 
-        call_kwargs = mock_gemini.call_args[1]
-        system_prompt = call_kwargs['system_prompt']
+        call_args = mock_gemini.call_args[0]
+        system_prompt = call_args[1]
         self.assertNotIn('User Context', system_prompt)
 
     @patch('agent.gemini_client.call_gemini_json')
