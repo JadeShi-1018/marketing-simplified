@@ -1269,13 +1269,13 @@ class MeetingAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         to_date = self.request.query_params.get('to')
 
         if from_date:
-            from_datetime = parse_datetime(from_date.replace('Z', '+00:00'))
+            from_datetime = parse_datetime(from_date.replace(' ', '+').replace('Z', '+00:00'))
             if from_datetime is None:
                 raise ValidationError({'from': 'Invalid ISO 8601 date format'})
             queryset = queryset.filter(timestamp__gte=from_datetime)
 
         if to_date:
-            to_datetime = parse_datetime(to_date.replace('Z', '+00:00'))
+            to_datetime = parse_datetime(to_date.replace(' ', '+').replace('Z', '+00:00'))
             if to_datetime is None:
                 raise ValidationError({'to': 'Invalid ISO 8601 date format'})
             queryset = queryset.filter(timestamp__lte=to_datetime)

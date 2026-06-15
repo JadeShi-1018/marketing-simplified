@@ -8,8 +8,8 @@ import django.utils.timezone
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('customer', '0009_region_project_nullable'),
-        ('csm', '0005_csm_notification_and_is_creator'),
+        ('customer', '0001_initial'),
+        ('csm', '0001_initial'),
     ]
 
     operations = [
