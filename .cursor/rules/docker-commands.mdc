@@ -1,0 +1,23 @@
+---
+description: Docker Compose commands must use fixed project name mediajira-v2; never edit compose files.
+alwaysApply: true
+---
+
+# Docker commands (always)
+
+**Always use `-p mediajira-v2`** with every `docker compose` command in this repo.
+
+```bash
+# Correct pattern (always):
+docker compose -p mediajira-v2 -f docker-compose.dev.yml <command>
+
+# Examples:
+docker compose -p mediajira-v2 -f docker-compose.dev.yml up -d --build frontend backend
+docker compose -p mediajira-v2 -f docker-compose.dev.yml restart nginx
+docker compose -p mediajira-v2 -f docker-compose.dev.yml exec backend python manage.py test
+docker compose -p mediajira-v2 -f docker-compose.dev.yml exec backend python manage.py migrate
+```
+
+**Never omit `-p mediajira-v2`** — it prevents Docker from generating random container IDs that cause "No such container" and name conflicts during rebuilds.
+
+**Never modify any `docker-compose*.yml` file** (including `docker-compose.dev.yml`). For Docker issues, only run commands or tell the user what to run manually.

@@ -56,7 +56,8 @@ class StripeViewsTestCase(TestCase):
             stripe_subscription_id="sub_123456789",
             start_date=timezone.now(),
             end_date=timezone.now() + timedelta(days=30),
-            is_active=True
+            is_active=True,
+            seat_count=10,  # generous default so invite tests aren't blocked by seat cap
         )
         
         # Ensure the user has Organization Admin role (level 2)
@@ -239,6 +240,71 @@ class SubscriptionViewsTest(StripeViewsTestCase):
         self.assertEqual(response.status_code, 403)
 
 
+class PaymentViewsTest(StripeViewsTestCase):
+    """Test cases for invoice history."""
+
+    @patch('stripe_meta.services.stripe.Invoice.list')
+    def test_list_payments_success(self, invoice_list):
+        self.organization.stripe_customer_id = 'cus_test_123'
+        self.organization.save(update_fields=['stripe_customer_id'])
+        invoice_list.return_value.data = [
+            {
+                'id': 'in_123',
+                'number': 'INV-0001',
+                'created': 1717977600,
+                'amount_paid': 9400,
+                'currency': 'aud',
+                'status': 'paid',
+                'description': 'Team subscription',
+                'hosted_invoice_url': 'https://invoice.stripe.test/in_123',
+                'invoice_pdf': 'https://invoice.stripe.test/in_123.pdf',
+            },
+        ]
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 200)
+        invoice_list.assert_called_once_with(customer='cus_test_123', limit=24)
+        self.assertEqual(response.json(), [{
+            'id': 'in_123',
+            'number': 'INV-0001',
+            'created': '2024-06-10T00:00:00+00:00',
+            'amount_paid_cents': 9400,
+            'currency': 'AUD',
+            'status': 'paid',
+            'description': 'Team subscription',
+            'hosted_invoice_url': 'https://invoice.stripe.test/in_123',
+            'invoice_pdf': 'https://invoice.stripe.test/in_123.pdf',
+        }])
+
+    @patch('stripe_meta.services.stripe.Invoice.list')
+    def test_list_payments_without_customer_returns_empty(self, invoice_list):
+        self.organization.stripe_customer_id = ''
+        self.organization.save(update_fields=['stripe_customer_id'])
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        invoice_list.assert_not_called()
+
+    def test_list_payments_requires_authentication(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_list_payments_without_organization(self):
+        self.user.organization = None
+        self.user.save(update_fields=['organization'])
+
+        response = self.client.get(reverse('stripe_meta:list_payments'))
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()['code'], 'NO_ORG')
+
+
 class CheckoutViewsTest(StripeViewsTestCase):
     """Test cases for checkout-related views"""
     
@@ -405,6 +471,46 @@ class OrganizationCreationViewsTest(TestCase):
             )
             self.assertEqual(resp.status_code, 500)
             self.assertEqual(resp.json().get('code'), 'ORGANIZATION_CREATION_ERROR')
+
+    def test_create_organization_grants_admin_and_creates_customer_user(self):
+        """
+        create_organization must align with all other org-creation paths:
+        assign Organization Admin (level=2) and create CustomerUser.is_creator=True.
+
+        Regression: previously the endpoint created only the Organization row —
+        no CustomerOrganisation, no CustomerUser, no admin role — leaving the
+        creator locked out of switch_plan / cancel_subscription.
+        """
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser
+        from access_control.models import UserRole
+
+        response = self.client.post(
+            reverse('stripe_meta:create_organization'),
+            data={'name': 'Admin Test Org'},
+        )
+        self.assertEqual(response.status_code, 201)
+
+        self.user.refresh_from_db()
+        org = self.user.organization
+        self.assertIsNotNone(org)
+
+        # CustomerOrganisation created
+        cust_org = CustomerOrganisation.objects.filter(organization=org).first()
+        self.assertIsNotNone(cust_org, "CustomerOrganisation must be created")
+
+        # CustomerUser.is_creator=True created
+        cu = CustomerUser.objects.filter(user=self.user, organisation=cust_org, is_creator=True).first()
+        self.assertIsNotNone(cu, "CustomerUser.is_creator=True must be created")
+
+        # Organization Admin role assigned
+        is_admin = UserRole.objects.filter(
+            user=self.user,
+            role__name='Organization Admin',
+            role__level=2,
+            role__organization=org,
+        ).exists()
+        self.assertTrue(is_admin, "Organization Admin must be assigned to org creator")
 
     
 
@@ -661,31 +767,20 @@ class WebhookViewsTest(StripeViewsTestCase):
 
     def test_list_plans_exception_handling(self):
         """Test list_plans exception handling"""
-        # Mock Plan.objects.all() to raise an exception
-        with patch('stripe_meta.views.Plan.objects.all') as mock_plans:
+        with patch('stripe_meta.views.Plan.objects.filter') as mock_plans:
             mock_plans.side_effect = Exception("Database error")
-            
+
             response = self.client.get(
                 reverse('stripe_meta:list_plans'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 500)
             data = response.json()
             self.assertEqual(data['code'], 'PLANS_RETRIEVAL_ERROR')
 
     def test_get_subscription_with_subscription(self):
         """Test get_subscription when subscription exists"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
         response = self.client.get(
             reverse('stripe_meta:get_subscription'),
             HTTP_X_ORGANIZATION_TOKEN=self.org_token
@@ -746,58 +841,48 @@ class WebhookViewsTest(StripeViewsTestCase):
         
         self.assertEqual(response.status_code, 403)
 
-    def test_switch_plan_free_plan_allowed(self):
-        """Test switch_plan when trying to switch to free plan"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
-        # Create a free plan
+    def test_switch_team_to_free_schedules_cancel(self):
+        """Switching to Free (no stripe_price_id) must schedule a period-end cancellation,
+        not attempt a Stripe price swap."""
         free_plan = Plan.objects.create(
             name='Free',
             max_team_members=1,
             max_previews_per_day=5,
             max_tasks_per_day=3,
-            stripe_price_id='price_free'
+            stripe_price_id=None,  # Free plan has no Stripe price
         )
-        
-        # Mock successful Stripe API calls
+
+        fake_period_end = 1800000000  # arbitrary future Unix timestamp
         mock_subscription = {
-            'id': 'sub_test_123',
+            'id': 'sub_123456789',
             'status': 'active',
-            'items': {
-                'data': [{'id': 'si_test_123'}]
-            }
+            'current_period_end': fake_period_end,
+            'items': {'data': [{'id': 'si_test_123', 'price': {'id': 'price_basic_123'}}]},
         }
-        
-        # Mock Price objects (current price is $10, new price is $0, so it's a downgrade)
-        mock_current_price = Mock()
-        mock_current_price.unit_amount = 1000  # $10 in cents
-        
-        mock_new_price = Mock()
-        mock_new_price.unit_amount = 0  # $0 in cents
-        
-        with patch('stripe_meta.views.stripe') as mock_stripe:
+
+        with patch('stripe_meta.views.stripe') as mock_stripe, \
+             patch('tracking.middleware.emit_tracking_event') as _mock_track:
+            mock_stripe.StripeError = stripe.StripeError
             mock_stripe.Subscription.retrieve.return_value = mock_subscription
             mock_stripe.Subscription.modify.return_value = mock_subscription
-            mock_stripe.Price.retrieve.side_effect = [mock_current_price, mock_new_price]
-            
+
             response = self.client.post(
                 reverse('stripe_meta:switch_plan'),
                 data={'plan_id': free_plan.id},
-                HTTP_X_ORGANIZATION_TOKEN=self.org_token
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token,
             )
-            
-            # Should succeed with mocked Stripe API
-            self.assertEqual(response.status_code, 200)
-            data = response.json()
-            self.assertTrue(data['requested'])
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data['status'], 'scheduled_downgrade')
+        self.assertEqual(data['effective_at'], fake_period_end)
+
+        # Must set cancel_at_period_end, NOT swap price items
+        mock_stripe.Subscription.modify.assert_called_once_with(
+            'sub_123456789',
+            cancel_at_period_end=True,
+        )
+        mock_stripe.Price.retrieve.assert_not_called()
 
     def test_switch_plan_no_active_subscription(self):
         """Test switch_plan when no active subscription exists"""
@@ -823,16 +908,6 @@ class WebhookViewsTest(StripeViewsTestCase):
 
     def test_switch_plan_same_plan(self):
         """Test switch_plan when already on the same plan"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
         response = self.client.post(
             reverse('stripe_meta:switch_plan'),
             data={'plan_id': self.plan.id},
@@ -846,16 +921,6 @@ class WebhookViewsTest(StripeViewsTestCase):
 
     def test_switch_plan_stripe_api_success(self):
         """Test switch_plan with successful Stripe API call"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
         # Create another plan
         premium_plan = Plan.objects.create(
             name='Premium',
@@ -865,33 +930,35 @@ class WebhookViewsTest(StripeViewsTestCase):
             stripe_price_id='price_premium'
         )
         
-        # Mock successful Stripe API calls
+        # Mock successful Stripe API calls — item must include 'price' so the
+        # price_id match in switch_plan can locate the base-plan item.
         mock_subscription = {
             'id': 'sub_test_123',
             'status': 'active',
             'items': {
-                'data': [{'id': 'si_test_123'}]
+                'data': [{'id': 'si_test_123', 'price': {'id': 'price_basic_123'}}]
             }
         }
-        
+
         # Mock Price objects (current price is $10, new price is $20, so it's an upgrade)
         mock_current_price = Mock()
         mock_current_price.unit_amount = 1000  # $10 in cents
-        
+
         mock_new_price = Mock()
         mock_new_price.unit_amount = 2000  # $20 in cents
-        
+
         with patch('stripe_meta.views.stripe') as mock_stripe:
+            mock_stripe.StripeError = stripe.StripeError
             mock_stripe.Subscription.retrieve.return_value = mock_subscription
             mock_stripe.Subscription.modify.return_value = mock_subscription
             mock_stripe.Price.retrieve.side_effect = [mock_current_price, mock_new_price]
-            
+
             response = self.client.post(
                 reverse('stripe_meta:switch_plan'),
                 data={'plan_id': premium_plan.id},
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             # Should succeed with mocked Stripe API
             self.assertEqual(response.status_code, 200)
             data = response.json()
@@ -899,16 +966,6 @@ class WebhookViewsTest(StripeViewsTestCase):
 
     def test_switch_plan_stripe_error_handling(self):
         """Test switch_plan Stripe error handling"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
         # Create another plan
         premium_plan = Plan.objects.create(
             name='Premium',
@@ -917,7 +974,7 @@ class WebhookViewsTest(StripeViewsTestCase):
             max_tasks_per_day=200,
             stripe_price_id='price_premium'
         )
-        
+
         with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve:
             mock_retrieve.side_effect = stripe.StripeError("Stripe API error")
             
@@ -933,50 +990,107 @@ class WebhookViewsTest(StripeViewsTestCase):
             self.assertEqual(data['code'], 'STRIPE_ERROR')
 
     def test_cancel_subscription_stripe_api_success(self):
-        """Test cancel_subscription with successful Stripe API call"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
-        with patch('stripe_meta.views.stripe.Subscription.cancel') as mock_cancel:
-            mock_cancel.return_value = Mock()
-            
+        """cancel_subscription schedules at period end, returns cancel_at timestamp."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.return_value = {}
+
             response = self.client.post(
                 reverse('stripe_meta:cancel_subscription'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
-            # Should succeed with mocked Stripe API
+
             self.assertEqual(response.status_code, 200)
             data = response.json()
             self.assertTrue(data['success'])
+            self.assertEqual(data['cancel_at'], 1700000000)
+            mock_modify.assert_called_once_with(
+                self.subscription.stripe_subscription_id,
+                cancel_at_period_end=True,
+            )
 
-    def test_cancel_subscription_stripe_error_handling(self):
-        """Test cancel_subscription Stripe error handling"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
-        with patch('stripe_meta.views.stripe.Subscription.cancel') as mock_cancel:
-            mock_cancel.side_effect = stripe.StripeError("Stripe API error")
-            
+    def test_cancel_subscription_persists_cancel_at_period_end(self):
+        """cancel_subscription must write cancel_at_period_end=True to the local DB row."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.return_value = {}
+
             response = self.client.post(
                 reverse('stripe_meta:cancel_subscription'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
+            self.assertEqual(response.status_code, 200)
+            self.subscription.refresh_from_db()
+            self.assertTrue(
+                self.subscription.cancel_at_period_end,
+                "cancel_at_period_end must be True in DB after cancellation — "
+                "omitting this causes the amber banner to reset on page refresh"
+            )
+
+    def test_get_subscription_exposes_cancel_at_period_end(self):
+        """get_subscription serializer must expose cancel_at_period_end so the frontend can restore cancel state on load."""
+        self.subscription.cancel_at_period_end = True
+        self.subscription.save(update_fields=['cancel_at_period_end'])
+
+        response = self.client.get(
+            reverse('stripe_meta:get_subscription'),
+            HTTP_X_ORGANIZATION_TOKEN=self.org_token
+        )
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn('cancel_at_period_end', data, "Serializer must expose cancel_at_period_end")
+        self.assertTrue(data['cancel_at_period_end'])
+
+    def test_switch_plan_downgrade_persists_cancel_at_period_end(self):
+        """switch_plan downgrade to Free must write cancel_at_period_end=True locally — same bug class as cancel_subscription."""
+        free_plan = Plan.objects.create(
+            name="Free Downgrade Target",
+            base_price_cents=0,
+            stripe_price_id=None,
+        )
+
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.return_value = {}
+
+            response = self.client.post(
+                reverse('stripe_meta:switch_plan'),
+                data={'plan_id': free_plan.id},
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token
+            )
+
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertEqual(data['status'], 'scheduled_downgrade')
+            self.assertEqual(data['effective_at'], 1700000000)
+            mock_modify.assert_called_once_with(
+                self.subscription.stripe_subscription_id,
+                cancel_at_period_end=True,
+            )
+            self.subscription.refresh_from_db()
+            self.assertTrue(
+                self.subscription.cancel_at_period_end,
+                "cancel_at_period_end must be True in DB after a scheduled downgrade — "
+                "omitting this causes the banner to revert to 'Renews on...' after refresh"
+            )
+
+    def test_cancel_subscription_stripe_error_handling(self):
+        """StripeError from modify propagates as 400 STRIPE_ERROR."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.side_effect = stripe.StripeError("Stripe API error")
+
+            response = self.client.post(
+                reverse('stripe_meta:cancel_subscription'),
+                HTTP_X_ORGANIZATION_TOKEN=self.org_token
+            )
+
             self.assertEqual(response.status_code, 400)
             data = response.json()
             self.assertEqual(data['code'], 'STRIPE_ERROR')
@@ -1077,28 +1191,23 @@ class CheckoutViewsExtended(StripeViewsTestCase):
             self.assertEqual(data['checkout_url'], 'https://checkout.stripe.com/test')
     
     def test_create_checkout_session_existing_customer(self):
-        """Test create_checkout_session with existing Stripe customer"""
-        # Deactivate existing subscription
+        """Test create_checkout_session reuses cached stripe_customer_id without calling Customer.create"""
         self.subscription.is_active = False
         self.subscription.save()
-        
-        # Mock existing customer
-        mock_customer = Mock()
-        mock_customer.id = 'cus_existing_123'
-        
-        mock_customers = Mock()
-        mock_customers.data = [mock_customer]
-        
+
+        # Pre-set customer ID so the code takes the cached-customer branch
+        self.organization.stripe_customer_id = 'cus_existing_123'
+        self.organization.save(update_fields=['stripe_customer_id'])
+
         mock_session = Mock()
         mock_session.id = 'cs_test_123'
         mock_session.url = 'https://checkout.stripe.com/test'
-        
-        # Mock the entire stripe module
+
         with patch('stripe_meta.views.stripe') as mock_stripe:
-            mock_stripe.Customer.list.return_value = mock_customers
-            mock_stripe.Customer.modify.return_value = mock_customer
             mock_stripe.checkout.Session.create.return_value = mock_session
-            
+            # Preserve the real StripeError so except-clauses don't TypeError
+            mock_stripe.StripeError = stripe.StripeError
+
             response = self.client.post(
                 reverse('stripe_meta:create_checkout_session'),
                 data={
@@ -1108,11 +1217,13 @@ class CheckoutViewsExtended(StripeViewsTestCase):
                 },
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 200)
             data = response.json()
             self.assertIn('checkout_url', data)
             self.assertEqual(data['checkout_url'], 'https://checkout.stripe.com/test')
+            # Verify no new customer was created — cached ID was used
+            mock_stripe.Customer.create.assert_not_called()
     
     def test_create_checkout_session_stripe_error(self):
         """Test create_checkout_session with Stripe API error"""
@@ -1138,28 +1249,21 @@ class CheckoutViewsExtended(StripeViewsTestCase):
             self.assertEqual(data['code'], 'STRIPE_ERROR')
     
     def test_cancel_subscription_stripe_success(self):
-        """Test cancel_subscription with successful Stripe API call"""
-        # Create a subscription for the user's organization
-        subscription = Subscription.objects.create(
-            organization=self.organization,
-            plan=self.plan,
-            stripe_subscription_id='sub_test_123',
-            start_date=timezone.now(),
-            end_date=timezone.now() + timedelta(days=30),
-            is_active=True
-        )
-        
-        with patch('stripe_meta.views.stripe.Subscription.cancel') as mock_cancel:
-            mock_cancel.return_value = {'id': 'sub_test_123', 'status': 'canceled'}
-            
+        """cancel_subscription uses cancel_at_period_end, not immediate cancel."""
+        with patch('stripe_meta.views.stripe.Subscription.retrieve') as mock_retrieve, \
+             patch('stripe_meta.views.stripe.Subscription.modify') as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1750000000}
+            mock_modify.return_value = {}
+
             response = self.client.post(
                 reverse('stripe_meta:cancel_subscription'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 200)
             data = response.json()
             self.assertTrue(data['success'])
+            self.assertEqual(data['cancel_at'], 1750000000)
     
     
     def test_get_usage_with_existing_data(self):
@@ -1442,15 +1546,16 @@ class SubscriptionCheckoutErrorTests(TestCase):
             is_active=True
         )
         
-        # Mock stripe.Subscription.delete to raise a StripeError
-        with patch("stripe_meta.views.stripe.Subscription.delete") as mock_delete:
-            mock_delete.side_effect = stripe.StripeError("Stripe API error")
-            
+        with patch("stripe_meta.views.stripe.Subscription.retrieve") as mock_retrieve, \
+             patch("stripe_meta.views.stripe.Subscription.modify") as mock_modify:
+            mock_retrieve.return_value = {'current_period_end': 1700000000}
+            mock_modify.side_effect = stripe.StripeError("Stripe API error")
+
             response = self.client.post(
                 reverse("stripe_meta:cancel_subscription"),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 400)
             data = response.json()
             self.assertEqual(data["code"], "STRIPE_ERROR")
@@ -1526,6 +1631,7 @@ class SubscriptionCheckoutErrorTests(TestCase):
     def test_webhook_checkout_session_completed(self):
         """Test webhook handling for checkout.session.completed event"""
         event_data = {
+            "id": "evt_checkout_001",
             "type": "checkout.session.completed",
             "data": {
                 "object": {
@@ -1535,24 +1641,25 @@ class SubscriptionCheckoutErrorTests(TestCase):
                 }
             }
         }
-        
+
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct, \
              patch("stripe_meta.views.handle_checkout_completed") as mock_handler:
             mock_construct.return_value = event_data
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps(event_data),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 200)
-            mock_handler.assert_called_once_with(event_data["data"]["object"])
+            mock_handler.assert_called_once_with(event_data["data"]["object"], event_id="evt_checkout_001")
 
     def test_webhook_customer_subscription_created(self):
         """Test webhook handling for customer.subscription.created event"""
         event_data = {
+            "id": "evt_sub_created_001",
             "type": "customer.subscription.created",
             "data": {
                 "object": {
@@ -1562,24 +1669,25 @@ class SubscriptionCheckoutErrorTests(TestCase):
                 }
             }
         }
-        
+
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct, \
              patch("stripe_meta.views.handle_subscription_created") as mock_handler:
             mock_construct.return_value = event_data
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps(event_data),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 200)
-            mock_handler.assert_called_once_with(event_data["data"]["object"])
+            mock_handler.assert_called_once_with(event_data["data"]["object"], event_id="evt_sub_created_001")
 
     def test_webhook_customer_subscription_updated(self):
         """Test webhook handling for customer.subscription.updated event"""
         event_data = {
+            "id": "evt_sub_updated_001",
             "type": "customer.subscription.updated",
             "data": {
                 "object": {
@@ -1588,24 +1696,25 @@ class SubscriptionCheckoutErrorTests(TestCase):
                 }
             }
         }
-        
+
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct, \
              patch("stripe_meta.views.handle_subscription_updated") as mock_handler:
             mock_construct.return_value = event_data
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps(event_data),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 200)
-            mock_handler.assert_called_once_with(event_data["data"]["object"])
+            mock_handler.assert_called_once_with(event_data["data"]["object"], event_id="evt_sub_updated_001")
 
     def test_webhook_customer_subscription_deleted(self):
         """Test webhook handling for customer.subscription.deleted event"""
         event_data = {
+            "id": "evt_sub_deleted_001",
             "type": "customer.subscription.deleted",
             "data": {
                 "object": {
@@ -1614,24 +1723,25 @@ class SubscriptionCheckoutErrorTests(TestCase):
                 }
             }
         }
-        
+
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct, \
              patch("stripe_meta.views.handle_subscription_deleted") as mock_handler:
             mock_construct.return_value = event_data
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps(event_data),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 200)
-            mock_handler.assert_called_once_with(event_data["data"]["object"])
+            mock_handler.assert_called_once_with(event_data["data"]["object"], event_id="evt_sub_deleted_001")
 
     def test_webhook_invoice_payment_succeeded(self):
         """Test webhook handling for invoice.payment_succeeded event"""
         event_data = {
+            "id": "evt_inv_succeeded_001",
             "type": "invoice.payment_succeeded",
             "data": {
                 "object": {
@@ -1641,24 +1751,25 @@ class SubscriptionCheckoutErrorTests(TestCase):
                 }
             }
         }
-        
+
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct, \
              patch("stripe_meta.views.handle_payment_succeeded") as mock_handler:
             mock_construct.return_value = event_data
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps(event_data),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 200)
-            mock_handler.assert_called_once_with(event_data["data"]["object"])
+            mock_handler.assert_called_once_with(event_data["data"]["object"], event_id="evt_inv_succeeded_001")
 
     def test_webhook_invoice_payment_failed(self):
         """Test webhook handling for invoice.payment_failed event"""
         event_data = {
+            "id": "evt_inv_failed_001",
             "type": "invoice.payment_failed",
             "data": {
                 "object": {
@@ -1668,24 +1779,25 @@ class SubscriptionCheckoutErrorTests(TestCase):
                 }
             }
         }
-        
+
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct, \
              patch("stripe_meta.views.handle_payment_failed") as mock_handler:
             mock_construct.return_value = event_data
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps(event_data),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 200)
-            mock_handler.assert_called_once_with(event_data["data"]["object"])
+            mock_handler.assert_called_once_with(event_data["data"]["object"], event_id="evt_inv_failed_001")
 
     def test_webhook_unsupported_event(self):
         """Test webhook handling for unsupported event types"""
         event_data = {
+            "id": "evt_unknown_999",
             "type": "unsupported.event",
             "data": {
                 "object": {
@@ -1693,34 +1805,33 @@ class SubscriptionCheckoutErrorTests(TestCase):
                 }
             }
         }
-        
+
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct:
             mock_construct.return_value = event_data
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps(event_data),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 200)
             data = response.json()
-            self.assertEqual(data["received"], True)
+            self.assertEqual(data["status"], "ignored")
 
     def test_webhook_exception_handling(self):
-        """Test webhook exception handling"""
-        # Mock stripe.Webhook.construct_event to raise an exception
+        """Unexpected exception during construct_event → 500 with WEBHOOK_ERROR code"""
         with patch("stripe_meta.views.stripe.Webhook.construct_event") as mock_construct:
             mock_construct.side_effect = Exception("Webhook processing error")
-            
+
             response = self.client.post(
                 reverse("stripe_meta:stripe_webhook"),
                 data=json.dumps({"type": "test.event"}),
                 content_type="application/json",
                 HTTP_STRIPE_SIGNATURE="test_signature"
             )
-            
+
             self.assertEqual(response.status_code, 500)
             data = response.json()
             self.assertEqual(data["code"], "WEBHOOK_ERROR")
@@ -1906,21 +2017,21 @@ class PlanViewsErrorTest(StripeViewsTestCase):
     """Test cases for error paths in plan-related endpoints"""
     
     def test_list_plans_stripe_error(self):
-        """Test plan listing when Stripe API returns error"""
-        # Mock stripe.Price.retrieve to raise StripeError
+        """list_plans is zero-Stripe-calls: even if Price.retrieve would raise, response is unaffected"""
         with patch('stripe_meta.views.stripe.Price.retrieve') as mock_retrieve:
             mock_retrieve.side_effect = stripe.StripeError("Stripe API error")
-            
+
             response = self.client.get(
                 reverse('stripe_meta:list_plans'),
                 HTTP_X_ORGANIZATION_TOKEN=self.org_token
             )
-            
+
             self.assertEqual(response.status_code, 200)
             data = response.json()
             self.assertEqual(data['count'], 1)
-            # Price should be None due to Stripe error
-            self.assertIsNone(data['results'][0]['price'])
+            # Price comes from DB (base_price_cents), Stripe is never called
+            self.assertEqual(data['results'][0]['price'], 0.0)
+            mock_retrieve.assert_not_called()
     
     def test_list_plans_no_stripe_price_id(self):
         """Test plan listing when plan has no stripe_price_id"""
@@ -1944,7 +2055,7 @@ class PlanViewsErrorTest(StripeViewsTestCase):
         # Find the free plan in results
         free_plan_data = next(p for p in data['results'] if p['name'] == 'Free Plan')
         self.assertEqual(free_plan_data['price'], 0)
-        self.assertEqual(free_plan_data['price_currency'], 'USD')
+        self.assertEqual(free_plan_data['currency'], 'AUD')
 
 
 class WebhookViewsErrorTest(StripeViewsTestCase):
@@ -1961,57 +2072,51 @@ class WebhookViewsErrorTest(StripeViewsTestCase):
             self.fail("handle_checkout_completed raised an exception")
     
     def test_handle_subscription_created_no_customer(self):
-        """Test handle_subscription_created when customer is not found"""
-        
+        """handle_subscription_created propagates StripeError — webhook handler logs and returns 500"""
         event_data = {
             'id': 'sub_test123',
             'customer': 'cus_nonexistent'
         }
-        
+
         with patch('stripe_meta.views.stripe.Customer.retrieve') as mock_retrieve:
             mock_retrieve.side_effect = stripe.StripeError("Customer not found")
-            
-            # Should handle the error gracefully
-            try:
+
+            with self.assertRaises(stripe.StripeError):
                 handle_subscription_created(event_data)
-            except Exception:
-                self.fail("handle_subscription_created should handle Stripe errors gracefully")
     
     def test_handle_subscription_created_no_org_in_metadata(self):
-        """Test handle_subscription_created when organization_id is missing"""
-        
+        """handle_subscription_created logs warning and returns when org_id absent (no ValueError)."""
         event_data = {
             'id': 'sub_test123',
-            'customer': 'cus_test123'
+            'customer': 'cus_test123',
+            'items': {'data': []},
         }
-        
+
         mock_customer = Mock()
         mock_customer.metadata = {}  # No organization_id
-        
+
+        before = Subscription.objects.count()
         with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
-            # Should catch and silently handle the exception (webhook handlers are defensive)
-            try:
-                handle_subscription_created(event_data)
-            except Exception:
-                self.fail("handle_subscription_created should catch exceptions internally")
-    
+            handle_subscription_created(event_data)   # must not raise
+
+        self.assertEqual(Subscription.objects.count(), before)
+
     def test_handle_subscription_created_org_not_found(self):
-        """Test handle_subscription_created when organization doesn't exist in DB"""
-        
+        """handle_subscription_created logs warning and returns when org doesn't exist (no ValueError)."""
         event_data = {
             'id': 'sub_test123',
-            'customer': 'cus_test123'
+            'customer': 'cus_test123',
+            'items': {'data': []},
         }
-        
+
         mock_customer = Mock()
         mock_customer.metadata = {'organization_id': '99999'}  # Non-existent org
-        
+
+        before = Subscription.objects.count()
         with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
-            # Should catch and silently handle the exception (webhook handlers are defensive)
-            try:
-                handle_subscription_created(event_data)
-            except Exception:
-                self.fail("handle_subscription_created should catch exceptions internally")
+            handle_subscription_created(event_data)   # must not raise
+
+        self.assertEqual(Subscription.objects.count(), before)
 
 class WebhookHandlerUnitTests(TestCase):
     """Unit tests for webhook handler helper functions"""
@@ -2036,6 +2141,10 @@ class WebhookHandlerUnitTests(TestCase):
         )
 
     def test_handle_subscription_created_happy_path(self):
+        # Deactivate setUp subscription: handler will create a new active one for same org
+        self.subscription.is_active = False
+        self.subscription.save()
+
         plan2 = Plan.objects.create(
             name='Pro', max_team_members=10, max_previews_per_day=100, max_tasks_per_day=50,
             stripe_price_id='price_pro_1'
@@ -2102,3 +2211,70 @@ class WebhookHandlerUnitTests(TestCase):
         handle_subscription_deleted(payload)
         self.subscription.refresh_from_db()
         self.assertFalse(self.subscription.is_active)
+
+    def test_subscription_deleted_reactivates_free_sentinel(self):
+        """When the paid subscription is deleted, the Free sentinel must be re-enabled
+        so the org falls back to the Free tier instead of having zero active subscriptions."""
+        free_plan = Plan.objects.create(
+            name='Free',
+            base_price_cents=0,
+            stripe_price_id=None,
+        )
+        sentinel = Subscription.objects.create(
+            organization=self.organization,
+            plan=free_plan,
+            stripe_subscription_id=f'sub_free_internal_{self.organization.id}',
+            start_date=timezone.now(),
+            end_date=timezone.now() + timedelta(days=365 * 100),
+            is_active=False,  # deactivated when the paid subscription was created
+            is_internal=True,
+        )
+
+        handle_subscription_deleted({'id': self.subscription.stripe_subscription_id})
+
+        # Paid subscription must be deactivated
+        self.subscription.refresh_from_db()
+        self.assertFalse(self.subscription.is_active)
+
+        # Free sentinel must be reactivated so the org has basic access
+        sentinel.refresh_from_db()
+        self.assertTrue(sentinel.is_active)
+
+    def test_payment_succeeded_null_parent(self):
+        """
+        invoice.payment_succeeded with parent=None (one-off invoice, no subscription)
+        must not raise AttributeError and must silently skip Payment creation.
+        Regression: parent.get() on None was an AttributeError → 500.
+        """
+        invoice = {
+            'id': 'in_null_parent',
+            'customer': 'cus_abc',
+            'parent': None,
+            'lines': {'data': []},
+        }
+        mock_customer = Mock()
+        mock_customer.metadata = {'user_id': str(self.user.id), 'organization_id': str(self.organization.id)}
+        before = Payment.objects.count()
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
+            handle_payment_succeeded(invoice)
+        self.assertEqual(Payment.objects.count(), before)
+
+    def test_subscription_created_missing_org_id(self):
+        """
+        customer.subscription.created where customer metadata has no organization_id
+        must not raise and must not create a Subscription row.
+        Regression: previously raised ValueError → 500 → infinite Stripe retries.
+        """
+        payload = {
+            'id': 'sub_no_org',
+            'status': 'active',
+            'customer': 'cus_no_org',
+            'start_date': int(timezone.now().timestamp()),
+            'items': {'data': []},
+        }
+        mock_customer = Mock()
+        mock_customer.metadata = {}
+        before = Subscription.objects.count()
+        with patch('stripe_meta.views.stripe.Customer.retrieve', return_value=mock_customer):
+            handle_subscription_created(payload)
+        self.assertEqual(Subscription.objects.count(), before)

@@ -23,6 +23,7 @@ class Organization(TimeStampedModel):
     is_parent = models.BooleanField(default=False)
     slug = models.SlugField(max_length=200, unique=True)
     is_active = models.BooleanField(default=True)
+    stripe_customer_id = models.CharField(max_length=255, null=True, blank=True)
 
     def save(self, *args, **kwargs):
         if not self.slug:

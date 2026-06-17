@@ -4,6 +4,8 @@ from rest_framework.test import APITestCase
 from rest_framework import status
 from django.contrib.auth import get_user_model
 
+from access_control.models import UserRole
+
 User = get_user_model()
 
 class RegisterViewTests(APITestCase):
@@ -102,3 +104,35 @@ class RegisterViewTests(APITestCase):
         response = self.client.post(self.register_url, data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertIn("message", response.data)
+
+    def test_new_org_creator_gets_organization_admin_role(self):
+        """Registering without organization_id creates a new org and grants Organization Admin."""
+        response = self.client.post(self.register_url, self.valid_data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        user = User.objects.get(email=self.valid_data['email'])
+        is_admin = UserRole.objects.filter(
+            user=user,
+            role__name='Organization Admin',
+            role__level=2,
+            role__organization=user.organization,
+        ).exists()
+        self.assertTrue(is_admin, "Org creator must have Organization Admin role")
+
+    def test_joining_existing_org_does_not_grant_admin(self):
+        """Registering with organization_id (joining existing org) must NOT grant admin."""
+        from core.models import Organization
+        org = Organization.objects.create(name="ExistingOrg")
+        data = self.valid_data.copy()
+        data["organization_id"] = org.id
+
+        response = self.client.post(self.register_url, data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        user = User.objects.get(email=self.valid_data['email'])
+        is_admin = UserRole.objects.filter(
+            user=user,
+            role__name='Organization Admin',
+            role__level=2,
+        ).exists()
+        self.assertFalse(is_admin, "User joining an existing org must not receive admin")

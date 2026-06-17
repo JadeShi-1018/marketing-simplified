@@ -29,42 +29,23 @@ def _get_api_key() -> str:
     )
 
 
-def call_gemini(
-    system_prompt: str,
-    user_prompt: str,
-    temperature: float = 0.3,
+def _gemini_request_with_retry(
+    url: str,
+    body: dict,
     timeout: int = 300,
-    response_mime_type: str | None = None,
-) -> str:
-    """Call Gemini and return the full text response as a string."""
-    api_key = _get_api_key()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not configured")
-
-    url = f"{_GEMINI_BASE}/{GEMINI_MODEL}:streamGenerateContent?key={api_key}"
-    generation_config: dict = {"temperature": temperature}
-    if response_mime_type:
-        generation_config["responseMimeType"] = response_mime_type
-    body = {
-        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-        "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "generationConfig": generation_config,
-    }
-
-    logger.info(
-        "Calling Gemini model=%s system_chars=%d user_chars=%d",
-        GEMINI_MODEL,
-        len(system_prompt),
-        len(user_prompt),
-    )
-
+    stream: bool = False,
+) -> requests.Response:
+    """
+    POST to a Gemini endpoint with exponential backoff on HTTP 429.
+    Works for both streamGenerateContent (stream=True) and generateContent (stream=False).
+    Raises RuntimeError on unrecoverable errors.
+    """
     last_http_error: requests.exceptions.HTTPError | None = None
     for attempt in range(1, _RATE_LIMIT_MAX_ATTEMPTS + 1):
         try:
-            response = requests.post(url, json=body, timeout=timeout, stream=True)
+            response = requests.post(url, json=body, timeout=timeout, stream=stream)
             response.raise_for_status()
-            last_http_error = None
-            break
+            return response
         except requests.exceptions.HTTPError as exc:
             last_http_error = exc
             status_code = exc.response.status_code if exc.response is not None else None
@@ -87,15 +68,43 @@ def call_gemini(
             ) from exc
         except requests.exceptions.RequestException as exc:
             raise RuntimeError("Gemini network error.") from exc
-    else:
-        if last_http_error is not None:
-            raise RuntimeError("Gemini rate limited (HTTP 429).") from last_http_error
+    raise RuntimeError("Gemini rate limited (HTTP 429).") from last_http_error
 
+
+def call_gemini(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.3,
+    timeout: int = 300,
+    response_mime_type: str | None = None,
+) -> str:
+    """Call Gemini via streamGenerateContent and return the full text response."""
+    api_key = _get_api_key()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not configured")
+
+    url = f"{_GEMINI_BASE}/{GEMINI_MODEL}:streamGenerateContent?key={api_key}"
+    generation_config: dict = {"temperature": temperature}
+    if response_mime_type:
+        generation_config["responseMimeType"] = response_mime_type
+    body = {
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "generationConfig": generation_config,
+    }
+
+    logger.info(
+        "Calling Gemini model=%s system_chars=%d user_chars=%d",
+        GEMINI_MODEL,
+        len(system_prompt),
+        len(user_prompt),
+    )
+
+    response = _gemini_request_with_retry(url, body, timeout=timeout, stream=True)
     buffer = b""
     for chunk in response.iter_content(chunk_size=None):
         if chunk:
             buffer += chunk
-
     return _extract_text(buffer.decode("utf-8", errors="replace"))
 
 
@@ -190,7 +199,6 @@ def call_gemini_json(
     try:
         return json.loads(clean)
     except json.JSONDecodeError:
-        # Try extracting the JSON block directly in case there's surrounding text
         extracted = _extract_json_block(clean)
         try:
             return json.loads(extracted)

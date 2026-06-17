@@ -7,7 +7,7 @@ import { WelcomeScreen } from "./WelcomeScreen"
 import { MessageList, type ChatMessage } from "./MessageList"
 import { ChatInput } from "./ChatInput"
 import { ActionBar } from "./ActionBar"
-import { ApprovalToggle } from "./ApprovalToggle"
+import OnboardingTokenIntro from "./OnboardingTokenIntro"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import { AgentAPI } from "@/lib/api/agentApi"
 import {
@@ -15,29 +15,76 @@ import {
   setAgentMessageBoardRenderEffectsCompletedOnQuit,
   shouldShowAgentMessageBoardThinkingBubbleOnRevisit,
 } from "@/lib/agentMessageBoardReadState"
-import type { SSEEvent, AgentAction, AgentMessage, AnalysisResult, WorkflowStepState, ColumnDetectionData } from "@/types/agent"
+import type {
+  SSEEvent,
+  AgentAction,
+  AgentMessage,
+  AgentMessageData,
+  AnalysisResult,
+  WorkflowStepState,
+  ColumnDetectionData,
+  GenerationOutputKey,
+  RecommendedTask,
+  RecommendedDecisionTreeNode,
+  SuggestedCalendarEvent,
+} from "@/types/agent"
+import { useGenerationOutputs } from "@/hooks/useGenerationOutputs"
+import { GenerationOutputsSettings } from "./GenerationOutputsSettings"
 import { AGENT_MESSAGES } from "@/lib/agentMessages"
 import type { StepProgressItem } from "./StepProgress"
 import type { TaskGenerationStatus } from "./TaskListCard"
+import type { DecisionGenerationStatus } from "./DecisionTreeListCard"
 import {
   AGENT_PANEL_OPENED_EVENT,
   consumeCalendarPreload,
   type CalendarPreload,
 } from "@/lib/agentLaunchContext"
+import { getPendingMiroWorkflowRunIds } from "@/lib/agentMiroBoardStatus"
 
-function getPendingMiroWorkflowRunIds(messages: ChatMessage[]): string[] {
-  // Only treat "miro_board_created" as done — a prior failure can be retried for the same
-  // workflow_run_id, so "miro_generation_failed" must NOT stop the polling loop.
-  const completed = new Set(
-    messages
-      .filter((message) => message.workflowRunId && message.eventType === "miro_board_created")
-      .map((message) => message.workflowRunId as string)
-  )
+function pickRecommendedDecisionTree(
+  data: AnalysisResult | null | undefined,
+  wantsDecisions: boolean
+) {
+  if (!wantsDecisions) return undefined
+  const nodes = data?.recommended_decision_tree?.nodes
+  if (!Array.isArray(nodes) || nodes.length === 0) return undefined
+  return { nodes }
+}
 
-  return messages
-    .filter((message) => message.eventType === "miro_generation_started" && message.workflowRunId)
-    .map((message) => message.workflowRunId as string)
-    .filter((workflowRunId) => !completed.has(workflowRunId))
+function mapCreatedDecisionsByRef(
+  created?: Array<{ ref?: string; decision_id?: number }> | null
+): Record<string, number> {
+  if (!Array.isArray(created)) return {}
+  const out: Record<string, number> = {}
+  for (const entry of created) {
+    const ref = entry?.ref
+    const decisionId = Number(entry?.decision_id)
+    if (typeof ref === "string" && ref && Number.isFinite(decisionId)) {
+      out[ref] = decisionId
+    }
+  }
+  return out
+}
+
+function hasPersistedAnalysisPayload(data?: AgentMessageData | null): boolean {
+  if (!data) return false
+  if (Array.isArray(data.recommended_tasks)) return true
+  if (Array.isArray(data.recommended_decision_tree?.nodes)) return true
+  if (Array.isArray(data.anomalies) && data.anomalies.length > 0) return true
+  if (Array.isArray(data.calendar_events)) return true
+  return false
+}
+
+function restoreGenerationOutputsFromMessages(
+  messages: AgentMessage[]
+): GenerationOutputKey[] | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const raw = messages[i].data?.generation_outputs
+    if (Array.isArray(raw) && raw.length > 0) {
+      return raw as GenerationOutputKey[]
+    }
+  }
+  return null
 }
 
 /** Broadcast anomalies from restored messages to RightPanel Alerts. */
@@ -80,21 +127,41 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     navigateHref = `/miro/${m.data.board_id}`
   } else if (eventType === "miro_generation_failed") {
     type = "error"
-  } else if (m.data?.anomalies) {
+  } else if (m.message_type === "analysis" || hasPersistedAnalysisPayload(m.data)) {
     type = "analysis"
   } else if (m.message_type === "task_created" || m.data?.task_ids) {
     // Check task_created BEFORE decision_draft — backend may include decision_id on task events
     type = "tasks_created"
     navigateTo = "tasks"
     navigateLabel = "Go to Tasks"
+  } else if (
+    m.message_type === "decision_draft" ||
+    (Array.isArray(m.data?.decision_ids) && m.data.decision_ids.length > 0)
+  ) {
+    type = "decisions_created"
+    navigateTo = "decisions"
+    navigateLabel = "Go to Decisions"
   } else if (m.message_type === "approval_request" && m.data?.approval_id) {
-    type = "approval_request"
     approval = {
       id: String(m.data.approval_id),
       kind: String(m.data.kind ?? ""),
       draft: (m.data.draft as Record<string, unknown>) ?? {},
     }
+    const draftTasks = (m.data.draft as { recommended_tasks?: unknown } | undefined)
+      ?.recommended_tasks
+    const hasDraftTasks = Array.isArray(draftTasks) && draftTasks.length > 0
+    type =
+      hasPersistedAnalysisPayload(m.data) || hasDraftTasks ? "analysis" : "approval_request"
+  } else if (m.message_type === "confirmation_request") {
+    type = "confirmation_request"
   }
+
+  const draftRecommendedTasks = (
+    m.data?.draft as { recommended_tasks?: RecommendedTask[] } | undefined
+  )?.recommended_tasks
+  const draftDecisionTree = (
+    m.data?.draft as { recommended_decision_tree?: AnalysisResult["recommended_decision_tree"] } | undefined
+  )?.recommended_decision_tree
 
   return {
     id: String(m.id),
@@ -102,8 +169,20 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     content: m.content,
     type,
     isFollowUpPrompt,
-    anomalies: m.data?.anomalies,
-    recommendedTasks: m.data?.recommended_tasks,
+    // Prefer the reviewed list so a restored, confirmed card shows the user's
+    // include/exclude + edits; fall back to the raw anomalies pre-confirmation.
+    anomalies: m.data?.reviewed_anomalies ?? m.data?.anomalies,
+    anomaliesConfirmed:
+      Boolean(m.data?.anomalies_confirmed) || (m.data?.anomalies?.length ?? 0) === 0,
+    recommendedTasks: m.data?.recommended_tasks ?? draftRecommendedTasks,
+    recommendedDecisionTree: pickRecommendedDecisionTree(
+      {
+        recommended_decision_tree:
+          m.data?.recommended_decision_tree ?? draftDecisionTree,
+      } as AnalysisResult,
+      Boolean(m.data?.recommended_decision_tree?.nodes?.length || draftDecisionTree?.nodes?.length)
+    ),
+    calendarEvents: m.data?.calendar_events,
     navigateTo,
     navigateLabel,
     navigateDisabled,
@@ -244,13 +323,16 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const router = useRouter()
   const { setActiveView, floatingChat, toggleMaximize, setFloatingSessionId } = useAgentLayout()
   const [sessionId, setSessionIdState] = useState<string | null>(null)
+  const [projectId, setProjectId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [hasStarted, setHasStarted] = useState(false)
   const [stepProgress, setStepProgress] = useState<StepProgressItem[]>([])
   const [stepState, setStepState] = useState<WorkflowStepState>({
     analysisComplete: false,
+    anomaliesConfirmed: false,
     tasksCreated: false,
+    decisionsCreated: false,
   })
   const [followUpAvailable, setFollowUpAvailable] = useState(false)
   const [followUpStarted, setFollowUpStarted] = useState(false)
@@ -260,16 +342,65 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const [skippedTaskIndexes, setSkippedTaskIndexes] = useState<number[]>([])
   const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number>>({})
   const [pendingTaskApproval, setPendingTaskApproval] = useState<PendingExternalApproval | null>(null)
-  const [pendingMiroApproval, setPendingMiroApproval] = useState<PendingExternalApproval | null>(null)
+  const [pendingDecisionApproval, setPendingDecisionApproval] = useState<PendingExternalApproval | null>(null)
   const [selectedTaskIndexes, setSelectedTaskIndexes] = useState<number[]>([])
+  const [selectedDecisionRefs, setSelectedDecisionRefs] = useState<string[]>([])
+  const [skippedDecisionRefs, setSkippedDecisionRefs] = useState<string[]>([])
+  const [generatedDecisionRefs, setGeneratedDecisionRefs] = useState<string[]>([])
   const [tasksApprovalGenerating, setTasksApprovalGenerating] = useState(false)
-  const [miroApprovalGenerating, setMiroApprovalGenerating] = useState(false)
+  const [decisionsApprovalGenerating, setDecisionsApprovalGenerating] = useState(false)
+  const [miroGenerateInFlight, setMiroGenerateInFlight] = useState(false)
   const [taskGenerationStatus, setTaskGenerationStatus] = useState<TaskGenerationStatus>("idle")
+  const [decisionGenerationStatus, setDecisionGenerationStatus] =
+    useState<DecisionGenerationStatus>("idle")
+  const [createdDecisionByRef, setCreatedDecisionByRef] = useState<Record<string, number>>({})
   const selectAllRecommendedTasks = useCallback((count: number) => {
     if (count > 0) {
       setSelectedTaskIndexes(Array.from({ length: count }, (_, i) => i))
     }
   }, [])
+  const selectAllRecommendedDecisionRefs = useCallback((refs: string[]) => {
+    if (refs.length > 0) {
+      setSelectedDecisionRefs(refs)
+    }
+  }, [])
+  const syncDecisionTreeNodeCount = useCallback((analysis?: AnalysisResult | null) => {
+    latestDecisionTreeNodeCountRef.current =
+      analysis?.recommended_decision_tree?.nodes?.length ?? 0
+  }, [])
+
+  const applyDecisionDraftResult = useCallback((data?: Record<string, unknown> | null) => {
+    setStepState((prev) => ({ ...prev, decisionsCreated: true }))
+    setPendingDecisionApproval(null)
+    setDecisionsApprovalGenerating(false)
+    setDecisionGenerationStatus("completed")
+    const created = data?.created_decisions as Array<{ ref?: string; decision_id?: number }> | undefined
+    setCreatedDecisionByRef(mapCreatedDecisionsByRef(created))
+    if (Array.isArray(created)) {
+      const refs = created
+        .map((entry) => String(entry?.ref ?? ""))
+        .filter((ref) => ref.length > 0)
+      if (refs.length > 0) {
+        setGeneratedDecisionRefs(Array.from(new Set(refs)))
+        setSkippedDecisionRefs((prev) => prev.filter((ref) => !refs.includes(ref)))
+      }
+    }
+  }, [])
+
+  const applyPendingDecisionApproval = useCallback((pending: PendingExternalApproval) => {
+    setPendingDecisionApproval(pending)
+    setDecisionsApprovalGenerating(false)
+    setDecisionGenerationStatus("awaiting_approval")
+    setSkippedDecisionRefs([])
+    const nodes = (pending.draft as { recommended_decision_tree?: { nodes?: { ref: string }[] } })
+      ?.recommended_decision_tree?.nodes
+    if (Array.isArray(nodes) && nodes.length > 0) {
+      setSelectedDecisionRefs((prev) =>
+        prev.length > 0 ? prev : nodes.map((node) => node.ref).filter(Boolean)
+      )
+    }
+  }, [])
+
   const applyPendingTaskApproval = useCallback((pending: PendingExternalApproval) => {
     setPendingTaskApproval(pending)
     setTasksApprovalGenerating(false)
@@ -314,7 +445,14 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const inputHelperText = isAwaitingFollowUp
     ? "You can send one follow-up message now. Ask for an explanation, a short report, or forwarding to specific project members."
     : undefined
-  const latestAnalysisMessageId = [...messages].reverse().find((message) => message.type === "analysis")?.id ?? null
+  const latestAnalysisMessageId =
+    [...messages]
+      .reverse()
+      .find(
+        (message) =>
+          message.type === "analysis" ||
+          (Array.isArray(message.recommendedTasks) && message.recommendedTasks.length > 0)
+      )?.id ?? null
   const [renderFinishSignal, setRenderFinishSignal] = useState(0)
   const showRevisitThinkingBubble = useMemo(() => {
     // Important: this value is persisted outside React (localStorage). We must re-check it
@@ -336,6 +474,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const handleConfirmColumnsRef = useRef<((m: Record<string, string>) => void) | null>(null)
   // Stores recommended tasks from latest analysis for task cards and approvals
   const latestRecommendedTasksRef = useRef<import("@/types/agent").RecommendedTask[] | null>(null)
+  const latestDecisionTreeNodeCountRef = useRef(0)
   const autoExternalActionsTriggeredRef = useRef(false)
   const autoActionQueueRef = useRef<string[]>([])
   const approvalRequiredRef = useRef(approvalRequired)
@@ -352,14 +491,80 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     }
   }, [])
 
-  const queueAutoExternalActionsAfterAnalysis = useCallback((options?: { approvalRequired?: boolean }) => {
-    const requiresApproval = options?.approvalRequired ?? approvalRequiredRef.current
-    if (autoExternalActionsTriggeredRef.current) return
-    autoExternalActionsTriggeredRef.current = true
-    autoActionQueueRef.current = requiresApproval ? ["create_tasks"] : ["create_tasks", "generate_miro"]
-    setTaskGenerationStatus("generating")
-    tryRunNextAutoAction()
-  }, [tryRunNextAutoAction])
+  const { selected: generationOutputsSelected } = useGenerationOutputs()
+  const [requestedGenerationOutputs, setRequestedGenerationOutputs] = useState<
+    GenerationOutputKey[]
+  >([])
+  const requestedGenerationOutputsRef = useRef<GenerationOutputKey[]>([])
+
+  // Low-level: queue and run the downstream external actions (create tasks,
+  // generate miro). Runs at most once per analysis cycle.
+  const triggerExternalActions = useCallback(
+    (options?: { requiresApproval?: boolean; generationOutputs?: GenerationOutputKey[] }) => {
+      if (autoExternalActionsTriggeredRef.current) return
+      autoExternalActionsTriggeredRef.current = true
+      const outputs = options?.generationOutputs ?? requestedGenerationOutputsRef.current
+      const requiresApproval = options?.requiresApproval ?? approvalRequiredRef.current
+      const queue: string[] = []
+      if (outputs.includes("recommended_tasks")) {
+        queue.push("create_tasks")
+      }
+      if (outputs.includes("recommended_decision_tree")) {
+        queue.push("create_decisions")
+      }
+      if (outputs.includes("miro_board") && !requiresApproval) {
+        queue.push("generate_miro")
+      }
+      if (queue.length === 0) {
+        autoExternalActionsTriggeredRef.current = false
+        return
+      }
+      autoActionQueueRef.current = queue
+      if (queue.includes("create_tasks")) {
+        setTaskGenerationStatus("generating")
+      }
+      if (queue.includes("create_decisions")) {
+        setDecisionGenerationStatus("generating")
+      }
+      tryRunNextAutoAction()
+    },
+    [tryRunNextAutoAction]
+  )
+
+  // After analysis: only auto-run downstream actions when there are no anomalies
+  // to review (clean dataset / already confirmed). When anomalies are present,
+  // defer until the user confirms them via confirm_anomalies.
+  const queueAutoExternalActionsAfterAnalysis = useCallback(
+    (options?: {
+      approvalRequired?: boolean
+      analysis?: AnalysisResult | null
+      generationOutputs?: GenerationOutputKey[]
+    }) => {
+      if (options && "analysis" in options) {
+        const anomalies = options.analysis?.anomalies ?? []
+        const alreadyConfirmed =
+          Boolean(options.analysis?.anomalies_confirmed) || anomalies.length === 0
+        if (anomalies.length > 0 && !alreadyConfirmed) {
+          return // wait for the user to confirm anomalies
+        }
+      }
+      triggerExternalActions({
+        requiresApproval: options?.approvalRequired,
+        generationOutputs: options?.generationOutputs,
+      })
+    },
+    [triggerExternalActions]
+  )
+
+  // After the user confirms anomalies: run downstream actions only if at least
+  // one anomaly was included. All-excluded => no tasks.
+  const runPostConfirmActions = useCallback(
+    (hasIncluded: boolean) => {
+      if (!hasIncluded) return
+      triggerExternalActions()
+    },
+    [triggerExternalActions]
+  )
 
   const setSessionId = useCallback((id: string | null) => {
     sessionIdRef.current = id
@@ -414,6 +619,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   const applySessionState = useCallback((session: Awaited<ReturnType<typeof AgentAPI.getSession>>) => {
     setSessionId(String(session.id))
+    setProjectId(session.project_id ? String(session.project_id) : null)
 
     // Restore messages and back-fill recommendedTasks onto analysis messages when needed.
     const restored = session.messages.map(restoreMessage)
@@ -463,21 +669,49 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     // task/decision data from a *previous* upload cycle does not carry over.
     const restoredStepState: WorkflowStepState = {
       analysisComplete: false,
+      anomaliesConfirmed: false,
       tasksCreated: false,
+      decisionsCreated: false,
     }
     for (const m of session.messages) {
-      if (m.data?.anomalies) {
+      const treeNodes = m.data?.recommended_decision_tree?.nodes
+      if (Array.isArray(treeNodes) && treeNodes.length > 0) {
+        latestDecisionTreeNodeCountRef.current = treeNodes.length
+      }
+      if (
+        m.message_type === "analysis" ||
+        hasPersistedAnalysisPayload(m.data)
+      ) {
         restoredStepState.analysisComplete = true
         restoredStepState.tasksCreated = false
+        restoredStepState.decisionsCreated = false
+        // A fresh analysis resets confirmation; clean datasets (no anomalies)
+        // and already-confirmed analyses are treated as confirmed.
+        restoredStepState.anomaliesConfirmed =
+          Boolean(m.data?.anomalies_confirmed) || (m.data?.anomalies?.length ?? 0) === 0
       }
       if (m.message_type === "task_created" || m.data?.task_ids) restoredStepState.tasksCreated = true
+      if (
+        m.message_type === "decision_draft" ||
+        (Array.isArray(m.data?.decision_ids) && m.data.decision_ids.length > 0)
+      ) {
+        restoredStepState.decisionsCreated = true
+      }
     }
     setStepState(restoredStepState)
+    const restoredOutputs = restoreGenerationOutputsFromMessages(session.messages)
+    if (restoredOutputs) {
+      requestedGenerationOutputsRef.current = restoredOutputs
+      setRequestedGenerationOutputs(restoredOutputs)
+    }
     if (restoredStepState.analysisComplete) {
       setAgentMessageBoardWaitingForFileAnalysisResponse(String(session.id), false)
     }
     const pendingTaskApprovalFromMessages = !restoredStepState.tasksCreated
       ? [...restored].reverse().find((message) => message.approval?.kind === "task")?.approval ?? null
+      : null
+    const pendingDecisionApprovalFromMessages = !restoredStepState.decisionsCreated
+      ? [...restored].reverse().find((message) => message.approval?.kind === "decision_tree")?.approval ?? null
       : null
     if (pendingTaskApprovalFromMessages) {
       setPendingTaskApproval(pendingTaskApprovalFromMessages)
@@ -502,12 +736,58 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       }
       setTaskGenerationStatus(restoredStepState.tasksCreated ? "completed" : "idle")
     }
+    const lastDecisionDraft = [...session.messages]
+      .reverse()
+      .find(
+        (m) =>
+          m.message_type === "decision_draft" ||
+          (Array.isArray(m.data?.created_decisions) && m.data.created_decisions.length > 0)
+      )
+    const createdDecisions = lastDecisionDraft?.data?.created_decisions
+    setCreatedDecisionByRef(mapCreatedDecisionsByRef(createdDecisions))
+    if (Array.isArray(createdDecisions)) {
+      const refs = createdDecisions
+        .map((entry: { ref?: string }) => String(entry?.ref ?? ""))
+        .filter((ref: string) => ref.length > 0)
+      setGeneratedDecisionRefs(Array.from(new Set(refs)))
+    } else {
+      setGeneratedDecisionRefs([])
+    }
+    if (pendingDecisionApprovalFromMessages) {
+      applyPendingDecisionApproval(pendingDecisionApprovalFromMessages)
+    } else {
+      setPendingDecisionApproval(null)
+      const restoredDecisionNodes = [...restored]
+        .reverse()
+        .find((message) => message.recommendedDecisionTree?.nodes?.length)
+        ?.recommendedDecisionTree?.nodes
+      if (
+        Boolean(session.approval_required) &&
+        restoredStepState.analysisComplete &&
+        !restoredStepState.decisionsCreated &&
+        Array.isArray(restoredDecisionNodes) &&
+        restoredDecisionNodes.length > 0
+      ) {
+        setSelectedDecisionRefs(restoredDecisionNodes.map((node) => node.ref))
+      }
+      setDecisionGenerationStatus(
+        restoredStepState.decisionsCreated ? "completed" : "idle"
+      )
+    }
     const recommendedTaskCount = latestRecommendedTasksRef.current?.length ?? 0
+    const wantsDecisions = (restoredOutputs ?? requestedGenerationOutputsRef.current).includes(
+      "recommended_decision_tree"
+    )
+    const wantsTasks = (restoredOutputs ?? requestedGenerationOutputsRef.current).includes(
+      "recommended_tasks"
+    )
     if (
       restoredStepState.analysisComplete &&
-      !restoredStepState.tasksCreated &&
-      recommendedTaskCount > 0 &&
-      !pendingTaskApprovalFromMessages
+      restoredStepState.anomaliesConfirmed &&
+      ((wantsTasks && !restoredStepState.tasksCreated && recommendedTaskCount > 0) ||
+        (wantsDecisions && !restoredStepState.decisionsCreated && latestDecisionTreeNodeCountRef.current > 0)) &&
+      !pendingTaskApprovalFromMessages &&
+      !pendingDecisionApprovalFromMessages
     ) {
       queueAutoExternalActionsAfterAnalysis({ approvalRequired: Boolean(session.approval_required) })
     }
@@ -524,6 +804,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     setSessionId,
     embeddedInFloating,
     queueAutoExternalActionsAfterAnalysis,
+    applyPendingDecisionApproval,
   ])
 
   const refreshFollowUpState = useCallback(async (id: string) => {
@@ -561,9 +842,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const resetTransientChatUiState = useCallback(() => {
     setStepProgress([])
     setPendingTaskApproval(null)
-    setPendingMiroApproval(null)
+    setPendingDecisionApproval(null)
     setTasksApprovalGenerating(false)
-    setMiroApprovalGenerating(false)
+    setDecisionsApprovalGenerating(false)
+    setMiroGenerateInFlight(false)
     stepProgressMsgIdRef.current = null
     pendingAutoConfirmRef.current = null
     autoExternalActionsTriggeredRef.current = false
@@ -582,7 +864,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
       }
       setMessages(dedupeMiroGenerationStartedMessages(restored))
-      const hasAnalysis = session.messages.some((message) => Boolean(message.data?.anomalies))
+      const hasAnalysis = session.messages.some(
+        (message) =>
+          message.message_type === "analysis" || hasPersistedAnalysisPayload(message.data)
+      )
       if (hasAnalysis) {
         setAgentMessageBoardWaitingForFileAnalysisResponse(String(id), false)
       }
@@ -616,6 +901,18 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       if (lastTaskCreated) {
         setStepState((prev) => ({ ...prev, tasksCreated: true }))
         setTaskGenerationStatus("completed")
+      }
+      const lastDecisionCreated = [...session.messages].reverse().find(
+        (m) =>
+          m.message_type === "decision_draft" ||
+          (Array.isArray(m.data?.decision_ids) && m.data.decision_ids.length > 0)
+      )
+      if (lastDecisionCreated) {
+        setStepState((prev) => ({ ...prev, decisionsCreated: true }))
+        setCreatedDecisionByRef(
+          mapCreatedDecisionsByRef(lastDecisionCreated.data?.created_decisions)
+        )
+        setDecisionGenerationStatus("completed")
       }
     } catch {
       // ignore refresh failures; next restore/poll can retry
@@ -660,37 +957,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     const intervalId = window.setInterval(async () => {
       try {
         const session = await AgentAPI.getSession(sessionId)
-        // Re-apply the same backfill logic as applySessionState so that
-        const restored = session.messages.map(restoreMessage)
-        setMessages(dedupeMiroGenerationStartedMessages(restored))
-        setFollowUpAvailable(Boolean(session.follow_up_available))
-        setFollowUpStarted(Boolean(session.follow_up_started))
-        setApprovalRequired(Boolean(session.approval_required))
-        const lastTaskCreated = [...session.messages].reverse().find(
-          (m) => m.message_type === "task_created" || (m.data?.task_ids && m.data.task_ids.length > 0)
-        )
-        const created = (lastTaskCreated as any)?.data?.created_tasks
-        if (Array.isArray(created)) {
-          const idxs = created
-            .map((c: any) => Number(c?.index))
-            .filter((n: unknown) => typeof n === "number" && Number.isFinite(n))
-          setGeneratedTaskIndexes(Array.from(new Set(idxs)))
-          const pairs = created
-            .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-            .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
-          setCreatedTaskIdByIndex(Object.fromEntries(pairs))
-        }
-        if (lastTaskCreated) {
-          setStepState((prev) => ({ ...prev, tasksCreated: true }))
-          setTaskGenerationStatus("completed")
-        }
+        if (String(sessionIdRef.current) !== String(sessionId)) return
+        applySessionState(session)
       } catch {
         // ignore polling failures; next cycle can retry
       }
     }, 5000)
 
     return () => window.clearInterval(intervalId)
-  }, [sessionId, messages])
+  }, [sessionId, messages, applySessionState])
 
   // Restore session on mount
   useEffect(() => {
@@ -721,7 +996,12 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       setFollowUpStarted(false)
       setSessionTitle("Chat")
       setApprovalRequired(getApprovalPref())
-      setStepState({ analysisComplete: false, tasksCreated: false })
+setStepState({
+      analysisComplete: false,
+      anomaliesConfirmed: false,
+      tasksCreated: false,
+      decisionsCreated: false,
+    })
       setGeneratedTaskIndexes([])
       setSkippedTaskIndexes([])
       setCreatedTaskIdByIndex({})
@@ -747,6 +1027,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       invalidateActiveStreams()
       resetTransientChatUiState()
       setSessionId(null)
+      setProjectId(null)
       sessionStorage.removeItem("agent-session-calendar-context")
       setMessages([])
       setSessionCalendarContext(null)
@@ -755,7 +1036,12 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       setFollowUpStarted(false)
       setSessionTitle("Chat")
       setApprovalRequired(false)
-      setStepState({ analysisComplete: false, tasksCreated: false })
+setStepState({
+      analysisComplete: false,
+      anomaliesConfirmed: false,
+      tasksCreated: false,
+      decisionsCreated: false,
+    })
     }
 
     const handleLoadSession = (e: Event) => {
@@ -787,9 +1073,19 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   /** Handle file upload — calls upload-analyze SSE endpoint */
   const handleFileUpload = useCallback(async (file: File, userContext?: string) => {
+    if (generationOutputsSelected.length === 0) return
+    const outputsForUpload = [...generationOutputsSelected]
+    requestedGenerationOutputsRef.current = outputsForUpload
+    setRequestedGenerationOutputs(outputsForUpload)
+
     setHasStarted(true)
     // Reset workflow state so a new upload always starts from analysis
-    setStepState({ analysisComplete: false, tasksCreated: false })
+setStepState({
+      analysisComplete: false,
+      anomaliesConfirmed: false,
+      tasksCreated: false,
+      decisionsCreated: false,
+    })
     setGeneratedTaskIndexes([])
     setSkippedTaskIndexes([])
     setCreatedTaskIdByIndex({})
@@ -845,12 +1141,18 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     abortRef.current = AgentAPI.uploadAndAnalyze(
       file,
       sid,
+      outputsForUpload,
       userContext || null,
       (event: SSEEvent) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
 
         if (event.type === "file_uploaded") {
+          const fromServer = event.data?.generation_outputs
+          if (Array.isArray(fromServer) && fromServer.length > 0) {
+            requestedGenerationOutputsRef.current = fromServer as GenerationOutputKey[]
+            setRequestedGenerationOutputs(fromServer as GenerationOutputKey[])
+          }
           // File confirmed uploaded — update thinking message
           updateMessage(aiMsgId, {
             content: event.content || "File uploaded. Analyzing...",
@@ -900,29 +1202,57 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           setAgentMessageBoardWaitingForFileAnalysisResponse(requestSessionId, false)
           contentParts.push(event.content || "")
           analysisData = (event.data as unknown as AnalysisResult) || null
-          latestRecommendedTasksRef.current = analysisData?.recommended_tasks || null
+          const wantsTasks = requestedGenerationOutputsRef.current.includes("recommended_tasks")
+          const wantsDecisions =
+            requestedGenerationOutputsRef.current.includes("recommended_decision_tree")
+          const tasks = wantsTasks ? analysisData?.recommended_tasks : undefined
+          latestRecommendedTasksRef.current = tasks || null
+          syncDecisionTreeNodeCount(analysisData)
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
-          setStepState((prev) => ({ ...prev, analysisComplete: true }))
+          const anomConfirmed =
+            Boolean(analysisData?.anomalies_confirmed) ||
+            (analysisData?.anomalies?.length ?? 0) === 0
+          setStepState((prev) => ({
+            ...prev,
+            analysisComplete: true,
+            anomaliesConfirmed: anomConfirmed,
+          }))
           setGeneratedTaskIndexes([])
           setSkippedTaskIndexes([])
           setCreatedTaskIdByIndex({})
+          setCreatedDecisionByRef({})
+          setDecisionGenerationStatus("idle")
           updateMessage(aiMsgId, {
             content: contentParts.join("\n"),
             type: "analysis",
-            anomalies: analysisData?.anomalies,
-            recommendedTasks: analysisData?.recommended_tasks,
+            anomalies: wantsTasks ? analysisData?.anomalies : undefined,
+            anomaliesConfirmed: anomConfirmed,
+            recommendedTasks: tasks,
+            recommendedDecisionTree: pickRecommendedDecisionTree(analysisData, wantsDecisions),
           })
-          selectAllRecommendedTasks(analysisData?.recommended_tasks?.length ?? 0)
-          queueAutoExternalActionsAfterAnalysis()
-          // Individual anomalies are added to the right panel via the
-          // AnomalyCard "+ Add" button — no auto-broadcast on new analysis.
+          if (wantsTasks) {
+            selectAllRecommendedTasks(tasks?.length ?? 0)
+          }
+          if (wantsDecisions) {
+            const refs =
+              analysisData?.recommended_decision_tree?.nodes?.map((node) => node.ref) ?? []
+            selectAllRecommendedDecisionRefs(refs)
+          }
+          queueAutoExternalActionsAfterAnalysis({
+            analysis: analysisData,
+            generationOutputs: requestedGenerationOutputsRef.current,
+          })
+        } else if (event.type === "calendar_events" && event.data) {
+          const events =
+            (event.data.calendar_events as SuggestedCalendarEvent[] | undefined) ?? []
+          updateMessage(aiMsgId, { calendarEvents: events })
         } else if (event.type === "confirmation_request") {
-          // If column mapping already shown, don't overwrite the card — just
-          // silently wait for user confirmation via ColumnMappingCard buttons.
           if (!columnMappingReceived) {
-            contentParts.push(event.content || "")
-            updateMessage(aiMsgId, { content: contentParts.join("\n") })
+            updateMessage(aiMsgId, {
+              content: event.content || "Please confirm to continue.",
+              type: "confirmation_request",
+            })
           }
         } else if (event.type === "approval_request" && event.data) {
           const d = event.data as Record<string, unknown>
@@ -938,10 +1268,17 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
+          } else if (kind === "decision_tree") {
+            applyPendingDecisionApproval(pending)
           }
+        } else if (event.type === "decision_draft" && event.data) {
+          applyDecisionDraftResult(event.data as Record<string, unknown>)
+          updateMessage(aiMsgId, {
+            content: contentParts.join("\n"),
+            type: "decisions_created",
+            navigateTo: "decisions",
+            navigateLabel: "Go to Decisions",
+          })
         } else if (event.type === "follow_up_prompt") {
           contentParts.push(event.content || "")
           setFollowUpAvailable(false)
@@ -1008,7 +1345,18 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
       }
     )
-  }, [sessionId, addMessage, updateMessage, setSessionId, refreshFollowUpState, refreshSession, getApprovalPref, embeddedInFloating, queueAutoExternalActionsAfterAnalysis])
+  }, [
+    sessionId,
+    addMessage,
+    updateMessage,
+    setSessionId,
+    refreshFollowUpState,
+    refreshSession,
+    getApprovalPref,
+    embeddedInFloating,
+    queueAutoExternalActionsAfterAnalysis,
+    generationOutputsSelected,
+  ])
 
   /** Confirm detected column mapping and resume paused workflow */
   const handleConfirmColumns = useCallback(async (mapping: Record<string, string>) => {
@@ -1077,20 +1425,44 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
         if (event.type === "analysis" && event.data) {
           const data = event.data as unknown as AnalysisResult
-          latestRecommendedTasksRef.current = data.recommended_tasks || null
+          const wantsTasks = requestedGenerationOutputsRef.current.includes("recommended_tasks")
+          const wantsDecisions =
+            requestedGenerationOutputsRef.current.includes("recommended_decision_tree")
+          const tasks = wantsTasks ? data.recommended_tasks : undefined
+          latestRecommendedTasksRef.current = tasks || null
+          syncDecisionTreeNodeCount(data)
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
-          setStepState((prev) => ({ ...prev, analysisComplete: true }))
+          const anomConfirmed =
+            Boolean(data.anomalies_confirmed) || (data.anomalies?.length ?? 0) === 0
+          setStepState((prev) => ({
+            ...prev,
+            analysisComplete: true,
+            anomaliesConfirmed: anomConfirmed,
+          }))
           setGeneratedTaskIndexes([])
           setSkippedTaskIndexes([])
           setCreatedTaskIdByIndex({})
+          setCreatedDecisionByRef({})
+          setDecisionGenerationStatus("idle")
           updateMessage(aiMsgId, {
             type: "analysis",
-            anomalies: data.anomalies,
-            recommendedTasks: data.recommended_tasks,
+            anomalies: wantsTasks ? data.anomalies : undefined,
+            anomaliesConfirmed: anomConfirmed,
+            recommendedTasks: tasks,
+            recommendedDecisionTree: pickRecommendedDecisionTree(data, wantsDecisions),
           })
-          selectAllRecommendedTasks(data.recommended_tasks?.length ?? 0)
-          queueAutoExternalActionsAfterAnalysis()
+          if (wantsTasks) {
+            selectAllRecommendedTasks(tasks?.length ?? 0)
+          }
+          if (wantsDecisions) {
+            const refs = data.recommended_decision_tree?.nodes?.map((node) => node.ref) ?? []
+            selectAllRecommendedDecisionRefs(refs)
+          }
+          queueAutoExternalActionsAfterAnalysis({
+            analysis: data,
+            generationOutputs: requestedGenerationOutputsRef.current,
+          })
         }
         if (event.type === "approval_request" && event.data) {
           const d = event.data as Record<string, unknown>
@@ -1106,9 +1478,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
+          } else if (kind === "decision_tree") {
+            applyPendingDecisionApproval(pending)
           }
         }
         if (event.type === "task_created" && event.data) {
@@ -1136,6 +1507,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             type: "tasks_created",
             navigateTo: "tasks",
             navigateLabel: "Go to Tasks",
+          })
+        }
+        if (event.type === "decision_draft" && event.data) {
+          applyDecisionDraftResult(event.data as Record<string, unknown>)
+          updateMessage(aiMsgId, {
+            content: contentParts.join("\n"),
+            type: "decisions_created",
+            navigateTo: "decisions",
+            navigateLabel: "Go to Decisions",
           })
         }
       },
@@ -1176,6 +1556,47 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   // Keep ref in sync so handleFileUpload's done handler can call the latest version
   handleConfirmColumnsRef.current = handleConfirmColumns
 
+  /**
+   * Confirm the user's anomaly review. Persists the reviewed list, locks the
+   * card read-only, and (only if anomalies were included) runs the downstream
+   * task/miro actions. All-excluded confirms but creates nothing.
+   */
+  const handleConfirmAnomalies = useCallback(
+    (messageId: string, reviewed: import("@/types/agent").ReviewedAnomaly[]) => {
+      const sid = sessionIdRef.current
+      if (!sid) return
+      const requestSessionId = String(sid)
+
+      AgentAPI.sendMessage(
+        sid,
+        { message: "confirm_anomalies", action: "confirm_anomalies", reviewed_anomalies: reviewed },
+        (event: SSEEvent) => {
+          if (String(sessionIdRef.current) !== requestSessionId) return
+          if (event.type === "anomalies_confirmed") {
+            const data = (event.data as unknown as AnalysisResult) || null
+            const reviewedList = data?.reviewed_anomalies ?? []
+            const includedCount = reviewedList.filter((a) => a.included !== false).length
+            setStepState((prev) => ({ ...prev, anomaliesConfirmed: true }))
+            updateMessage(messageId, {
+              anomaliesConfirmed: true,
+              ...(reviewedList.length > 0 ? { anomalies: reviewedList } : {}),
+            })
+            runPostConfirmActions(includedCount > 0)
+          } else if (event.type === "error") {
+            // Leave the card editable for retry; surface the error inline.
+            addMessage({
+              id: `ai-anom-err-${Date.now()}`,
+              role: "assistant",
+              content: event.content || "Failed to confirm anomalies.",
+              type: "error",
+            })
+          }
+        }
+      )
+    },
+    [addMessage, updateMessage, runPostConfirmActions]
+  )
+
   /** Re-upload: reset to welcome screen so the user can upload a different file */
   const handleReupload = useCallback(() => {
     sessionIdRef.current = null
@@ -1187,20 +1608,45 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     setFollowUpAvailable(false)
     setFollowUpStarted(false)
     setStepProgress([])
-    setStepState({ analysisComplete: false, tasksCreated: false })
+setStepState({
+      analysisComplete: false,
+      anomaliesConfirmed: false,
+      tasksCreated: false,
+      decisionsCreated: false,
+    })
     setGeneratedTaskIndexes([])
     setSkippedTaskIndexes([])
+    setCreatedDecisionByRef({})
+    setDecisionGenerationStatus("idle")
     latestRecommendedTasksRef.current = null
+    latestDecisionTreeNodeCountRef.current = 0
     autoExternalActionsTriggeredRef.current = false
     autoActionQueueRef.current = []
+    requestedGenerationOutputsRef.current = []
+    setRequestedGenerationOutputs([])
     abortRef.current?.abort()
   }, [setSessionId])
 
-  /** Handle text message send */
+  /** Resume a workflow paused at await_confirmation (Continue button). */
+  const handleResumeWorkflow = useCallback((confirmMessageId: string) => {
+    void handleSendMessageRef.current?.(
+      "",
+      undefined,
+      undefined,
+      undefined,
+      "resume_workflow",
+      confirmMessageId,
+    )
+  }, [])
+
+  /** Handle text message send. Pass workflowId when user confirms an AI-matched workflow. */
   const handleSendMessage = useCallback(async (
     text: string,
     calendarContext?: Record<string, unknown>,
     userContext?: string,
+    workflowId?: string,
+    action?: AgentAction,
+    reuseAiMsgId?: string,
   ) => {
     setHasStarted(true)
     // Use provided context or fall back to the session-level calendar context
@@ -1209,8 +1655,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       setSessionCalendarContext(calendarContext)
     }
 
-    const userMsgId = `user-${Date.now()}`
-    addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    const isResumeOnly = action === "resume_workflow"
+    if (!isResumeOnly && text.trim()) {
+      const userMsgId = `user-${Date.now()}`
+      addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    }
 
     // Create session if needed
     let sid = sessionId
@@ -1233,8 +1682,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       }
     }
 
-    const aiMsgId = `ai-${Date.now()}`
-    addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    const aiMsgId = reuseAiMsgId ?? `ai-${Date.now()}`
+    if (reuseAiMsgId) {
+      updateMessage(reuseAiMsgId, {
+        content: "Continuing workflow…",
+        type: "text",
+      })
+    } else {
+      addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    }
 
     setIsStreaming(true)
     setStepProgress([])
@@ -1245,7 +1701,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     abortRef.current = AgentAPI.sendMessage(
       sid!,
       {
-        message: text,
+        message: isResumeOnly ? "Continue" : text,
+        ...(workflowId ? { workflow_id: workflowId } : {}),
+        ...(action ? { action } : {}),
         ...(effectiveCalendarContext ? { calendar_context: effectiveCalendarContext as any } : {}),
         user_context: userContext || undefined,
       },
@@ -1295,17 +1753,21 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
+            addMessage({
+              id: `approval-${approvalId}`,
+              role: "assistant",
+              content: event.content || "Approval required.",
+              type: "approval_request",
+              approval: pending,
+            })
           }
+          return
+        }
 
-          addMessage({
-            id: `approval-${approvalId}`,
-            role: "assistant",
-            content: event.content || "Approval required.",
-            type: "approval_request",
-            approval: pending,
+        if (event.type === "confirmation_request") {
+          updateMessage(aiMsgId, {
+            content: event.content || "Please confirm to continue.",
+            type: "confirmation_request",
           })
           return
         }
@@ -1354,22 +1816,44 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
         if (event.type === "analysis" && event.data) {
           const data = event.data as unknown as AnalysisResult
-          latestRecommendedTasksRef.current = data.recommended_tasks || null
+          const wantsTasks = requestedGenerationOutputsRef.current.includes("recommended_tasks")
+          const wantsDecisions =
+            requestedGenerationOutputsRef.current.includes("recommended_decision_tree")
+          const tasks = wantsTasks ? data.recommended_tasks : undefined
+          latestRecommendedTasksRef.current = tasks || null
+          syncDecisionTreeNodeCount(data)
           setFollowUpAvailable(true)
           setFollowUpStarted(false)
-          setStepState((prev) => ({ ...prev, analysisComplete: true }))
+          const anomConfirmed =
+            Boolean(data.anomalies_confirmed) || (data.anomalies?.length ?? 0) === 0
+          setStepState((prev) => ({
+            ...prev,
+            analysisComplete: true,
+            anomaliesConfirmed: anomConfirmed,
+          }))
           setGeneratedTaskIndexes([])
           setSkippedTaskIndexes([])
           setCreatedTaskIdByIndex({})
+          setCreatedDecisionByRef({})
+          setDecisionGenerationStatus("idle")
           updateMessage(aiMsgId, {
             type: "analysis",
-            anomalies: data.anomalies,
-            recommendedTasks: data.recommended_tasks,
+            anomalies: wantsTasks ? data.anomalies : undefined,
+            anomaliesConfirmed: anomConfirmed,
+            recommendedTasks: tasks,
+            recommendedDecisionTree: pickRecommendedDecisionTree(data, wantsDecisions),
           })
-          selectAllRecommendedTasks(data.recommended_tasks?.length ?? 0)
-          // Individual anomalies are added to the right panel via the
-          // AnomalyCard "+ Add" button — no auto-broadcast on new analysis.
-          queueAutoExternalActionsAfterAnalysis()
+          if (wantsTasks) {
+            selectAllRecommendedTasks(tasks?.length ?? 0)
+          }
+          if (wantsDecisions) {
+            const refs = data.recommended_decision_tree?.nodes?.map((node) => node.ref) ?? []
+            selectAllRecommendedDecisionRefs(refs)
+          }
+          queueAutoExternalActionsAfterAnalysis({
+            analysis: data,
+            generationOutputs: requestedGenerationOutputsRef.current,
+          })
         }
         if (event.type === "task_created" && event.data) {
           setStepState((prev) => ({ ...prev, tasksCreated: true }))
@@ -1395,12 +1879,24 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             navigateLabel: "Go to Tasks",
           })
         }
+        if (event.type === "decision_draft" && event.data) {
+          applyDecisionDraftResult(event.data as Record<string, unknown>)
+          updateMessage(aiMsgId, {
+            content: contentParts.join("\n"),
+            type: "decisions_created",
+            navigateTo: "decisions",
+            navigateLabel: "Go to Decisions",
+          })
+        }
         if (event.type === "miro_status") {
-          setPendingMiroApproval(null)
-          setMiroApprovalGenerating(false)
+          setMiroGenerateInFlight(false)
           const rawWr = event.data?.workflow_run_id
           const workflowRunId =
             typeof rawWr === "string" ? rawWr : rawWr != null ? String(rawWr) : undefined
+          const startedEventType =
+            typeof event.data?.event_type === "string"
+              ? event.data.event_type
+              : "miro_generation_started"
 
           setMessages((prev) => {
             const next = mergeMiroGenerationStartedIntoMessages(prev, aiMsgId, {
@@ -1410,7 +1906,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
               navigateLabel: "Generating Miro...",
               navigateDisabled: true,
               navigateHref: undefined,
-              eventType: "miro_generation_started",
+              eventType: startedEventType,
               workflowRunId,
             })
             return appendMiroResultMessage(next, event)
@@ -1429,15 +1925,19 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       (error) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        if (error.message === "quota_error") {
+          // The global UpgradeModal already explains the block; drop the optimistic
+          // thinking placeholder instead of leaving an "Error: quota_error" bubble.
+          setMessages((prev) => prev.filter((m) => m.id !== aiMsgId))
+        } else {
+          updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        }
         setIsStreaming(false)
       },
       () => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        void refreshSession(requestSessionId)
-        void refreshFollowUpState(requestSessionId)
-        // Attach final step progress to the message
+        // Attach final step progress before refresh (refresh reloads messages from DB)
         setStepProgress((prev) => {
           if (prev.length > 0) {
             const final = prev.map((s) => ({
@@ -1450,6 +1950,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           return prev
         })
         setIsStreaming(false)
+        void refreshSession(requestSessionId)
+        void refreshFollowUpState(requestSessionId)
         if (embeddedInFloating) {
           window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
           void AgentAPI.updateSession(requestSessionId, { last_read_at: new Date().toISOString() }).catch(() => {
@@ -1469,9 +1971,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     if (!sid) return
 
     const actionMap: Record<string, AgentAction> = {
+      create_decisions: "create_decisions",
       create_tasks: "create_tasks",
       generate_miro: "generate_miro",
-      distribute_message: "distribute_message",
       start_follow_up: "start_follow_up",
       cancel_follow_up: "cancel_follow_up",
     }
@@ -1480,6 +1982,12 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
     if (action === "create_tasks") {
       setTaskGenerationStatus("generating")
+    }
+    if (action === "create_decisions") {
+      setDecisionGenerationStatus("generating")
+    }
+    if (action === "generate_miro") {
+      setMiroGenerateInFlight(true)
     }
 
     const aiMsgId = `ai-${Date.now()}`
@@ -1562,12 +2070,25 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
             navigateLabel: "Go to Tasks",
           })
         }
+        if (event.type === "decision_draft" && event.data) {
+          applyDecisionDraftResult(event.data as Record<string, unknown>)
+          updateMessage(aiMsgId, {
+            content: contentParts.join("\n"),
+            type: "decisions_created",
+            navigateTo: "decisions",
+            navigateLabel: "Go to Decisions",
+          })
+        }
         if (event.type === "miro_status") {
-          setPendingMiroApproval(null)
-          setMiroApprovalGenerating(false)
+          setMiroGenerateInFlight(false)
           const rawWr = event.data?.workflow_run_id
           const workflowRunId =
             typeof rawWr === "string" ? rawWr : rawWr != null ? String(rawWr) : undefined
+
+          const startedEventType =
+            typeof event.data?.event_type === "string"
+              ? event.data.event_type
+              : "miro_generation_started"
 
           setMessages((prev) => {
             const next = mergeMiroGenerationStartedIntoMessages(prev, aiMsgId, {
@@ -1577,7 +2098,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
               navigateLabel: "Generating Miro...",
               navigateDisabled: true,
               navigateHref: undefined,
-              eventType: "miro_generation_started",
+              eventType: startedEventType,
               workflowRunId,
             })
             return appendMiroResultMessage(next, event)
@@ -1606,13 +2127,15 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
           if (kind === "task") {
             applyPendingTaskApproval(pending)
-          } else if (kind === "miro_board") {
-            setPendingMiroApproval(pending)
-            setMiroApprovalGenerating(false)
+          } else if (kind === "decision_tree") {
+            applyPendingDecisionApproval(pending)
           }
         }
         if (event.type === "error" && action === "create_tasks") {
           setTaskGenerationStatus("error")
+        }
+        if (event.type === "error" && action === "create_decisions") {
+          setDecisionGenerationStatus("error")
         }
       },
       (error) => {
@@ -1620,6 +2143,12 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         if (String(sessionIdRef.current) !== requestSessionId) return
         if (action === "create_tasks") {
           setTaskGenerationStatus("error")
+        }
+        if (action === "create_decisions") {
+          setDecisionGenerationStatus("error")
+        }
+        if (action === "generate_miro") {
+          setMiroGenerateInFlight(false)
         }
         updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
         setIsStreaming(false)
@@ -1629,6 +2158,9 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         if (String(sessionIdRef.current) !== requestSessionId) return
         if (action === "create_tasks") {
           setTaskGenerationStatus((status) => (status === "generating" ? "error" : status))
+        }
+        if (action === "create_decisions") {
+          setDecisionGenerationStatus((status) => (status === "generating" ? "error" : status))
         }
         void refreshSession(requestSessionId)
         void refreshFollowUpState(requestSessionId)
@@ -1653,7 +2185,16 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
       }
     )
-  }, [addMessage, updateMessage, setMessages, refreshFollowUpState, refreshSession, embeddedInFloating, applyPendingTaskApproval])
+  }, [
+    addMessage,
+    updateMessage,
+    setMessages,
+    refreshFollowUpState,
+    refreshSession,
+    embeddedInFloating,
+    applyPendingTaskApproval,
+    applyDecisionDraftResult,
+  ])
 
   useEffect(() => {
     handleActionRef.current = handleAction
@@ -1662,9 +2203,22 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   useEffect(() => {
     if (isStreamingRef.current || !sessionIdRef.current) return
     if (approvalRequiredRef.current) return
-    if (!stepState.analysisComplete || stepState.tasksCreated) return
-    if (pendingTaskApproval) return
-    if ((latestRecommendedTasksRef.current?.length ?? 0) === 0) return
+    if (!stepState.analysisComplete) return
+    // Do not auto-run downstream actions until anomalies are confirmed.
+    if (!stepState.anomaliesConfirmed) return
+    if (pendingTaskApproval || pendingDecisionApproval) return
+    const outputs = requestedGenerationOutputsRef.current
+    const wantsTasks = outputs.includes("recommended_tasks")
+    const wantsDecisions = outputs.includes("recommended_decision_tree")
+    const needsTasks =
+      wantsTasks &&
+      !stepState.tasksCreated &&
+      (latestRecommendedTasksRef.current?.length ?? 0) > 0
+    const needsDecisions =
+      wantsDecisions &&
+      !stepState.decisionsCreated &&
+      latestDecisionTreeNodeCountRef.current > 0
+    if (!needsTasks && !needsDecisions) return
     if (autoExternalActionsTriggeredRef.current) return
     queueAutoExternalActionsAfterAnalysis()
   }, [
@@ -1672,8 +2226,11 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     isStreaming,
     approvalRequired,
     stepState.analysisComplete,
+    stepState.anomaliesConfirmed,
     stepState.tasksCreated,
+    stepState.decisionsCreated,
     pendingTaskApproval,
+    pendingDecisionApproval,
     queueAutoExternalActionsAfterAnalysis,
   ])
 
@@ -1704,7 +2261,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           if (activeStreamTokenRef.current !== streamToken) return
           if (String(sessionIdRef.current) !== requestSessionId) return
           if (pending.kind === "task") setTasksApprovalGenerating(false)
-          if (pending.kind === "miro_board") setMiroApprovalGenerating(false)
+          if (pending.kind === "decision_tree") setDecisionsApprovalGenerating(false)
         },
         () => {
           if (activeStreamTokenRef.current !== streamToken) return
@@ -1758,22 +2315,35 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
     setPendingTaskApproval(null)
   }, [pendingTaskApproval, resolveExternalApproval])
 
-  const handleApproveMiroApproval = useCallback(
-    () => {
-      if (!pendingMiroApproval) return
-      setMiroApprovalGenerating(true)
-      resolveExternalApproval(pendingMiroApproval, "approve", {})
-      setPendingMiroApproval(null)
-    },
-    [pendingMiroApproval, resolveExternalApproval]
-  )
+  const handleApproveSelectedDecisions = useCallback(
+    (selectedRefs: string[]) => {
+      if (!pendingDecisionApproval) return
+      const nodes =
+        (pendingDecisionApproval.draft as { recommended_decision_tree?: { nodes?: RecommendedDecisionTreeNode[] } })
+          ?.recommended_decision_tree?.nodes ?? []
+      if (!Array.isArray(nodes) || nodes.length === 0) return
 
-  const handleRejectMiroApproval = useCallback(() => {
-    if (!pendingMiroApproval) return
-    setMiroApprovalGenerating(false)
-    resolveExternalApproval(pendingMiroApproval, "reject")
-    setPendingMiroApproval(null)
-  }, [pendingMiroApproval, resolveExternalApproval])
+      const selectedSet = new Set(selectedRefs)
+      const skipped = nodes.map((node) => node.ref).filter((ref) => !selectedSet.has(ref))
+      setSkippedDecisionRefs(skipped)
+
+      const filteredNodes = nodes
+        .filter((node) => selectedSet.has(node.ref))
+        .map((node) => ({
+          ...node,
+          parent_refs: (node.parent_refs || []).filter((parentRef) => selectedSet.has(parentRef)),
+        }))
+
+      setDecisionsApprovalGenerating(true)
+      setPendingDecisionApproval(null)
+      setSelectedDecisionRefs([])
+      setDecisionGenerationStatus("generating")
+      resolveExternalApproval(pendingDecisionApproval, "approve", {
+        recommended_decision_tree: { nodes: filteredNodes },
+      })
+    },
+    [pendingDecisionApproval, resolveExternalApproval]
+  )
 
   // Auto-run queued external actions when streaming is idle.
   useEffect(() => {
@@ -1794,32 +2364,34 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   return (
     <div className="flex h-full flex-col">
+      <OnboardingTokenIntro />
       {!embeddedInFloating && (
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 shrink-0 bg-background">
           <h2 className="text-sm font-semibold truncate text-foreground">{sessionTitle}</h2>
-          {sessionId ? (
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[11px] text-muted-foreground font-medium">
-                Approval
-              </span>
-              <ApprovalToggle
-                sessionId={sessionId}
-                value={approvalRequired}
-                onChange={(next) => {
-                  setApprovalRequired(next)
-                  if (typeof window !== "undefined") {
-                    window.dispatchEvent(new CustomEvent("agent:approval-changed", { detail: { sessionId, value: next } }))
+          <div className="flex items-center gap-2 shrink-0">
+            <GenerationOutputsSettings
+              disabled={isStreaming}
+              sessionId={sessionId}
+              approvalRequired={approvalRequired}
+              onApprovalChange={(next) => {
+                setApprovalRequired(next)
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(
+                    new CustomEvent("agent:approval-changed", {
+                      detail: { sessionId, value: next },
+                    })
+                  )
+                  if (sessionId) {
                     window.dispatchEvent(
                       new CustomEvent("agent:session-state", {
                         detail: { sessionId, title: sessionTitle, approvalRequired: next },
                       })
                     )
                   }
-                }}
-                disabled={isStreaming}
-              />
-            </div>
-          ) : null}
+                }
+              }}
+            />
+          </div>
         </div>
       )}
       {!hasStarted ? (
@@ -1834,6 +2406,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         {...({
           messages,
           sessionId,
+          projectId,
+          requestedGenerationOutputs,
           isStreaming,
           showRevisitThinkingBubble,
           onRenderFinishChange: () => setRenderFinishSignal((prev) => prev + 1),
@@ -1843,20 +2417,30 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
           skippedTaskIndexes,
           createdTaskIdByIndex,
           generatingTasks: !approvalRequired && stepState.analysisComplete && !stepState.tasksCreated,
+          generatingDecisions:
+            !approvalRequired && stepState.analysisComplete && !stepState.decisionsCreated,
           taskGenerationStatus,
+          decisionGenerationStatus,
+          createdDecisionByRef,
           pendingTaskApproval,
+          pendingDecisionApproval,
           selectedTaskIndexes,
           onSelectedTaskIndexesChange: setSelectedTaskIndexes,
           tasksApprovalGenerating,
           onApproveSelectedTasks: handleApproveSelectedTasks,
           onRejectTasksApproval: handleRejectTasksApproval,
-          pendingMiroApproval,
-          miroApprovalGenerating,
-          onApproveMiroApproval: handleApproveMiroApproval,
-          onRejectMiroApproval: handleRejectMiroApproval,
+          selectedDecisionRefs,
+          onSelectedDecisionRefsChange: setSelectedDecisionRefs,
+          skippedDecisionRefs,
+          generatedDecisionRefs,
+          decisionsApprovalGenerating,
+          onApproveSelectedDecisions: handleApproveSelectedDecisions,
+          miroGenerateInFlight,
           onAction: handleAction,
           onConfirmColumns: handleConfirmColumns,
+          onConfirmAnomalies: handleConfirmAnomalies,
           onReupload: handleReupload,
+          onResumeWorkflow: handleResumeWorkflow,
           latestAnalysisMessageId,
           showFollowUpToggle: followUpAvailable || followUpStarted,
           followUpActive: followUpStarted,
@@ -1868,6 +2452,10 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         }
         if (view === "tasks") {
           router.push("/tasks")
+          return
+        }
+        if (view === "decisions") {
+          router.push("/decisions")
           return
         }
         setActiveView(view as AgentView)

@@ -1,4 +1,7 @@
-from django.db import migrations, models
+# Placeholder migration - operations already in 0001_initial.py
+# This migration exists only to maintain the dependency chain for other apps.
+
+from django.db import migrations
 
 
 class Migration(migrations.Migration):
@@ -8,9 +11,5 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='agentworkflowrun',
-            name='success_criteria',
-            field=models.JSONField(blank=True, null=True),
-        ),
+        # Operations already applied in 0001_initial (compressed migration)
     ]

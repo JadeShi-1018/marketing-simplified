@@ -22,11 +22,6 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
   setUnreadCount: (count) => set({ unreadCount: count }),
   setChatActivityCount: (count) => set({ chatActivityCount: count }),
   triggerRefresh: () => {
-    if (process.env.NODE_ENV === "development") {
-      console.log(
-        "[notificationStore] triggerRefresh — consumers should refetch notifications / bell"
-      );
-    }
     set({ lastRefresh: Date.now() });
   },
 }));

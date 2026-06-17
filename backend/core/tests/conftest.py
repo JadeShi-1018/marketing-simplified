@@ -30,11 +30,21 @@ def api_client():
 @pytest.fixture
 @pytest.mark.django_db
 def organization():
-    """Create a test organization"""
-    return Organization.objects.create(
+    """Create a test organization.
+
+    The post-save signal auto-subscribes the org to the Free (1-seat) plan.
+    Member-management tests here predate the SMP-560 seat cap and assume an org
+    can freely invite/approve members, so give the fixture org generous seats.
+    Tests that specifically exercise the seat cap build their own org+subscription
+    (see core/tests/test_seat_cap_invite.py) and are unaffected.
+    """
+    org = Organization.objects.create(
         name="Test Organization",
-        email_domain="test.com"
+        email_domain="test.com",
     )
+    from stripe_meta.models import Subscription  # local import: avoid app-load issues
+    Subscription.objects.filter(organization=org, is_active=True).update(seat_count=25)
+    return org
 
 
 @pytest.fixture
@@ -139,4 +149,3 @@ def authenticated_client(api_client, user):
     """API client authenticated as user"""
     api_client.force_authenticate(user=user)
     return api_client
-

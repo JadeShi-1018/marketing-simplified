@@ -6,6 +6,7 @@ the logic for that particular action.
 """
 import logging
 import os
+from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -53,44 +54,73 @@ class AnalyzeDataExecutor(BaseStepExecutor):
             return StepResult(success=False, error='No spreadsheet_data in input')
 
         try:
+            from .generation_registry import (
+                GenerationValidationError,
+                filter_sse_analysis_payload,
+                normalize_generation_outputs,
+            )
+
             user_id = str(self.orchestrator.user.id)
             success_criteria = (
                 input_data.get('success_criteria')
                 or (self.workflow_run.success_criteria if self.workflow_run.success_criteria else None)
             )
-            user_context = self.workflow_run.user_context or None
+            user_context = cache.get(f"agent:context:{self.workflow_run.id}")
+            generation_outputs = input_data.get('generation_outputs')
+            requested = frozenset(normalize_generation_outputs(generation_outputs))
+
             analysis = _run_analysis(
                 spreadsheet_data,
                 user_id=user_id,
                 success_criteria=success_criteria,
+                column_mapping=input_data.get('column_mapping'),
                 user_context=user_context,
+                generation_outputs=list(requested),
+                agent_session=self.orchestrator.session,
             )
 
             self.workflow_run.analysis_result = analysis
             self.workflow_run.save(update_fields=['analysis_result'])
 
-            anomalies = analysis.get('anomalies', [])
-            content = f"Found {len(anomalies)} anomalies in the data."
+            tasks = analysis.get('recommended_tasks', [])
+            tree = analysis.get('recommended_decision_tree') or {}
+            tree_nodes = tree.get('nodes') or []
+            parts = []
+            if tasks:
+                parts.append(f"{len(tasks)} recommended task(s)")
+            if tree_nodes:
+                parts.append(f"{len(tree_nodes)} decision node(s)")
+            if parts:
+                content = f"Found {' and '.join(parts)}."
+            else:
+                content = "Analysis complete."
+
+            sse_data = filter_sse_analysis_payload(analysis, requested)
+            sse_events = [{
+                'type': 'analysis',
+                'content': content,
+                'data': sse_data,
+            }]
 
             return StepResult(
                 success=True,
                 output_data={
                     'analysis_result': analysis,
                     'spreadsheet_data': spreadsheet_data,
+                    'generation_outputs': list(requested),
                 },
-                sse_events=[{
-                    'type': 'analysis',
-                    'content': content,
-                    'data': analysis,
-                }],
+                sse_events=sse_events,
             )
+        except GenerationValidationError as e:
+            logger.warning("AnalyzeDataExecutor validation failed: %s", e)
+            return StepResult(success=False, error=str(e))
         except Exception as e:
             logger.exception("AnalyzeDataExecutor failed")
             return StepResult(success=False, error=str(e))
 
 
 class CallDifyExecutor(BaseStepExecutor):
-    """Legacy step type — Dify has been replaced by Gemini. Returns error if called."""
+    """Legacy step type replaced by call_llm. Returns error if called."""
 
     def execute(self, input_data):
         return StepResult(
@@ -111,7 +141,7 @@ class CallLLMExecutor(BaseStepExecutor):
             if not client:
                 return StepResult(success=False, error='No LLM API key configured')
 
-            result = _call_llm(client, spreadsheet_data)
+            result = _call_llm(client, spreadsheet_data, agent_session=self.orchestrator.session)
 
             return StepResult(
                 success=True,
@@ -127,10 +157,64 @@ class CallLLMExecutor(BaseStepExecutor):
 
 
 class CreateDecisionExecutor(BaseStepExecutor):
-    """Legacy step type: agent workflows no longer persist Decision records."""
+    """Creates Decision tree from analysis recommended_decision_tree via the approval gate."""
 
     def execute(self, input_data):
-        return StepResult(success=True, output_data=input_data, sse_events=[])
+        from .approval_gate import KIND_DECISION_TREE, request_external_commit
+
+        analysis = input_data.get('analysis_result')
+        if not analysis:
+            return StepResult(success=False, error='No analysis_result in input')
+
+        try:
+            tree = analysis.get('recommended_decision_tree') or {}
+            nodes = tree.get('nodes') or []
+            if not nodes:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=[{
+                        'type': 'text',
+                        'content': 'No decision nodes to create.',
+                    }],
+                )
+
+            draft = {'recommended_decision_tree': tree}
+            commit_context = {
+                'input_data': input_data,
+                'analysis_result': analysis,
+            }
+            gate = request_external_commit(
+                orchestrator=self.orchestrator,
+                workflow_run=self.workflow_run,
+                step_execution=self.step_execution,
+                kind=KIND_DECISION_TREE,
+                draft=draft,
+                commit_context=commit_context,
+            )
+
+            if gate.paused:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=gate.sse_events,
+                    pause_external_approval=True,
+                )
+
+            wf = gate.workflow_run_patch or {}
+            created_ids = wf.get('created_decisions') or []
+            self.workflow_run.created_decisions = created_ids
+            self.workflow_run.save(update_fields=['created_decisions'])
+
+            base_out = gate.output_data or {**input_data, 'analysis_result': analysis}
+            return StepResult(
+                success=True,
+                output_data={**base_out, 'created_decision_ids': created_ids},
+                sse_events=gate.sse_events,
+            )
+        except Exception as e:
+            logger.exception("CreateDecisionExecutor failed")
+            return StepResult(success=False, error=str(e))
 
 
 class CreateTasksExecutor(BaseStepExecutor):
@@ -144,6 +228,30 @@ class CreateTasksExecutor(BaseStepExecutor):
             return StepResult(success=False, error='No analysis_result in input')
 
         try:
+            # Gate only applies when anomalies were detected: they must be
+            # reviewed + confirmed first. Zero-anomaly analyses proceed unchanged.
+            had_anomalies = bool(analysis.get('anomalies'))
+            if had_anomalies and not analysis.get('anomalies_confirmed'):
+                return StepResult(
+                    success=False,
+                    error='Anomalies must be confirmed before creating tasks.',
+                )
+
+            # All-excluded: anomalies existed but none were included -> no-op
+            # success so the workflow completes cleanly. Zero-detected-anomaly
+            # runs are NOT skipped (existing behaviour preserved).
+            reviewed = analysis.get('reviewed_anomalies') or []
+            included_anomalies = [a for a in reviewed if a.get('included', True)]
+            if had_anomalies and not included_anomalies:
+                return StepResult(
+                    success=True,
+                    output_data=input_data,
+                    sse_events=[{
+                        'type': 'text',
+                        'content': 'All anomalies were excluded; no tasks were created.',
+                    }],
+                )
+
             tasks_data = analysis.get('recommended_tasks', [])
             if not tasks_data:
                 return StepResult(success=False, error='No recommended_tasks in analysis.')
@@ -154,6 +262,8 @@ class CreateTasksExecutor(BaseStepExecutor):
                 'input_data': input_data,
                 'analysis_result': analysis,
                 'decision_id': decision.id if decision else None,
+                'included_anomalies': included_anomalies,
+                'reviewed_anomalies': reviewed,
             }
             gate = request_external_commit(
                 orchestrator=self.orchestrator,
@@ -205,6 +315,7 @@ class GenerateMiroSnapshotExecutor(BaseStepExecutor):
             snapshot = call_gemini_miro_generator(
                 context,
                 user_id=str(self.orchestrator.user.id),
+                agent_session=self.orchestrator.session,
             )
 
             self.workflow_run.miro_snapshot = snapshot
@@ -408,7 +519,7 @@ class DetectColumnsExecutor(BaseStepExecutor):
                 headers = first_sheet.get('columns', [])
                 sample_rows = first_sheet.get('rows', [])[:3]
 
-            detection = detect_columns(headers, sample_rows=sample_rows)
+            detection = detect_columns(headers, sample_rows=sample_rows, agent_session=self.orchestrator.session)
             detection_dict = detection.to_dict()
 
             return StepResult(
@@ -728,7 +839,8 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
 
     def execute(self, input_data):
         import json
-        from .gemini_client import call_gemini_json, _get_api_key as _gemini_key
+        from .gemini_client import _get_api_key as _gemini_key
+        from .llm_client import call_llm as _call_llm_unified
 
         if not _gemini_key():
             logger.warning("GenerateCriteriaExecutor: GEMINI_API_KEY not set; skipping")
@@ -760,15 +872,20 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
             )
 
         try:
-            criteria = call_gemini_json(
+            _criteria_result = _call_llm_unified(
+                agent_session=self.orchestrator.session,
+                provider='gemini',
+                model='gemini-2.5-flash-lite',
                 system_prompt=_CRITERIA_SYSTEM_PROMPT,
                 user_prompt=(
                     f"Column names:\n{json.dumps(column_names)}\n\n"
                     f"Generate success criteria for these columns now."
                 ),
                 temperature=0.2,
-                timeout=120,
+                max_output_tokens=2048,
+                response_mime_type='application/json',
             )
+            criteria = json.loads(_criteria_result['text'])
 
             # Persist on the workflow run so downstream steps can always access it
             self.workflow_run.success_criteria = criteria
@@ -817,6 +934,18 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
             )
 
 
+class FlowControlExecutor(BaseStepExecutor):
+    """No-op pass-through for UI-only flow control steps (if_else, merge, loop).
+
+    These step types are rendered visually on the canvas but do not yet have
+    runtime execution logic.  The executor simply forwards input_data unchanged
+    so existing pipelines are not disrupted when flow-control steps are present.
+    """
+
+    def execute(self, input_data: dict) -> StepResult:
+        return StepResult(success=True, output_data=input_data, sse_events=[])
+
+
 # Executor registry — maps step_type to executor class
 EXECUTOR_REGISTRY = {
     'analyze_data': AnalyzeDataExecutor,
@@ -831,6 +960,10 @@ EXECUTOR_REGISTRY = {
     'detect_columns': DetectColumnsExecutor,
     'normalize_data': NormalizeDataExecutor,
     'generate_criteria': GenerateCriteriaExecutor,
+    # Flow-control types (UI canvas; no runtime logic yet)
+    'if_else': FlowControlExecutor,
+    'merge': FlowControlExecutor,
+    'loop': FlowControlExecutor,
 }
 
 

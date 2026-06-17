@@ -35,6 +35,7 @@ import {
 import QuickStartGenerating from './QuickStartGenerating';
 import QuickStartShell from './QuickStartShell';
 import QuickStartPreviewStep from './steps/QuickStartPreviewStep';
+import RegenerateWarning from '@/components/agent/chat/RegenerateWarning';
 import QuickStartPromptStep from './steps/QuickStartPromptStep';
 import QuickStartSupplementStep from './steps/QuickStartSupplementStep';
 import type { QuickStartSelectedModules } from '@/types/quickStart';
@@ -59,6 +60,8 @@ export default function QuickStartWizard() {
   const [stepError, setStepError] = useState<string | null>(null);
   const [loadingMode, setLoadingMode] = useState<LoadingMode>(null);
   const [preview, setPreview] = useState<QuickStartPreviewPayload | null>(null);
+  const [showRegenWarning, setShowRegenWarning] = useState(false);
+  const [pendingRegenModules, setPendingRegenModules] = useState<QuickStartSelectedModules | undefined>(undefined);
   const { isCoolingDown, secondsLeft, startCooldown } = useQuickStartRetryCooldown();
 
   const currentStep = QUICK_START_WIZARD_STEPS[stepIndex];
@@ -187,7 +190,13 @@ export default function QuickStartWizard() {
   };
 
   const handleRegenerate = () => {
-    void fetchPreview({ advanceToPreview: false });
+    setPendingRegenModules(undefined);
+    setShowRegenWarning(true);
+  };
+
+  const confirmRegenerate = () => {
+    setShowRegenWarning(false);
+    void fetchPreview({ advanceToPreview: false, selectedModules: pendingRegenModules });
   };
 
   const handleConfirm = async () => {
@@ -337,24 +346,33 @@ export default function QuickStartWizard() {
             current ? { ...current, blueprint: nextBlueprint } : current
           );
         }}
-        onRegenerate={(selectedModules) =>
-          void fetchPreview({ advanceToPreview: false, selectedModules })
-        }
+        onRegenerate={(selectedModules) => {
+          setPendingRegenModules(selectedModules);
+          setShowRegenWarning(true);
+        }}
       />
     );
   })();
 
   return (
-    <QuickStartShell
-      step={currentStep}
-      stepIndex={stepIndex}
-      totalSteps={QUICK_START_WIZARD_STEPS.length}
-      errorMessage={stepError}
-      onExit={exitWizard}
-      isSubmitting={isWorking}
-      {...shellProps}
-    >
-      {stepContent}
-    </QuickStartShell>
+    <>
+      <RegenerateWarning
+        isOpen={showRegenWarning}
+        estimatedTokens={500}
+        onConfirm={confirmRegenerate}
+        onCancel={() => setShowRegenWarning(false)}
+      />
+      <QuickStartShell
+        step={currentStep}
+        stepIndex={stepIndex}
+        totalSteps={QUICK_START_WIZARD_STEPS.length}
+        errorMessage={stepError}
+        onExit={exitWizard}
+        isSubmitting={isWorking}
+        {...shellProps}
+      >
+        {stepContent}
+      </QuickStartShell>
+    </>
   );
 }

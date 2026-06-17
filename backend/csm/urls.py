@@ -4,12 +4,18 @@ from .views import (
     QueueViewSet, QueueAgentViewSet,
     QueueTeamViewSet, CustomerUserViewSet,
     CsmNotificationViewSet,
+    TicketFormViewSet,
+    SupportProjectViewSet,
+    CsmWorkTypeViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'queues', QueueViewSet, basename='queue')
 router.register(r'customer-users', CustomerUserViewSet, basename='customer-user')
 router.register(r'notifications', CsmNotificationViewSet, basename='csm-notification')
+router.register(r'ticket-forms', TicketFormViewSet, basename='ticket-form')
+router.register(r'support-projects', SupportProjectViewSet, basename='support-project')
+router.register(r'work-types', CsmWorkTypeViewSet, basename='csm-work-type')
 
 urlpatterns = [
     # Standard routes

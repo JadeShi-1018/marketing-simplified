@@ -75,25 +75,20 @@ def generate_miro_board_for_workflow_run_task(workflow_run_id: str):
         return
 
     if board is None:
-        from .models import AgentPendingExternalApproval
-
-        pend = AgentPendingExternalApproval.objects.filter(
-            workflow_run=workflow_run,
-            status='pending',
-            kind='miro_board',
-        ).order_by('-created_at').first()
-        if pend:
-            AgentMessage.objects.create(
-                session=workflow_run.session,
-                role='assistant',
-                content='Approval required before creating the Miro board.',
-                message_type='approval_request',
-                metadata={
-                    'approval_id': str(pend.id),
-                    'kind': pend.kind,
-                    'draft': pend.draft,
-                },
-            )
+        logger.error(
+            "Background Miro generation finished without a board for workflow_run=%s",
+            workflow_run_id,
+        )
+        AgentMessage.objects.create(
+            session=workflow_run.session,
+            role="assistant",
+            content="Miro generation failed: board was not created.",
+            message_type="error",
+            metadata={
+                "workflow_run_id": str(workflow_run.id),
+                "event_type": "miro_generation_failed",
+            },
+        )
         return
 
     logger.info(
@@ -162,3 +157,69 @@ def handle_chat_message_for_agent(message_id: int):
     from chat.tasks import notify_new_message
     notify_new_message.delay(bot_message.id)
     logger.info("handle_chat_message_for_agent: bot replied with message %s in chat %s", bot_message.id, chat.id)
+
+
+# ============================================================================
+# Workflow Trigger Tasks
+# ============================================================================
+
+@shared_task(name="agent.tasks.check_polling_triggers")
+def check_polling_triggers() -> int:
+    """
+    Check all polling triggers and execute workflows when conditions are met.
+    Runs every 5 minutes (configured in CELERY_BEAT_SCHEDULE).
+    """
+    from .trigger_handlers import PollingHandler
+    return PollingHandler.check_all_polling_workflows()
+
+
+@shared_task(name="agent.tasks.check_scheduled_triggers")
+def check_scheduled_triggers() -> int:
+    """
+    Check all scheduled triggers and execute workflows at scheduled times.
+    Runs every minute (configured in CELERY_BEAT_SCHEDULE).
+    """
+    from .trigger_handlers import ScheduledHandler
+    return ScheduledHandler.check_all_scheduled_workflows()
+
+
+@shared_task(name="agent.tasks.cleanup_old_trigger_logs")
+def cleanup_old_trigger_logs() -> int:
+    """
+    Delete trigger logs older than 30 days.
+    Runs daily at 02:00 UTC (configured in CELERY_BEAT_SCHEDULE).
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from .models import WorkflowTriggerLog
+
+    cutoff = timezone.now() - timedelta(days=30)
+    deleted_count, _ = WorkflowTriggerLog.objects.filter(
+        created_at__lt=cutoff
+    ).delete()
+
+    logger.info(f"Cleaned up {deleted_count} old trigger logs")
+    return deleted_count
+
+
+@shared_task(name="agent.tasks.execute_workflow_async")
+def execute_workflow_async(workflow_id: str, trigger_context: dict) -> str:
+    """
+    Execute a workflow asynchronously (for polling/scheduled triggers).
+    Returns workflow_run_id.
+    """
+    from .trigger_service import TriggerExecutionService
+    from .models import AgentWorkflowDefinition
+
+    try:
+        workflow = AgentWorkflowDefinition.objects.get(id=workflow_id)
+        return TriggerExecutionService.execute_workflow_trigger(
+            workflow_id=workflow_id,
+            trigger_type=trigger_context.get('trigger_type', 'polling'),
+            trigger_context=trigger_context,
+            user=workflow.created_by,
+            project=workflow.project,
+        )
+    except Exception as e:
+        logger.exception(f"Error executing workflow {workflow_id} asynchronously: {e}")
+        return None

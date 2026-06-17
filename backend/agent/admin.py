@@ -6,6 +6,7 @@ from .models import (
     AgentPendingExternalApproval,
     FieldCategory, DataSchemaTemplate,
     ImportedDataField, ImportedDataRecord,
+    AgentWorkflowTemplate,
 )
 
 
@@ -87,3 +88,13 @@ class ImportedDataFieldAdmin(admin.ModelAdmin):
 class ImportedDataRecordAdmin(admin.ModelAdmin):
     list_display = ('id', 'file', 'row_index', 'quality_score', 'created_at')
     readonly_fields = ('created_at',)
+
+
+@admin.register(AgentWorkflowTemplate)
+class AgentWorkflowTemplateAdmin(admin.ModelAdmin):
+    list_display = ('id', 'name', 'category', 'organization', 'created_by', 'created_at')
+    list_filter = ('category',)
+    search_fields = ('name',)
+    readonly_fields = ('id', 'created_at', 'updated_at')
+
+

@@ -27,7 +27,7 @@ export const AGENT_MESSAGES = {
   CHAT_WELCOME: 'Welcome! Upload your ad performance CSV file to begin analysis.',
   CHAT_THINKING: 'Thinking...',
   CHAT_GENERAL_GUIDANCE:
-    "I can help you analyze spreadsheet data and recommended tasks. To get started, select a spreadsheet and use the 'analyze' action.",
+    "Upload a spreadsheet above — the AI will analyze your data and you can ask follow-up questions.",
   // Empty states
   EMPTY_PERFORMANCE_CHART: 'Upload a CSV report via the Pipeline to see performance trends',
   EMPTY_ANOMALY_ALERTS: 'No active alerts',

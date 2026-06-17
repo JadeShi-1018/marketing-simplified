@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import PublicPageShell from '@/components/home/PublicPageShell';
-import { DocsPricingPageContent } from '@/components/home/PublicSeoPages';
+import PublicPricingContent from '@/components/plans/PublicPricingContent';
 
 export const metadata: Metadata = {
   title: 'Pricing Docs | Marketing Simplified',
@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 export default function DocsPricingPage() {
   return (
     <PublicPageShell>
-      <DocsPricingPageContent />
+      <PublicPricingContent />
     </PublicPageShell>
   );
 }

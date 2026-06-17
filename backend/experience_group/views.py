@@ -2,10 +2,23 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError, NotFound
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django_fsm import TransitionNotAllowed
 
 from core.permissions import IsProjectMember
 from core.viewset_mixins import ProjectScopedViewSetMixin
+
+from csm.models import TicketForm
+from csm.serializers import TicketFormFieldSerializer
+from csm.services import (
+    resolve_form_for_experience_group,
+    TicketFormNotConfigured,
+    parse_multipart_submission,
+    validate_submission,
+    create_ticket_from_submission,
+    get_form_options,
+)
 
 from .models import ExperienceGroup
 from .serializers import ExperienceGroupSerializer, ExperienceGroupListSerializer
@@ -120,3 +133,56 @@ class ExperienceGroupViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
 
         preview_data['is_preview'] = True
         return Response(preview_data)
+
+    @action(detail=True, methods=['get'], url_path='request-form')
+    def request_form(self, request, pk=None):
+        """GET /api/experience-groups/{id}/request-form/ — resolved schema + options."""
+        eg = self.get_object()
+        try:
+            form = resolve_form_for_experience_group(eg.id)
+        except TicketFormNotConfigured as exc:
+            raise NotFound(detail=str(exc))
+
+        form = (
+            TicketForm.objects.filter(pk=form.pk)
+            .prefetch_related('fields')
+            .first()
+        )
+        return Response({
+            'form_id': form.id,
+            'form_name': form.name,
+            'form_description': form.description,
+            'experience_group_id': eg.id,
+            'fields': TicketFormFieldSerializer(form.fields.all(), many=True).data,
+            'options': get_form_options(eg.project_id),
+        })
+
+    @action(detail=True, methods=['post'], url_path='submit-request')
+    def submit_request(self, request, pk=None):
+        """POST /api/experience-groups/{id}/submit-request/ — preview ticket create."""
+        eg = self.get_object()
+        try:
+            form = resolve_form_for_experience_group(eg.id)
+        except TicketFormNotConfigured as exc:
+            raise NotFound(detail=str(exc))
+
+        form = TicketForm.objects.filter(pk=form.pk).prefetch_related('fields').first()
+
+        try:
+            answers, files_by_field = parse_multipart_submission(request, form)
+            cleaned = validate_submission(form, answers, files_by_field, eg.project_id)
+            ticket, submission = create_ticket_from_submission(
+                form=form,
+                experience_group=eg,
+                submitted_by=request.user,
+                cleaned_data=cleaned,
+                files_by_field=files_by_field,
+            )
+        except DjangoValidationError as exc:
+            detail = exc.message_dict if hasattr(exc, 'message_dict') else exc.messages
+            raise ValidationError(detail)
+
+        return Response(
+            {'ticket_id': ticket.id, 'submission_id': submission.id},
+            status=status.HTTP_201_CREATED,
+        )

@@ -12,7 +12,7 @@ Coverage:
 import json
 from unittest.mock import patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from .column_registry import (
     CAT_FINANCIAL,
@@ -176,19 +176,59 @@ class RuleBasedDetectionTests(SimpleTestCase):
 _GEMINI_SETTINGS = dict(GEMINI_API_KEY='test-key')
 
 
-class LLMFallbackTests(SimpleTestCase):
+class LLMFallbackTests(TestCase):
     databases = ('default',)
 
+    def setUp(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        from django.contrib.auth import get_user_model
+        from core.models import Organization, Project
+        from agent.models import AgentSession
+        from stripe_meta.models import Plan, Subscription
+
+        User = get_user_model()
+        Plan.objects.all().delete()
+
+        self.org = Organization.objects.create(name='LLMFallbackOrg', slug='llm-fallback-org')
+        self.user = User.objects.create_user(
+            email='llmfallback@test.com', username='llmfallbackuser', password='pass',
+        )
+        self.user.organization = self.org
+        self.user.save()
+        self.plan = Plan.objects.create(
+            name='FallbackTestPlan',
+            monthly_token_quota=10_000_000,
+            max_tokens_per_call=None,
+            base_price_cents=0,
+        )
+        Subscription.objects.create(
+            organization=self.org,
+            plan=self.plan,
+            stripe_subscription_id=f'sub_fallback_{self.org.id}',
+            start_date=timezone.now(),
+            end_date=timezone.now() + timedelta(days=365 * 10),
+            is_active=True,
+            is_internal=True,
+        )
+        self.project = Project.objects.create(
+            name='FallbackProject', organization=self.org, owner=self.user,
+        )
+        self.session = AgentSession.objects.create(user=self.user, project=self.project)
+
     def _make_gemini_response(self, columns_list, schema_name='Custom Report', confidence=0.8):
-        """Return the dict that call_gemini_json would return for a successful call."""
+        """Return the dict that _call_gemini would return for a successful call."""
         return {
-            'schema_name': schema_name,
-            'confidence': confidence,
-            'columns': columns_list,
+            'text': json.dumps({
+                'schema_name': schema_name,
+                'confidence': confidence,
+                'columns': columns_list,
+            }),
+            'usage': {'input': 10, 'output': 20},
         }
 
     @override_settings(**_GEMINI_SETTINGS)
-    @patch('agent.gemini_client.call_gemini_json')
+    @patch('agent.llm_client._call_gemini')
     def test_llm_fallback_success(self, mock_run):
         headers = ['Revenue', 'Sessions', 'Bounce Rate']
         mock_run.return_value = self._make_gemini_response([
@@ -197,7 +237,7 @@ class LLMFallbackTests(SimpleTestCase):
             {'original': 'Bounce Rate', 'canonical': 'bounce_rate', 'category': 'performance_ratio', 'confidence': 0.8},
         ])
 
-        result = detect_columns(headers)
+        result = detect_columns(headers, agent_session=self.session)
 
         self.assertEqual(result.source, 'llm')
         self.assertEqual(result.mappings['Revenue'], 'revenue')
@@ -208,7 +248,7 @@ class LLMFallbackTests(SimpleTestCase):
         self.assertEqual(result.column_confidences['Bounce Rate'], 0.8)
 
     @override_settings(**_GEMINI_SETTINGS)
-    @patch('agent.gemini_client.call_gemini_json')
+    @patch('agent.llm_client._call_gemini')
     def test_llm_fallback_includes_sample_rows_in_prompt(self, mock_run):
         headers = ['Revenue']
         sample_rows = [{'Revenue': 1000}, {'Revenue': 2000}]
@@ -216,29 +256,32 @@ class LLMFallbackTests(SimpleTestCase):
             {'original': 'Revenue', 'canonical': 'revenue', 'category': 'financial', 'confidence': 0.9},
         ])
 
-        detect_columns(headers, sample_rows=sample_rows)
+        detect_columns(headers, sample_rows=sample_rows, agent_session=self.session)
 
-        call_kwargs = mock_run.call_args
-        user_prompt = call_kwargs[1].get('user_prompt') or call_kwargs[0][1]
+        # _call_gemini is called positionally: (model, system_prompt, user_prompt, ...)
+        user_prompt = mock_run.call_args[0][2]
         # Sample rows must be serialised into the user prompt sent to Gemini
         self.assertIn('1000', user_prompt)
 
     @override_settings(**_GEMINI_SETTINGS)
     @patch('agent.column_registry._try_db_template_match', return_value=None)
-    @patch('agent.gemini_client.call_gemini_json')
+    @patch('agent.llm_client._call_gemini')
     def test_llm_fallback_strips_markdown_fences(self, mock_run, _mock_db):
         headers = ['xyzUnknownMetric999']
         mock_run.return_value = {
-            'schema_name': 'Custom', 'confidence': 0.8,
-            'columns': [{'original': 'xyzUnknownMetric999', 'canonical': 'xyz_metric', 'category': 'financial', 'confidence': 0.9}],
+            'text': json.dumps({
+                'schema_name': 'Custom', 'confidence': 0.8,
+                'columns': [{'original': 'xyzUnknownMetric999', 'canonical': 'xyz_metric', 'category': 'financial', 'confidence': 0.9}],
+            }),
+            'usage': {'input': 10, 'output': 20},
         }
 
-        result = detect_columns(headers)
+        result = detect_columns(headers, agent_session=self.session)
         self.assertEqual(result.source, 'llm')
         self.assertEqual(result.mappings['xyzUnknownMetric999'], 'xyz_metric')
 
     @override_settings(**_GEMINI_SETTINGS)
-    @patch('agent.gemini_client.call_gemini_json')
+    @patch('agent.llm_client._call_gemini')
     def test_llm_unknown_columns_labeled_unknown(self, mock_run):
         headers = ['WeirdCol1', 'WeirdCol2']
         mock_run.return_value = self._make_gemini_response([
@@ -246,7 +289,7 @@ class LLMFallbackTests(SimpleTestCase):
             {'original': 'WeirdCol2', 'canonical': 'unknown', 'category': 'unknown', 'confidence': 0.0},
         ])
 
-        result = detect_columns(headers)
+        result = detect_columns(headers, agent_session=self.session)
         self.assertEqual(result.mappings['WeirdCol1'], CAT_UNKNOWN)
         self.assertEqual(result.mappings['WeirdCol2'], CAT_UNKNOWN)
         self.assertEqual(set(result.unrecognized), {'WeirdCol1', 'WeirdCol2'})
@@ -255,12 +298,12 @@ class LLMFallbackTests(SimpleTestCase):
         self.assertEqual(result.column_confidences['WeirdCol2'], 0.0)
 
     @override_settings(**_GEMINI_SETTINGS)
-    @patch('agent.gemini_client.call_gemini_json')
+    @patch('agent.llm_client._call_gemini')
     def test_llm_exception_falls_back_to_all_unknown(self, mock_run):
         headers = ['ColA', 'ColB']
         mock_run.side_effect = Exception('network error')
 
-        result = detect_columns(headers)
+        result = detect_columns(headers, agent_session=self.session)
         self.assertEqual(result.source, 'none')
         self.assertEqual(result.confidence, 0.0)
         self.assertTrue(all(v == CAT_UNKNOWN for v in result.mappings.values()))
@@ -269,7 +312,7 @@ class LLMFallbackTests(SimpleTestCase):
     def test_llm_skipped_when_no_api_key(self):
         headers = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Epsilon']
         with override_settings(GEMINI_API_KEY=''):
-            result = detect_columns(headers)
+            result = detect_columns(headers, agent_session=self.session)
         # Should return unknown result (no LLM, no rule match)
         self.assertIn(result.source, ('none', 'rule'))
 
