@@ -133,7 +133,7 @@ export default function SpreadsheetsV2ListPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await SpreadsheetAPI.deleteSpreadsheet(deleteTarget.id);
+      await SpreadsheetAPI.deleteSpreadsheet(deleteTarget.slug ?? deleteTarget.id);
       toast.success(`Deleted ${deleteTarget.name}`);
       setDeleteTarget(null);
       setRefreshToken((n) => n + 1);

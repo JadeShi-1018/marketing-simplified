@@ -74,7 +74,7 @@ export default function KlaviyoV2Page() {
     if (!deleteTarget) return;
     setDeleteBusy(true);
     try {
-      await klaviyoApi.deleteEmailDraft(deleteTarget.id);
+      await klaviyoApi.deleteEmailDraft(deleteTarget.slug ?? deleteTarget.id);
       setDrafts((prev) => prev.filter((d) => d.id !== deleteTarget.id));
       toast.success(`Moved "${deleteTarget.title}" to trash`);
       setDeleteTarget(null);

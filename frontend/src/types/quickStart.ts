@@ -185,6 +185,7 @@ export interface QuickStartConfirmRequest {
 
 export interface QuickStartConfirmProject {
   id: number;
+  slug?: string;
   name: string;
   is_active: boolean;
 }

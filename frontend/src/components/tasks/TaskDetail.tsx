@@ -1073,7 +1073,7 @@ export default function TaskDetail({
 
       try {
         setLoadingApprovers(true);
-        const members = await ProjectAPI.getProjectMembers(task.project.id);
+        const members = await ProjectAPI.getProjectMembers(task.project.slug ?? task.project.id);
         const approverList =
           members?.map((member) => ({
             id: member.user.id,
@@ -1837,7 +1837,7 @@ export default function TaskDetail({
               {!alertLoading && alertTask && (
                 <AlertDetail
                   alert={alertTask}
-                  projectId={task.project?.id ?? task.project_id}
+                  projectId={task.project?.slug ?? task.project?.id ?? task.project_id}
                   onRefresh={loadAlertTask}
                 />
               )}

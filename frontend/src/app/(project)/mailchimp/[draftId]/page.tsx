@@ -2501,6 +2501,29 @@ export default function MailchimpDetailV2Page() {
     );
   }
 
+  // Draft failed to resolve (e.g. unknown/numeric slug → 404): show not-found
+  // instead of an empty editor that misleadingly reads "Untitled Email".
+  if (!isLoading && loadError) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center rounded-xl bg-white py-24 ring-1 ring-rose-200">
+          <AlertTriangle className="h-5 w-5 text-rose-500" />
+          <div className="ml-3">
+            <p className="text-sm font-medium text-rose-700">Email draft not found</p>
+            <p className="mt-1 text-xs text-gray-500">{loadError}</p>
+            <button
+              type="button"
+              onClick={() => router.push(safeReturnTo)}
+              className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
+            >
+              Back to drafts
+            </button>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <>
       <UnsavedChangesGuardProvider confirmNavigation={confirmNavigation}>

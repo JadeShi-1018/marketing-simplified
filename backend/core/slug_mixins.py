@@ -70,6 +70,44 @@ class SlugLookupViewSetMixin:
         self.check_object_permissions(self.request, obj)
         return obj
 
+def resolve_project_pk(value):
+    """Resolve a `project_id` query-param value to a numeric Project pk.
+
+    Query-param filters (e.g. ?project_id=) historically expected a numeric pk,
+    but the frontend now passes the project slug. Accept either: a numeric string
+    resolves as a legacy pk; any other non-blank string resolves by slug.
+
+    Returns the integer pk, or None when the value is blank/absent or no project
+    matches (callers decide whether that means "no filter" or an error).
+    """
+    from core.models import Project
+    if value is None:
+        return None
+    value = str(value).strip()
+    if value == '':
+        return None
+    if value.isdigit():
+        return int(value)
+    return Project.objects.filter(slug=value).values_list('id', flat=True).first()
+
+
+def resolve_pk_for(model, value):
+    """Resolve a slug-or-pk query/body value to the given model's pk.
+
+    Generic sibling of `resolve_project_pk` for any model with a unique `slug`:
+    a numeric string resolves as a legacy pk; any other non-blank string resolves
+    by slug. Returns None when blank/absent or no row matches (callers decide).
+    """
+    if value is None:
+        return None
+    value = str(value).strip()
+    if value == '':
+        return None
+    if value.isdigit():
+        return int(value)
+    return model.objects.filter(slug=value).values_list('pk', flat=True).first()
+
+
 def resolve_lookup_kwargs(lookup_value, pk_field='pk', slug_field='slug'):
     """
     Helper function to generate filter kwargs for slug-only lookups.

@@ -4,7 +4,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
-from core.slug_mixins import SlugLookupViewSetMixin
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -54,7 +54,7 @@ class AdCopyVariationViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         ).values_list('project_id', flat=True)
 
     def _require_project(self, raw_project_id):
-        project_id = self._parse_int(raw_project_id)
+        project_id = resolve_project_pk(raw_project_id)
         if not project_id:
             return None, Response(
                 {'error': 'project_id is required'},

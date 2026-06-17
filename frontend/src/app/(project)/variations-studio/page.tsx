@@ -59,6 +59,7 @@ const EMPTY_COPY: AdCopyVariationCopy = {
 interface CardState {
   key: string;
   id: number;
+  slug?: string;
   batch_id: string;
   source_mode: AdCopyVariationSourceMode;
   source_ref: string;
@@ -102,6 +103,7 @@ function cardFromVariation(row: AdCopyVariation): CardState {
   return {
     key: `draft-${row.id}`,
     id: row.id,
+    slug: row.slug,
     batch_id: row.batch_id || "",
     source_mode: row.source_mode,
     source_ref: row.source_ref || "",
@@ -291,7 +293,7 @@ function VariationsStudioContent() {
     if (!card) return;
     updateCard(key, { saving: true });
     try {
-      const updated = await updateVariation(card.id, card.draft);
+      const updated = await updateVariation(card.slug ?? card.id, card.draft);
       const copy = copyFromVariation(updated);
       setCards((prev) =>
         prev.map((c) =>
@@ -1035,7 +1037,8 @@ function AiDraftsTab({
     if (!editingRowId) return;
     setSavingEditId(editingRowId);
     try {
-      const updated = await updateVariation(editingRowId, editingDraft);
+      const editingRow = rows.find((r) => r.id === editingRowId);
+      const updated = await updateVariation(editingRow?.slug ?? editingRowId, editingDraft);
       setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
       setEditingRowId(null);
       setEditingDraft(EMPTY_COPY);

@@ -207,6 +207,95 @@ class SlugOnlyApiLookupTest(APITestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class QaRegressionTest(APITestCase):
+    """
+    Regressions found and fixed during SMP-539 QA. Each guards a slug fix that the
+    widened ``id: number | string`` type had hidden from the compiler.
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            email="qa@example.com", username="qa", password="testpass123"
+        )
+        self.organization = Organization.objects.create(name="QA Org")
+        self.project = Project.objects.create(
+            name="QA Project", organization=self.organization
+        )
+        ProjectMember.objects.create(
+            user=self.user, project=self.project, role="Team Leader", is_active=True
+        )
+        self.user.active_project = self.project
+        self.user.save(update_fields=["active_project"])
+        self.client.force_authenticate(user=self.user)
+
+    def test_task_list_accepts_project_slug_query_param(self):
+        # resolve_project_pk: ?project_id=<slug> must resolve. Member pickers and the
+        # Jira-style task view passed the project slug here and used to 404/400.
+        Task.objects.create(
+            summary="QA Query Task", type="asset", project=self.project, owner=self.user
+        )
+        response = self.client.get(f"/api/tasks/?project_id={self.project.slug}")
+        self.assertEqual(response.status_code, 200)
+
+    def test_task_list_still_tolerates_numeric_project_id(self):
+        # Numeric tolerance is kept as an internal safety net (query params are not migrated).
+        response = self.client.get(f"/api/tasks/?project_id={self.project.id}")
+        self.assertEqual(response.status_code, 200)
+
+    def test_campaign_subresource_resolves_by_slug(self):
+        # Campaign sub-resources used a UUID route converter and fed the slug straight
+        # into a UUID lookup, throwing 404/500. They now resolve via resolve_lookup_kwargs.
+        from datetime import date
+        from campaign.models import Campaign
+
+        campaign = Campaign.objects.create(
+            name="QA Slug Campaign",
+            objective=Campaign.Objective.AWARENESS,
+            platforms=["META"],
+            start_date=date(2026, 1, 1),
+            project=self.project,
+            owner=self.user,
+        )
+        response = self.client.get(f"/api/campaigns/{campaign.slug}/check-ins/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_notion_draft_list_returns_slug(self):
+        # The Notion list serialiser omitted slug, so the UI navigated to /notion/<id>.
+        from notion_editor.models import Draft
+
+        Draft.objects.create(title="QA Notion Draft", user=self.user)
+        response = self.client.get("/api/notion/api/drafts/")
+        self.assertEqual(response.status_code, 200)
+        items = response.data.get("results", response.data)
+        self.assertTrue(items)
+        self.assertTrue(all("slug" in item for item in items))
+
+    def test_mailchimp_save_provisions_missing_settings(self):
+        # Legacy drafts without CampaignSettings failed save with "Campaign settings not
+        # found"; the save now provisions the settings on first edit.
+        from mailchimp.models import Campaign as MailchimpCampaign, CampaignSettings
+
+        campaign = MailchimpCampaign.objects.create(user=self.user)
+        self.assertFalse(CampaignSettings.objects.filter(campaign=campaign).exists())
+        response = self.client.patch(
+            f"/api/mailchimp/email-drafts/{campaign.slug}/template-content/",
+            {"template_data": {"sections": {}}},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(CampaignSettings.objects.filter(campaign=campaign).exists())
+
+    def test_project_set_active_by_slug(self):
+        # Project switch (Select-Project) posts the slug to set-active; this used to 404
+        # because callers passed the slug into a numeric path. Resolves via slug now,
+        # and the response payload carries slug (ProjectSummarySerializer).
+        response = self.client.post(f"/api/core/projects/{self.project.slug}/set_active/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["active_project"]["slug"], self.project.slug)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.active_project_id, self.project.id)
+
+
 class SlugBackfillTest(APITestCase):
     """core/slug_backfill.py mirrors the mixin rules for migration RunPython."""
 

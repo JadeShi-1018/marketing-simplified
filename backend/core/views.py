@@ -6,7 +6,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
-from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -1060,7 +1060,8 @@ class ListMyProjectInvitationsView(APIView):
         ).select_related('invited_by', 'project').order_by('-created_at')
 
         if project_id:
-            invitations = invitations.filter(project_id=project_id)
+            resolved_pid = resolve_project_pk(project_id)
+            invitations = invitations.filter(project_id=resolved_pid) if resolved_pid else invitations.none()
 
         serializer = ProjectInvitationSerializer(invitations, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)

@@ -346,7 +346,7 @@ class ChatAPITest(TestCase):
         ChatParticipant.objects.create(chat=hidden_chat, user=self.user1, is_active=True)
 
         url = reverse('chat-browse')
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         names = {row['name'] for row in response.data}
@@ -354,7 +354,7 @@ class ChatAPITest(TestCase):
         self.assertNotIn('Hidden Group', names)
 
         self.client.force_authenticate(user=self.user3)
-        forbidden = self.client.get(url, {'project_id': self.project.id})
+        forbidden = self.client.get(url, {'project_id': self.project.slug})
         self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
     
     def test_leave_chat(self):
@@ -1402,7 +1402,7 @@ class AttachmentAPITest(TestCase):
         )
 
         url = reverse('attachment-files')
-        r = self.client.get(url, {'project_id': self.project.id, 'page': 1, 'page_size': 25})
+        r = self.client.get(url, {'project_id': self.project.slug, 'page': 1, 'page_size': 25})
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertIn('results', r.data)
         ids = {row['id'] for row in r.data['results']}
@@ -1451,14 +1451,14 @@ class AttachmentAPITest(TestCase):
         )
 
         url = reverse('attachment-files')
-        before_delete = self.client.get(url, {'project_id': self.project.id})
+        before_delete = self.client.get(url, {'project_id': self.project.slug})
         self.assertEqual(before_delete.status_code, status.HTTP_200_OK)
         before_ids = {row['id'] for row in before_delete.data['results']}
         self.assertEqual(before_ids, {source_attachment.id})
 
         source_msg.delete()
 
-        after_delete = self.client.get(url, {'project_id': self.project.id})
+        after_delete = self.client.get(url, {'project_id': self.project.slug})
         self.assertEqual(after_delete.status_code, status.HTTP_200_OK)
         self.assertEqual(after_delete.data['results'], [])
         self.assertTrue(MessageAttachment.objects.filter(id=forwarded_attachment.id).exists())
@@ -1485,7 +1485,7 @@ class AttachmentAPITest(TestCase):
             mime_type='text/plain',
         )
 
-        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.id})
+        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['results'], [])
@@ -1509,7 +1509,7 @@ class AttachmentAPITest(TestCase):
             mime_type='text/plain',
         )
 
-        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.id})
+        response = self.client.get(reverse('attachment-files'), {'project_id': self.project.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['results'][0]['id'], attachment.id)
@@ -1574,7 +1574,7 @@ class StarredChatAPITest(TestCase):
         c2 = self._group_chat()
         list_url = reverse('chat-starred-list')
 
-        r = self.client.get(list_url, {'project_id': self.project.id})
+        r = self.client.get(list_url, {'project_id': self.project.slug})
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data, [])
 
@@ -1585,7 +1585,7 @@ class StarredChatAPITest(TestCase):
         r = self.client.post(reverse('chat-starred-list'), {'chat_id': c2.id}, format='json')
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
 
-        r = self.client.get(list_url, {'project_id': self.project.id})
+        r = self.client.get(list_url, {'project_id': self.project.slug})
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(len(r.data), 2)
         self.assertEqual(r.data[0]['chat']['id'], c1.id)
@@ -1599,13 +1599,13 @@ class StarredChatAPITest(TestCase):
         )
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 
-        r = self.client.get(list_url, {'project_id': self.project.id})
+        r = self.client.get(list_url, {'project_id': self.project.slug})
         self.assertEqual(r.data[0]['chat']['id'], c2.id)
         self.assertEqual(r.data[1]['chat']['id'], c1.id)
 
         r = self.client.delete(reverse('chat-starred-detail', kwargs={'pk': c1.id}))
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
-        r = self.client.get(list_url, {'project_id': self.project.id})
+        r = self.client.get(list_url, {'project_id': self.project.slug})
         self.assertEqual(len(r.data), 1)
         self.assertEqual(r.data[0]['chat']['id'], c2.id)
 

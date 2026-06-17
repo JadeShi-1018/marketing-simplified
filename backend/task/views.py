@@ -1,6 +1,6 @@
 import logging
 from rest_framework import viewsets, status, generics, permissions
-from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 
 logger = logging.getLogger(__name__)
 from rest_framework.decorators import action, api_view, permission_classes
@@ -105,8 +105,11 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Get the project (404 if it doesn't exist)
-        project = get_object_or_404(Project, id=project_id)
+        # Get the project (404 if it doesn't exist). Accept slug or numeric pk.
+        resolved_pk = resolve_project_pk(project_id)
+        if not resolved_pk:
+            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        project = get_object_or_404(Project, id=resolved_pk)
 
         # Ensure the current user is a member of this project
         ProjectMember.objects.get_or_create(
@@ -178,10 +181,8 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         has_explicit_project_id = requested_project_id_raw is not None
         requested_project_id = None
         if has_explicit_project_id:
-            try:
-                requested_project_id = int(requested_project_id_raw)
-            except (TypeError, ValueError):
-                raise DRFValidationError({'project_id': 'project_id must be an integer'})
+            # Accept slug (current frontend) or numeric pk (legacy); resolve to pk.
+            requested_project_id = resolve_project_pk(requested_project_id_raw)
 
             if requested_project_id not in accessible_project_ids:
                 raise PermissionDenied('You do not have access to this project.')
@@ -407,10 +408,9 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
-                raise DRFValidationError({'project_id': 'project_id must be an integer'})
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
+                raise DRFValidationError({'project_id': 'Unknown project'})
             if pid not in accessible_ids:
                 raise PermissionDenied('You do not have access to this project.')
             return pid
@@ -514,9 +514,8 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -620,9 +619,8 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -660,9 +658,8 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -691,9 +688,8 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         if not project_id_param:
             return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            project_id = int(project_id_param)
-        except (TypeError, ValueError):
+        project_id = resolve_project_pk(project_id_param)
+        if project_id is None:
             return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
 
         has_membership = ProjectMember.objects.filter(

@@ -96,8 +96,8 @@ export default function CampaignHeader({ campaign, onUpdate, loading, onChangeSt
   // Fetch users when component mounts or project changes
   useEffect(() => {
     const fetchUsers = async () => {
-      // Use project.id as fallback, since project_id may be undefined
-      const projectId = campaign.project_id || campaign.project?.id;
+      // Project routes are slug-only; prefer the project slug, fall back to numeric id.
+      const projectId = campaign.project?.slug || campaign.project_id || campaign.project?.id;
       
       if (!projectId) {
         console.warn('No project ID available for fetching members');

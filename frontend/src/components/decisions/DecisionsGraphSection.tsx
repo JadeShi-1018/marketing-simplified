@@ -145,12 +145,14 @@ export default function DecisionsGraphSection({
 
   const handleSelectNode = (id: number) => {
     setStartInEditMode(false);
-    updateMapUrl({ fullscreen: true, decisionId: id });
+    // URLs are slug-only; emit the decision slug, never the numeric id.
+    const slug = nodes.find((n) => n.id === id)?.slug;
+    updateMapUrl({ fullscreen: true, decisionId: slug ?? id });
   };
 
   const handleEditNodeInTree = (node: DecisionGraphNode) => {
     setStartInEditMode(true);
-    updateMapUrl({ fullscreen: true, decisionId: node.id });
+    updateMapUrl({ fullscreen: true, decisionId: node.slug ?? node.id });
   };
 
   const handleDeleteNodeInTree = async (node: DecisionGraphNode) => {
@@ -552,7 +554,7 @@ export default function DecisionsGraphSection({
           key={resolvedSelectedNodeId}
           decisionId={resolvedSelectedNodeId}
           decisionSlug={selectedGraphNode?.slug ?? null}
-          projectId={selectedGraphNode?.projectId ?? projectId ?? null}
+          projectId={projectId ?? selectedGraphNode?.projectId ?? null}
           graphNodeStatus={selectedGraphNode?.status ?? 'DRAFT'}
           canEdit={canEdit}
           startInEditMode={startInEditMode}

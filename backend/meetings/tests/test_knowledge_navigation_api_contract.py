@@ -226,7 +226,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         Decision.objects.filter(pk=d.pk).update(status=Decision.Status.COMMITTED)
 
         url = f"/api/decisions/{d.slug}/"
-        response = self.client.get(url, {"project_id": self.project.id})
+        response = self.client.get(url, {"project_id": self.project.slug})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("origin_meeting", response.data)
         om = response.data["origin_meeting"]
@@ -289,7 +289,7 @@ class TestKnowledgeNavigationAPIContract(TestCase):
         create_meeting_decision_origin(meeting=m, decision=d)
 
         url = f"/api/decisions/drafts/{d.slug}/"
-        response = self.client.get(url, {"project_id": self.project.id})
+        response = self.client.get(url, {"project_id": self.project.slug})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("origin_meeting", response.data)
         om = response.data["origin_meeting"]

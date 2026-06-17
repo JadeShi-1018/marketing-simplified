@@ -38,7 +38,7 @@ class ProjectSummarySerializer(serializers.ModelSerializer):
     """Serializer for project summary information"""
     class Meta:
         model = Project
-        fields = ['id', 'name']
+        fields = ['id', 'slug', 'name']
 
 
 # ============================================================================

@@ -107,7 +107,7 @@ class TestDecisionCaptureIntegration(TestCase):
         )
 
         response = self.client.get(
-            f"/api/decisions/{decision.slug}/origin/?project_id={self.project.id}"
+            f"/api/decisions/{decision.slug}/origin/?project_id={self.project.slug}"
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -130,7 +130,7 @@ class TestDecisionCaptureIntegration(TestCase):
         )
 
         response = self.client.get(
-            f"/api/decisions/{decision.slug}/?project_id={self.project.id}"
+            f"/api/decisions/{decision.slug}/?project_id={self.project.slug}"
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)

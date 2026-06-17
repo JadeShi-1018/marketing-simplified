@@ -108,7 +108,7 @@ export default function WorkflowListPage() {
     if (!confirmed) return;
     setLoading(true);
     try {
-      await WorkflowAPI.duplicate(workflow.id);
+      await WorkflowAPI.duplicate(workflow.slug ?? workflow.id);
       await fetchWorkflows({ resetPage: false });
     } catch (err: any) {
       const message =
@@ -131,7 +131,7 @@ export default function WorkflowListPage() {
     if (!workflowPendingDelete) return;
     setLoading(true);
     try {
-      await WorkflowAPI.delete(workflowPendingDelete.id);
+      await WorkflowAPI.delete(workflowPendingDelete.slug ?? workflowPendingDelete.id);
       await fetchWorkflows({ resetPage: false });
       toast.success("Workflow deleted.");
     } catch (err: any) {

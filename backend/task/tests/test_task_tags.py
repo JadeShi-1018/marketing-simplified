@@ -130,7 +130,7 @@ class TestTaskTags:
 
         url = reverse('task-tag-catalog')
         deleted = authenticated_client.delete(
-            f'{url}?project_id={project.id}&name=Launch',
+            f'{url}?project_id={project.slug}&name=Launch',
             format='json',
         )
 
@@ -159,7 +159,7 @@ class TestTaskTags:
 
         url = reverse('task-tag-catalog-delete')
         deleted = authenticated_client.post(
-            f'{url}?project_id={project.id}',
+            f'{url}?project_id={project.slug}',
             {'name': 'Launch'},
             format='json',
         )

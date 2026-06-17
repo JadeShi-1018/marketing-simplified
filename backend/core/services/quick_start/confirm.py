@@ -56,6 +56,7 @@ class QuickStartConfirmService:
         return {
             'project': {
                 'id': result.project.id,
+                'slug': result.project.slug,
                 'name': result.project.name,
                 'is_active': True,
             },

@@ -102,7 +102,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
   }, [externalRefreshKey]);
 
   useEffect(() => {
-    const pid = task?.project?.id ?? task?.project_id;
+    const pid = task?.project?.slug ?? task?.project?.id ?? task?.project_id;
     if (!pid) return;
     let cancelled = false;
     ProjectAPI.getProjectMembers(pid)

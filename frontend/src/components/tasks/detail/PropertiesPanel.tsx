@@ -235,7 +235,7 @@ export default function PropertiesPanel({
       <div className={ROW}>
         <span className={LABEL}>Labels</span>
         <TaskLabelsPicker
-          projectId={task.project?.id ?? task.project_id}
+          projectId={task.project?.slug ?? task.project?.id ?? task.project_id}
           value={localTags}
           onChange={(next) => { void saveTags(next); }}
           disabled={readOnly}

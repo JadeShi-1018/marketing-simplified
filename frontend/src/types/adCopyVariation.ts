@@ -10,6 +10,7 @@ export interface AdCopyVariationCopy {
 
 export interface AdCopyVariation extends AdCopyVariationCopy {
   id: number;
+  slug?: string;
   project: number | null;
   creative: number | null;
   source_mode: AdCopyVariationSourceMode;

@@ -16,6 +16,7 @@ export interface UserSummary {
 
 export interface ProjectSummary {
   id: number;
+  slug?: string;
   name: string;
 }
 

@@ -3,7 +3,7 @@ ViewSets for Workflow API endpoints.
 Implements CRUD operations, batch operations, and graph validation.
 """
 from rest_framework import viewsets, status
-from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -72,9 +72,8 @@ class WorkflowViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
         project_id = self.request.query_params.get("project_id")
         if project_id is not None:
-            try:
-                project_id_int = int(project_id)
-            except (TypeError, ValueError):
+            project_id_int = resolve_project_pk(project_id)
+            if project_id_int is None:
                 return queryset.none()
 
             if project_id_int not in accessible_project_ids:

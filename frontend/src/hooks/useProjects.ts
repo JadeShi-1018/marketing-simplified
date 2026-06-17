@@ -145,7 +145,8 @@ export const useProjects = () => {
         const selectedProject =
           projects.find((project) => String(project.id) === String(projectId)) ?? null;
 
-        await ProjectAPI.setActiveProject(projectId);
+        // Project detail/action routes are slug-only; send slug, fall back to id (legacy).
+        await ProjectAPI.setActiveProject(selectedProject?.slug ?? projectId);
         toast.success('Active project updated');
         setProjects((prev) =>
           prev.map((project) => ({
@@ -189,14 +190,16 @@ export const useProjects = () => {
         const nextActiveProject =
           String(activeProject?.id) === String(projectId) ? remainingProjects[0] ?? null : null;
 
-        await ProjectAPI.deleteProject(projectId);
+        // Project routes are slug-only; resolve slug from the loaded list (fall back to id).
+        const deleteTarget = projects.find((project) => String(project.id) === String(projectId));
+        await ProjectAPI.deleteProject(deleteTarget?.slug ?? projectId);
         let nextProjects = remainingProjects;
 
         setCompletedProjectIds((prev) => prev.filter((id) => String(id) !== String(projectId)));
 
         if (nextActiveProject) {
           try {
-            await ProjectAPI.setActiveProject(nextActiveProject.id);
+            await ProjectAPI.setActiveProject(nextActiveProject.slug ?? nextActiveProject.id);
             nextProjects = remainingProjects.map((project) => ({
               ...project,
               is_active: String(project.id) === String(nextActiveProject.id),

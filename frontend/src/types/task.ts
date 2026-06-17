@@ -137,6 +137,7 @@ export function userDisplayName(u: { name?: string; username?: string; email?: s
 
 export interface ProjectSummary {
   id: number;
+  slug?: string;
   name: string;
 }
 

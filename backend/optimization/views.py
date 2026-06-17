@@ -7,6 +7,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 
+from core.slug_mixins import resolve_pk_for
+from task.models import Task
 from .services import ExperimentService, RollbackHistoryService
 from .models import (
     OptimizationExperiment,
@@ -314,9 +316,9 @@ class ScalingPlanListCreateView(generics.ListCreateAPIView):
             task__project_id__in=accessible_project_ids
         )
 
-        task_id = self.request.query_params.get("task_id")
-        if task_id:
-            queryset = queryset.filter(task_id=task_id)
+        task_pk = resolve_pk_for(Task, self.request.query_params.get("task_id"))
+        if task_pk:
+            queryset = queryset.filter(task_id=task_pk)
 
         return queryset
 
@@ -477,9 +479,9 @@ class OptimizationListCreateView(generics.ListCreateAPIView):
         )
 
         # Optional filtering by query params
-        task_id = self.request.query_params.get("task_id")
-        if task_id:
-            queryset = queryset.filter(task_id=task_id)
+        task_pk = resolve_pk_for(Task, self.request.query_params.get("task_id"))
+        if task_pk:
+            queryset = queryset.filter(task_id=task_pk)
 
         execution_status = self.request.query_params.get("execution_status")
         if execution_status:

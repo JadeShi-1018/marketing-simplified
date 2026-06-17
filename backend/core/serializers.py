@@ -106,7 +106,7 @@ class ProjectSummarySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ['id', 'name', 'description', 'owner', 'objectives', 'is_active', 'member_count']
+        fields = ['id', 'slug', 'name', 'description', 'owner', 'objectives', 'is_active', 'member_count']
 
     def get_is_active(self, obj):
         request = self.context.get('request')

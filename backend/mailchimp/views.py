@@ -9,6 +9,7 @@ from django.utils import timezone
 from .models import (
     Campaign,
     CampaignComment,
+    CampaignSettings,
     Template,
     TemplateDefaultContent,
     ensure_shared_default_template,
@@ -283,17 +284,43 @@ class EmailDraftViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             campaign = self.get_object()
             settings = getattr(campaign, 'settings', None)
             if not settings:
-                return Response(
-                    {'error': 'Campaign settings not found'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
+                # Legacy/orphaned drafts may have no settings; provision on first save so
+                # rename/edit works instead of failing with "Campaign settings not found".
+                settings = CampaignSettings.objects.create(campaign=campaign)
+
             template = getattr(settings, 'template', None)
             if not template:
-                return Response(
-                    {'error': 'Template not found for this campaign'},
-                    status=status.HTTP_400_BAD_REQUEST
+                # Clone the shared default into a per-campaign template. Never point the
+                # campaign at the shared template directly — editing it would change the
+                # starter template for everyone.
+                source = ensure_shared_default_template()
+                template = Template.objects.create(
+                    user=campaign.user if getattr(campaign, 'user', None) else source.user,
+                    type=source.type,
+                    name=(settings.subject_line or settings.title or source.name),
+                    drag_and_drop=source.drag_and_drop,
+                    responsive=source.responsive,
+                    category='custom',
+                    date_created=timezone.now(),
+                    date_edited=timezone.now(),
+                    created_by=source.created_by,
+                    edited_by=source.edited_by,
+                    active=True,
+                    folder_id=source.folder_id,
+                    thumbnail=source.thumbnail,
+                    share_url=source.share_url,
+                    content_type=source.content_type,
+                    links=source.links,
                 )
+                src_content = getattr(source, 'default_content', None)
+                if src_content:
+                    TemplateDefaultContent.objects.create(
+                        template=template,
+                        sections=src_content.sections,
+                        links=src_content.links,
+                    )
+                settings.template = template
+                settings.save(update_fields=['template'])
             
             # Update template content
             template_data = request.data.get('template_data', {})

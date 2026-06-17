@@ -105,7 +105,7 @@ export default function CreateCampaignFromTemplateDialog({
     if (!open || !activeProject?.id) return;
     let cancelled = false;
     setLoadingUsers(true);
-    ProjectAPI.getProjectMembers(activeProject.id)
+    ProjectAPI.getProjectMembers(activeProject.slug ?? activeProject.id)
       .then((members) => {
         if (cancelled) return;
         setUsers(

@@ -1097,7 +1097,7 @@ class WorkflowAPITestCase(APITestCase):
         Workflow.objects.create(name='Workflow 1', project=self.project)
         Workflow.objects.create(name='Workflow 2', project=project2)
         
-        response = self.client.get(f'/api/workflows/?project_id={self.project.id}')
+        response = self.client.get(f'/api/workflows/?project_id={self.project.slug}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
         self.assertEqual(response.data['results'][0]['project_id'], self.project.id)

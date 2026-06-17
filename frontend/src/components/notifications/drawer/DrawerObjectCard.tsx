@@ -546,14 +546,15 @@ export default function DrawerObjectCard({ notification }: DrawerObjectCardProps
         if (objectType === "task") {
           // API lookups are slug-only; the slug lives in action_url.
           const { taskKey } = parseActionUrl(notification.action_url || "");
-          const response = await TaskAPI.getTask(taskKey ?? parseInt(objectId, 10));
+          // Slug-only lookup: prefer the slug from the action URL, else pass the raw id string.
+          const response = await TaskAPI.getTask(taskKey ?? objectId);
           setTaskData(response.data);
 
         } else if (objectType === "meeting") {
           const projectId = extractProjectId(notification);
           if (projectId) {
             const { meetingKey } = parseActionUrl(notification.action_url || "");
-            const id = meetingKey || parseInt(objectId, 10);
+            const id = meetingKey || objectId;
             const data = await MeetingsAPI.getMeeting(projectId, id);
             setMeetingData({
               id: data.id,

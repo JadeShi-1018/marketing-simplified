@@ -474,7 +474,7 @@ export default function ListView({
       setMenuMembersLoading(false);
       return;
     }
-    const pid = rowMenu.task.project_id ?? rowMenu.task.project?.id ?? null;
+    const pid = rowMenu.task.project?.slug ?? rowMenu.task.project_id ?? rowMenu.task.project?.id ?? null;
     if (pid == null) {
       setMenuMembers([]);
       setMenuMembersLoading(false);

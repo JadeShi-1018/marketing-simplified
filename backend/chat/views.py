@@ -47,6 +47,7 @@ from .serializers import (
 from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
 from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
 from core.models import ProjectMember
+from core.slug_mixins import resolve_project_pk
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +107,8 @@ class StarredChatViewSet(
                 {'error': 'project_id is required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            pid = int(project_id)
-        except (TypeError, ValueError):
+        pid = resolve_project_pk(project_id)
+        if pid is None:
             return Response(
                 {'error': 'Invalid project_id'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -665,9 +665,8 @@ class ChatViewSet(viewsets.ModelViewSet):
         project_id = request.query_params.get('project_id')
         if not project_id:
             return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            project_id = int(project_id)
-        except (TypeError, ValueError):
+        project_id = resolve_project_pk(project_id)
+        if project_id is None:
             return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not ProjectMember.objects.filter(project_id=project_id, user=request.user, is_active=True).exists():
@@ -1697,9 +1696,8 @@ class AttachmentViewSet(viewsets.GenericViewSet):
                 {'error': 'project_id is required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            pid = int(project_id)
-        except (TypeError, ValueError):
+        pid = resolve_project_pk(project_id)
+        if pid is None:
             return Response(
                 {'error': 'Invalid project_id'},
                 status=status.HTTP_400_BAD_REQUEST,

@@ -151,7 +151,7 @@ class CampaignViewSetCRUDTestCase(CampaignViewSetBaseTestCase):
         campaign1 = self._create_campaign(name="Campaign 1")
         campaign2 = self._create_campaign(name="Campaign 2", project=self.project2)
         
-        url = f'/api/campaigns/?project={self.project.id}'
+        url = f'/api/campaigns/?project={self.project.slug}'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)

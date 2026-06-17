@@ -876,7 +876,7 @@ class TaskAPITest(TestCase):
             organization=self.organization
         )
         url = reverse('task-list')
-        response = self.client.get(url, {'project_id': other_project.id})
+        response = self.client.get(url, {'project_id': other_project.slug})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertIn('detail', response.data)
@@ -907,7 +907,7 @@ class TaskAPITest(TestCase):
         self.assertEqual(tasks[0]['type'], 'budget')
         
         # Test filter by project_id
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         tasks = response.data if isinstance(response.data, list) else response.data.get('results', response.data)
         self.assertEqual(len(tasks), 2)
@@ -1983,7 +1983,7 @@ class TaskAPITest(TestCase):
 
         url = reverse('task-list')
         # Test with first project
-        response = self.client.get(url, {"project_id": q4_campaign.id})
+        response = self.client.get(url, {"project_id": q4_campaign.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
@@ -1993,7 +1993,7 @@ class TaskAPITest(TestCase):
         self.assertNotIn(task_social.summary, summaries)
 
         # Test with second project
-        response = self.client.get(url, {"project_id": social_launch.id})
+        response = self.client.get(url, {"project_id": social_launch.slug})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
         summaries = [t["summary"] for t in results]
@@ -2029,7 +2029,7 @@ class TaskAPITest(TestCase):
         )
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": q4_campaign.id})
+        response = self.client.get(url, {"project_id": q4_campaign.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
@@ -2053,16 +2053,21 @@ class TaskAPITest(TestCase):
         # user is NOT a member of external_project
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": external_project.id})
+        response = self.client.get(url, {"project_id": external_project.slug})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_list_tasks_with_project_ids_invalid_format(self):
-        """project_id must be an integer."""
+        """An unresolvable project_id (unknown slug/numeric) is treated as no-access → 403.
+
+        Under slug-only lookups (SMP-539) project_id is resolved via resolve_project_pk,
+        so a value that matches no project resolves to None and falls outside the user's
+        accessible projects — same path as the inaccessible-project case above.
+        """
         url = reverse('task-list')
         response = self.client.get(url, {"project_id": "invalid"})
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_list_tasks_with_project_ids_overrides_active_campaign(self):
         """project_id should override active_project default filtering."""
@@ -2086,7 +2091,7 @@ class TaskAPITest(TestCase):
         )
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": brand_rebuild.id})
+        response = self.client.get(url, {"project_id": brand_rebuild.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
@@ -2117,7 +2122,7 @@ class TaskAPITest(TestCase):
         )
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": q4_campaign.id, "type": "budget"})
+        response = self.client.get(url, {"project_id": q4_campaign.slug, "type": "budget"})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)

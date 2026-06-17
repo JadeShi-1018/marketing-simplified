@@ -291,7 +291,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self._row(status_value='draft', project=self.other_project, creative=None, position=3)
 
         resp = self.client.get(reverse('ad-copy-variation-list'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'status': 'draft',
             'source_mode': 'existing',
             'creative': self.creative.id,
@@ -312,7 +312,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self._row(batch_id=other_batch, position=2)
 
         resp = self.client.get(reverse('ad-copy-variation-list'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'batch_id': str(wanted_batch),
         })
 
@@ -330,7 +330,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self._row(batch_id=other_project_batch, project=self.other_project, creative=None, position=1)
 
         resp = self.client.get(reverse('ad-copy-variation-latest-batch'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
         })
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
@@ -343,7 +343,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
 
     def test_latest_batch_returns_empty_when_project_has_no_batches(self):
         resp = self.client.get(reverse('ad-copy-variation-latest-batch'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
         })
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)

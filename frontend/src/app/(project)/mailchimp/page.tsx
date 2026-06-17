@@ -77,7 +77,7 @@ export default function MailchimpV2Page() {
     if (!deleteTarget) return;
     setDeleteBusy(true);
     try {
-      await mailchimpApi.deleteEmailDraft(deleteTarget.id);
+      await mailchimpApi.deleteEmailDraft(deleteTarget.slug ?? deleteTarget.id);
       setDrafts((prev) => prev.filter((d) => d.id !== deleteTarget.id));
       toast.success(`Deleted "${deleteTarget.title}"`);
       setDeleteTarget(null);

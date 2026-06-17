@@ -197,9 +197,10 @@ export default function TaskListRowContextMenu({
     const nextPinned = !task.is_pinned;
     setPatchBusy(true);
     try {
+      const apiId = task.slug ?? id;
       const res = nextPinned
-        ? await TaskAPI.pinTask(id)
-        : await TaskAPI.unpinTask(id);
+        ? await TaskAPI.pinTask(apiId)
+        : await TaskAPI.unpinTask(apiId);
       const data = res.data as TaskData;
       onTaskPatched(id, { is_pinned: data.is_pinned ?? nextPinned });
       toast.success(nextPinned ? 'Task pinned' : 'Task unpinned');

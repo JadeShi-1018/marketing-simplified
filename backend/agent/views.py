@@ -27,6 +27,7 @@ class EventStreamRenderer(BaseRenderer):
         return json.dumps(data).encode('utf-8')
 
 from core.models import Project, ProjectMember
+from core.slug_mixins import resolve_project_pk
 from spreadsheet.models import Spreadsheet
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowDefinition,
@@ -58,10 +59,13 @@ class EnglishResponseMixin:
 
 def _get_user_project(request):
     """Get the active project for the current user, with membership check."""
-    project_id = request.headers.get('X-Project-Id') or request.query_params.get('project_id')
-    if project_id:
+    raw_project_id = request.headers.get('X-Project-Id') or request.query_params.get('project_id')
+    if raw_project_id:
+        pk = resolve_project_pk(raw_project_id)
+        if pk is None:
+            return None
         try:
-            project = Project.objects.get(id=project_id, is_deleted=False)
+            project = Project.objects.get(id=pk, is_deleted=False)
             if not ProjectMember.objects.filter(project=project, user=request.user).exists():
                 return None
             return project
