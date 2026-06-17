@@ -3,7 +3,7 @@
   import { useState } from 'react';                                                                                                    
   import Link from 'next/link';                                                                                                      
   import { FormContainer, FormInput, FormButton, ErrorMessage } from '@/components/form';
-  import toast, { Toaster } from 'react-hot-toast';
+  import toast from 'react-hot-toast';
   import { authAPI } from '@/lib/api';        
                                                                                                                                        
   export default function ForgotPasswordPage() {
@@ -57,9 +57,8 @@
       );                                                                                                                               
     }                                                                                                                                
                                               
-    return (                              
+    return (
       <>
-        <Toaster position="top-center" />                                                                                              
         <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-cyan-50 py-12 px-4 
   sm:px-6 lg:px-8">                                                                                                                    
           <FormContainer                                                                                                             

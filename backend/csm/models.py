@@ -165,6 +165,11 @@ class Ticket(TimeStampedModel):
         related_name='assigned_tickets',
     )
     customer_email = models.EmailField(blank=True)
+    conversation = models.ForeignKey(
+        'Conversation', on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='tickets',
+    )
 
     # --- CSM-S01-07: form submission context ---
     form = models.ForeignKey(
@@ -194,6 +199,140 @@ class Ticket(TimeStampedModel):
 
     def __str__(self):
         return f"[{self.get_status_display()}] {self.title}"
+
+
+class Conversation(TimeStampedModel):
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('pending', 'Pending'),
+        ('resolved', 'Resolved'),
+        ('closed', 'Closed'),
+    ]
+    CHANNEL_CHOICES = [
+        ('web', 'Web'),
+        ('email', 'Email'),
+        ('whatsapp', 'WhatsApp'),
+    ]
+
+    customer = models.ForeignKey(
+        'customer.Customer',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='conversations',
+    )
+    queue = models.ForeignKey(
+        Queue, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='conversations',
+    )
+    assigned_to = models.ForeignKey(
+        CustomerUser, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assigned_conversations',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default='web')
+    tags = models.JSONField(default=list, blank=True)
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        customer_name = self.customer.full_name if self.customer else 'Unknown'
+        return f"Conversation with {customer_name} [{self.get_status_display()}]"
+
+    @property
+    def elapsed_seconds(self):
+        end = self.ended_at or timezone.now()
+        return int((end - self.started_at).total_seconds())
+
+
+class ConversationMessage(models.Model):
+    SENDER_TYPE_CHOICES = [
+        ('agent', 'Agent'),
+        ('customer', 'Customer'),
+        ('system', 'System'),
+    ]
+
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE,
+        related_name='messages',
+    )
+    sender_type = models.CharField(max_length=20, choices=SENDER_TYPE_CHOICES)
+    sender_agent = models.ForeignKey(
+        CustomerUser, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='sent_messages',
+    )
+    content = models.TextField(blank=True)
+    rich_body = models.JSONField(null=True, blank=True)
+    image = models.ImageField(upload_to='conversation_images/', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"[{self.sender_type}] {self.content[:50]}"
+
+
+class QuickReplyTemplate(TimeStampedModel):
+    """Pre-written reply templates that agents can insert into the conversation composer."""
+
+    organisation = models.ForeignKey(
+        'customer.CustomerOrganisation',
+        on_delete=models.CASCADE,
+        related_name='quick_reply_templates',
+    )
+    team = models.ForeignKey(
+        Team, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='quick_reply_templates',
+        help_text="If set, only members of this team can see the template",
+    )
+    title = models.CharField(max_length=200, help_text="Short label shown in the template picker")
+    content = models.TextField(help_text="Plain-text content inserted into the composer")
+    rich_body = models.JSONField(null=True, blank=True, help_text="Optional Tiptap JSON")
+    tags = models.JSONField(default=list, blank=True, help_text="List of tag strings for filtering")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='created_templates',
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['title']
+
+    def __str__(self):
+        return f"[Template] {self.title}"
+
+
+class QuickReplyTemplateHistory(models.Model):
+    """Snapshot of a QuickReplyTemplate captured before each edit."""
+
+    template = models.ForeignKey(
+        QuickReplyTemplate, on_delete=models.CASCADE,
+        related_name='history',
+    )
+    edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='template_edits',
+    )
+    edited_at = models.DateTimeField(auto_now_add=True)
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    rich_body = models.JSONField(null=True, blank=True)
+    tags = models.JSONField(default=list)
+
+    class Meta:
+        ordering = ['-edited_at']
+
+    def __str__(self):
+        return f"History of template {self.template_id} at {self.edited_at}"
 
 
 # ---------------------------------------------------------------------------
