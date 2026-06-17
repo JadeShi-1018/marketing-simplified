@@ -12,7 +12,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('spreadsheet', '0009_alter_pivotconfig_is_deleted'),
+        ('spreadsheet', '0001_initial'),
     ]
 
     operations = [

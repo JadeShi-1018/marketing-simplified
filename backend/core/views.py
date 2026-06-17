@@ -557,7 +557,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         from core.utils.bot_user import AGENT_BOT_EMAIL
 
         project_id = self.kwargs.get('project_id')
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Verify user is a member
         if not ProjectMember.objects.filter(
@@ -694,7 +694,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Invite user to project."""
         project_id = self.kwargs.get('project_id')
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Invite is owner-only: verify actor is the authoritative project owner
         user = request.user
@@ -863,7 +863,7 @@ class ListProjectAvailableRolesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id: int):
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Prevent leaking role definitions to non-members.
         if not ProjectMember.objects.filter(
@@ -1051,7 +1051,7 @@ class ListProjectInvitationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Verify user is a project member
         if not ProjectMember.objects.filter(
@@ -1102,7 +1102,7 @@ class ListPendingInvitationApprovalsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(
@@ -1126,7 +1126,7 @@ class ApproveProjectInvitationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, project_id, invitation_id):
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(
@@ -1211,7 +1211,7 @@ class RejectProjectInvitationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, project_id, invitation_id):
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(

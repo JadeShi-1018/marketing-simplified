@@ -12,7 +12,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('miro', '0004_rename_miro_boarda_user_id_7fb95b_idx_miro_boarda_user_id_e19366_idx_and_more'),
+        ('miro', '0001_initial'),
     ]
 
     operations = [

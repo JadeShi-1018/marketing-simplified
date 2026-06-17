@@ -13,7 +13,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('mailchimp', '0002_campaign_media_campaign'),
+        ('mailchimp', '0001_initial'),
     ]
 
     operations = [
