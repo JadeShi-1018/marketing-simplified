@@ -6,6 +6,7 @@ import { AuthProvider } from './AuthProvider';
 import { OnboardingProvider } from '@/contexts/OnboardingContext';
 import OnboardingGate from '@/components/onboarding/OnboardingGate';
 import { TrackingProvider } from '@/lib/tracking/TrackingProvider';
+import UpgradeModal from '@/components/plans/UpgradeModal';
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
@@ -15,6 +16,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
           <OnboardingGate>{children}</OnboardingGate>
         </OnboardingProvider>
       </TrackingProvider>
+      <UpgradeModal />
       <Toaster
         position="top-right"
         containerStyle={{

@@ -443,32 +443,6 @@ function MeetingsPageInner() {
   const completedResultCount = listPage?.completedResultCount;
 
   useEffect(() => {
-    if (process.env.NODE_ENV === 'production') return;
-    console.log('lane props source', {
-      incomingResultCount,
-      incomingLaneTotal,
-      completedResultCount,
-      completedLaneTotal,
-    });
-    console.log('meeting lane counts', {
-      incomingLaneTotal,
-      incomingResultCount,
-      completedLaneTotal,
-      completedResultCount,
-      incomingMeetingsLength: incomingRows.length,
-      completedMeetingsLength: completedRows.length,
-    });
-  }, [
-    listPage,
-    incomingLaneTotal,
-    incomingResultCount,
-    completedLaneTotal,
-    completedResultCount,
-    incomingRows.length,
-    completedRows.length,
-  ]);
-
-  useEffect(() => {
     if (selectedMeetingId == null) return;
     const results = listPage?.results ?? [];
     if (!results.some((m) => m.id === selectedMeetingId)) {

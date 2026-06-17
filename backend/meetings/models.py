@@ -292,7 +292,7 @@ class MeetingDecisionOrigin(models.Model):
 
     meeting = models.ForeignKey(
         Meeting,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name="decision_origins",
     )
     decision = models.OneToOneField(
@@ -553,7 +553,7 @@ class MeetingAuditLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     meeting = models.ForeignKey(
         Meeting,
-        on_delete=models.PROTECT,
+        on_delete=models.CASCADE,
         related_name='audit_log',
         db_index=True,
     )

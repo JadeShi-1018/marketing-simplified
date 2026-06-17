@@ -9,20 +9,26 @@ urlpatterns = [
     # GET /plans
     path('plans/', views.list_plans, name='list_plans'),
     path('plans/switch/', views.switch_plan, name='switch_plan'),
+    path('plans/seats/', views.purchase_seats, name='purchase_seats'),
+    path('plans/seats/preview/', views.preview_seat_purchase, name='preview_seat_purchase'),
 
 
     # Subscription endpoints
     # GET & POST /subscription
     path('subscription/', views.get_subscription, name='get_subscription'),
     path('subscription/cancel/', views.cancel_subscription, name='cancel_subscription'),
+    path('payments/', views.list_payments, name='list_payments'),
 
     # Checkout endpoints
     # POST /checkout
     path('checkout/', views.create_checkout_session, name='create_checkout_session'),
 
     # Usage endpoints
-    # GET /usage
     path('usage/', views.get_usage, name='get_usage'),
+    # GET /quota-preview/?project_id=<id>
+    path('quota-preview/', views.quota_preview, name='quota_preview'),
+    # GET /org-token-summary/
+    path('org-token-summary/', views.org_token_summary, name='org_token_summary'),
     
     # Organization endpoints
     # POST /organization

@@ -233,9 +233,6 @@ function MiroBoardPage() {
         setCanvasSize((prev) => {
           const next = { width: w, height: h };
           if (prev.width !== next.width || prev.height !== next.height) {
-            if (process.env.NODE_ENV === "development" && (w > 0 || h > 0)) {
-              console.debug("[Miro canvas] size:", next);
-            }
             return next;
           }
           return prev;
@@ -701,9 +698,6 @@ function MiroBoardPage() {
         if (canvasContainerRef.current) {
           w = canvasContainerRef.current.clientWidth;
           h = canvasContainerRef.current.clientHeight;
-          if (process.env.NODE_ENV === "development") {
-            console.debug("[Miro canvas] createAtViewportCenter used ref dimensions:", { w, h });
-          }
         }
         if (w <= 0 || h <= 0) return;
       }

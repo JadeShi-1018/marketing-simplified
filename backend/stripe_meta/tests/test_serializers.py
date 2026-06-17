@@ -42,8 +42,8 @@ class PlanSerializerTest(TestCase):
         self.assertEqual(data['max_tasks_per_day'], 50)
         self.assertEqual(data['stripe_price_id'], "price_basic_123")
         self.assertIn('price', data)
-        self.assertIn('price_currency', data)
-        self.assertEqual(data['price_id'], "price_basic_123")
+        self.assertIn('currency', data)
+        self.assertEqual(data['stripe_price_id'], "price_basic_123")
     
     def test_plan_serialization_multiple_plans(self):
         """Test serialization of multiple plans"""

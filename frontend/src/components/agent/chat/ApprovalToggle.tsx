@@ -10,10 +10,18 @@ type ApprovalToggleProps = {
   value: boolean
   onChange?: (next: boolean) => void
   disabled?: boolean
+  size?: "default" | "sm"
 }
 
 /** Green pill switch — matches approval-required “on” styling. */
-export function ApprovalToggle({ sessionId, value, onChange, disabled }: ApprovalToggleProps) {
+export function ApprovalToggle({
+  sessionId,
+  value,
+  onChange,
+  disabled,
+  size = "default",
+}: ApprovalToggleProps) {
+  const isSm = size === "sm"
   const [pending, setPending] = useState(false)
 
   const toggle = useCallback(async () => {
@@ -45,14 +53,16 @@ export function ApprovalToggle({ sessionId, value, onChange, disabled }: Approva
       disabled={disabled || pending}
       onClick={toggle}
       className={cn(
-        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#22c55e]/80 disabled:opacity-50",
+        "relative inline-flex shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#22c55e]/80 disabled:opacity-50",
+        isSm ? "h-4 w-7" : "h-5 w-9",
         value ? "bg-[#22c55e]" : "bg-muted-foreground/30"
       )}
     >
       <span
         className={cn(
-          "pointer-events-none absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
-          value ? "translate-x-4" : "translate-x-0"
+          "pointer-events-none absolute left-0.5 top-0.5 rounded-full bg-white shadow-sm transition-transform",
+          isSm ? "h-3 w-3" : "h-4 w-4",
+          value ? (isSm ? "translate-x-3" : "translate-x-4") : "translate-x-0"
         )}
       />
     </button>

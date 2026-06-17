@@ -20,6 +20,11 @@ export default class CsmAPI {
     return unwrap<Queue>(res.data);
   }
 
+  static async listProjectQueues(projectId: number) {
+    const res = await api.get(`${BASE}/projects/${projectId}/queues/`);
+    return unwrap<Queue>(res.data);
+  }
+
   static async getQueue(queueId: number) {
     const res = await api.get<Queue>(`${BASE}/queues/${queueId}/`);
     return res.data;
