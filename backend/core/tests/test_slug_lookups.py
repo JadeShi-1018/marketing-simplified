@@ -351,3 +351,127 @@ class SlugBackfillTest(APITestCase):
         meeting.refresh_from_db()
         self.assertIsNotNone(meeting.slug)
         self.assertEqual(meeting.slug, "meeting-to-backfill")
+
+
+class SlugOnlyApiLookupExtraModulesTest(APITestCase):
+    """Defence-in-depth for the remaining slug-mixin modules (SMP-539).
+
+    SlugOnlyApiLookupTest above covers task/project/meeting/decision/spreadsheet/
+    workflow. These modules share the same SlugLookupViewSetMixin, so the contract
+    is already proven centrally; this class asserts it end-to-end per module so a
+    future change to any one detail route can't silently drop slug resolution.
+
+    Pattern: GET by the mixin-generated slug must 200; GET by a bare numeric
+    segment (treated as a slug, never matched) must 404 — regardless of whether
+    the model's pk is numeric or a UUID.
+    """
+
+    def setUp(self):
+        import datetime
+        from miro.models import Board
+        from klaviyo.models import EmailDraft as KlaviyoDraft
+        from ad_copy_variation.models import AdCopyVariation
+        from campaign.models import Campaign as MarketingCampaign
+        from mailchimp.models import Campaign as MailchimpCampaign, CampaignSettings
+        from notion_editor.models import Draft as NotionDraft
+
+        self.user = User.objects.create_user(
+            email="extra@example.com", username="extra", password="testpass123"
+        )
+        self.organization = Organization.objects.create(name="Extra Org")
+        self.project = Project.objects.create(
+            name="Extra Project", organization=self.organization
+        )
+        ProjectMember.objects.create(
+            user=self.user, project=self.project, role="Team Leader", is_active=True
+        )
+        self.user.active_project = self.project
+        self.user.save(update_fields=["active_project"])
+        self.client.force_authenticate(user=self.user)
+
+        self.board = Board.objects.create(
+            project=self.project,
+            title="Slug Lookup Board",
+            share_token="tok-board-001",
+        )
+        self.klaviyo_draft = KlaviyoDraft.objects.create(
+            user=self.user,
+            name="Slug Lookup Klaviyo",
+            subject="Subject Line",
+        )
+        self.variation = AdCopyVariation.objects.create(
+            project=self.project,
+            source_mode="custom",
+            headline="Slug Lookup Variation",
+            created_by=self.user,
+        )
+        self.campaign = MarketingCampaign.objects.create(
+            project=self.project,
+            name="Slug Lookup Campaign",
+            objective=MarketingCampaign.Objective.AWARENESS,
+            platforms=[MarketingCampaign.Platform.META],
+            start_date=datetime.date(2026, 1, 1),
+            owner=self.user,
+        )
+        self.mc_campaign = MailchimpCampaign.objects.create(user=self.user)
+        CampaignSettings.objects.create(
+            campaign=self.mc_campaign, subject_line="Slug Lookup Mailchimp"
+        )
+        self.mc_campaign.refresh_from_db()  # post_save signal regenerates the slug
+        self.notion_draft = NotionDraft.objects.create(
+            user=self.user, title="Slug Lookup Note"
+        )
+
+    # miro --------------------------------------------------------------
+    def test_miro_board_slug_url_resolves(self):
+        response = self.client.get(f"/api/miro/boards/{self.board.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_miro_board_numeric_url_is_rejected(self):
+        response = self.client.get("/api/miro/boards/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # klaviyo -----------------------------------------------------------
+    def test_klaviyo_draft_slug_url_resolves(self):
+        response = self.client.get(f"/api/klaviyo/klaviyo-drafts/{self.klaviyo_draft.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_klaviyo_draft_numeric_url_is_rejected(self):
+        response = self.client.get("/api/klaviyo/klaviyo-drafts/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # ad_copy_variation -------------------------------------------------
+    def test_variation_slug_url_resolves(self):
+        response = self.client.get(f"/api/ad_copy_variation/variations/{self.variation.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_variation_numeric_url_is_rejected(self):
+        response = self.client.get("/api/ad_copy_variation/variations/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # campaign ----------------------------------------------------------
+    def test_campaign_slug_url_resolves(self):
+        response = self.client.get(f"/api/campaigns/{self.campaign.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_campaign_numeric_url_is_rejected(self):
+        response = self.client.get("/api/campaigns/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # mailchimp ---------------------------------------------------------
+    def test_mailchimp_draft_slug_url_resolves(self):
+        response = self.client.get(f"/api/mailchimp/email-drafts/{self.mc_campaign.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_mailchimp_draft_numeric_url_is_rejected(self):
+        response = self.client.get("/api/mailchimp/email-drafts/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # notion_editor -----------------------------------------------------
+    def test_notion_draft_slug_url_resolves(self):
+        response = self.client.get(f"/api/notion/api/drafts/{self.notion_draft.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_notion_draft_numeric_url_is_rejected(self):
+        response = self.client.get("/api/notion/api/drafts/999999/")
+        self.assertEqual(response.status_code, 404)
