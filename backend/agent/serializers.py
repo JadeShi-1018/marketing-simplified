@@ -190,11 +190,11 @@ class AgentWorkflowDefinitionListSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentWorkflowDefinition
         fields = [
-            'id', 'name', 'description', 'is_default', 'is_system',
+            'id', 'slug', 'name', 'description', 'is_default', 'is_system',
             'status', 'step_count', 'step_types', 'created_at',
             'trigger_config', 'trigger_state',
         ]
-        read_only_fields = ['id', 'is_system', 'created_at']
+        read_only_fields = ['id', 'slug', 'is_system', 'created_at']
 
     def get_step_count(self, obj):
         return obj.steps.filter(is_deleted=False).count()
@@ -223,11 +223,11 @@ class AgentWorkflowDefinitionDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentWorkflowDefinition
         fields = [
-            'id', 'name', 'description', 'is_default', 'is_system',
+            'id', 'slug', 'name', 'description', 'is_default', 'is_system',
             'status', 'steps', 'trigger_config',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'is_system', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'slug', 'is_system', 'created_at', 'updated_at']
         extra_kwargs = {
             'trigger_config': {'required': False},
         }

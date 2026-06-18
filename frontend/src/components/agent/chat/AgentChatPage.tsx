@@ -40,6 +40,7 @@ import {
   type CalendarPreload,
 } from "@/lib/agentLaunchContext"
 import { getPendingMiroWorkflowRunIds } from "@/lib/agentMiroBoardStatus"
+import { agentMiroBoardHref } from "@/lib/agentMiroBoardHref"
 
 function pickRecommendedDecisionTree(
   data: AnalysisResult | null | undefined,
@@ -124,7 +125,7 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     type = "miro_status"
     navigateTo = "miro"
     navigateLabel = "Open Miro"
-    navigateHref = `/miro/${m.data.board_id}`
+    navigateHref = agentMiroBoardHref(m.data)
   } else if (eventType === "miro_generation_failed") {
     type = "error"
   } else if (m.message_type === "analysis" || hasPersistedAnalysisPayload(m.data)) {
@@ -287,7 +288,7 @@ function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMess
         type: "miro_status",
         navigateTo: "miro",
         navigateLabel: "Open Miro",
-        navigateHref: `/miro/${event.data.board_id}`,
+        navigateHref: agentMiroBoardHref(event.data),
         eventType,
         workflowRunId,
       },

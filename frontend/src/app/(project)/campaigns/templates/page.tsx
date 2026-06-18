@@ -119,7 +119,7 @@ export default function TemplatesListV2Page() {
           loading={loading}
           errorMessage={errorMessage}
           showArchived={showArchived}
-          onRowClick={(t) => router.push(`/campaigns/templates/${t.id}`)}
+          onRowClick={(t) => router.push(`/campaigns/templates/${t.slug}`)}
         />
       </div>
       <ChatFAB />

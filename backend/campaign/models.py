@@ -965,7 +965,7 @@ class CampaignNotificationPreference(TimeStampedModel):
 # Campaign Template Models
 # ============================================================================
 
-class CampaignTemplate(TimeStampedModel):
+class CampaignTemplate(SluggedResourceModelMixin, TimeStampedModel):
     """
     Campaign Template Model - Reusable campaign structures.
 

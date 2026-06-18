@@ -3,6 +3,7 @@ from django.db import models
 from django.db.models import Q
 from django.conf import settings
 from core.models import TimeStampedModel
+from core.slug_mixins import SluggedResourceModelMixin
 
 
 class AgentSession(TimeStampedModel):
@@ -394,7 +395,7 @@ class ImportedDataRecord(models.Model):
         return f"Record row={self.row_index} file={self.file_id}"
 
 
-class AgentWorkflowDefinition(TimeStampedModel):
+class AgentWorkflowDefinition(SluggedResourceModelMixin, TimeStampedModel):
     STATUS_CHOICES = [
         ('active', 'Active'),
         ('draft', 'Draft'),

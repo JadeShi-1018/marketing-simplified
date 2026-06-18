@@ -396,7 +396,7 @@ class CampaignTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CampaignTemplate
         fields = [
-            'id', 'name', 'description', 'creator', 'version_number',
+            'id', 'slug', 'name', 'description', 'creator', 'version_number',
             'sharing_scope', 'sharing_scope_display', 'project', 'project_id',
             'objective', 'platforms', 'hypothesis_framework', 'tag_suggestions',
             'task_checklist', 'review_schedule_pattern', 'decision_point_triggers',
@@ -405,7 +405,7 @@ class CampaignTemplateSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'creator', 'version_number', 'usage_count', 'created_at', 'updated_at'
+            'id', 'slug', 'creator', 'version_number', 'usage_count', 'created_at', 'updated_at'
         ]
 
     project_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)

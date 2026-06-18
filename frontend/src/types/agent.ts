@@ -69,6 +69,7 @@ export interface AgentMessageData {
   task_ids?: number[];
   created_tasks?: Array<{ index: number; task_id: number; summary: string }>;
   board_id?: string;
+  board_slug?: string;
   event_type?: string;
   status?: string;
   recommended_tasks?: RecommendedTask[];
@@ -368,6 +369,7 @@ export interface AgentWorkflowStep {
 
 export interface AgentWorkflowDefinition {
   id: string;
+  slug: string;
   name: string;
   description: string;
   is_default: boolean;

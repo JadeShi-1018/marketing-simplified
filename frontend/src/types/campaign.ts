@@ -204,6 +204,7 @@ export type TemplateSharingScope = 'PERSONAL' | 'TEAM' | 'ORGANIZATION';
 
 export interface CampaignTemplate {
   id: string;
+  slug: string;
   name: string;
   description?: string;
   creator: UserSummary;

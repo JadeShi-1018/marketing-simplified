@@ -31,7 +31,7 @@ class EventStreamRenderer(BaseRenderer):
         return json.dumps(data).encode('utf-8')
 
 from core.models import Project, ProjectMember
-from core.slug_mixins import resolve_project_pk
+from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin, resolve_lookup_kwargs
 from spreadsheet.models import Spreadsheet
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowDefinition,
@@ -696,7 +696,7 @@ class AnomalyLatestView(EnglishResponseMixin, APIView):
         return Response(msg.metadata['anomalies'])
 
 
-class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
+class AgentWorkflowDefinitionViewSet(SlugLookupViewSetMixin, EnglishResponseMixin, viewsets.ModelViewSet):
     """CRUD for workflow definitions. Shows project-level + system-level workflows."""
     permission_classes = [IsAuthenticated]
     pagination_class = None
@@ -830,7 +830,7 @@ def _get_workflow_or_404(request, workflow_id):
     """Fetch workflow with project-level access check. Returns (workflow, error_response)."""
     try:
         workflow = AgentWorkflowDefinition.objects.get(
-            id=workflow_id, is_deleted=False,
+            **resolve_lookup_kwargs(workflow_id), is_deleted=False,
         )
     except AgentWorkflowDefinition.DoesNotExist:
         return None, Response(

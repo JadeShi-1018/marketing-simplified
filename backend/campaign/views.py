@@ -734,7 +734,7 @@ class CampaignAttachmentViewSet(viewsets.ModelViewSet):
 # Campaign Template ViewSet
 # ============================================================================
 
-class CampaignTemplateViewSet(viewsets.ModelViewSet):
+class CampaignTemplateViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for Campaign Template CRUD operations.
     

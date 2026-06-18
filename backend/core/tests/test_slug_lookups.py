@@ -371,9 +371,10 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
         from miro.models import Board
         from klaviyo.models import EmailDraft as KlaviyoDraft
         from ad_copy_variation.models import AdCopyVariation
-        from campaign.models import Campaign as MarketingCampaign
+        from campaign.models import Campaign as MarketingCampaign, CampaignTemplate
         from mailchimp.models import Campaign as MailchimpCampaign, CampaignSettings
         from notion_editor.models import Draft as NotionDraft
+        from agent.models import AgentWorkflowDefinition
 
         self.user = User.objects.create_user(
             email="extra@example.com", username="extra", password="testpass123"
@@ -420,6 +421,16 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
         self.mc_campaign.refresh_from_db()  # post_save signal regenerates the slug
         self.notion_draft = NotionDraft.objects.create(
             user=self.user, title="Slug Lookup Note"
+        )
+        self.campaign_template = CampaignTemplate.objects.create(
+            creator=self.user,
+            name="Slug Lookup Template",
+            sharing_scope="PERSONAL",
+        )
+        self.agent_workflow = AgentWorkflowDefinition.objects.create(
+            name="Slug Lookup Workflow",
+            project=self.project,
+            created_by=self.user,
         )
 
     # miro --------------------------------------------------------------
@@ -474,4 +485,22 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
 
     def test_notion_draft_numeric_url_is_rejected(self):
         response = self.client.get("/api/notion/api/drafts/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # campaign template -------------------------------------------------
+    def test_campaign_template_slug_url_resolves(self):
+        response = self.client.get(f"/api/campaign-templates/{self.campaign_template.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_campaign_template_numeric_url_is_rejected(self):
+        response = self.client.get("/api/campaign-templates/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # agent workflow definition -----------------------------------------
+    def test_agent_workflow_slug_url_resolves(self):
+        response = self.client.get(f"/api/agent/workflows/{self.agent_workflow.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_agent_workflow_numeric_url_is_rejected(self):
+        response = self.client.get("/api/agent/workflows/999999/")
         self.assertEqual(response.status_code, 404)

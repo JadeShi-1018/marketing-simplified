@@ -263,7 +263,9 @@ def _commit_miro_board(orchestrator, draft: dict, destination: dict | None, comm
         {
             'type': 'miro_board_created',
             'content': f'Miro board created: {board.title}',
-            'data': {'board_id': str(board.id)},
+            # SMP-539 upgrade: emit board_slug so the agent's Miro deep-link is
+            # slug-only (the board UUID never appears in the URL).
+            'data': {'board_id': str(board.id), 'board_slug': board.slug},
         }
     ]
     return out, sse, wf_patch
