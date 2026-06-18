@@ -430,6 +430,7 @@ export interface TemplateProjectInfo {
 
 export interface AgentWorkflowTemplate {
   id: string;
+  slug: string;
   name: string;
   description?: string;
   category: TemplateCategory;

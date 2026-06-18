@@ -1104,7 +1104,7 @@ def _clone_workflow_definition(
         return new_workflow
 
 
-class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
+class AgentWorkflowTemplateViewSet(SlugLookupViewSetMixin, EnglishResponseMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing workflow templates.
 

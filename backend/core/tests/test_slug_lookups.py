@@ -374,7 +374,7 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
         from campaign.models import Campaign as MarketingCampaign, CampaignTemplate
         from mailchimp.models import Campaign as MailchimpCampaign, CampaignSettings
         from notion_editor.models import Draft as NotionDraft
-        from agent.models import AgentWorkflowDefinition
+        from agent.models import AgentWorkflowDefinition, AgentWorkflowTemplate
 
         self.user = User.objects.create_user(
             email="extra@example.com", username="extra", password="testpass123"
@@ -430,6 +430,10 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
         self.agent_workflow = AgentWorkflowDefinition.objects.create(
             name="Slug Lookup Workflow",
             project=self.project,
+            created_by=self.user,
+        )
+        self.agent_template = AgentWorkflowTemplate.objects.create(
+            name="Slug Lookup Agent Template",
             created_by=self.user,
         )
 
@@ -503,4 +507,13 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
 
     def test_agent_workflow_numeric_url_is_rejected(self):
         response = self.client.get("/api/agent/workflows/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # agent workflow template -------------------------------------------
+    def test_agent_template_slug_url_resolves(self):
+        response = self.client.get(f"/api/agent/templates/{self.agent_template.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_agent_template_numeric_url_is_rejected(self):
+        response = self.client.get("/api/agent/templates/999999/")
         self.assertEqual(response.status_code, 404)

@@ -661,7 +661,7 @@ class AgentPendingExternalApproval(TimeStampedModel):
         return f"PendingExternalApproval {self.id} ({self.kind}) {self.status}"
 
 
-class AgentWorkflowTemplate(TimeStampedModel):
+class AgentWorkflowTemplate(SluggedResourceModelMixin, TimeStampedModel):
     """
     Reusable workflow template that stores workflow steps configuration.
 

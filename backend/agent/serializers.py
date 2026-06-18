@@ -284,7 +284,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentWorkflowTemplate
         fields = [
-            'id', 'name', 'description', 'category',
+            'id', 'slug', 'name', 'description', 'category',
             'steps_config', 'workflow_step_count',
             'workflow_step_types', 'created_by',
             'organization', 'organization_name',
@@ -296,7 +296,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'created_by',
+            'id', 'slug', 'created_by',
             'organization',
             'is_shared_to_current_project',
             'created_at', 'updated_at',
