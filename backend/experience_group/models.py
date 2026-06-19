@@ -1,13 +1,17 @@
-from django.db import models                                                                                                                                       
+from django.db import models
 from django.contrib.auth import get_user_model
-from django_fsm import FSMField, transition                                                                                                                        
+from django_fsm import FSMField, transition
+
+from core.slug_mixins import SluggedResourceModelMixin
                                                                                                                                                                  
 User = get_user_model()                                                                                                                                            
                                                                                                                                                                  
                                                                                                                                                                    
-class ExperienceGroup(models.Model):
-                                                                                                                                                                   
-    class PublishStatus(models.TextChoices):                                                                                                                     
+class ExperienceGroup(SluggedResourceModelMixin, models.Model):
+    # SMP-539: slug-only URLs (admin/CSM internal resources). Source: name.
+    slug_source_field = 'name'
+
+    class PublishStatus(models.TextChoices):
         DRAFT = 'DRAFT', 'Draft'        
         PUBLISHED = 'PUBLISHED', 'Published'
     project = models.ForeignKey(                                                                                                                                  

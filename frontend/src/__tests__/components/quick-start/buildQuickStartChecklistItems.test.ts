@@ -43,7 +43,7 @@ describe('buildQuickStartChecklistItems', () => {
       'team',
     ]);
     expect(items.find((i) => i.id === 'spreadsheet')?.href).toBe(
-      '/spreadsheets/april-budget?project_id=7'
+      '/spreadsheets/april-budget'
     );
     expect(items.find((i) => i.id === 'miro')?.href).toBe('/miro/board-uuid');
   });

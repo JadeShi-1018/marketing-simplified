@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Loader2, Pencil, Save, X } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -271,7 +272,7 @@ export default function DecisionTreeDetailPanel({
   };
 
   const fullPageHref = projectId
-    ? `/decisions/${decisionKey}?project_id=${projectId}`
+    ? nestedProjectPath(projectId, `/decisions/${decisionKey}`)
     : `/decisions/${decisionKey}`;
 
   return (
@@ -421,9 +422,11 @@ export default function DecisionTreeDetailPanel({
                 editable={status !== 'ARCHIVED' && canEdit && !editing}
                 onCreateTask={() => {
                   const q = new URLSearchParams();
-                  if (projectId) q.set('project_id', String(projectId));
                   q.set('link_decision_id', String(decisionKey));
-                  window.open(`/tasks/new?${q.toString()}`, '_blank');
+                  const href = projectId
+                    ? nestedProjectPath(projectId, `/tasks/new?${q.toString()}`)
+                    : `/tasks/new?${q.toString()}`;
+                  window.open(href, '_blank');
                 }}
               />
             </div>

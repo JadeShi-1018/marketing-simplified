@@ -11,6 +11,7 @@ import Modal from "@/components/ui/Modal";
 import { TaskAPI } from "@/lib/api/taskApi";
 import { ProjectAPI } from "@/lib/api/projectApi";
 import { useProjectStore } from "@/lib/projectStore";
+import { useStripProjectIdFromUrl } from "@/lib/useStripProjectIdFromUrl";
 import { useTaskFilterParams } from "@/hooks/useTaskFilterParams";
 import { TaskFilterPanel } from "@/components/tasks/TaskFilterPanel";
 import { TimelineTaskCreateFlow } from "@/components/tasks/TimelineTaskCreateFlow";
@@ -18,12 +19,11 @@ import { TimelineTaskCreateFlow } from "@/components/tasks/TimelineTaskCreateFlo
 export function TimelinePageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const projectIdParam = searchParams.get("project_id");
+  useStripProjectIdFromUrl();
   const originMeetingIdParam = searchParams.get("origin_meeting_id");
-  const { activeProject } = useProjectStore();
-  const projectId = projectIdParam
-    ? projectIdParam
-    : activeProject?.slug || activeProject?.id || null;
+  const activeProject = useProjectStore((s) => s.activeProject);
+  const setActiveProject = useProjectStore((s) => s.setActiveProject);
+  const projectId = activeProject?.slug || activeProject?.id || null;
 
   const originMeetingIdNum = useMemo(() => {
     if (!originMeetingIdParam) return null;
@@ -47,13 +47,6 @@ export function TimelinePageContent() {
     };
     loadTypes();
   }, []);
-
-  useEffect(() => {
-    if (projectIdParam || (!activeProject?.id && !activeProject?.slug)) return;
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("project_id", String(activeProject.slug || activeProject.id));
-    router.replace(`/timeline?${params.toString()}`);
-  }, [projectIdParam, activeProject?.id, activeProject?.slug, router, searchParams]);
 
   const {
     tasks,
@@ -149,9 +142,8 @@ export function TimelinePageContent() {
       }
       return next;
     });
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("project_id", String(selectedProject.slug || selectedProject.id));
-    router.push(`/timeline?${params.toString()}`);
+    setActiveProject(selectedProject);
+    setProjectPickerOpen(false);
   };
 
   const filteredProjects = useMemo(() => {
@@ -199,7 +191,7 @@ export function TimelinePageContent() {
                   type="button"
                   onClick={() =>
                     router.push(
-                      projectId ? `/tasks?project_id=${projectId}` : "/tasks",
+                      "/tasks",
                     )
                   }
                   className="rounded px-3 py-1.5 text-sm font-medium text-indigo-600 ring-1 ring-indigo-200 transition-colors hover:bg-indigo-50"

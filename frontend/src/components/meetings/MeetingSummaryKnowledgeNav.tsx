@@ -4,6 +4,7 @@ import Link from 'next/link';
 
 import type { KnowledgeNavigationLink } from '@/types/meeting';
 import { taskWorkspaceCreateFromMeetingHref } from '@/lib/tasks/taskWorkspaceDeepLinks';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 export interface MeetingSummaryKnowledgeNavProps {
   generatedDecisions?: KnowledgeNavigationLink[];
@@ -78,7 +79,10 @@ export function MeetingSummaryKnowledgeNav({
             Create task from this meeting
           </Link>
           <Link
-            href={`/decisions?project_id=${projectId}&origin_meeting_id=${meetingId}`}
+            href={nestedProjectPath(
+              projectId,
+              `/decisions?origin_meeting_id=${meetingId}`,
+            )}
             className="inline-flex items-center justify-center rounded-md border border-[#3CCED7]/30 bg-[#3CCED7]/10/80 px-3 py-2 text-sm font-medium text-[#0f757a] transition hover:bg-[#3CCED7]/15"
           >
             Create decision from this meeting

@@ -16,6 +16,7 @@ export const TIER_COLORS: Record<TierType, string> = {
 
 export interface Queue {
   id: number;
+  slug: string;
   project: number | string;
   organisation: number | null;
   organisation_name: string | null;

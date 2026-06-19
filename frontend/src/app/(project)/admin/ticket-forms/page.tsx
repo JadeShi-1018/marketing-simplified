@@ -48,7 +48,7 @@ export default function TicketFormsListPage() {
       const res = await TicketFormAPI.create(projectId, { name: name.trim() });
       setCreateOpen(false);
       setName('');
-      router.push(`/admin/ticket-forms/${res.data.id}/edit?project=${projectId}`);
+      router.push(`/admin/ticket-forms/${res.data.slug}/edit?project=${projectId}`);
     } catch {
       setError('Could not create form.');
     } finally {
@@ -111,14 +111,14 @@ export default function TicketFormsListPage() {
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
                           <Link
-                            href={`/admin/ticket-forms/${f.id}/edit?project=${projectId}`}
+                            href={`/admin/ticket-forms/${f.slug}/edit?project=${projectId}`}
                             className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-gray-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
                           >
                             <Pencil className="h-4 w-4" aria-hidden />
                             Edit
                           </Link>
                           <Link
-                            href={`/admin/ticket-forms/${f.id}/assignments?project=${projectId}`}
+                            href={`/admin/ticket-forms/${f.slug}/assignments?project=${projectId}`}
                             className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-gray-600 transition-colors hover:bg-indigo-50 hover:text-indigo-600"
                           >
                             <Link2 className="h-4 w-4" aria-hidden />

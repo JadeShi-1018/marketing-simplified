@@ -44,6 +44,7 @@ export function buildDecisionMapSearchParams(
   next: DecisionMapUrlState,
 ): URLSearchParams {
   const params = new URLSearchParams(current.toString());
+  params.delete('project_id');
   const mapValue = decisionMapModeToUrl(next.mode);
   if (mapValue) params.set(MAP_PARAM, mapValue);
   else params.delete(MAP_PARAM);

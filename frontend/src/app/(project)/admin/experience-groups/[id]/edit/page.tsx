@@ -13,7 +13,7 @@ const EditExperienceGroupPage: React.FC = () => {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const id = Number(params.id);
+  const id = String(params.id);
   const projectId = searchParams.get('project');
 
   const [group, setGroup] = useState<ExperienceGroup | null>(null);

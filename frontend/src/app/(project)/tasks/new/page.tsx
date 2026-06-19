@@ -6,7 +6,7 @@ import toast from 'react-hot-toast';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskTag } from '@/types/task';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
@@ -105,12 +105,8 @@ function normalizeDraftTags(value: unknown): TaskTag[] {
 export default function CreateTaskPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const projectIdParam = searchParams?.get('project_id');
   const linkDecisionIdParam = searchParams?.get('link_decision_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam
-    ? projectIdParam
-    : activeProject?.slug || activeProject?.id || null;
+  const { projectId, activeProject } = useActiveProjectForFlatRoute();
   const linkDecisionId = linkDecisionIdParam || null;
 
   const [taskTypes, setTaskTypes] = useState<{ value: string; label: string }[]>([]);
@@ -399,8 +395,7 @@ export default function CreateTaskPage() {
       // Fire-and-forget: draft is superseded; TTL cleans up any orphan in 7 days.
       void clear().catch(() => {});
       if (linkDecisionId) {
-        const qs = projectId ? `?project_id=${projectId}` : '';
-        router.push(`/decisions/${linkDecisionId}${qs}`);
+        router.push(`/decisions/${linkDecisionId}`);
       } else {
         router.push('/tasks');
       }
@@ -434,8 +429,7 @@ export default function CreateTaskPage() {
           type="button"
           onClick={() => {
             if (linkDecisionId) {
-              const qs = projectId ? `?project_id=${projectId}` : '';
-              router.push(`/decisions/${linkDecisionId}${qs}`);
+              router.push(`/decisions/${linkDecisionId}`);
             } else {
               router.push('/tasks');
             }
@@ -628,8 +622,7 @@ export default function CreateTaskPage() {
                     try { await clear(); } catch { /* best-effort */ }
                   }
                   if (linkDecisionId) {
-                    const qs = projectId ? `?project_id=${projectId}` : '';
-                    router.push(`/decisions/${linkDecisionId}${qs}`);
+                    router.push(`/decisions/${linkDecisionId}`);
                   } else {
                     router.push('/tasks');
                   }

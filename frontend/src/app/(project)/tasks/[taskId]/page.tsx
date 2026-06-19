@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { useTaskTracking } from '@/lib/tracking/useTaskTracking';
 import toast from 'react-hot-toast';
+import { useTaskTracking } from '@/lib/tracking/useTaskTracking';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { useParams, useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
@@ -101,7 +102,9 @@ export default function TaskV2DetailPage() {
     if (!task?.id) return;
     try {
       await TaskAPI.deleteTask(task.slug ?? task.id);
-      router.push('/tasks');
+      const projectKey =
+        task?.project?.slug ?? task?.project?.id ?? task?.project_id ?? null;
+      router.push(nestedProjectPath(projectKey, '/tasks'));
     } catch (e) {
       toast.error((e as any)?.response?.data?.detail || 'Delete failed');
     }

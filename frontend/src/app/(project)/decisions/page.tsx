@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DecisionsPageCard from '@/components/decisions/DecisionsPageCard';
 import { useAuthStore } from '@/lib/authStore';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 
 const ROLE_LEVELS: Record<string, number> = {
   owner: 1,
@@ -36,19 +36,8 @@ function resolveRoleLevel(role?: string | null): number {
 
 function DecisionsV2Content() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectIdParam = searchParams?.get('project_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
+  const { projectId } = useActiveProjectForFlatRoute();
   const user = useAuthStore((s) => s.user);
-
-  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
-
-  useEffect(() => {
-    if (!projectId || projectIdParam) return;
-    const params = new URLSearchParams(searchParams?.toString() ?? '');
-    params.set('project_id', String(projectId));
-    router.replace(`/decisions?${params.toString()}`, { scroll: false });
-  }, [projectId, projectIdParam, router, searchParams]);
 
   const role = useMemo(() => {
     if (!user) return null;
@@ -64,10 +53,8 @@ function DecisionsV2Content() {
   const canCreate = roleLevel <= EDIT_MAX_LEVEL;
   const canDelete = roleLevel <= EDIT_MAX_LEVEL;
 
-  const navigateToDecision = (id: string | number, targetProjectId?: number | string | null) => {
-    const resolvedProjectId = targetProjectId ?? projectId;
-    const qs = resolvedProjectId ? `?project_id=${resolvedProjectId}` : '';
-    router.push(`/decisions/${id}${qs}`);
+  const navigateToDecision = (id: string | number) => {
+    router.push(`/decisions/${id}`);
   };
 
   return (

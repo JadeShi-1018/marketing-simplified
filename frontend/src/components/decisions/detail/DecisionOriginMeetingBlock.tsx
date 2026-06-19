@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { CalendarDays } from 'lucide-react';
 import type { OriginMeetingPayload } from '@/types/meeting';
 
@@ -23,7 +24,9 @@ export default function DecisionOriginMeetingBlock({ origin, projectId }: Props)
   const href =
     origin.detail_url ??
     origin.url ??
-    (projectId ? `/meetings/${meetingKey}?project_id=${projectId}` : `/meetings/${meetingKey}`);
+    (projectId
+      ? nestedProjectPath(projectId, `/meetings/${meetingKey}`)
+      : `/meetings/${meetingKey}`);
 
   const title = origin.title?.trim() || 'Meeting';
   const dateLabel = formatDate((origin as any).originTimestamp ?? (origin as any).scheduled_date ?? (origin as any).scheduled_start);

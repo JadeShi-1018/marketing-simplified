@@ -82,7 +82,7 @@ export default function DecisionLinkedTasksSection({
 
   const linkHref = (task: LinkedTask) => {
     const key = task.slug ?? task.id;
-    return projectId ? `/tasks/${key}?project_id=${projectId}` : `/tasks/${key}`;
+    return `/tasks/${key}`;
   };
 
   return (

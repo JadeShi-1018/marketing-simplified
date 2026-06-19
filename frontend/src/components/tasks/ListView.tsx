@@ -29,6 +29,11 @@ import TaskDrawer from './TaskDrawer';
 import QuickTaskCreate from './QuickTaskCreate';
 import type { TaskTag } from '@/types/task';
 
+function resolveTaskSlug(task: Pick<TaskData, 'slug'>): string | null {
+  const slug = task.slug?.trim();
+  return slug || null;
+}
+
 interface ListViewProps {
   tasks: TaskData[];
   loading: boolean;
@@ -40,6 +45,10 @@ interface ListViewProps {
   onLinearBulkSynced?: () => void | Promise<void>;
   /** Refresh the task list from the parent (e.g. after a drawer mutation). */
   onRefresh?: () => void;
+  /** When set, opens the quick-view drawer for this task slug (path or query, depending on list route). */
+  initialDrawerTaskSlug?: string | null;
+  /** List route base, e.g. `/tasks` or `/projects/<slug>/tasks`. Controls drawer URL shape. */
+  listBasePath?: string;
 }
 
 const TABLE_COLUMN_WIDTHS = {
@@ -128,9 +137,13 @@ export default function ListView({
   onOpenLinearImport,
   onLinearBulkSynced,
   onRefresh,
+  initialDrawerTaskSlug = null,
+  listBasePath = '/tasks',
 }: ListViewProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const projectKey = projectId != null && projectId !== '' ? String(projectId) : null;
+  const drawerUsesNestedPath = listBasePath.startsWith('/projects/');
   const removeTask = useTaskStore((s) => s.removeTask);
   const updateTask = useTaskStore((s) => s.updateTask);
   const sessionKey = `tasks-list-state-${projectId ?? 'all'}`;
@@ -447,19 +460,47 @@ export default function ListView({
     };
   }, [projectId]);
   const [drawerRefreshKey, setDrawerRefreshKey] = useState(0);
-  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(() => {
-    const param = searchParams?.get('drawerTaskId');
-    const n = param ? Number(param) : NaN;
-    return Number.isFinite(n) && n > 0 ? n : null;
+  const [drawerTaskSlug, setDrawerTaskSlug] = useState<string | null>(() => {
+    const fromPath = initialDrawerTaskSlug?.trim();
+    return fromPath || null;
   });
-  const openDrawer = useCallback((id: number | null) => {
-    setDrawerTaskId(id);
+  const openDrawer = useCallback((slug: string | null) => {
+    const normalized = slug?.trim() || null;
+    setDrawerTaskSlug(normalized);
     const params = new URLSearchParams(searchParams?.toString() ?? '');
-    if (id != null) params.set('drawerTaskId', String(id));
-    else params.delete('drawerTaskId');
+    params.delete('drawerTaskId');
+    params.delete('project_id');
+
+    if (drawerUsesNestedPath) {
+      if (!projectKey) return;
+      params.delete('drawerTask');
+      const qs = params.toString();
+      const path = normalized
+        ? `${listBasePath}/${encodeURIComponent(normalized)}`
+        : listBasePath;
+      router.replace(qs ? `${path}?${qs}` : path, { scroll: false });
+      return;
+    }
+
+    if (normalized) params.set('drawerTask', normalized);
+    else params.delete('drawerTask');
     const qs = params.toString();
-    router.replace(qs ? `?${qs}` : '?', { scroll: false });
-  }, [router, searchParams]);
+    router.replace(qs ? `${listBasePath}?${qs}` : listBasePath, { scroll: false });
+  }, [drawerUsesNestedPath, listBasePath, projectKey, router, searchParams]);
+  const legacyDrawerResolvedRef = useRef(false);
+
+  useEffect(() => {
+    const fromPath = initialDrawerTaskSlug?.trim() || null;
+    setDrawerTaskSlug(fromPath);
+  }, [initialDrawerTaskSlug]);
+
+  useEffect(() => {
+    if (!drawerUsesNestedPath || !projectKey || initialDrawerTaskSlug?.trim()) return;
+    const legacyQuerySlug = searchParams?.get('drawerTask')?.trim();
+    if (legacyQuerySlug) {
+      openDrawer(legacyQuerySlug);
+    }
+  }, [drawerUsesNestedPath, initialDrawerTaskSlug, openDrawer, projectKey, searchParams]);
 
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [rowMenu, setRowMenu] = useState<TaskListRowContextMenuState>(null);
@@ -629,6 +670,24 @@ export default function ListView({
     const start = (safeCurrentPage - 1) * LIST_PAGE_SIZE;
     return sorted.slice(start, start + LIST_PAGE_SIZE);
   }, [safeCurrentPage, sorted]);
+  // Migrate legacy ?drawerTaskId=<numeric> once tasks are loaded (slug-only deep links).
+  useEffect(() => {
+    if (drawerTaskSlug || legacyDrawerResolvedRef.current || initialDrawerTaskSlug?.trim()) return;
+    const legacyId = searchParams?.get('drawerTaskId');
+    if (!legacyId) return;
+    const n = Number(legacyId);
+    if (!Number.isFinite(n) || n <= 0) {
+      legacyDrawerResolvedRef.current = true;
+      openDrawer(null);
+      return;
+    }
+    if (loading) return;
+    legacyDrawerResolvedRef.current = true;
+    const match = paginatedVisible.find((t) => t.id === n);
+    const slug = match?.slug?.trim();
+    if (slug) openDrawer(slug);
+    else openDrawer(null);
+  }, [drawerTaskSlug, initialDrawerTaskSlug, loading, openDrawer, paginatedVisible, searchParams]);
   const pageStart = sorted.length === 0 ? 0 : (safeCurrentPage - 1) * LIST_PAGE_SIZE + 1;
   const pageEnd = Math.min(sorted.length, safeCurrentPage * LIST_PAGE_SIZE);
 
@@ -842,7 +901,7 @@ export default function ListView({
     try {
       await TaskAPI.updateTask(task.slug ?? task.id, requestData as Partial<TaskData>);
       markRecentlyUpdated([task.id]);
-      if (task.id === drawerTaskId) setDrawerRefreshKey((k) => k + 1);
+      if (resolveTaskSlug(task) === drawerTaskSlug) setDrawerRefreshKey((k) => k + 1);
       return true;
     } catch (err) {
       updateTaskInStore(task.id, previous);
@@ -1488,7 +1547,8 @@ export default function ListView({
                         toggleSelection(task.id, !isSelected);
                         return;
                       }
-                      openDrawer(task.id);
+                      const drawerSlug = resolveTaskSlug(task);
+                      if (drawerSlug) openDrawer(drawerSlug);
                     }}
                     onContextMenu={(e) => openRowMenu(e, task)}
                   >
@@ -1570,7 +1630,8 @@ export default function ListView({
                             onClick={(e) => {
                               e.stopPropagation();
                               if (bulkMode) { task.id && toggleSelection(task.id, !isSelected); return; }
-                              if (task.id) openDrawer(task.id);
+                              const drawerSlug = resolveTaskSlug(task);
+                              if (drawerSlug) openDrawer(drawerSlug);
                             }}
                           >
                             <span className="block min-w-0 flex-1 leading-5">
@@ -2000,7 +2061,10 @@ export default function ListView({
                     <tr
                       key={`sub-${sub.id}`}
                       className="cursor-pointer bg-gray-50/60 hover:bg-gray-100/60"
-                      onClick={() => sub.id && openDrawer(sub.id)}
+                      onClick={() => {
+                        const drawerSlug = resolveTaskSlug(sub);
+                        if (drawerSlug) openDrawer(drawerSlug);
+                      }}
                     >
                       <td colSpan={colSpan} className="py-1.5 pl-14 pr-4">
                         <div className="flex items-center gap-3 text-sm text-gray-700">
@@ -2088,23 +2152,24 @@ export default function ListView({
             if (hiddenBySearch || hiddenByStatus || hiddenByPriority || hiddenByType || hiddenByTags) {
               toast('Task created but hidden by your active filters — clear them to see it.', { icon: '⚠️', duration: 5000 });
             }
-            if (task.id) openDrawer(task.id);
+            const drawerSlug = resolveTaskSlug(task);
+            if (drawerSlug) openDrawer(drawerSlug);
           }}
         />
       )}
       <TaskDrawer
-        taskId={drawerTaskId}
+        taskSlug={drawerTaskSlug}
         onClose={() => openDrawer(null)}
         onTaskUpdate={async () => { await onRefresh?.(); }}
         externalRefreshKey={drawerRefreshKey}
-        taskIds={paginatedVisible.map((t) => t.id).filter(Boolean) as number[]}
+        taskSlugs={paginatedVisible.map((t) => resolveTaskSlug(t)).filter(Boolean) as string[]}
         onNavigate={(dir) => {
-          if (!drawerTaskId) return;
-          const ids = paginatedVisible.map((t) => t.id).filter(Boolean) as number[];
-          const idx = ids.indexOf(drawerTaskId);
+          if (!drawerTaskSlug) return;
+          const slugs = paginatedVisible.map((t) => resolveTaskSlug(t)).filter(Boolean) as string[];
+          const idx = slugs.indexOf(drawerTaskSlug);
           if (idx === -1) return;
-          const next = dir === 'next' ? ids[idx + 1] : ids[idx - 1];
-          if (next != null) openDrawer(next);
+          const next = dir === 'next' ? slugs[idx + 1] : slugs[idx - 1];
+          if (next) openDrawer(next);
         }}
       />
     </div>

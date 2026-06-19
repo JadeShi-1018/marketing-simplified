@@ -8,6 +8,7 @@ from django_fsm import TransitionNotAllowed
 
 from core.permissions import IsProjectMember
 from core.viewset_mixins import ProjectScopedViewSetMixin
+from core.slug_mixins import SlugLookupViewSetMixin
 
 from csm.models import TicketForm
 from csm.serializers import TicketFormFieldSerializer
@@ -24,7 +25,8 @@ from .models import ExperienceGroup
 from .serializers import ExperienceGroupSerializer, ExperienceGroupListSerializer
 
 
-class ExperienceGroupViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+class ExperienceGroupViewSet(SlugLookupViewSetMixin, ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    # SMP-539: slug-only lookups; numeric path segments 404.
     queryset = ExperienceGroup.objects.all()
     serializer_class = ExperienceGroupSerializer
     permission_classes = [IsAuthenticated, IsProjectMember]

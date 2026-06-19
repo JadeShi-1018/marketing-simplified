@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import api from '@/lib/api';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
 import type {
@@ -69,14 +69,7 @@ function getErrorMessage(err: unknown, fallback: string): string {
 export default function MeetingDetailPage() {
   const router = useRouter();
   const params = useParams<{ meetingId: string }>();
-  const searchParams = useSearchParams();
-  const activeProject = useProjectStore((s) => s.activeProject);
-
-  const meetingId = String(params.meetingId);
-  const projectIdParam = searchParams?.get('project_id');
-  const projectId = projectIdParam
-    ? projectIdParam
-    : activeProject?.slug || activeProject?.id || null;
+  const { projectId } = useActiveProjectForFlatRoute();
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [availableTransitions, setAvailableTransitions] = useState<string[]>([]);
@@ -182,7 +175,7 @@ export default function MeetingDetailPage() {
 
   const handleDocumentOpen = useCallback(() => {
     if (!projectId || !meeting) return;
-    router.push(`/meetings/${meeting.slug}/document?project_id=${projectId}`);
+    router.push(`/meetings/${meeting.slug}/document`);
   }, [router, projectId, meeting]);
 
   const handleCreateZoomMeeting = useCallback(async () => {

@@ -1,11 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
 import type {
   MeetingListItem,
@@ -48,12 +47,7 @@ function dedupeByKey<T>(rows: T[], key: (row: T) => string): T[] {
 }
 
 export default function MeetingsV2Page() {
-  const searchParams = useSearchParams();
-  const projectIdParam = searchParams?.get('project_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam
-    ? projectIdParam
-    : activeProject?.slug || activeProject?.id || null;
+  const { projectId } = useActiveProjectForFlatRoute();
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');

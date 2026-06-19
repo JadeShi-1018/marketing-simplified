@@ -14,7 +14,7 @@ import { AlertCircle } from 'lucide-react';
 const PreviewPage: React.FC = () => {
   const params = useParams();
   const searchParams = useSearchParams();
-  const id = Number(params.id);
+  const id = String(params.id);
   const projectId = searchParams.get('project');
 
   const [data, setData] = useState<(ExperienceGroup & { is_preview: boolean }) | null>(null);

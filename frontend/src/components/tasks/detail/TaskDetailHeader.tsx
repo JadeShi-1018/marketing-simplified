@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import {
   ChevronRight, Trash2, Share2, ArrowLeft, KanbanSquare,
   Calendar, ChevronsUp, ChevronUp, Minus, ChevronDown, ChevronsDown,
@@ -155,6 +156,8 @@ export default function TaskDetailHeader({
   const activeMembers = members.filter((m) => m.is_active);
   const overdue = isDueOverdue(task.due_date);
 
+  const tasksListHref = nestedProjectPath(projectId, '/tasks');
+
   return (
     <section className="rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
       {/* Top bar */}
@@ -162,7 +165,7 @@ export default function TaskDetailHeader({
         {!isDrawer && (
           <nav className="flex min-w-0 items-center gap-2 text-xs text-gray-500">
             <Link
-              href="/tasks"
+              href={tasksListHref}
               data-testid="back-to-tasks"
               title="Back to Tasks"
               aria-label="Back to Tasks"
@@ -171,9 +174,9 @@ export default function TaskDetailHeader({
               <ArrowLeft className="h-3.5 w-3.5" />
             </Link>
             <div className="flex min-w-0 items-center gap-1.5">
-              <Link href="/tasks" className="hidden hover:text-gray-900 sm:inline">Tasks</Link>
+              <Link href={tasksListHref} className="hidden hover:text-gray-900 sm:inline">Tasks</Link>
               <ChevronRight className="hidden h-3 w-3 text-gray-300 sm:block" />
-              <Link href={projectId ? `/tasks?project_id=${projectId}` : '/tasks'} className="max-w-[9rem] truncate hover:text-gray-900 sm:max-w-[14rem]">
+              <Link href={tasksListHref} className="max-w-[9rem] truncate hover:text-gray-900 sm:max-w-[14rem]">
                 {projectName}
               </Link>
               <ChevronRight className="h-3 w-3 shrink-0 text-gray-300" />

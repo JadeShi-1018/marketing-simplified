@@ -519,8 +519,7 @@ export default function CalendarPageContent() {
               const meta = extractNavigationMetadata(event.description || "");
               if (meta && meta.isDerived) {
                 if (meta.decision_slug || meta.decision_id) {
-                  const query = meta.project_id ? `?project_id=${meta.project_id}` : '';
-                  router.push(`/decisions/${meta.decision_slug ?? meta.decision_id}${query}`);
+                  router.push(`/decisions/${meta.decision_slug ?? meta.decision_id}`);
                   return;
                 }
                 if (meta.task_slug || meta.task_id) {

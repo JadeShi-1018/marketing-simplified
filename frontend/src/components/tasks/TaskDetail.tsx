@@ -64,6 +64,7 @@ import { OriginMeetingBlock } from "@/components/meetings/OriginMeetingBlock";
 import { useChatData } from "@/hooks/useChatData";
 import { createChat, findPrivateChat, sendMessage } from "@/lib/api/chatApi";
 import ShareTaskDialog from "./ShareTaskDialog";
+import { nestedProjectPath } from "@/lib/projectNestedRoutes";
 
 interface TaskDetailProps {
   task: TaskData;
@@ -1702,9 +1703,14 @@ export default function TaskDetail({
                   <p className="text-sm text-slate-500 mt-1">
                     From{" "}
                     <Link
-                      href={`/decisions/${task.linked_object_slug ?? task.object_id}${
-                        projectId ? `?project_id=${projectId}` : ""
-                      }`}
+                      href={
+                        projectId
+                          ? nestedProjectPath(
+                              projectId,
+                              `/decisions/${task.linked_object_slug ?? task.object_id}`,
+                            )
+                          : `/decisions/${task.linked_object_slug ?? task.object_id}`
+                      }
                       className="text-indigo-600 hover:text-indigo-800 hover:underline"
                     >
                       Decision #{task.object_id}

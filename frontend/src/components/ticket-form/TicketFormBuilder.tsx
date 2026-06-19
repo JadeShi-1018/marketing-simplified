@@ -102,7 +102,7 @@ function validateRows(rows: BuilderFieldRow[]): Record<string, string> {
 }
 
 interface Props {
-  formId: number;
+  formId: number | string;
   projectId: number;
   formName: string;
   formDescription: string;

@@ -3,6 +3,8 @@
 import { Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { CampaignTemplate } from '@/types/campaign';
+import { useProjectStore } from '@/lib/projectStore';
+import { nestedProjectPathFromProject } from '@/lib/projectNestedRoutes';
 import SharingScopePill from '../pills/SharingScopePill';
 
 interface Props {
@@ -31,6 +33,7 @@ export default function TemplateListTable({
   showArchived = false,
 }: Props) {
   const router = useRouter();
+  const activeProject = useProjectStore((s) => s.activeProject);
 
   return (
     <div className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
@@ -85,7 +88,7 @@ export default function TemplateListTable({
                   onClick={() =>
                     onRowClick
                       ? onRowClick(t)
-                      : router.push(`/campaigns/templates/${t.slug}`)
+                      : router.push(nestedProjectPathFromProject(activeProject, `/campaigns/templates/${t.slug}`))
                   }
                 >
                   <td className="px-4 py-3">

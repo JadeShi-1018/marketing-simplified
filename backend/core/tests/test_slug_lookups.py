@@ -437,6 +437,26 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
             created_by=self.user,
         )
 
+        # SMP-539: admin/CSM internal resources (experience_group, csm).
+        from experience_group.models import ExperienceGroup
+        from customer.models import CustomerOrganisation
+        from csm.models import CustomerUser, Queue, TicketForm
+
+        self.experience_group = ExperienceGroup.objects.create(
+            project=self.project, name="Slug Lookup Experience Group", created_by=self.user,
+        )
+        self.ticket_form = TicketForm.objects.create(
+            project=self.project, name="Slug Lookup Ticket Form", created_by=self.user,
+        )
+        self.customer_org = CustomerOrganisation.objects.create(name="Slug Lookup Cust Org")
+        CustomerUser.objects.create(
+            user=self.user, organisation=self.customer_org,
+            user_type="admin", is_active=True,
+        )
+        self.queue = Queue.objects.create(
+            organisation=self.customer_org, name="Slug Lookup Queue",
+        )
+
     # miro --------------------------------------------------------------
     def test_miro_board_slug_url_resolves(self):
         response = self.client.get(f"/api/miro/boards/{self.board.slug}/")
@@ -516,4 +536,31 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
 
     def test_agent_template_numeric_url_is_rejected(self):
         response = self.client.get("/api/agent/templates/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # experience_group (admin) ------------------------------------------
+    def test_experience_group_slug_url_resolves(self):
+        response = self.client.get(f"/api/experience-groups/{self.experience_group.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_experience_group_numeric_url_is_rejected(self):
+        response = self.client.get("/api/experience-groups/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # csm ticket form (admin) -------------------------------------------
+    def test_ticket_form_slug_url_resolves(self):
+        response = self.client.get(f"/api/csm/ticket-forms/{self.ticket_form.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_ticket_form_numeric_url_is_rejected(self):
+        response = self.client.get("/api/csm/ticket-forms/999999/")
+        self.assertEqual(response.status_code, 404)
+
+    # csm queue ---------------------------------------------------------
+    def test_queue_slug_url_resolves(self):
+        response = self.client.get(f"/api/csm/queues/{self.queue.slug}/")
+        self.assertEqual(response.status_code, 200)
+
+    def test_queue_numeric_url_is_rejected(self):
+        response = self.client.get("/api/csm/queues/999999/")
         self.assertEqual(response.status_code, 404)

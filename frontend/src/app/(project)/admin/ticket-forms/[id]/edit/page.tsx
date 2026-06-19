@@ -30,7 +30,7 @@ export default function TicketFormEditPage() {
 
   const searchParams = useSearchParams();
 
-  const formId = Number(params.id);
+  const formId = String(params.id);
 
   const projectId = Number(searchParams.get('project'));
 

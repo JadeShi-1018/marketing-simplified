@@ -8,6 +8,7 @@ import DecisionTree, { type DecisionTreeHandle, type DecisionTreeViewMode } from
 import DecisionFullscreenPanel from '@/components/decisions/DecisionFullscreenPanel';
 import DecisionTreeDetailPanel from '@/components/decisions/DecisionTreeDetailPanel';
 import DecisionTreeNavigator from '@/components/decisions/DecisionTreeNavigator';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 const DecisionTreeFlow = dynamic(() => import('@/components/decisions/DecisionTreeFlow'), {
   ssr: false,
@@ -377,9 +378,9 @@ export default function DecisionsGraphSection({
     onCreateTopic: canEdit ? handleCreateTopic : undefined,
     onDeleteTopic: canEdit ? handleDeleteTopic : undefined,
     getDecisionUrl: (idOrSlug: number | string, pid?: number | string | null) =>
-      `/decisions/${idOrSlug}${pid ? `?project_id=${pid}` : ''}`,
+      pid ? nestedProjectPath(pid, `/decisions/${idOrSlug}`) : `/decisions/${idOrSlug}`,
     getReviewUrl: (idOrSlug: number | string, pid?: number | string | null) =>
-      `/decisions/${idOrSlug}${pid ? `?project_id=${pid}` : ''}`,
+      pid ? nestedProjectPath(pid, `/decisions/${idOrSlug}/review`) : `/decisions/${idOrSlug}/review`,
   };
 
   const embeddedViewport = {

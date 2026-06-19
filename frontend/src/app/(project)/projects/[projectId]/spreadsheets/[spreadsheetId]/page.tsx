@@ -1254,7 +1254,7 @@ export default function SpreadsheetDetailPage() {
                     Retry
                   </button>
                   <Link
-                    href={`/projects/${projectId}/spreadsheets`}
+                    href="/spreadsheets"
                     className="rounded-full bg-gray-600 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-700"
                   >
                     Back to Spreadsheets
@@ -1306,7 +1306,7 @@ export default function SpreadsheetDetailPage() {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => router.push(`/projects/${projectId}/spreadsheets`)}
+                    onClick={() => router.push('/spreadsheets')}
                     className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900"
                   >
                     <ArrowLeft className="h-4 w-4" />

@@ -17,7 +17,7 @@ const OUTLINE_BUTTON_CLASS =
 export default function TicketFormAssignmentsPage() {
   const params = useParams();
   const searchParams = useSearchParams();
-  const formId = Number(params.id);
+  const formId = String(params.id);
   const projectId = Number(searchParams.get('project'));
 
   const [form, setForm] = useState<TicketFormDetail | null>(null);

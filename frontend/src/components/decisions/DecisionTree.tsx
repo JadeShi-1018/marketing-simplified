@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import dagre from '@dagrejs/dagre';
 import { CheckCircle2, FileText, Link2, PencilLine, Plus, Trash2, X } from 'lucide-react';
 import DecisionStatusPill from '@/components/decisions/DecisionStatusPill';
@@ -87,10 +88,14 @@ interface DecisionTreeProps {
 }
 
 const defaultGetDecisionUrl = (idOrSlug: number | string, projectId?: number | string | null) =>
-  `/decisions/${idOrSlug}${projectId ? `?project_id=${projectId}` : ''}`;
+  projectId
+    ? nestedProjectPath(projectId, `/decisions/${idOrSlug}`)
+    : `/decisions/${idOrSlug}`;
 
 const defaultGetReviewUrl = (idOrSlug: number | string, projectId?: number | string | null) =>
-  `/decisions/${idOrSlug}/review${projectId ? `?project_id=${projectId}` : ''}`;
+  projectId
+    ? nestedProjectPath(projectId, `/decisions/${idOrSlug}/review`)
+    : `/decisions/${idOrSlug}/review`;
 
 type PositionedNode = DecisionGraphNode & { x: number; y: number; dateKey: string };
 type PositionedTreeGroup = {

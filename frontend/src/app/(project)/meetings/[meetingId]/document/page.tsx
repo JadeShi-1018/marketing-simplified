@@ -1,10 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { useAuthStore } from '@/lib/authStore';
 import api from '@/lib/api';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
@@ -17,16 +17,11 @@ import CollaborativeEditor, {
 
 export default function MeetingDocumentPage() {
   const params = useParams<{ meetingId: string }>();
-  const searchParams = useSearchParams();
-  const activeProject = useProjectStore((s) => s.activeProject);
+  const { projectId } = useActiveProjectForFlatRoute();
   const token = useAuthStore((s) => s.token);
   const hasHydrated = useAuthStore((s) => s.hasHydrated);
 
   const meetingId = String(params.meetingId);
-  const projectIdParam = searchParams?.get('project_id');
-  const projectId = projectIdParam
-    ? projectIdParam
-    : activeProject?.slug || activeProject?.id || null;
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [members, setMembers] = useState<MemberLike[]>([]);

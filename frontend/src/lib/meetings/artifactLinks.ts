@@ -1,6 +1,4 @@
-/**
- * Meeting artifact links (SMP-484 #4) — canonical types and navigation targets.
- */
+import { flatAppPath } from '@/lib/projectNestedRoutes';
 
 export type MeetingArtifactResourceIndex = {
   decisions: { id: number; slug?: string | null; title?: string | null; status?: string; projectSeq?: number | null }[];
@@ -45,13 +43,13 @@ export function meetingArtifactHref(
   if (!slug) return null;
 
   if (t === 'decision') {
-    return `/decisions/${slug}?project_id=${projectId}`;
+    return flatAppPath(`/decisions/${slug}`);
   }
   if (t === 'task') {
     return `/tasks/${slug}`;
   }
   if (t === 'spreadsheet') {
-    return `/projects/${projectId}/spreadsheets/${slug}`;
+    return `/spreadsheets/${slug}`;
   }
   return null;
 }

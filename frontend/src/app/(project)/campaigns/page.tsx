@@ -1,12 +1,12 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { Plus, FileText } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { useCampaignData } from '@/hooks/useCampaignData';
 import CampaignListFilters from '@/components/campaigns/CampaignListFilters';
 import CampaignListTable from '@/components/campaigns/CampaignListTable';
@@ -15,10 +15,7 @@ import CreateCampaignFromTemplateDialog from '@/components/campaigns/modals/Crea
 
 export default function CampaignsV2Page() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectIdParam = searchParams?.get('project_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
+  const { projectId, activeProject } = useActiveProjectForFlatRoute();
 
   const { campaigns, loading, error, fetchCampaigns } = useCampaignData();
   const [searchQuery, setSearchQuery] = useState('');

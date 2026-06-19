@@ -16,6 +16,7 @@ import {
   type WorkspaceDashboardData,
   type WorkspaceSpreadsheet,
 } from '@/lib/api/workspaceApi';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -1005,7 +1006,7 @@ export default function WorkspaceDashboard({ projectId }: Props) {
           }
           iconBg="#ecfeff" title="Decisions" badge=""
           // badge={`${dec.activeCount} active`}
-          viewAllHref={`/decisions?project_id=${projectId}`}
+          viewAllHref={nestedProjectPath(projectId, '/decisions')}
         >
           <div style={{ borderBottom: '1px solid #f2f3f5' }}>
             <MetricRow label="Active decisions" value={dec.activeCount} tooltip={`${dec.activeCount} decision${dec.activeCount !== 1 ? 's' : ''} currently active in this project`} />
@@ -1037,7 +1038,7 @@ export default function WorkspaceDashboard({ projectId }: Props) {
           }
           iconBg="#fffbeb" title="Tasks" badge=""
           // badge={`${workspace.tasks.length} priority queue`}
-          viewAllHref={`/tasks?project_id=${projectId}`}
+          viewAllHref={nestedProjectPath(projectId, '/tasks')}
         >
           <div style={{ borderBottom: '1px solid #f2f3f5' }}>
             <MetricRow label="Completion rate" value={`${completionPct}%`} valueColor={completionPct >= 50 ? COLOR.green : TEXT_PRIMARY} tooltip={`${doneTasks} of ${totalTasks} tasks completed`} />
@@ -1097,7 +1098,7 @@ export default function WorkspaceDashboard({ projectId }: Props) {
           }
           iconBg="#ecfdf5" title="Operations" badge=""
           // badge={`${ops.activeSheets + ops.activePatterns} active`}
-          viewAllHref={`/spreadsheets`}
+          viewAllHref={nestedProjectPath(projectId, '/spreadsheets')}
         >
           <div style={{ borderBottom: '1px solid #f2f3f5' }}>
             <MetricRow label="Active spreadsheets" value={ops.activeSheets} tooltip={`${ops.activeSheets} spreadsheet${ops.activeSheets !== 1 ? 's' : ''} in this project`} />

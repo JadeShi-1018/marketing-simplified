@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import { Calendar, CheckSquare, GitBranch, Layout, Table2, Users } from 'lucide-react';
 import type { QuickStartPostCreateGuide } from '@/lib/quickStartPostCreate';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 export type QuickStartChecklistItem = {
   id: string;
@@ -15,11 +16,13 @@ export function buildQuickStartChecklistItems(
   const { projectId, summary, enabledModules, spreadsheetId, miroBoardId } = guide;
   const items: QuickStartChecklistItem[] = [];
 
+  const projectKey = String(projectId);
+
   if (enabledModules.tasks && summary.tasks > 0) {
     items.push({
       id: 'tasks',
       label: `Review ${summary.tasks} generated task${summary.tasks === 1 ? '' : 's'}`,
-      href: '/tasks',
+      href: nestedProjectPath(projectKey, '/tasks'),
       icon: CheckSquare,
     });
   }
@@ -27,8 +30,8 @@ export function buildQuickStartChecklistItems(
   if (enabledModules.spreadsheet && summary.spreadsheets > 0) {
     const href =
       spreadsheetId != null
-        ? `/spreadsheets/${spreadsheetId}?project_id=${projectId}`
-        : `/spreadsheets?project_id=${projectId}`;
+        ? nestedProjectPath(projectKey, `/spreadsheets/${spreadsheetId}`)
+        : nestedProjectPath(projectKey, '/spreadsheets');
     items.push({
       id: 'spreadsheet',
       label: `Open campaign spreadsheet${summary.spreadsheets > 1 ? 's' : ''}`,
@@ -52,14 +55,14 @@ export function buildQuickStartChecklistItems(
     items.push({
       id: 'decisions',
       label: `Review ${summary.decisions} draft decision${summary.decisions === 1 ? '' : 's'}`,
-      href: '/decisions',
+      href: nestedProjectPath(projectKey, '/decisions'),
       icon: GitBranch,
     });
   }
 
   if (enabledModules.miro && summary.miro_boards > 0) {
     const href =
-      miroBoardId != null ? `/miro/${miroBoardId}` : `/miro?project_id=${projectId}`;
+      miroBoardId != null ? `/miro/${miroBoardId}` : '/miro';
     items.push({
       id: 'miro',
       label: `Open planning board${summary.miro_boards > 1 ? 's' : ''}`,

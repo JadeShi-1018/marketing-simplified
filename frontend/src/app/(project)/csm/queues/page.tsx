@@ -139,7 +139,7 @@ const QueuesPageContent: React.FC = () => {
                     <TableRow key={queue.id}>
                       <TableCell>
                         <a
-                          href={`/csm/queues/${queue.id}`}
+                          href={`/csm/queues/${queue.slug}`}
                           className="font-medium text-indigo-600 hover:text-indigo-800"
                         >
                           {queue.name}

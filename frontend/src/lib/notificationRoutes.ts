@@ -1,3 +1,4 @@
+import { nestedProjectPath } from "@/lib/projectNestedRoutes";
 import { ProjectAPI } from "@/lib/api/projectApi";
 import { useProjectStore } from "@/lib/projectStore";
 import type { NotificationItem } from "@/types/notifications";
@@ -16,18 +17,6 @@ export function parseProjectIdFromActionUrl(actionUrl: string): number | string 
     const projectId = Number(rawVal);
     if (Number.isFinite(projectId) && projectId > 0) return projectId;
     return rawVal;
-  }
-
-  try {
-    const url = new URL(actionUrl, "http://local");
-    const fromQuery = url.searchParams.get("project_id");
-    if (fromQuery) {
-      const projectId = Number(fromQuery);
-      if (Number.isFinite(projectId) && projectId > 0) return projectId;
-      return fromQuery;
-    }
-  } catch {
-    // ignore malformed URLs
   }
 
   return undefined;
@@ -59,11 +48,6 @@ export function extractNotificationProjectId(
   return undefined;
 }
 
-function withProjectQuery(path: string, projectId: number | string): string {
-  const separator = path.includes("?") ? "&" : "?";
-  return `${path}${separator}project_id=${projectId}`;
-}
-
 function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarget | null {
   const projectTask = actionUrl.match(/^\/projects\/([^/]+)\/tasks\/([^/]+)/);
   if (projectTask) {
@@ -73,7 +57,7 @@ function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarg
   const projectMeeting = actionUrl.match(/^\/projects\/([^/]+)\/meetings\/([^/]+)/);
   if (projectMeeting) {
     return {
-      href: `/meetings/${projectMeeting[2]}?project_id=${projectMeeting[1]}`,
+      href: nestedProjectPath(projectMeeting[1], `/meetings/${projectMeeting[2]}`),
       requiresProjectSwitch: false,
     };
   }
@@ -81,7 +65,7 @@ function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarg
   const projectDecision = actionUrl.match(/^\/projects\/([^/]+)\/decisions\/([^/]+)/);
   if (projectDecision) {
     return {
-      href: `/decisions/${projectDecision[2]}?project_id=${projectDecision[1]}`,
+      href: nestedProjectPath(projectDecision[1], `/decisions/${projectDecision[2]}`),
       requiresProjectSwitch: false,
     };
   }
@@ -98,7 +82,15 @@ function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarg
   }
 
   if (actionUrl.startsWith("/") && !actionUrl.startsWith("//")) {
-    return { href: actionUrl, requiresProjectSwitch: false };
+    try {
+      const url = new URL(actionUrl, "http://local");
+      url.searchParams.delete("project_id");
+      const qs = url.searchParams.toString();
+      const href = qs ? `${url.pathname}?${qs}` : url.pathname;
+      return { href, requiresProjectSwitch: false };
+    } catch {
+      return { href: actionUrl, requiresProjectSwitch: false };
+    }
   }
 
   return null;
@@ -152,7 +144,7 @@ export function buildNotificationFullPageTarget(
   if (objectType === "meeting" && related_object_id) {
     const meetingKey = related_object_slug ?? related_object_id;
     const href = projectId
-      ? withProjectQuery(`/meetings/${meetingKey}`, projectId)
+      ? nestedProjectPath(projectId, `/meetings/${meetingKey}`)
       : `/meetings/${meetingKey}`;
     return { href, requiresProjectSwitch: false };
   }
@@ -160,7 +152,7 @@ export function buildNotificationFullPageTarget(
   if (objectType === "decision" && related_object_id) {
     const decisionKey = related_object_slug ?? related_object_id;
     const href = projectId
-      ? withProjectQuery(`/decisions/${decisionKey}`, projectId)
+      ? nestedProjectPath(projectId, `/decisions/${decisionKey}`)
       : `/decisions/${decisionKey}`;
     return { href, requiresProjectSwitch: false };
   }

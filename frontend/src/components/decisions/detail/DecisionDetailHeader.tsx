@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Sparkles } from 'lucide-react';
 import DecisionStatusPill from '@/components/decisions/DecisionStatusPill';
@@ -40,7 +41,7 @@ export default function DecisionDetailHeader({
     setLocal(title ?? '');
   }, [title]);
 
-  const backHref = projectId ? `/decisions?project_id=${projectId}` : '/decisions';
+  const backHref = nestedProjectPath(projectId, '/decisions');
 
   const handleBlur = async () => {
     const normalized = local.trim();

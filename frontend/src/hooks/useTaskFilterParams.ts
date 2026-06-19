@@ -6,8 +6,10 @@ import type { TaskListFilters } from "@/types/task";
  * Hook to keep task filters in sync with URL query params.
  *
  * URL shape (examples):
- * - ?project_id=123&type=asset&status=UNDER_REVIEW
+ * - ?type=asset&status=UNDER_REVIEW
  * - ?priority=HIGH&current_approver_id=42&has_parent=true&tag_names=Launch
+ *
+ * Project scope is never stored in the URL (`project_id` comes from the store).
  */
 export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters) => void, () => void] => {
   const router = useRouter();
@@ -27,12 +29,7 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
       return parsed.length ? parsed[0] : undefined;
     };
 
-    const getProjectId = (key: string): number | string | undefined => {
-      const raw = searchParams.get(key);
-      if (!raw) return undefined;
-      const num = Number(raw);
-      return Number.isFinite(num) ? num : raw;
-    };
+    const getProjectId = (_key: string): number | string | undefined => undefined;
 
     const getStrings = (key: string): string[] => {
       return searchParams.getAll(key).filter(Boolean);
@@ -95,6 +92,7 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
   const setFilters = useCallback(
     (next: TaskListFilters) => {
       const params = new URLSearchParams(searchParams.toString());
+      params.delete("project_id");
 
       const setRepeated = (key: keyof TaskListFilters, value?: string | string[] | number | number[]) => {
         const k = String(key);
@@ -133,11 +131,7 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
         else params.set(k, value);
       };
 
-      if (next.project_id === undefined || next.project_id === null) {
-        params.delete("project_id");
-      } else {
-        params.set("project_id", String(next.project_id));
-      }
+      params.delete("project_id");
       setRepeated("type", next.type as any);
       setRepeated("status", next.status as any);
       setRepeated("priority", next.priority as any);
@@ -159,6 +153,7 @@ export const useTaskFilterParams = (): [TaskListFilters, (next: TaskListFilters)
 
   const clearFilters = useCallback(() => {
     const params = new URLSearchParams(searchParams.toString());
+    params.delete("project_id");
     [
       "type",
       "status",

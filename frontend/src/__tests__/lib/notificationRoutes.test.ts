@@ -27,9 +27,9 @@ function makeNotification(
 }
 
 describe("notificationRoutes", () => {
-  it("parses project_id from legacy and new action URLs", () => {
+  it("parses project_id from legacy nested action URLs only", () => {
     expect(parseProjectIdFromActionUrl("/projects/5/meetings/9")).toBe(5);
-    expect(parseProjectIdFromActionUrl("/meetings/9?project_id=5")).toBe(5);
+    expect(parseProjectIdFromActionUrl("/meetings/9?project_id=5")).toBeUndefined();
   });
 
   it("extracts project_id from notification metadata", () => {
@@ -65,7 +65,7 @@ describe("notificationRoutes", () => {
       })
     );
     expect(target).toEqual({
-      href: "/meetings/9?project_id=5",
+      href: "/meetings/9",
       requiresProjectSwitch: false,
     });
   });
@@ -80,7 +80,7 @@ describe("notificationRoutes", () => {
       })
     );
     expect(target).toEqual({
-      href: "/decisions/12?project_id=3",
+      href: "/decisions/12",
       requiresProjectSwitch: false,
     });
   });
@@ -109,7 +109,7 @@ describe("notificationRoutes", () => {
       })
     );
     expect(target).toEqual({
-      href: "/decisions/15?project_id=2",
+      href: "/decisions/15",
       requiresProjectSwitch: false,
     });
   });
@@ -151,7 +151,7 @@ describe("notificationRoutes — slug routing (SMP-539)", () => {
         metadata: { project_id: 5 },
       })
     );
-    expect(target?.href).toBe("/meetings/q2-client-sync?project_id=5");
+    expect(target?.href).toBe("/meetings/q2-client-sync");
     expect(target?.href).not.toContain("/meetings/9");
   });
 
@@ -164,7 +164,7 @@ describe("notificationRoutes — slug routing (SMP-539)", () => {
         metadata: { project_id: 3 },
       })
     );
-    expect(target?.href).toBe("/decisions/approve-budget-increase?project_id=3");
+    expect(target?.href).toBe("/decisions/approve-budget-increase");
     expect(target?.href).not.toContain("/decisions/12");
   });
 

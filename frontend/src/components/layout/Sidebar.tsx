@@ -4,6 +4,9 @@ import type { FC, ComponentType } from "react";
 import { useChatStore } from "@/lib/chatStore";
 import { useAgentSidePanelStore } from "@/lib/agentSidePanelStore";
 import { useProjectStore } from "@/lib/projectStore";
+import {
+  pathnameMatchesProjectResource,
+} from "@/lib/projectNestedRoutes";
 // TODO: In actual projects, uncomment the imports below
 // import Link from 'next/link';
 // For Next.js 13+ App Router, also import:
@@ -212,10 +215,7 @@ const Sidebar: FC<SidebarProps> = ({
 
   /** Hub /meetings, or any /projects/:id/meetings/... — only Meetings nav should be active */
   const pathnameIsMeetingsWorkspace = useMemo(
-    () =>
-      pathname === "/meetings" ||
-      pathname.startsWith("/meetings/") ||
-      /^\/projects\/[^/]+\/meetings(\/.*)?$/.test(pathname),
+    () => pathnameMatchesProjectResource(pathname ?? "", "/meetings"),
     [pathname]
   );
 
@@ -285,7 +285,7 @@ const Sidebar: FC<SidebarProps> = ({
     }
     // On any Meetings URL, highlight only Meetings (not Projects, etc.)
     if (pathnameIsMeetingsWorkspace) {
-      return href === "/meetings";
+      return href.endsWith("/meetings") || href === "/meetings";
     }
     // For exact match or sub-path match, but avoid partial matches
     // e.g., '/admin' should match '/admin' and '/admin/xxx', but not '/administrator'

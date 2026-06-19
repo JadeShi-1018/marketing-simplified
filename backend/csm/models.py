@@ -3,9 +3,13 @@ from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from core.models import TimeStampedModel, Project, Team
+from core.slug_mixins import SluggedResourceModelMixin
 
 
-class Queue(TimeStampedModel):
+class Queue(SluggedResourceModelMixin, TimeStampedModel):
+    # SMP-539: slug-only URLs. Source: name.
+    slug_source_field = 'name'
+
     TIER_CHOICES = [
         ('T1', 'T1 Frontline'),
         ('T2', 'T2 Technical Support'),
@@ -250,7 +254,10 @@ class CsmWorkType(TimeStampedModel):
         return self.name
 
 
-class TicketForm(TimeStampedModel):
+class TicketForm(SluggedResourceModelMixin, TimeStampedModel):
+    # SMP-539: slug-only URLs. Source: name.
+    slug_source_field = 'name'
+
     project = models.ForeignKey(
         Project, on_delete=models.CASCADE, related_name='ticket_forms',
     )

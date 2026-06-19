@@ -13,7 +13,7 @@ import {
 } from './constants';
 
 interface Props {
-  formId: number;
+  formId: number | string;
   projectId: number;
   formName: string;
   formDescription: string;

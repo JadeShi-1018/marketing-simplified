@@ -2208,7 +2208,7 @@ export default function MeetingWorkspacePage() {
           {!projectId ? null : (
             <button
               type="button"
-              onClick={() => router.push(`/projects/${project?.slug ?? projectId}/meetings`)}
+              onClick={() => router.push('/meetings')}
               className="mt-4 text-sm font-medium text-[#3CCED7] hover:underline"
             >
               Back to meetings
@@ -2359,7 +2359,7 @@ export default function MeetingWorkspacePage() {
                         onExternalReferenceChange={setExtRefDraft}
                         onMeetingTypeChange={(value) => void handleMeetingTypeChange(value)}
                         onSave={() => void saveMeetingMeta()}
-                        onBack={() => router.push(`/projects/${project?.slug ?? projectId}/meetings`)}
+                        onBack={() => router.push('/meetings')}
                         onTitleSave={(value) => void saveMeetingTitle(value)}
                         onObjectiveSave={(value) => void saveMeetingObjective(value)}
                       />

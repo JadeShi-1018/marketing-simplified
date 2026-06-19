@@ -7,6 +7,7 @@ import { Link2, Plus, X, ExternalLink } from 'lucide-react';
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
 import type { ArtifactLink, KnowledgeNavigationLink } from '@/types/meeting';
 import AddArtifactDialog from './AddArtifactDialog';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 interface Props {
   projectId: number | string;
@@ -21,8 +22,11 @@ interface Props {
 }
 
 function v2Url(link: KnowledgeNavigationLink, kind: 'decision' | 'task', projectId: number | string): string {
-  const base = kind === 'decision' ? '/decisions' : '/tasks';
-  return `${base}/${link.id}?project_id=${projectId}`;
+  const key = link.slug ?? link.id;
+  if (kind === 'decision') {
+    return nestedProjectPath(projectId, `/decisions/${key}`);
+  }
+  return `/tasks/${key}`;
 }
 
 export default function RelatedArtifactsSection({

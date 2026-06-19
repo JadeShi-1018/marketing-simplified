@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DecisionAPI } from '@/lib/api/decisionApi';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 interface Connection {
   id: number;
@@ -62,7 +63,9 @@ export default function DecisionConnectionsAside({ decisionId, projectId, mySeq 
 
   const linkHref = (c: Connection) => {
     const key = c.slug ?? c.id;
-    return projectId ? `/decisions/${key}?project_id=${projectId}` : `/decisions/${key}`;
+    return projectId
+      ? nestedProjectPath(projectId, `/decisions/${key}`)
+      : `/decisions/${key}`;
   };
 
   return (

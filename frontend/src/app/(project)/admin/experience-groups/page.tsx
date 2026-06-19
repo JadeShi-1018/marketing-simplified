@@ -427,8 +427,8 @@ const ExperienceGroupsPage: React.FC = () => {
     }
   };
 
-  const handlePreview = (id: number) => {
-    window.open(`/admin/experience-groups/${id}/preview?project=${projectId}`, '_blank');
+  const handlePreview = (slug: string) => {
+    window.open(`/admin/experience-groups/${slug}/preview?project=${projectId}`, '_blank');
   };
 
   return (
@@ -561,7 +561,7 @@ const ExperienceGroupsPage: React.FC = () => {
                         <div className="flex items-center justify-end gap-2">
                           {/* Preview */}
                           <button
-                            onClick={() => handlePreview(group.id)}
+                            onClick={() => handlePreview(group.slug)}
                             title="Preview"
                             className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
                           >

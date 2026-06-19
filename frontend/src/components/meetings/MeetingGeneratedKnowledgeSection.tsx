@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import type { KnowledgeNavigationLink } from '@/types/meeting';
 import { Id } from '@/types/common';
 import { taskWorkspaceCreateFromMeetingHref } from '@/lib/tasks/taskWorkspaceDeepLinks';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { decisionCaptureAPI } from '@/lib/api';
 
 function MetaLine({ children }: { children: ReactNode }) {
@@ -28,7 +29,10 @@ function decisionToKnowledgeLink(
 ): KnowledgeNavigationLink | null {
   if (!decision.id) return null;
 
-  const url = decision.detail_url ?? decision.url ?? `/decisions/${decision.slug}?project_id=${projectId}`;
+  const url =
+    decision.detail_url ??
+    decision.url ??
+    nestedProjectPath(projectId, `/decisions/${decision.slug}`);
 
   return {
     id: decision.id,

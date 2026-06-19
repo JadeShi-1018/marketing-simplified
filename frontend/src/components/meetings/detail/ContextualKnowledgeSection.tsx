@@ -4,6 +4,8 @@ import { useState } from 'react';
 import Link from 'next/link';
 import toast from 'react-hot-toast';
 import { FileSearch, Plus, ExternalLink, Loader2 } from 'lucide-react';
+import AddArtifactDialog from './AddArtifactDialog';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import api, { decisionCaptureAPI } from '@/lib/api';
 import type { KnowledgeNavigationLink } from '@/types/meeting';
 
@@ -18,8 +20,11 @@ interface Props {
 }
 
 function rewriteToV2(link: KnowledgeNavigationLink, kind: 'decision' | 'task', projectId: number | string): string {
-  const base = kind === 'decision' ? '/decisions' : '/tasks';
-  return `${base}/${link.slug ?? link.id}?project_id=${projectId}`;
+  const key = link.slug ?? link.id;
+  if (kind === 'decision') {
+    return nestedProjectPath(projectId, `/decisions/${key}`);
+  }
+  return `/tasks/${key}`;
 }
 
 export default function ContextualKnowledgeSection({
@@ -102,7 +107,7 @@ export default function ContextualKnowledgeSection({
       if (newSlug || newId) {
         toast.success('Task draft created');
         onMutated();
-        window.location.href = `/tasks/${newSlug ?? newId}?project_id=${projectId}`;
+        window.location.href = `/tasks/${newSlug ?? newId}`;
       } else {
         toast.error('Task created but no id returned.');
       }

@@ -1,13 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
 import { Button } from '@/components/ui/button';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { useCampaignData } from '@/hooks/useCampaignData';
 import type { CampaignCheckIn, CampaignData, PerformanceSnapshot } from '@/types/campaign';
 import CampaignHeader from '@/components/campaigns/CampaignHeader';
@@ -26,11 +26,8 @@ import SaveAsTemplateDialog from '@/components/campaigns/modals/SaveAsTemplateDi
 export default function CampaignV2DetailPage() {
   const router = useRouter();
   const params = useParams();
-  const searchParams = useSearchParams();
   const campaignId = params?.slug as string;
-  const projectIdParam = searchParams?.get('project_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam ? projectIdParam : activeProject?.slug || activeProject?.id || null;
+  const { projectId } = useActiveProjectForFlatRoute();
 
   const { currentCampaign, loading, error, fetchCampaign, updateCampaign } = useCampaignData();
 
