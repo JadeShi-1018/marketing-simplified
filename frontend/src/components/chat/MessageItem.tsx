@@ -14,6 +14,7 @@ import ReactionsDisplay from './ReactionsDisplay';
 import MessageHoverActions from './MessageHoverActions';
 import { extractUrls } from '@/lib/api/linkPreviewApi';
 import ChatRichTextRenderer from './ChatRichTextRenderer';
+import { buildMessagesPath, parseChatSlugFromPathname } from '@/lib/messages/messagesRoutes';
 
 const AGENT_BOT_EMAIL = 'agent-bot@system.local';
 const AGENT_BOT_USERNAME = 'agent-bot';
@@ -138,6 +139,7 @@ function Avatar({
 
 export default function MessageItem({
   message,
+  chatSlug,
   isOwnMessage,
   showSender = true,
   isCompact = false,
@@ -269,15 +271,12 @@ export default function MessageItem({
   const handleCopyLink = () => {
     if (typeof window === 'undefined') return;
 
-    const params = new URLSearchParams(window.location.search);
-    const messageChatId = message.chat_id ?? message.chat;
-    if (messageChatId) params.set('chatId', String(messageChatId));
-    params.set('messageId', String(message.id));
-
-    const messagesPath = window.location.pathname.includes('/messages')
-      ? window.location.pathname
-      : '/messages';
-    const url = `${window.location.origin}${messagesPath}?${params.toString()}`;
+    const slug =
+      chatSlug ??
+      parseChatSlugFromPathname(window.location.pathname) ??
+      undefined;
+    const path = slug ? buildMessagesPath(slug, { messageId: message.id }) : '/messages';
+    const url = `${window.location.origin}${path}`;
 
     navigator.clipboard
       .writeText(url)

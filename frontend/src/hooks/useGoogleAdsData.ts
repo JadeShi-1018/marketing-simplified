@@ -62,7 +62,7 @@ export const useGoogleAdsData = () => {
     }
   }, []);
 
-  const fetchAd = useCallback(async (adId: number) => {
+  const fetchAd = useCallback(async (adId: number | string) => {
     try {
       setLoading(true);
       setError(null);

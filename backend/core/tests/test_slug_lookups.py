@@ -547,6 +547,18 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
         response = self.client.get("/api/experience-groups/999999/")
         self.assertEqual(response.status_code, 404)
 
+    def test_experience_group_list_accepts_project_slug(self):
+        # SMP-539 Batch D: admin list `?project=` resolves a project slug
+        # (not just a numeric pk). Before the fix this returned HTTP 400.
+        response = self.client.get(
+            f"/api/experience-groups/?project={self.project.slug}"
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        rows = data["results"] if isinstance(data, dict) and "results" in data else data
+        returned_slugs = [row["slug"] for row in rows]
+        self.assertIn(self.experience_group.slug, returned_slugs)
+
     # csm ticket form (admin) -------------------------------------------
     def test_ticket_form_slug_url_resolves(self):
         response = self.client.get(f"/api/csm/ticket-forms/{self.ticket_form.slug}/")

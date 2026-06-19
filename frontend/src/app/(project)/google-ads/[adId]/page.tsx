@@ -79,7 +79,7 @@ function AdForm({ ad, onUpdate, saving }: { ad: GoogleAd; onUpdate: (data: any) 
 function GoogleAdsDetailContent() {
   const router = useRouter();
   const params = useParams<{ adId: string }>();
-  const adId = params?.adId ? Number(params.adId) : null;
+  const adId = params?.adId ? String(params.adId) : null;
 
   const {
     ad,

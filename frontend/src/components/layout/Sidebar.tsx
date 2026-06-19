@@ -230,7 +230,7 @@ const Sidebar: FC<SidebarProps> = ({
       }
       if (item.href === "/admin/experience-groups") {
         const href = activeProject
-          ? `/admin/experience-groups?project=${activeProject.slug ?? activeProject.id}`
+          ? `/admin/experience-groups`
           : "/select-project";
         return { ...item, href };
       }

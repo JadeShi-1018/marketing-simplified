@@ -2,10 +2,12 @@ from django.conf import settings
 from django.db import models
 
 from core.models import TimeStampedModel
+from core.slug_mixins import SluggedResourceModelMixin
 from facebook_integration.models import MetaAdAccount
 
 
-class MetaCampaign(TimeStampedModel):
+class MetaCampaign(SluggedResourceModelMixin, TimeStampedModel):
+    slug_source_field = "name"
     ad_account = models.ForeignKey(
         MetaAdAccount, on_delete=models.CASCADE, related_name="campaigns"
     )
@@ -42,7 +44,8 @@ class MetaCampaign(TimeStampedModel):
         return f"MetaCampaign({self.meta_campaign_id}, {self.name[:40]})"
 
 
-class MetaAdSet(TimeStampedModel):
+class MetaAdSet(SluggedResourceModelMixin, TimeStampedModel):
+    slug_source_field = "name"
     campaign = models.ForeignKey(
         MetaCampaign, on_delete=models.CASCADE, related_name="adsets"
     )
@@ -66,7 +69,8 @@ class MetaAdSet(TimeStampedModel):
         return f"MetaAdSet({self.meta_adset_id}, {self.name[:40]})"
 
 
-class MetaAdCreative(TimeStampedModel):
+class MetaAdCreative(SluggedResourceModelMixin, TimeStampedModel):
+    slug_source_field = "name"
     ad_account = models.ForeignKey(
         MetaAdAccount, on_delete=models.CASCADE, related_name="creatives"
     )

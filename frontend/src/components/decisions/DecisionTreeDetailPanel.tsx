@@ -422,7 +422,7 @@ export default function DecisionTreeDetailPanel({
                 editable={status !== 'ARCHIVED' && canEdit && !editing}
                 onCreateTask={() => {
                   const q = new URLSearchParams();
-                  q.set('link_decision_id', String(decisionKey));
+                  q.set('link_decision', String(decisionKey));
                   const href = projectId
                     ? nestedProjectPath(projectId, `/tasks/new?${q.toString()}`)
                     : `/tasks/new?${q.toString()}`;

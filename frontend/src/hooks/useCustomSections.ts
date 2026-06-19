@@ -61,10 +61,11 @@ export function useCustomSections(projectId: number | string | null) {
   // Load from localStorage whenever the project changes
   useEffect(() => {
     if (projectId === null) {
-      setSections([]);
+      setSections((prev) => (prev.length === 0 ? prev : []));
       return;
     }
-    setSections(load(projectId));
+    const loaded = load(projectId);
+    setSections((prev) => (JSON.stringify(prev) === JSON.stringify(loaded) ? prev : loaded));
   }, [projectId]);
 
   // Persist whenever sections change

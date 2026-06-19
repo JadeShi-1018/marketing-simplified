@@ -47,7 +47,7 @@ from .serializers import (
 from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
 from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
 from core.models import ProjectMember
-from core.slug_mixins import resolve_project_pk
+from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin
 
 logger = logging.getLogger(__name__)
 
@@ -158,21 +158,23 @@ class StarredChatViewSet(
         return Response({'status': 'ok'})
 
 
-class ChatViewSet(viewsets.ModelViewSet):
+class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing chats.
     
     Endpoints:
     - GET /chats/ - List user's chats
     - POST /chats/ - Create a new chat
-    - GET /chats/{id}/ - Get chat details
-    - DELETE /chats/{id}/ - Leave a chat (soft delete for user)
-    - POST /chats/{id}/add_participant/ - Add participant to group chat
-    - POST /chats/{id}/remove_participant/ - Remove participant from group chat
-    - POST /chats/{id}/mark_as_read/ - Mark all messages as read
+    - GET /chats/{slug}/ - Get chat details
+    - DELETE /chats/{slug}/ - Leave a chat (soft delete for user)
+    - POST /chats/{slug}/add_participant/ - Add participant to group chat
+    - POST /chats/{slug}/remove_participant/ - Remove participant from group chat
+    - POST /chats/{slug}/mark_as_read/ - Mark all messages as read
+    - GET /chats/legacy-id-slug/?id=<pk> - Resolve legacy numeric id to slug (migration)
     """
     
     permission_classes = [IsAuthenticated]
+    lookup_field = 'slug'
 
     def _get_active_participant(self, chat, user):
         return ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
@@ -197,6 +199,8 @@ class ChatViewSet(viewsets.ModelViewSet):
             self.request.query_params.get('project_id')
             or self.request.query_params.get('pro_ct_id')
         )
+        if project_id:
+            project_id = resolve_project_pk(project_id)
 
         return ChatService.get_user_chats(user, project_id)
     
@@ -245,6 +249,18 @@ class ChatViewSet(viewsets.ModelViewSet):
             'page_size': page_size,
             'total': queryset.count()
         })
+
+    @action(detail=False, methods=['get'], url_path='legacy-id-slug')
+    def legacy_id_slug(self, request):
+        """Resolve a legacy numeric chat pk to slug (bookmark/notification migration)."""
+        raw = request.query_params.get('id')
+        if not raw or not str(raw).isdigit():
+            return Response({'error': 'id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        chat = get_object_or_404(
+            ChatService.get_user_chats(request.user, None),
+            pk=int(raw),
+        )
+        return Response({'id': chat.id, 'slug': chat.slug})
     
     def create(self, request, *args, **kwargs):
         """
@@ -354,7 +370,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-    def add_participant(self, request, pk=None):
+    def add_participant(self, request, slug=None):
         """
         Add a participant to a group chat.
         
@@ -391,7 +407,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-    def remove_participant(self, request, pk=None):
+    def remove_participant(self, request, slug=None):
         """
         Remove a participant from a group chat.
         
@@ -441,7 +457,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['patch'], url_path='manager')
-    def set_manager(self, request, pk=None):
+    def set_manager(self, request, slug=None):
         """
         Promote or demote a channel participant as manager.
 
@@ -503,7 +519,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(ChatParticipantSerializer(participant).data)
     
     @action(detail=True, methods=['post'])
-    def mark_as_read(self, request, pk=None):
+    def mark_as_read(self, request, slug=None):
         """
         Mark all messages in a chat as read (up to a specific message).
 
@@ -529,7 +545,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['patch'], url_path='update_details')
-    def update_details(self, request, pk=None):
+    def update_details(self, request, slug=None):
         """
         Update channel name, topic, and/or description.
         Only participants may call this; only group chats support name changes.
@@ -561,7 +577,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(ChatSerializer(chat, context={'request': request}).data)
 
     @action(detail=True, methods=['get'], url_path='pins')
-    def list_pins(self, request, pk=None):
+    def list_pins(self, request, slug=None):
         """List pinned messages for a channel (participant-only)."""
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
@@ -571,7 +587,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @action(detail=True, methods=['get'], url_path='files')
-    def list_files(self, request, pk=None):
+    def list_files(self, request, slug=None):
         """
         List files (attachments) shared in this chat, newest first.
 
@@ -618,7 +634,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=['post'], url_path='pin')
-    def pin_message(self, request, pk=None):
+    def pin_message(self, request, slug=None):
         """Pin a message in a channel. Body: { message_id }"""
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
@@ -642,7 +658,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=['delete'], url_path='pin/(?P<message_id>[^/.]+)')
-    def unpin_message(self, request, pk=None, message_id=None):
+    def unpin_message(self, request, slug=None, message_id=None):
         """Unpin a message from a channel."""
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
@@ -700,7 +716,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(results)
 
     @action(detail=True, methods=['patch'], url_path='notification_settings')
-    def notification_settings(self, request, pk=None):
+    def notification_settings(self, request, slug=None):
         """
         Update the current user's notification preferences for this chat.
         Body (all optional): { is_muted, notification_level }

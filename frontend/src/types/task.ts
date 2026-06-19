@@ -117,7 +117,7 @@ export interface CreateTaskData {
   /** Draft-only: persisted create-panel state (backend stores JSON) */
   draft_payload?: unknown | null;
   /** When set, creates ``MeetingTaskOrigin`` on the server (same project as task). */
-  origin_meeting_id?: number;
+  origin_meeting_id?: number | string;
   /** Stored on task JSON field (omit to leave empty). */
   tags?: TaskTag[];
 }

@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import { ArrowLeft, Users } from 'lucide-react';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -16,9 +17,9 @@ const OUTLINE_BUTTON_CLASS =
 
 export default function TicketFormAssignmentsPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
+  const { activeProject } = useActiveProjectForFlatRoute();
   const formId = String(params.id);
-  const projectId = Number(searchParams.get('project'));
+  const projectId = Number(activeProject?.id ?? 0);
 
   const [form, setForm] = useState<TicketFormDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,14 +51,14 @@ export default function TicketFormAssignmentsPage() {
             </div>
             <div className="flex flex-wrap items-center gap-3">
               <Link
-                href={`/admin/experience-groups?project=${projectId}`}
+                href={`/admin/experience-groups`}
                 className={OUTLINE_BUTTON_CLASS}
               >
                 <Users className="h-4 w-4 shrink-0" aria-hidden />
                 Experience Groups
               </Link>
               <Link
-                href={`/admin/ticket-forms?project=${projectId}`}
+                href={`/admin/ticket-forms`}
                 className={OUTLINE_BUTTON_CLASS}
               >
                 <ArrowLeft className="h-4 w-4 shrink-0" aria-hidden />

@@ -20,16 +20,18 @@ export function TimelinePageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   useStripProjectIdFromUrl();
-  const originMeetingIdParam = searchParams.get("origin_meeting_id");
+  const originMeetingIdParam =
+    searchParams.get("origin_meeting") ?? searchParams.get("origin_meeting_id");
   const activeProject = useProjectStore((s) => s.activeProject);
   const setActiveProject = useProjectStore((s) => s.setActiveProject);
   const projectId = activeProject?.slug || activeProject?.id || null;
 
-  const originMeetingIdNum = useMemo(() => {
-    if (!originMeetingIdParam) return null;
-    const n = Number(originMeetingIdParam);
-    return Number.isFinite(n) && n >= 1 ? n : null;
-  }, [originMeetingIdParam]);
+  // SMP-539 Batch E1: carry the meeting slug (or legacy pk) through as-is;
+  // the backend resolves slug-or-pk on task create.
+  const originMeetingIdNum = useMemo(
+    () => originMeetingIdParam || null,
+    [originMeetingIdParam],
+  );
 
   const [filters, setFilters, clearFilters] = useTaskFilterParams();
   const [taskTypeOptions, setTaskTypeOptions] = useState<

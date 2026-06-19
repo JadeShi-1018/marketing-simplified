@@ -109,7 +109,7 @@ export default function CreateTaskPage() {
 
   // SMP-539: nested route — project slug comes from the path segment.
   const projectId = (params?.projectId as string) || '';
-  const linkDecisionIdParam = searchParams?.get('link_decision_id');
+  const linkDecisionIdParam = searchParams?.get('link_decision') ?? searchParams?.get('link_decision_id');
   const activeProject = useProjectStore((s) => s.activeProject);
   const linkDecisionId = linkDecisionIdParam || null;
 

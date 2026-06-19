@@ -409,7 +409,7 @@ function DecisionDetailContent() {
                 editable={status !== 'ARCHIVED' && canEdit}
                 onCreateTask={() => {
                   const q = new URLSearchParams();
-                  q.set('link_decision_id', String(detail.committed?.slug ?? decisionId));
+                  q.set('link_decision', String(detail.committed?.slug ?? decisionId));
                   router.push(nestedProjectPath(projectId, `/tasks/new?${q.toString()}`));
                 }}
               />

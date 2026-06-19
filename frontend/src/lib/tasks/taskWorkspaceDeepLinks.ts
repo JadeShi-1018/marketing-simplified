@@ -12,6 +12,6 @@ export function taskWorkspaceCreateFromMeetingHref(
   const p = new URLSearchParams();
   p.set("view", "timeline");
   p.set("create", "1");
-  p.set("origin_meeting_id", String(meetingId));
+  p.set("origin_meeting", String(meetingId));
   return nestedProjectPath(String(projectId), `/tasks?${p.toString()}`);
 }

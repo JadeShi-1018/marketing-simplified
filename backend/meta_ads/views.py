@@ -17,6 +17,8 @@ from django.db import models, transaction
 from django.db.models import IntegerField, OuterRef, Subquery, Sum
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
+
+from core.slug_mixins import resolve_pk_for  # SMP-539 Batch F: slug-or-pk detail lookups
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -150,6 +152,7 @@ class MetaCampaignPerformanceView(APIView):
             purchases = camp.total_purchases or 0
             rows.append({
                 "id": camp.id,
+                "slug": camp.slug,
                 "meta_campaign_id": camp.meta_campaign_id,
                 "name": camp.name,
                 "objective": camp.objective,
@@ -544,6 +547,7 @@ class MetaCreativePerformanceView(APIView):
             completion_rate = _safe_ratio(p100, p25) * Decimal("100")
             rows.append({
                 "id": cr.id,
+                "slug": cr.slug,
                 "meta_creative_id": cr.meta_creative_id,
                 "name": cr.name,
                 "title": cr.title,
@@ -686,6 +690,7 @@ class MetaAdSetPerformanceView(APIView):
             purchases = adset.total_purchases or 0
             rows.append({
                 "id": adset.id,
+                "slug": adset.slug,
                 "meta_adset_id": adset.meta_adset_id,
                 "name": adset.name,
                 "effective_status": adset.effective_status,
@@ -915,6 +920,7 @@ class MetaAdPerformanceView(APIView):
                 "creative": (
                     {
                         "id": creative.id,
+                        "slug": creative.slug,
                         "meta_creative_id": creative.meta_creative_id,
                         "title": creative.title,
                         "thumbnail_url": creative.thumbnail_url,
@@ -1904,7 +1910,7 @@ class MetaCreativeDetailView(APIView):
     def get(self, request, creative_id: int):
         creative = get_object_or_404(
             MetaAdCreative,
-            pk=creative_id,
+            pk=resolve_pk_for(MetaAdCreative, creative_id),
             ad_account_id__in=_accessible_ad_accounts_for_user(request.user),
         )
         days = _normalize_days(request.query_params.get("days"), self.ALLOWED_DAYS, default=28)
@@ -2033,6 +2039,7 @@ class MetaCreativeDetailView(APIView):
 
         return Response({
             "id": creative.id,
+            "slug": creative.slug,
             "meta_creative_id": creative.meta_creative_id,
             "ad_account_id": creative.ad_account_id,
             "currency": creative.ad_account.currency,
@@ -2082,7 +2089,7 @@ class MetaCreativeVideoSourceView(APIView):
     def get(self, request, creative_id: int):
         creative = get_object_or_404(
             MetaAdCreative,
-            pk=creative_id,
+            pk=resolve_pk_for(MetaAdCreative, creative_id),
             ad_account_id__in=_accessible_ad_accounts_for_user(request.user),
         )
         ad = creative.ads.order_by("-updated_at").first()
@@ -2157,7 +2164,7 @@ class MetaCreativeInsightTimeseriesView(APIView):
     def get(self, request, creative_id: int):
         creative = get_object_or_404(
             MetaAdCreative,
-            pk=creative_id,
+            pk=resolve_pk_for(MetaAdCreative, creative_id),
             ad_account_id__in=_accessible_ad_accounts_for_user(request.user),
         )
         days = _normalize_days(request.query_params.get("days"), self.ALLOWED_DAYS, default=28)
@@ -2229,7 +2236,7 @@ class MetaCampaignDetailView(APIView):
     def get(self, request, campaign_id: int):
         campaign = get_object_or_404(
             MetaCampaign,
-            pk=campaign_id,
+            pk=resolve_pk_for(MetaCampaign, campaign_id),
             ad_account_id__in=_accessible_ad_accounts_for_user(request.user),
         )
         days = _normalize_days(request.query_params.get("days"), self.ALLOWED_DAYS, default=28)
@@ -2321,6 +2328,7 @@ class MetaCampaignDetailView(APIView):
             a_rev = a.total_revenue or Decimal("0")
             adset_rows.append({
                 "id": a.id,
+                "slug": a.slug,
                 "meta_adset_id": a.meta_adset_id,
                 "name": a.name,
                 "effective_status": a.effective_status,
@@ -2339,6 +2347,7 @@ class MetaCampaignDetailView(APIView):
 
         return Response({
             "id": campaign.id,
+            "slug": campaign.slug,
             "meta_campaign_id": campaign.meta_campaign_id,
             "ad_account_id": campaign.ad_account_id,
             "currency": campaign.ad_account.currency,
@@ -2370,7 +2379,7 @@ class MetaCampaignInsightTimeseriesView(APIView):
     def get(self, request, campaign_id: int):
         campaign = get_object_or_404(
             MetaCampaign,
-            pk=campaign_id,
+            pk=resolve_pk_for(MetaCampaign, campaign_id),
             ad_account_id__in=_accessible_ad_accounts_for_user(request.user),
         )
         days = _normalize_days(request.query_params.get("days"), self.ALLOWED_DAYS, default=28)
@@ -2425,7 +2434,7 @@ class MetaAdSetDetailView(APIView):
     def get(self, request, adset_id: int):
         adset = get_object_or_404(
             MetaAdSet.objects.select_related("campaign", "campaign__ad_account"),
-            pk=adset_id,
+            pk=resolve_pk_for(MetaAdSet, adset_id),
             campaign__ad_account_id__in=_accessible_ad_accounts_for_user(request.user),
         )
         days = _normalize_days(request.query_params.get("days"), self.ALLOWED_DAYS, default=28)
@@ -2530,6 +2539,7 @@ class MetaAdSetDetailView(APIView):
                 "creative": (
                     {
                         "id": ad.creative.id,
+                        "slug": ad.creative.slug,
                         "meta_creative_id": ad.creative.meta_creative_id,
                         "title": ad.creative.title,
                         "thumbnail_url": ad.creative.thumbnail_url,
@@ -2562,6 +2572,7 @@ class MetaAdSetDetailView(APIView):
             "lifetime_budget_cents": adset.lifetime_budget_cents,
             "campaign": {
                 "id": adset.campaign_id,
+                "slug": adset.campaign.slug,
                 "meta_campaign_id": adset.campaign.meta_campaign_id,
                 "name": adset.campaign.name,
             },
@@ -2584,7 +2595,7 @@ class MetaAdSetInsightTimeseriesView(APIView):
     def get(self, request, adset_id: int):
         adset = get_object_or_404(
             MetaAdSet,
-            pk=adset_id,
+            pk=resolve_pk_for(MetaAdSet, adset_id),
             campaign__ad_account_id__in=_accessible_ad_accounts_for_user(request.user),
         )
         days = _normalize_days(request.query_params.get("days"), self.ALLOWED_DAYS, default=28)

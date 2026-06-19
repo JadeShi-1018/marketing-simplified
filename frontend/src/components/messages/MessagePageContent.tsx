@@ -2,14 +2,24 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Bookmark, Hash, MessageSquare, PanelLeftOpen, Search } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
 import { useChatStore } from '@/lib/chatStore';
 import { useChatData } from '@/hooks/useChatData';
 import { useProjectMemberRoles } from '@/hooks/useProjectMemberRoles';
 import { useProjectMembers } from '@/hooks/useProjectMembers';
 import { useProjectStore } from '@/lib/projectStore';
-import { getChat } from '@/lib/api/chatApi';
+import { activateProjectForNavigation } from '@/lib/notificationRoutes';
+import { getChat, resolveLegacyChatSlug } from '@/lib/api/chatApi';
+import {
+  buildMessagesPath,
+  chatsForProjectKey,
+  getLegacyChatIdFromQuery,
+  normalizeProjectKey,
+  parseChatSlugFromPathname,
+  preferredProjectKey,
+  projectKeysMatch,
+} from '@/lib/messages/messagesRoutes';
 import ChatWindow from '@/components/chat/ChatWindow';
 import CreateChatDialog from '@/components/chat/CreateChatDialog';
 import SlackMessagesLayout from '@/components/messages/SlackMessagesLayout';
@@ -27,7 +37,9 @@ const isMessagesMobileViewport = () =>
 
 export default function MessagePageContent() {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
+  const chatSlugFromPath = parseChatSlugFromPathname(pathname);
   const isAuthenticated = useAuthStore(state => state.isAuthenticated);
   const currentUser = useAuthStore(state => state.user);
   const currentUserId = currentUser?.id ? Number(currentUser.id) : 0;
@@ -46,14 +58,19 @@ export default function MessagePageContent() {
   const [isBrowseOpen, setIsBrowseOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
+  const activeProjectKey = useMemo(
+    () => preferredProjectKey(activeProject),
+    [activeProject?.slug, activeProject?.id],
+  );
+
   // Chat store state
   const currentChatId = useChatStore(state => state.currentChatId);
   const setCurrentChat = useChatStore(state => state.setCurrentChat);
   const chatsByProject = useChatStore(state => state.chatsByProject);
   // Get chats for the selected project only (independent from widget)
   const chats = useMemo(
-    () => (selectedProjectId ? (chatsByProject[selectedProjectId] || []) : []),
-    [chatsByProject, selectedProjectId]
+    () => chatsForProjectKey(chatsByProject, selectedProjectId, activeProject),
+    [chatsByProject, selectedProjectId, activeProject],
   );
 
   const { roleByUserId } = useProjectMemberRoles(selectedProjectId);
@@ -70,6 +87,39 @@ export default function MessagePageContent() {
   // widget's fetchChats runs.  Here we only need to fetch on project change.
   const lastChatActivity = useChatStore(state => state.lastChatActivity);
   const hasFetchedRef = useRef<string | null>(null);
+  const legacyMigrateRef = useRef<number | null>(null);
+
+  const resolveChatSlug = useCallback(
+    (chatId: number): string | undefined => {
+      const fromList = chats.find((c) => c.id === chatId)?.slug;
+      if (fromList) return fromList;
+      return Object.values(chatsByProject)
+        .flat()
+        .find((c) => c.id === chatId)?.slug;
+    },
+    [chats, chatsByProject],
+  );
+
+  const navigateMessages = useCallback(
+    (
+      next: {
+        chatSlug?: string | null;
+        messageId?: number | null;
+        threadMessageId?: number | null;
+        jumpId?: string | null;
+        replace?: boolean;
+      },
+    ) => {
+      const href = buildMessagesPath(next.chatSlug, {
+        messageId: next.messageId,
+        threadMessageId: next.threadMessageId,
+        jumpId: next.jumpId,
+      });
+      if (next.replace) router.replace(href, { scroll: false });
+      else router.push(href);
+    },
+    [router],
+  );
 
   // Global Cmd/Ctrl-K → open conversation switcher
   useEffect(() => {
@@ -97,58 +147,100 @@ export default function MessagePageContent() {
   }, [isAuthenticated, selectedProjectId, lastChatActivity, fetchChats]);
 
   useEffect(() => {
-    const projectIdParam = searchParams.get('projectId');
-    const chatIdParam = searchParams.get('chatId');
-    const projectIdFromQuery = projectIdParam || null;
-    const chatIdFromQuery = chatIdParam ? Number(chatIdParam) : NaN;
-
     if (
-      projectIdFromQuery &&
-      projectIdFromQuery !== selectedProjectId
+      activeProjectKey != null &&
+      !projectKeysMatch(activeProjectKey, selectedProjectId, activeProject)
     ) {
-      setSelectedProjectId(projectIdFromQuery);
-    } else if (
-      !projectIdFromQuery &&
-      activeProject?.id &&
-      activeProject.id !== selectedProjectId
-    ) {
-      setSelectedProjectId(activeProject.id);
+      setSelectedProjectId(activeProjectKey);
     }
+  }, [activeProjectKey, activeProject, selectedProjectId]);
 
-    if (
-      Number.isFinite(chatIdFromQuery) &&
-      chatIdFromQuery > 0 &&
-      chatIdFromQuery !== useChatStore.getState().currentChatId
-    ) {
-      setCurrentChat(chatIdFromQuery);
-    }
-  }, [searchParams, selectedProjectId, setCurrentChat, activeProject?.id]);
-
-  const replaceMessagesQuery = useCallback(
-    (next: { projectId?: number | string | null; chatId?: number | null; messageId?: number | null }) => {
-      const params = new URLSearchParams(searchParams.toString());
-
-      if (next.projectId === null) params.delete('projectId');
-      else if (next.projectId) {
-        params.set('projectId', String(next.projectId));
+  const syncSelectedProject = useCallback(
+    (raw: number | string | null | undefined) => {
+      const next = normalizeProjectKey(raw, activeProject);
+      if (next != null && !projectKeysMatch(next, selectedProjectId, activeProject)) {
+        setSelectedProjectId(next);
       }
-
-      if (next.chatId === null) params.delete('chatId');
-      else if (typeof next.chatId === 'number' && Number.isFinite(next.chatId) && next.chatId > 0) {
-        params.set('chatId', String(next.chatId));
-      }
-
-      if (next.messageId === null) params.delete('messageId');
-      else if (typeof next.messageId === 'number' && Number.isFinite(next.messageId) && next.messageId > 0) {
-        params.set('messageId', String(next.messageId));
-      }
-
-      const query = params.toString();
-      router.replace(query ? `/messages?${query}` : '/messages');
+      return next;
     },
-    [router, searchParams]
+    [activeProject, selectedProjectId],
   );
-  
+
+  // Open chat from /messages/<chatSlug> path.
+  useEffect(() => {
+    if (!chatSlugFromPath) return;
+
+    const fromStore = Object.values(chatsByProject)
+      .flat()
+      .find((c) => c.slug === chatSlugFromPath);
+
+    if (fromStore) {
+      syncSelectedProject(fromStore.project_id ?? fromStore.project);
+      if (fromStore.id !== currentChatId) {
+        setCurrentChat(fromStore.id);
+      }
+      return;
+    }
+
+    let cancelled = false;
+    void getChat(chatSlugFromPath)
+      .then(async (chat) => {
+        if (cancelled) return;
+        useChatStore.getState().addChat(chat);
+        const projectKey = syncSelectedProject(chat.project_id ?? chat.project);
+        if (projectKey) {
+          await activateProjectForNavigation(projectKey);
+        }
+        setCurrentChat(chat.id);
+      })
+      .catch(() => {
+        if (!cancelled) navigateMessages({ chatSlug: null, replace: true });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    chatSlugFromPath,
+    chatsByProject,
+    currentChatId,
+    navigateMessages,
+    syncSelectedProject,
+    setCurrentChat,
+  ]);
+
+  // Migrate legacy ?chatId= deep links to /messages/<slug>.
+  useEffect(() => {
+    const legacyChatId = getLegacyChatIdFromQuery(searchParams);
+    if (!legacyChatId || legacyMigrateRef.current === legacyChatId) return;
+    legacyMigrateRef.current = legacyChatId;
+
+    const messageIdRaw = searchParams.get('messageId');
+    const threadMessageIdRaw = searchParams.get('threadMessageId');
+    const jumpId = searchParams.get('jumpId');
+    const messageId = messageIdRaw ? Number(messageIdRaw) : null;
+    const threadMessageId = threadMessageIdRaw ? Number(threadMessageIdRaw) : null;
+
+    void (async () => {
+      let slug = resolveChatSlug(legacyChatId);
+      if (!slug) {
+        try {
+          slug = await resolveLegacyChatSlug(legacyChatId);
+        } catch {
+          legacyMigrateRef.current = null;
+          return;
+        }
+      }
+      setCurrentChat(legacyChatId);
+      navigateMessages({
+        chatSlug: slug,
+        messageId: Number.isFinite(messageId ?? NaN) ? messageId : null,
+        threadMessageId: Number.isFinite(threadMessageId ?? NaN) ? threadMessageId : null,
+        jumpId,
+        replace: true,
+      });
+    })();
+  }, [navigateMessages, resolveChatSlug, searchParams, setCurrentChat]);
 
   // Get current chat from store
   const currentChat = chats.find(chat => chat.id === currentChatId);
@@ -176,10 +268,7 @@ export default function MessagePageContent() {
     return false;
   });
 
-  const projectIdFromQuery = searchParams.get('projectId');
-  const hasProjectCandidate =
-    Boolean(projectIdFromQuery) ||
-    Boolean(activeProject?.id);
+  const hasProjectCandidate = Boolean(activeProject?.id);
   const projectSelectionLoading =
     selectedProjectId === null && (!hasProjectStoreHydrated || hasProjectCandidate);
   
@@ -189,14 +278,14 @@ export default function MessagePageContent() {
     // Clicking the already-open chat closes it and returns to the list
     if (chatId === currentChatId) {
       setCurrentChat(null);
-      replaceMessagesQuery({ projectId: selectedProjectId, chatId: null, messageId: null });
+      navigateMessages({ chatSlug: null, messageId: null, replace: true });
       return;
     }
     setCurrentChat(chatId);
-    replaceMessagesQuery({
-      projectId: selectedProjectId,
-      chatId,
+    navigateMessages({
+      chatSlug: resolveChatSlug(chatId) ?? null,
       messageId: null,
+      replace: true,
     });
   };
   
@@ -214,18 +303,25 @@ export default function MessagePageContent() {
     setIsCreateChannelDialogOpen(true);
   };
   
-  const handleChatCreated = (chatId: number) => {
+  const handleChatCreated = (chatId: number, chatSlug?: string) => {
     setIsCreateDialogOpen(false);
     setCurrentChat(chatId);
-    replaceMessagesQuery({ projectId: selectedProjectId, chatId, messageId: null });
-    // Refresh chats to include the new one
+    navigateMessages({
+      chatSlug: chatSlug ?? resolveChatSlug(chatId) ?? null,
+      messageId: null,
+      replace: true,
+    });
     fetchChats();
   };
 
-  const handleChannelCreated = (chatId: number) => {
+  const handleChannelCreated = (chatId: number, chatSlug?: string) => {
     setIsCreateChannelDialogOpen(false);
     setCurrentChat(chatId);
-    replaceMessagesQuery({ projectId: selectedProjectId, chatId, messageId: null });
+    navigateMessages({
+      chatSlug: chatSlug ?? resolveChatSlug(chatId) ?? null,
+      messageId: null,
+      replace: true,
+    });
     fetchChats();
   };
 
@@ -241,39 +337,47 @@ export default function MessagePageContent() {
 
     if (existingChat) {
       setCurrentChat(existingChat.id);
-      replaceMessagesQuery({ projectId: selectedProjectId, chatId: existingChat.id, messageId: null });
+      navigateMessages({
+        chatSlug: existingChat.slug,
+        messageId: null,
+        replace: true,
+      });
       return;
     }
 
     try {
       const newChat = await createNewChat({
         type: 'private',
-        project_id: selectedProjectId,
+        project_id: activeProject?.id ?? selectedProjectId,
         participant_ids: [targetUserId],
       });
       setCurrentChat(newChat.id);
-      replaceMessagesQuery({ projectId: selectedProjectId, chatId: newChat.id, messageId: null });
+      navigateMessages({
+        chatSlug: newChat.slug,
+        messageId: null,
+        replace: true,
+      });
     } catch {
       // createNewChat already shows a toast on error
     }
-  }, [selectedProjectId, chats, createNewChat, setCurrentChat, replaceMessagesQuery]);
+  }, [activeProject?.id, selectedProjectId, chats, createNewChat, setCurrentChat, navigateMessages]);
 
   // When the user clicks a search result: navigate to that chat + message
   const handleSelectSearchResult = useCallback(
     (result: MessageSearchResult) => {
       setIsSearchOpen(false);
       // Switch project if the result is from a different one
-      if (result.project_id && result.project_id !== selectedProjectId) {
-        setSelectedProjectId(result.project_id);
+      if (result.project_id) {
+        syncSelectedProject(result.project_id);
       }
       setCurrentChat(result.chat_id);
-      replaceMessagesQuery({
-        projectId: result.project_id ?? selectedProjectId,
-        chatId: result.chat_id,
+      navigateMessages({
+        chatSlug: resolveChatSlug(result.chat_id) ?? null,
         messageId: result.id,
+        replace: true,
       });
     },
-    [selectedProjectId, setCurrentChat, replaceMessagesQuery]
+    [resolveChatSlug, syncSelectedProject, setCurrentChat, navigateMessages]
   );
 
   const handleSearchInChat = useCallback((chatId: number) => {
@@ -286,13 +390,13 @@ export default function MessagePageContent() {
     setIsSearchOpen(false);
     setIsSavedOpen(false);
     setCurrentChat(chatId);
-    replaceMessagesQuery({
-      projectId: selectedProjectId,
-      chatId,
+    navigateMessages({
+      chatSlug: resolveChatSlug(chatId) ?? null,
       messageId: null,
+      replace: true,
     });
     setDetailsSignal((prev) => ({ chatId, seq: (prev?.seq ?? 0) + 1 }));
-  }, [replaceMessagesQuery, selectedProjectId, setCurrentChat]);
+  }, [navigateMessages, resolveChatSlug, setCurrentChat]);
 
   const handleSavedJump = useCallback(
     async (
@@ -317,7 +421,8 @@ export default function MessagePageContent() {
 
       if (!targetChat) {
         try {
-          targetChat = await getChat(chatId);
+          const slug = await resolveLegacyChatSlug(chatId);
+          targetChat = await getChat(slug);
           useChatStore.getState().addChat(targetChat);
         } catch {
           // Let ChatWindow's target resolution show the normal not-found state.
@@ -325,28 +430,31 @@ export default function MessagePageContent() {
       }
 
       const rawProjectId = targetChat?.project_id ?? targetChat?.project ?? targetProjectId ?? selectedProjectId;
-      if (rawProjectId) {
-        targetProjectId = rawProjectId;
-        setSelectedProjectId(rawProjectId);
+      const projectKey = syncSelectedProject(rawProjectId);
+      if (projectKey) {
+        targetProjectId = projectKey;
+        await activateProjectForNavigation(projectKey);
       }
 
-      const params = new URLSearchParams(searchParams.toString());
-      if (targetProjectId) params.set('projectId', String(targetProjectId));
-      params.set('chatId', String(chatId));
-      params.set('jumpId', `saved:${chatId}:${parentMsgId ?? msgId}:${msgId}:${Date.now()}`);
-
-      if (parentMsgId) {
-        params.set('messageId', String(parentMsgId));
-        params.set('threadMessageId', String(msgId));
-      } else {
-        params.set('messageId', String(msgId));
-        params.delete('threadMessageId');
+      let chatSlug = targetChat?.slug;
+      if (!chatSlug) {
+        try {
+          chatSlug = await resolveLegacyChatSlug(chatId);
+        } catch {
+          chatSlug = undefined;
+        }
       }
 
       setCurrentChat(chatId);
-      router.push(`/messages?${params.toString()}`);
+      navigateMessages({
+        chatSlug: chatSlug ?? null,
+        messageId: parentMsgId ?? msgId,
+        threadMessageId: parentMsgId ? msgId : null,
+        jumpId: `saved:${chatId}:${parentMsgId ?? msgId}:${msgId}:${Date.now()}`,
+        replace: false,
+      });
     },
-    [chatsByProject, router, searchParams, selectedProjectId, setCurrentChat],
+    [chatsByProject, navigateMessages, syncSelectedProject, setCurrentChat],
   );
 
   // Sidebar chat-list filter input (mobile drawer only).

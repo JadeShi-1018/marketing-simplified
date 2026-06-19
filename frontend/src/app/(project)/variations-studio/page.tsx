@@ -132,11 +132,9 @@ function VariationsStudioContent() {
   const activeProject = useProjectStore((state) => state.activeProject);
   const hasProjectStoreHydrated = useProjectStore((state) => state.hasHydrated);
   const initialCreativeIdParam = searchParams.get("creative");
-  const initialCreativeId = initialCreativeIdParam
-    ? Number(initialCreativeIdParam)
-    : null;
+  const initialCreativeId = initialCreativeIdParam || null;
   const initialMode: AdCopyVariationSourceMode =
-    initialCreativeId && Number.isFinite(initialCreativeId) ? "existing" : "custom";
+    initialCreativeId ? "existing" : "custom";
 
   const [studioTab, setStudioTab] = useState<"generate" | "drafts">("generate");
   const [mode, setMode] = useState<AdCopyVariationSourceMode>(initialMode);
@@ -158,7 +156,7 @@ function VariationsStudioContent() {
   const [bulkReviewing, setBulkReviewing] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!initialCreativeId || !Number.isFinite(initialCreativeId)) return;
+    if (!initialCreativeId) return;
     let active = true;
     setCreativeMetaLoading(true);
     facebookApi
@@ -361,7 +359,7 @@ function VariationsStudioContent() {
   return (
     <div className="min-h-[calc(100vh-3rem)] bg-gray-50">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-[1440px] flex-col px-6 py-4">
-        {initialCreativeId !== null && Number.isFinite(initialCreativeId) && (
+        {initialCreativeId !== null && (
           <Link
             href="/meta-ads?tab=creatives"
             className="mb-4 inline-flex w-fit items-center gap-1 text-[14px] text-gray-500 transition-colors hover:text-gray-900"
@@ -927,14 +925,14 @@ function AiDraftsTab({
   initialCreativeId,
 }: {
   projectId: Id | null;
-  initialCreativeId: number | null;
+  initialCreativeId: string | null;
 }) {
   const [rows, setRows] = useState<AdCopyVariation[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [statusFilter, setStatusFilter] = useState<DraftStatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<AdCopyVariationSourceMode | "all">("all");
   const [creativeFilter, setCreativeFilter] = useState<string>(
-    initialCreativeId && Number.isFinite(initialCreativeId) ? String(initialCreativeId) : ""
+    initialCreativeId ? String(initialCreativeId) : ""
   );
   const [batchFilter, setBatchFilter] = useState<string>("");
   const [loadingLatestBatch, setLoadingLatestBatch] = useState<boolean>(false);

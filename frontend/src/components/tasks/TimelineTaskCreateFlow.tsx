@@ -26,7 +26,7 @@ const TIMELINE_TASK_TYPE_KEYS = [
 
 export type TimelineTaskCreateFlowProps = {
   projectId: number | string | null;
-  originMeetingId: number | null;
+  originMeetingId: number | string | null;
   /** Open the create panel on mount (e.g. timeline-only entry points). */
   autoOpen?: boolean;
   onPanelClose?: () => void;

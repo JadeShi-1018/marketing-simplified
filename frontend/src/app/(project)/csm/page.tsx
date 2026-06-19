@@ -24,8 +24,7 @@ const CSMPageContent: React.FC = () => {
   const searchParams = useSearchParams();
   const activeProject = useProjectStore((s) => s.activeProject);
 
-  const paramProjectId = searchParams.get('project');
-  const projectId = paramProjectId || (activeProject?.id ?? '');
+  const projectId = activeProject?.id ?? '';
   const projectValid = !!projectId;
 
   const initialTab = (searchParams.get('tab') as TabId) || 'organisations';

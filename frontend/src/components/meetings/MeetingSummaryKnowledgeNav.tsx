@@ -81,7 +81,7 @@ export function MeetingSummaryKnowledgeNav({
           <Link
             href={nestedProjectPath(
               projectId,
-              `/decisions?origin_meeting_id=${meetingId}`,
+              `/decisions?origin_meeting=${meetingId}`,
             )}
             className="inline-flex items-center justify-center rounded-md border border-[#3CCED7]/30 bg-[#3CCED7]/10/80 px-3 py-2 text-sm font-medium text-[#0f757a] transition hover:bg-[#3CCED7]/15"
           >

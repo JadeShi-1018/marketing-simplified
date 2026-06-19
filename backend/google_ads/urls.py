@@ -12,19 +12,19 @@ urlpatterns = [
     
     # Global ads operations (for frontend)
     path('ads/', views.AdsListView.as_view(), name='ads_list'),
-    path('ads/<int:ad_id>/', views.AdDetailView.as_view(), name='ad_detail'),
+    path('ads/<str:ad_id>/', views.AdDetailView.as_view(), name='ad_detail'),
     
     # Operations by account
     path('act_<str:customer_id>/ads/', views.AdsByAccountView.as_view(), name='ads_by_account'),
-    path('act_<str:customer_id>/ads/<int:ad_id>/', views.AdByAccountView.as_view(), name='ad_by_account'),
+    path('act_<str:customer_id>/ads/<str:ad_id>/', views.AdByAccountView.as_view(), name='ad_by_account'),
     
     # Global operations (legacy)
-    path('<int:ad_id>/', views.get_ad, name='get_ad'),
-    path('<int:ad_id>/update/', views.AdUpdateView.as_view(), name='update_ad'),
-    path('<int:ad_id>/delete/', views.AdDeleteView.as_view(), name='delete_ad'),
+    path('<str:ad_id>/', views.get_ad, name='get_ad'),
+    path('<str:ad_id>/update/', views.AdUpdateView.as_view(), name='update_ad'),
+    path('<str:ad_id>/delete/', views.AdDeleteView.as_view(), name='delete_ad'),
     
     # Preview related routes
     path('preview/<str:token>/', views.get_preview_data, name='get_preview_data'),
-    path('<int:ad_id>/create_preview/', views.create_preview_from_ad, name='create_preview_from_ad'),
+    path('<str:ad_id>/create_preview/', views.create_preview_from_ad, name='create_preview_from_ad'),
     
 ]

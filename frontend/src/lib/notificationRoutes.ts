@@ -1,4 +1,5 @@
 import { nestedProjectPath } from "@/lib/projectNestedRoutes";
+import { buildMessagesPath, translateLegacyMessagesActionUrl } from "@/lib/messages/messagesRoutes";
 import { ProjectAPI } from "@/lib/api/projectApi";
 import { useProjectStore } from "@/lib/projectStore";
 import type { NotificationItem } from "@/types/notifications";
@@ -82,9 +83,15 @@ function translateLegacyActionUrl(actionUrl: string): NotificationNavigationTarg
   }
 
   if (actionUrl.startsWith("/") && !actionUrl.startsWith("//")) {
+    const messagesHref = translateLegacyMessagesActionUrl(actionUrl);
+    if (messagesHref) {
+      return { href: messagesHref, requiresProjectSwitch: false };
+    }
     try {
       const url = new URL(actionUrl, "http://local");
       url.searchParams.delete("project_id");
+      url.searchParams.delete("projectId");
+      url.searchParams.delete("chatId");
       const qs = url.searchParams.toString();
       const href = qs ? `${url.pathname}?${qs}` : url.pathname;
       return { href, requiresProjectSwitch: false };
@@ -115,13 +122,22 @@ export function buildNotificationFullPageTarget(
     eventType === NOTIFICATION_EVENT.CHAT_MENTION
   ) {
     if (actionUrl) {
-      return translateLegacyActionUrl(actionUrl) ?? { href: actionUrl, requiresProjectSwitch: false };
+      const translated = translateLegacyActionUrl(actionUrl);
+      if (translated) return translated;
+      return { href: actionUrl, requiresProjectSwitch: false };
     }
+    const chatSlug = metadata?.chat_slug as string | undefined;
     const chatId = metadata?.chat_id;
-    const projectId = extractNotificationProjectId(notification);
-    if (chatId && projectId) {
+    const messageId = metadata?.message_id as number | undefined;
+    if (chatSlug) {
       return {
-        href: `/messages?chatId=${chatId}&projectId=${projectId}`,
+        href: buildMessagesPath(chatSlug, { messageId: messageId ?? null }),
+        requiresProjectSwitch: false,
+      };
+    }
+    if (chatId) {
+      return {
+        href: `/messages?chatId=${chatId}`,
         requiresProjectSwitch: false,
       };
     }

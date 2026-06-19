@@ -70,6 +70,7 @@ export default function MeetingDetailPage() {
   const router = useRouter();
   const params = useParams<{ meetingId: string }>();
   const { projectId } = useActiveProjectForFlatRoute();
+  const meetingId = String(params.meetingId);
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [availableTransitions, setAvailableTransitions] = useState<string[]>([]);

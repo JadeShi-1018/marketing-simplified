@@ -47,7 +47,7 @@ function dedupeByKey<T>(rows: T[], key: (row: T) => string): T[] {
 }
 
 export default function MeetingsV2Page() {
-  const { projectId } = useActiveProjectForFlatRoute();
+  const { projectId, activeProject } = useActiveProjectForFlatRoute();
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');

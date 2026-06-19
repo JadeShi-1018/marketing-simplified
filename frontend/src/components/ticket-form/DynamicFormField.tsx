@@ -150,7 +150,7 @@ export default function DynamicFormField({
             <p className="text-xs italic text-gray-400">No support projects configured.</p>
             {projectId ? (
               <Link
-                href={`/admin/csm/settings/support-projects?project=${projectId}`}
+                href="/admin/csm/settings/support-projects"
                 className="text-xs text-indigo-600 hover:underline not-italic"
               >
                 Configure in Settings
@@ -174,7 +174,7 @@ export default function DynamicFormField({
             <p className="text-xs italic text-gray-400">No work types configured.</p>
             {projectId ? (
               <Link
-                href={`/admin/csm/settings/work-types?project=${projectId}`}
+                href="/admin/csm/settings/work-types"
                 className="text-xs text-indigo-600 hover:underline not-italic"
               >
                 Configure in Settings

@@ -225,6 +225,12 @@ class MetaAdPerformanceFiltersTests(APITestCase):
         self.assertIn("b", ids)
         self.assertNotIn("c", ids)
 
+    def test_campaign_detail_resolves_by_slug(self):
+        # SMP-539 Batch F: detail endpoint resolves a campaign slug, not just a pk.
+        resp = self.client.get(reverse("meta-campaign-detail", args=[self.campaign.slug]))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["slug"], self.campaign.slug)
+
     def test_include_inactive_returns_inactive_ad(self):
         resp = self.client.get(self.url, {"days": 14, "include_inactive": "true"})
         self.assertEqual(resp.status_code, 200)

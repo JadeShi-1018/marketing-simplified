@@ -64,12 +64,12 @@ export default function CampaignDetailPage({
 }: {
   params: { campaignId: string };
 }) {
-  const campaignId = Number(params.campaignId);
+  const campaignId = String(params.campaignId);
   return (
     <ProtectedRoute>
       <DashboardLayout>
         <div className="p-6">
-          {Number.isFinite(campaignId) ? (
+          {campaignId ? (
             <CampaignDetailContent campaignId={campaignId} />
           ) : (
             <div className="text-sm text-gray-500">Invalid campaign id.</div>
@@ -80,7 +80,7 @@ export default function CampaignDetailPage({
   );
 }
 
-function CampaignDetailContent({ campaignId }: { campaignId: number }) {
+function CampaignDetailContent({ campaignId }: { campaignId: string }) {
   const router = useRouter();
   const [days, setDays] = useState<number>(28);
   const [detail, setDetail] = useState<MetaCampaignDetail | null>(null);
@@ -295,7 +295,7 @@ function CampaignDetailContent({ campaignId }: { campaignId: number }) {
                       >
                         <td className="px-4 py-2">
                           <Link
-                            href={`/meta-ads/adsets/${a.id}`}
+                            href={`/meta-ads/adsets/${a.slug}`}
                             className="block max-w-[420px] truncate text-xs font-medium text-gray-900 hover:text-[#1a9ba3]"
                           >
                             {a.name || a.meta_adset_id}

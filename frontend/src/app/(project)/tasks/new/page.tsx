@@ -105,7 +105,7 @@ function normalizeDraftTags(value: unknown): TaskTag[] {
 export default function CreateTaskPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const linkDecisionIdParam = searchParams?.get('link_decision_id');
+  const linkDecisionIdParam = searchParams?.get('link_decision') ?? searchParams?.get('link_decision_id');
   const { projectId, activeProject } = useActiveProjectForFlatRoute();
   const linkDecisionId = linkDecisionIdParam || null;
 

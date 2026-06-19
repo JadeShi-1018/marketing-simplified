@@ -21,7 +21,7 @@ const SCOPE_OPTIONS: Array<{ value: string; label: string }> = [
 
 export default function TemplatesListV2Page() {
   const router = useRouter();
-  const { projectId } = useActiveProjectForFlatRoute();
+  const { projectId, activeProject } = useActiveProjectForFlatRoute();
 
   const { items, loading, error, refresh } = useCampaignTemplates();
   const [searchQuery, setSearchQuery] = useState('');

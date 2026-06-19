@@ -3,9 +3,11 @@
 import { useEffect } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 
+const STRIP_KEYS = ['project_id', 'projectId', 'project'] as const;
+
 /**
- * SMP-539: `?project_id=` must never appear in browser URLs. Strip it on every route
- * without reading it for app logic (project comes from the Zustand store).
+ * SMP-539: project context must not live in browser URLs on main app routes.
+ * Strips legacy project query params without using them for app logic.
  */
 export function useStripProjectIdFromUrl() {
   const router = useRouter();
@@ -13,9 +15,14 @@ export function useStripProjectIdFromUrl() {
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    if (!searchParams?.get('project_id')) return;
+    if (!searchParams) return;
+    const shouldStrip = STRIP_KEYS.some((key) => searchParams.has(key));
+    if (!shouldStrip) return;
+
     const params = new URLSearchParams(searchParams.toString());
-    params.delete('project_id');
+    for (const key of STRIP_KEYS) {
+      params.delete(key);
+    }
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);

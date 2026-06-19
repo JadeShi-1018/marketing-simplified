@@ -362,6 +362,7 @@ def fire_message_reminders() -> int:
     has arrived and have not yet been dispatched.
     """
     from chat.models import MessageReminder
+    from chat.url_helpers import build_messages_action_url
     from notifications.models import NotificationCategory, NotificationEventType
     from notifications.services import create_notification
 
@@ -386,7 +387,7 @@ def fire_message_reminders() -> int:
             chat = message.chat
 
             # Build action URL to navigate to the message
-            action_url = f"/messages?chatId={chat.id}&messageId={message.id}&projectId={chat.project_id}"
+            action_url = build_messages_action_url(chat.slug, message_id=message.id)
 
             # Truncate message content for notification body
             content_preview = message.content[:200] if message.content else "[Attachment]"

@@ -126,7 +126,7 @@ export default function AssignmentPanel({
     );
   }
 
-  const settingsHref = `/admin/csm/settings/support-projects?project=${projectId}`;
+  const settingsHref = `/admin/csm/settings/support-projects`;
 
   return (
     <div className="flex flex-col gap-8">

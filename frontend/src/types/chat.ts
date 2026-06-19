@@ -39,6 +39,7 @@ export interface ChatParticipant {
 
 export interface Chat {
   id: number;
+  slug: string;
   project_id: number | string;
   project?: number | string; // Backend may send this instead of project_id
   type: ChatType;
@@ -92,6 +93,7 @@ export interface MissingForwardedAttachment {
 
 export interface ChatContext {
   id: number;
+  slug: string;
   type: ChatType;
   name?: string | null;
 }
@@ -500,10 +502,13 @@ export interface MessageItemProps {
   onRemind?: (messageId: number) => void;
   isPinned?: boolean;
   isSaved?: boolean;
+  /** Canonical chat slug for copy-link URLs. */
+  chatSlug?: string;
 }
 
 export interface MessageListProps {
   messages: Message[];
+  chatSlug?: string;
   currentUserId: number;
   onLoadMore: () => void;
   hasMore: boolean;
@@ -552,7 +557,7 @@ export interface CreateChatDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
-  onChatCreated: (chatId: number) => void;
+  onChatCreated: (chatId: number, chatSlug?: string) => void;
   /** When set, only group (channel) creation is shown — for Slack-style “Add channel”. */
   variant?: 'default' | 'channel';
 }
@@ -567,11 +572,12 @@ export interface ChatStarRow {
 }
 
 export interface ParticipantSelectorProps {
-  projectId: string;
+  projectId: number | string;
   selectedIds: number[];
   onSelect: (ids: number[]) => void;
   maxSelection?: number;
   currentUserId: number;
+  allowSolo?: boolean;
 }
 
 // ==================== Project Member Types ====================

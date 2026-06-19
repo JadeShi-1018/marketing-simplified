@@ -58,11 +58,19 @@ export const getChats = async (params?: GetChatsParams): Promise<PaginatedRespon
 };
 
 /**
- * Get a specific chat by ID
+ * Get a specific chat by slug (canonical) or legacy numeric id via resolve endpoint.
  */
-export const getChat = async (chatId: number): Promise<Chat> => {
-  const response = await api.get(`/api/chat/chats/${chatId}/`);
+export const getChat = async (chatKey: number | string): Promise<Chat> => {
+  const response = await api.get(`/api/chat/chats/${chatKey}/`);
   return response.data;
+};
+
+/** Resolve legacy numeric chat pk to slug (bookmarks / old notifications). */
+export const resolveLegacyChatSlug = async (chatId: number): Promise<string> => {
+  const response = await api.get<{ slug: string }>('/api/chat/chats/legacy-id-slug/', {
+    params: { id: chatId },
+  });
+  return response.data.slug;
 };
 
 /**

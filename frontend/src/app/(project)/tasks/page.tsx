@@ -158,7 +158,7 @@ export default function TasksV2Page() {
             />
           )}
           {tab === 'board' && (
-            <BoardView tasks={tasks} loading={taskListLoading} error={error} projectId={projectId} />
+            <BoardView tasks={tasks} loading={taskListLoading} error={error} projectId={projectId != null ? String(projectId) : undefined} />
           )}
           {tab === 'gantt' && (
             <GanttView projectId={projectId} projectContextLoading={projectContextLoading} />

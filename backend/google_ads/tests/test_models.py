@@ -206,7 +206,12 @@ class AdModelTest(TestCase):
         self.assertEqual(ad.customer_account, self.customer_account)
         self.assertEqual(ad.created_by, self.user)
         self.assertEqual(ad.status, 'DRAFT')
-    
+
+    def test_ad_gets_slug_from_name(self):
+        """SMP-539 Batch G: slug is generated from the ad name on save."""
+        ad = create_test_ad(self.user, self.customer_account, name='Spring Promo Ad')
+        self.assertEqual(ad.slug, 'spring-promo-ad')
+
     def test_resource_name_validation(self):
         """Test resource name validation"""
         # Valid resource name
