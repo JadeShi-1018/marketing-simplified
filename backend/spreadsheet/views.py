@@ -1,4 +1,4 @@
-from core.slug_mixins import resolve_lookup_kwargs
+from core.slug_mixins import resolve_lookup_kwargs, resolve_project_pk
 """
 API views for spreadsheet operations
 Handles CRUD operations for spreadsheets, sheets, rows, columns, and cells
@@ -81,7 +81,8 @@ class SpreadsheetListView(APIView):
         if not project_id:
             raise ValidationError({'project_id': 'project_id is required'})
         
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id))
+        # project_id query param tolerates a numeric pk OR a project slug.
+        project = get_object_or_404(Project, pk=resolve_project_pk(project_id))
         
         # Get queryset with select_related to avoid N+1 queries
         queryset = Spreadsheet.objects.filter(project=project, is_deleted=False).select_related('project')
@@ -123,7 +124,8 @@ class SpreadsheetListView(APIView):
         if not project_id:
             raise ValidationError({'project_id': 'project_id is required'})
         
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id))
+        # project_id query param tolerates a numeric pk OR a project slug.
+        project = get_object_or_404(Project, pk=resolve_project_pk(project_id))
         
         serializer = SpreadsheetCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
