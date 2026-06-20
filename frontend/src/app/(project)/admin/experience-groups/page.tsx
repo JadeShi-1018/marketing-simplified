@@ -113,7 +113,7 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, onSuccess, onCancel 
 // ── Edit Form ─────────────────────────────────────────────────────────────────
 
 interface EditFormProps {
-  groupId: number;
+  groupId: string;
   projectId: number;
   onSaved: (group: ExperienceGroup) => void;
   onClose: () => void;
@@ -349,9 +349,9 @@ const ExperienceGroupsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [editingGroupId, setEditingGroupId] = useState<number | null>(null);
-  const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [publishingId, setPublishingId] = useState<number | null>(null);
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const fetchGroups = useCallback(async () => {
@@ -392,13 +392,13 @@ const ExperienceGroupsPage: React.FC = () => {
     );
   };
 
-  const handleDelete = async (id: number, name: string) => {
+  const handleDelete = async (slug: string, name: string) => {
     if (!window.confirm(`Delete "${name}"? This action cannot be undone.`)) return;
-    setDeletingId(id);
+    setDeletingId(slug);
     setActionError(null);
     try {
-      await ExperienceGroupAPI.destroy(id);
-      setGroups((prev) => prev.filter((g) => g.id !== id));
+      await ExperienceGroupAPI.destroy(slug);
+      setGroups((prev) => prev.filter((g) => g.slug !== slug));
     } catch (err: any) {
       const detail =
         err?.response?.data?.detail ||
@@ -409,13 +409,13 @@ const ExperienceGroupsPage: React.FC = () => {
     }
   };
 
-  const handlePublish = async (id: number) => {
-    setPublishingId(id);
+  const handlePublish = async (slug: string) => {
+    setPublishingId(slug);
     setActionError(null);
     try {
-      const res = await ExperienceGroupAPI.publish(id);
+      const res = await ExperienceGroupAPI.publish(slug);
       setGroups((prev) =>
-        prev.map((g) => (g.id === id ? { ...g, status: res.data.status } : g))
+        prev.map((g) => (g.slug === slug ? { ...g, status: res.data.status } : g))
       );
     } catch (err: any) {
       const detail =
@@ -570,7 +570,7 @@ const ExperienceGroupsPage: React.FC = () => {
 
                           {/* Edit — opens modal */}
                           <button
-                            onClick={() => setEditingGroupId(group.id)}
+                            onClick={() => setEditingGroupId(group.slug)}
                             title="Edit"
                             className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"
                           >
@@ -580,8 +580,8 @@ const ExperienceGroupsPage: React.FC = () => {
                           {/* Publish (only if DRAFT) */}
                           {group.status === 'DRAFT' && (
                             <button
-                              onClick={() => handlePublish(group.id)}
-                              disabled={publishingId === group.id}
+                              onClick={() => handlePublish(group.slug)}
+                              disabled={publishingId === group.slug}
                               title="Publish"
                               className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-md transition-colors disabled:opacity-40"
                             >
@@ -591,8 +591,8 @@ const ExperienceGroupsPage: React.FC = () => {
 
                           {/* Delete */}
                           <button
-                            onClick={() => handleDelete(group.id, group.name)}
-                            disabled={deletingId === group.id}
+                            onClick={() => handleDelete(group.slug, group.name)}
+                            disabled={deletingId === group.slug}
                             title="Delete"
                             className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors disabled:opacity-40"
                           >
