@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
-from .models import Customer, CustomerOrganisation,Region
+from .models import (
+    Customer, CustomerOrganisation, Region, CustomerStatusLabel,
+    CustomerInternalNote, CustomerInternalNoteAuditLog
+)
 
 class RegionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -100,4 +103,55 @@ class CustomerSerializer(serializers.ModelSerializer):
                 )
         return attrs
 
-    
+
+class CustomerStatusLabelSerializer(serializers.ModelSerializer):
+    organisation_name = serializers.CharField(
+        source='organisation.name', read_only=True, default=None
+    )
+
+    class Meta:
+        model = CustomerStatusLabel
+        fields = [
+            'id', 'organisation', 'organisation_name',
+            'name', 'color', 'order', 'is_active',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class CustomerInternalNoteSerializer(serializers.ModelSerializer):
+    author_email = serializers.CharField(source='author.email', read_only=True)
+    author_name = serializers.SerializerMethodField(read_only=True)
+    is_author = serializers.SerializerMethodField()
+    body_text = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = CustomerInternalNote
+        fields = [
+            'id', 'customer', 'author', 'author_email', 'author_name',
+            'body', 'body_text', 'body_format',
+            'is_edited', 'created_at', 'updated_at', 'is_author',
+        ]
+        read_only_fields = ['id', 'author', 'body_text', 'body_format', 'created_at', 'updated_at', 'is_author']
+
+    def get_author_name(self, obj):
+        full = obj.author.get_full_name()
+        return full if full.strip() else obj.author.email
+
+    def get_is_author(self, obj):
+        request = self.context.get('request')
+        return request and request.user == obj.author
+
+
+class CustomerInternalNoteAuditLogSerializer(serializers.ModelSerializer):
+    actor_email = serializers.CharField(source='actor.email', read_only=True, allow_null=True)
+    event_type_display = serializers.CharField(source='get_event_type_display', read_only=True)
+
+    class Meta:
+        model = CustomerInternalNoteAuditLog
+        fields = [
+            'id', 'customer', 'actor', 'actor_email',
+            'event_type', 'event_type_display',
+            'timestamp', 'note_id', 'note_body',
+        ]
+        read_only_fields = ['id', 'customer', 'actor', 'event_type', 'timestamp', 'note_id', 'note_body']

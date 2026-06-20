@@ -2,12 +2,20 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.exceptions import PermissionDenied
 
 from core.admin_permissions import IsCsmAccessAllowed
 from core.viewset_mixins import ProjectScopedViewSetMixin
 
-from .models import Customer, Region, CustomerOrganisation
-from .serializers import CustomerSerializer, RegionSerializer, CustomerOrganisationSerializer
+from .models import (
+    Customer, Region, CustomerOrganisation, CustomerStatusLabel,
+    CustomerInternalNote, CustomerInternalNoteAuditLog
+)
+from .serializers import (
+    CustomerSerializer, RegionSerializer, CustomerOrganisationSerializer,
+    CustomerStatusLabelSerializer, CustomerInternalNoteSerializer,
+    CustomerInternalNoteAuditLogSerializer
+)
 
 
 class RegionViewSet(viewsets.ModelViewSet):
@@ -136,3 +144,86 @@ class CustomerViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         instance = self.get_object()
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CustomerStatusLabelViewSet(viewsets.ModelViewSet):
+    serializer_class = CustomerStatusLabelSerializer
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
+
+    def get_queryset(self):
+        from core.admin_utils import get_csm_admin_org_ids
+        queryset = CustomerStatusLabel.objects.filter(is_active=True)
+        admin_org_ids = get_csm_admin_org_ids(self.request.user)
+        return queryset.filter(organisation_id__in=admin_org_ids).order_by('order', 'name')
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete label — check if it's in use by customers"""
+        instance = self.get_object()
+        customer_count = instance.customers.count()
+        if customer_count > 0:
+            return Response(
+                {
+                    'detail': (
+                        f'Cannot delete: {customer_count} customer(s) use this label. '
+                        'Reassign them first.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class CustomerInternalNoteViewSet(viewsets.ModelViewSet):
+    """Internal notes on customer profiles — never visible to customers"""
+    serializer_class = CustomerInternalNoteSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return CustomerInternalNote.objects.select_related('author', 'customer')
+
+    def perform_create(self, serializer):
+        """Automatically set author to current user"""
+        note = serializer.save(author=self.request.user)
+        self._record_audit('note.created', note)
+
+    def perform_update(self, serializer):
+        """Mark as edited and record audit log"""
+        note = serializer.save(is_edited=True)
+        self._record_audit('note.edited', note)
+
+    def perform_destroy(self, instance):
+        """Record deletion to audit log before deleting"""
+        # Check permissions: author can delete own notes, admin can delete any
+        if instance.author != self.request.user:
+            from core.admin_utils import is_csm_admin
+            if not is_csm_admin(self.request.user):
+                raise PermissionDenied(
+                    "You can only delete your own notes. Contact admin to delete others' notes."
+                )
+
+        self._record_audit('note.deleted', instance)
+        instance.delete()
+
+    def _record_audit(self, event_type, note):
+        """Record audit log entry"""
+        CustomerInternalNoteAuditLog.objects.create(
+            customer=note.customer,
+            actor=self.request.user,
+            event_type=event_type,
+            note_id=note.id,
+            note_body=note.body[:500] if note.body else None,
+        )
+
+
+class CustomerInternalNoteAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only audit log for internal note changes"""
+    serializer_class = CustomerInternalNoteAuditLogSerializer
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
+
+    def get_queryset(self):
+        from core.admin_utils import get_csm_admin_org_ids
+        queryset = CustomerInternalNoteAuditLog.objects.all()
+        admin_org_ids = get_csm_admin_org_ids(self.request.user)
+        # Filter to customers where user is CSM admin
+        return queryset.filter(customer__organisation_id__in=admin_org_ids)
