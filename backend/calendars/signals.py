@@ -1,3 +1,5 @@
+import datetime as dt
+
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.utils import timezone
@@ -116,30 +118,21 @@ def generate_calendar_events_for_task(sender, instance, created, **kwargs):
 
     # Task Event — generated if there is start_date or due_date
     if instance.start_date or instance.due_date:
+        def _to_utc(d, t):
+            return dt.datetime.combine(d, t, tzinfo=dt.timezone.utc)
+
         if instance.start_date and instance.due_date:
             # Task has both start and due date — create a continuous duration event
-            start_time = timezone.make_aware(
-                timezone.datetime.combine(instance.start_date, timezone.datetime.min.time())
-            )
-            end_time = timezone.make_aware(
-                timezone.datetime.combine(instance.due_date, timezone.datetime.max.time())
-            )
+            start_time = _to_utc(instance.start_date, dt.time.min)
+            end_time = _to_utc(instance.due_date, dt.time.max)
         elif instance.start_date:
             # Only start date — single day event
-            start_time = timezone.make_aware(
-                timezone.datetime.combine(instance.start_date, timezone.datetime.min.time())
-            )
-            end_time = timezone.make_aware(
-                timezone.datetime.combine(instance.start_date, timezone.datetime.max.time())
-            )
+            start_time = _to_utc(instance.start_date, dt.time.min)
+            end_time = _to_utc(instance.start_date, dt.time.max)
         else:
             # Only due date — single day event (backward compatibility)
-            start_time = timezone.make_aware(
-                timezone.datetime.combine(instance.due_date, timezone.datetime.min.time())
-            )
-            end_time = timezone.make_aware(
-                timezone.datetime.combine(instance.due_date, timezone.datetime.max.time())
-            )
+            start_time = _to_utc(instance.due_date, dt.time.min)
+            end_time = _to_utc(instance.due_date, dt.time.max)
 
         project_prefix = f"[{instance.project.name}] " if instance.project else ""
         status_suffix = f" ({instance.get_status_display()})" if instance.status else ""

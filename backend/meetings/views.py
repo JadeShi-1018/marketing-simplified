@@ -6,6 +6,7 @@ from decision.models import Decision
 from decision.serializers import DecisionCommittedSerializer, DecisionListSerializer
 import logging
 from datetime import datetime
+from django.utils.dateparse import parse_datetime
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
@@ -1269,18 +1270,16 @@ class MeetingAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         to_date = self.request.query_params.get('to')
 
         if from_date:
-            try:
-                from_datetime = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
-                queryset = queryset.filter(timestamp__gte=from_datetime)
-            except ValueError:
+            from_datetime = parse_datetime(from_date.replace(' ', '+').replace('Z', '+00:00'))
+            if from_datetime is None:
                 raise ValidationError({'from': 'Invalid ISO 8601 date format'})
+            queryset = queryset.filter(timestamp__gte=from_datetime)
 
         if to_date:
-            try:
-                to_datetime = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
-                queryset = queryset.filter(timestamp__lte=to_datetime)
-            except ValueError:
+            to_datetime = parse_datetime(to_date.replace(' ', '+').replace('Z', '+00:00'))
+            if to_datetime is None:
                 raise ValidationError({'to': 'Invalid ISO 8601 date format'})
+            queryset = queryset.filter(timestamp__lte=to_datetime)
 
         return queryset
 

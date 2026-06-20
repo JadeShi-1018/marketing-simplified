@@ -1,7 +1,14 @@
 from django.db import models
+from django.conf import settings
 
 
 class Customer(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='customer_profile',
+    )
     email = models.EmailField()
     full_name = models.CharField(max_length=200)
     company = models.CharField(max_length=200, blank=True, default='')
