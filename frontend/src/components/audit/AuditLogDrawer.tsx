@@ -10,7 +10,7 @@ import AuditLogTimeline from './AuditLogTimeline';
 interface AuditLogDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
 }
 

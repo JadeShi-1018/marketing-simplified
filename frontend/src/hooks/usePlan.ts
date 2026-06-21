@@ -3,38 +3,101 @@ import api, { authAPI } from '@/lib/api';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/authStore';
 
-interface Plan {
+export interface Plan {
   id: number;
   name: string;
   desc: string | null;
-  max_team_members: number;
-  max_previews_per_day: number;
-  max_tasks_per_day: number;
-  stripe_price_id: string;
-  price: number | null;
-  price_currency: string | null;
-  price_id: string;
+  stripe_price_id: string | null;
+  // Token-billing schema
+  base_price_cents: number;
+  monthly_token_quota: number | null;  // null = unlimited
+  max_tokens_per_call?: number | null;
+  included_seats: number;
+  extra_seat_price_cents: number | null;
+  overage_price_cents_per_1m: number | null;  // null = hard block
+  currency: string;
+  is_archived: boolean;
+  // Legacy (deprecated — do not use for rendering)
+  max_team_members?: number | null;
+  max_previews_per_day?: number | null;
+  max_tasks_per_day?: number | null;
+}
+
+export interface Payment {
+  id: string;
+  number: string | null;
+  created: string | null;
+  amount_paid_cents: number;
+  currency: string;
+  status: string | null;
+  description: string | null;
+  hosted_invoice_url: string | null;
+  invoice_pdf: string | null;
+}
+
+export interface OrgTokenSummary {
+  tokens_used: number;
+  overage_tokens: number;
+  monthly_token_quota: number | null;
+  overage_price_cents_per_1m: number | null;
+  currency: string;
 }
 
 interface SwitchPlanResponse {
   requested: boolean;
+  redirect_to?: 'checkout' | null;
+  status?: 'scheduled_downgrade';
+  effective_at?: number | null;  // Unix timestamp
+}
+
+export interface ActiveSubscription {
+  id: number;
+  seat_count: number;
+  member_count: number;
+  is_active: boolean;
+  end_date: string | null;
+  cancel_at_period_end: boolean;
+  plan: Plan;
+}
+
+interface CancelSubscriptionResponse {
+  success: boolean;
+  cancel_at: number | null;
+}
+
+interface PurchaseSeatsResponse {
+  seat_count: number;
+  monthly_total_cents: number;
+}
+
+export interface PreviewSeatsResponse {
+  proration_now_cents: number;
+  monthly_total_cents: number;
+  proration_date: number;
 }
 
 interface UsePlanReturn {
   plans: Plan[];
   loading: boolean;
   error: string | null;
+  subscription: ActiveSubscription | null;
   fetchPlans: () => Promise<void>;
-  createCheckoutSession: (planId: number) => Promise<void>;
-  cancelSubscription: () => Promise<void>;
+  fetchSubscription: () => Promise<void>;
+  createCheckoutSession: (planId: number, seatCount?: number) => Promise<void>;
+  cancelSubscription: () => Promise<CancelSubscriptionResponse>;
   switchPlan: (planId: number) => Promise<SwitchPlanResponse>;
-  handleSubscribe: (planId: number) => Promise<void>;
+  handleSubscribe: (planId: number, seatCount?: number) => Promise<void>;
+  previewSeatPurchase: (newSeatCount: number) => Promise<PreviewSeatsResponse>;
+  purchaseSeats: (newSeatCount: number, prorationDate?: number) => Promise<PurchaseSeatsResponse>;
+  fetchPayments: () => Promise<Payment[]>;
+  fetchOrgTokenSummary: () => Promise<OrgTokenSummary>;
 }
 
 export default function usePlan(enabled = true): UsePlanReturn {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [subscription, setSubscription] = useState<ActiveSubscription | null>(null);
 
   const fetchPlans = async () => {
     setLoading(true);
@@ -83,13 +146,14 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
-  const createCheckoutSession = async (planId: number) => {
+  const createCheckoutSession = async (planId: number, seatCount = 1) => {
     try {
       const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
       const response = await api.post('/api/stripe/checkout/', {
         plan_id: planId,
-        success_url: `${baseUrl}/plans`,
-        cancel_url: `${baseUrl}/plans`
+        seat_count: seatCount,
+        success_url: `${baseUrl}/subscription?checkout=success`,
+        cancel_url: `${baseUrl}/subscription`
       });
 
       // Backend now returns JSON with checkout_url instead of 303 redirect
@@ -105,9 +169,10 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
-  const cancelSubscription = async () => {
+  const cancelSubscription = async (): Promise<CancelSubscriptionResponse> => {
     try {
-      await api.post('/api/stripe/subscription/cancel/');
+      const response = await api.post('/api/stripe/subscription/cancel/');
+      return response.data;
     } catch (error: any) {
       console.error('Error canceling subscription:', error);
       throw error;
@@ -126,7 +191,7 @@ export default function usePlan(enabled = true): UsePlanReturn {
     }
   };
 
-  const handleSubscribe = async (planId: number) => {
+  const handleSubscribe = async (planId: number, seatCount = 1) => {
     const user = useAuthStore.getState().user;
     const currentPlanId = user?.organization?.plan_id;
 
@@ -142,10 +207,30 @@ export default function usePlan(enabled = true): UsePlanReturn {
       }
 
       try {
-        await switchPlan(planId);
+        const result = await switchPlan(planId);
+
+        // Free-sentinel org: backend cannot modify a non-existent Stripe subscription.
+        // Redirect to checkout so the user creates a real one instead.
+        if (result.redirect_to === 'checkout') {
+          await createCheckoutSession(planId, seatCount);
+          return;
+        }
+
+        // Downgrade to Free: cancel_at_period_end was set — user keeps paid benefits
+        // until the billing period ends, then the subscription.deleted webhook fires.
+        if (result.status === 'scheduled_downgrade') {
+          const dateStr = result.effective_at
+            ? new Date(result.effective_at * 1000).toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric',
+              })
+            : 'the end of your billing period';
+          toast.success(`Your plan will downgrade to Free on ${dateStr}. You keep your current benefits until then.`);
+          await fetchSubscription();
+          return;
+        }
 
         // Poll for plan update (webhook will have processed it)
-        await new Promise<void>((resolve, reject) => {
+        await new Promise<void>((resolve) => {
           let pollCount = 0;
           const maxPolls = 10; // Max 5 seconds (10 * 500ms)
 
@@ -183,24 +268,82 @@ export default function usePlan(enabled = true): UsePlanReturn {
         throw error;
       }
     } else {
-      // No subscription - use normal checkout
-      await createCheckoutSession(planId);
+      // No subscription — only paid plans can be checked out this way
+      const targetPlan = plans.find((p) => p.id === planId);
+      if (!targetPlan?.stripe_price_id) return;
+      await createCheckoutSession(planId, seatCount);
     }
+  };
+
+  const fetchSubscription = async () => {
+    try {
+      const response = await api.get('/api/stripe/subscription/');
+      setSubscription(response.data);
+    } catch (err: any) {
+      if (err?.response?.status !== 404) {
+        console.error('Error fetching subscription:', err);
+      }
+      setSubscription(null);
+    }
+  };
+
+  const previewSeatPurchase = async (newSeatCount: number): Promise<PreviewSeatsResponse> => {
+    try {
+      const response = await api.get('/api/stripe/plans/seats/preview/', {
+        params: { seat_count: newSeatCount },
+      });
+      return response.data;
+    } catch (error: any) {
+      console.error('Error previewing seat purchase:', error);
+      throw error;
+    }
+  };
+
+  const purchaseSeats = async (newSeatCount: number, prorationDate?: number): Promise<PurchaseSeatsResponse> => {
+    try {
+      const payload: Record<string, number> = { seat_count: newSeatCount };
+      if (prorationDate !== undefined) payload.proration_date = prorationDate;
+      const response = await api.post('/api/stripe/plans/seats/', payload);
+      setSubscription((prev) =>
+        prev ? { ...prev, seat_count: response.data.seat_count } : null,
+      );
+      return response.data;
+    } catch (error: any) {
+      console.error('Error purchasing seats:', error);
+      throw error;
+    }
+  };
+
+  const fetchPayments = async (): Promise<Payment[]> => {
+    const response = await api.get('/api/stripe/payments/');
+    return response.data.results ?? response.data;
+  };
+
+  const fetchOrgTokenSummary = async (): Promise<OrgTokenSummary> => {
+    const response = await api.get('/api/stripe/org-token-summary/');
+    return response.data;
   };
 
   useEffect(() => {
     if (!enabled) return;
     fetchPlans();
+    fetchSubscription();
   }, [enabled]);
 
   return {
     plans,
     loading,
     error,
+    subscription,
     fetchPlans,
+    fetchSubscription,
     createCheckoutSession,
     cancelSubscription,
     switchPlan,
-    handleSubscribe
+    handleSubscribe,
+    previewSeatPurchase,
+    purchaseSeats,
+    fetchPayments,
+    fetchOrgTokenSummary,
   };
 }

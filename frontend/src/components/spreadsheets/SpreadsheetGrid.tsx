@@ -22,7 +22,7 @@ import { ApplyHighlightParams } from '@/types/patterns';
 import BrandSelect from '@/components/ui/BrandSelect';
 
 interface SpreadsheetGridProps {
-  spreadsheetId: number;
+  spreadsheetId: number | string;
   sheetId: number;
   loading?: boolean;
   spreadsheetName?: string;
@@ -144,7 +144,7 @@ interface StructureRedoEntry {
 }
 
 type StructureOp = {
-  id: number;
+  id: number | string;
   type: 'row_insert' | 'col_insert' | 'row_delete' | 'col_delete';
   count: number;
   position: number;
@@ -180,8 +180,8 @@ interface FormatStyleEntry {
 }
 
 interface SortHistoryEntry {
-  previous_order: Array<{ row_id: number; position: number }>;
-  new_order: Array<{ row_id: number; position: number }>;
+  previous_order: Array<{ row_id: number | string; position: number }>;
+  new_order: Array<{ row_id: number | string; position: number }>;
 }
 
 interface SortColumnHistoryEntry {

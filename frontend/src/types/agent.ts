@@ -69,6 +69,7 @@ export interface AgentMessageData {
   task_ids?: number[];
   created_tasks?: Array<{ index: number; task_id: number; summary: string }>;
   board_id?: string;
+  board_slug?: string;
   event_type?: string;
   status?: string;
   recommended_tasks?: RecommendedTask[];
@@ -338,6 +339,7 @@ export interface WorkflowTriggerState {
 
 export type WorkflowStepType =
   | 'analyze_data'
+  /** @deprecated Executor returns error if stepped; legacy DB records may still reference this value. */
   | 'call_dify'
   | 'call_llm'
   /** @deprecated No longer created from the UI; legacy workflows may still list this step. */
@@ -367,6 +369,7 @@ export interface AgentWorkflowStep {
 
 export interface AgentWorkflowDefinition {
   id: string;
+  slug: string;
   name: string;
   description: string;
   is_default: boolean;
@@ -427,6 +430,7 @@ export interface TemplateProjectInfo {
 
 export interface AgentWorkflowTemplate {
   id: string;
+  slug: string;
   name: string;
   description?: string;
   category: TemplateCategory;

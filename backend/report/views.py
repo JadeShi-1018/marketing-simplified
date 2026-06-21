@@ -6,6 +6,8 @@ from rest_framework import status
 
 from core.models import ProjectMember
 from report.models import ReportTask, ReportTaskKeyAction
+from core.slug_mixins import resolve_pk_for
+from task.models import Task
 from report.serializers import (
     ReportTaskSerializer,
     ReportCreateSerializer,
@@ -56,12 +58,9 @@ class ReportListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         qs = _get_accessible_report_queryset(self.request.user)
-        task_id = self.request.query_params.get("task")
-        if task_id is not None:
-            try:
-                qs = qs.filter(task_id=int(task_id))
-            except (TypeError, ValueError):
-                pass
+        task_pk = resolve_pk_for(Task, self.request.query_params.get("task"))
+        if task_pk:
+            qs = qs.filter(task_id=task_pk)
         return qs
 
     def perform_create(self, serializer):

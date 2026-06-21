@@ -7,7 +7,7 @@ import type { GoogleAd } from '@/lib/api/googleAdsApi';
 interface Props {
   ads: GoogleAd[];
   loading?: boolean;
-  onRowClick: (id: number) => void;
+  onRowClick: (id: number | string) => void;
   onDelete: (id: number) => void;
 }
 
@@ -78,7 +78,7 @@ export default function AdTableV2({ ads, loading, onRowClick, onDelete }: Props)
           {ads.map((ad) => (
             <tr
               key={ad.id}
-              onClick={() => onRowClick(ad.id!)}
+              onClick={() => onRowClick(ad.slug ?? ad.id!)}
               className="group cursor-pointer transition hover:bg-gray-50"
             >
               <td className="px-4 py-3 text-sm font-medium text-gray-900">

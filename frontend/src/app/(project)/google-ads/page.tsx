@@ -69,8 +69,8 @@ function GoogleAdsV2Content() {
     try {
       const created = await createAd({ name: payload.name, type: payload.type });
       setCreateOpen(false);
-      if (created?.id) {
-        router.push(`/google-ads/${created.id}`);
+      if (created?.slug || created?.id) {
+        router.push(`/google-ads/${created.slug ?? created.id}`);
       }
     } catch {
       // useGoogleAdsData shows toast on error; keep modal open

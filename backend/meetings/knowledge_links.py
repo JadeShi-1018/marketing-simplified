@@ -53,10 +53,11 @@ def serialize_linked_decision(decision: Any, project_id: int) -> dict[str, Any]:
     else:
         cs = (getattr(decision, "context_summary", None) or "").strip()
         title = (cs[:160] if cs else "") or f"Decision {decision.id}"
-    detail_url = project_decision_url(project_id, decision.id)
+    detail_url = project_decision_url(project_id, getattr(decision, "slug", None) or decision.id)
     status = getattr(decision, "status", None)
     return {
         "id": decision.id,
+        "slug": getattr(decision, "slug", None),
         "title": title,
         "status": str(status) if status is not None else None,
         "detail_url": detail_url,
@@ -67,10 +68,11 @@ def serialize_linked_decision(decision: Any, project_id: int) -> dict[str, Any]:
 def serialize_linked_task(task: Any, project_id: int) -> dict[str, Any]:
     """Minimal generated/related task row for meeting APIs (list + detail)."""
     title = (getattr(task, "summary", None) or "").strip() or f"Task {task.id}"
-    detail_url = project_task_url(project_id, task.id)
+    detail_url = project_task_url(project_id, getattr(task, "slug", None) or task.id)
     owner = getattr(task, "owner", None)
     return {
         "id": task.id,
+        "slug": getattr(task, "slug", None),
         "title": title,
         "status": str(getattr(task, "status", "") or ""),
         "assignee_name": _user_assignee_name(owner),
@@ -86,7 +88,7 @@ def serialize_origin_action_item(action_item: Any) -> dict[str, Any]:
     mid = action_item.meeting_id
     pid = action_item.meeting.project_id
     title = (getattr(action_item, "title", None) or "").strip() or f"Action item {action_item.id}"
-    detail_url = project_meeting_url(pid, mid)
+    detail_url = project_meeting_url(pid, getattr(action_item.meeting, "slug", None) or mid)
     return {
         "id": action_item.id,
         "title": title,
@@ -109,9 +111,10 @@ def serialize_origin_meeting(meeting: Any) -> dict[str, Any]:
     type_slug = getattr(type_def, "slug", None) if type_def is not None else None
     scheduled = getattr(meeting, "scheduled_date", None)
     scheduled_date = scheduled.isoformat() if scheduled is not None else None
-    detail_url = project_meeting_url(pid, meeting.id)
+    detail_url = project_meeting_url(pid, getattr(meeting, "slug", None) or meeting.id)
     return {
         "id": meeting.id,
+        "slug": getattr(meeting, "slug", None),
         "title": title,
         "scheduled_date": scheduled_date,
         "type": type_slug,

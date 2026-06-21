@@ -11,6 +11,7 @@ import {
   SearchX,
   Sparkles,
 } from 'lucide-react';
+import { Id } from '@/types/common';
 import type { TaskData } from '@/types/task';
 import { userDisplayName } from '@/types/task';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -23,7 +24,7 @@ type GroupBy = 'type' | 'owner' | 'priority' | 'theme';
 type MetricKey = 'groups' | 'duplicates' | 'conflicts' | 'nextCycle' | 'sparse';
 
 type PlanningViewProps = {
-  projectId: number | null;
+  projectId: Id | null;
   tasks: TaskData[];
   loading: boolean;
   error: unknown;
@@ -108,7 +109,7 @@ const TYPE_THEME: Record<string, string> = {
 };
 
 function taskUrl(task: TaskData): string {
-  return task.id ? `/tasks/${task.id}` : '/tasks';
+  return task.id ? `/tasks/${task.slug}` : '/tasks';
 }
 
 function typeLabel(type?: string): string {

@@ -46,6 +46,7 @@ const makePrivateChat = (
   otherUsername: string
 ): Chat => ({
   id,
+  slug: `chat-${id}`,
   project_id: 3,
   type: 'private',
   name: null,
@@ -59,6 +60,7 @@ const makePrivateChat = (
 
 const makeGroupChat = (id: number, name: string): Chat => ({
   id,
+  slug: name,
   project_id: 3,
   type: 'group',
   name,

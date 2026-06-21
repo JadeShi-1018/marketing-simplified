@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     QueueViewSet, QueueAgentViewSet,
     QueueTeamViewSet, CustomerUserViewSet,
-    CsmNotificationViewSet,
+    CsmNotificationViewSet, ConversationViewSet,
+    QuickReplyTemplateViewSet, TicketViewSet,
     TicketFormViewSet,
     SupportProjectViewSet,
     CsmWorkTypeViewSet,
@@ -13,6 +14,9 @@ router = DefaultRouter()
 router.register(r'queues', QueueViewSet, basename='queue')
 router.register(r'customer-users', CustomerUserViewSet, basename='customer-user')
 router.register(r'notifications', CsmNotificationViewSet, basename='csm-notification')
+router.register(r'conversations', ConversationViewSet, basename='conversation')
+router.register(r'templates', QuickReplyTemplateViewSet, basename='quick-reply-template')
+router.register(r'tickets', TicketViewSet, basename='ticket')
 router.register(r'ticket-forms', TicketFormViewSet, basename='ticket-form')
 router.register(r'support-projects', SupportProjectViewSet, basename='support-project')
 router.register(r'work-types', CsmWorkTypeViewSet, basename='csm-work-type')

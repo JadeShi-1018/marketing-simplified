@@ -174,7 +174,7 @@ export const klaviyoApi = {
   },
 
   // Get single email draft by ID
-  getEmailDraft: async (id: number): Promise<KlaviyoDraft> => {
+  getEmailDraft: async (id: number | string): Promise<KlaviyoDraft> => {
     try {
       const response = await api.get(`/api/klaviyo/klaviyo-drafts/${id}/`);
       return response.data;
@@ -241,7 +241,7 @@ export const klaviyoApi = {
 
   // Update email draft
   updateEmailDraft: async (
-    id: number,
+    id: number | string,
     data: UpdateKlaviyoDraftData
   ): Promise<KlaviyoDraft> => {
     try {
@@ -256,7 +256,7 @@ export const klaviyoApi = {
 
   // Partial update email draft (PATCH)
   patchEmailDraft: async (
-    id: number,
+    id: number | string,
     data: Partial<UpdateKlaviyoDraftData>
   ): Promise<KlaviyoDraft> => {
     try {
@@ -273,7 +273,7 @@ export const klaviyoApi = {
   },
 
   // Delete email draft
-  deleteEmailDraft: async (id: number): Promise<void> => {
+  deleteEmailDraft: async (id: number | string): Promise<void> => {
     try {
       await api.delete(`/api/klaviyo/klaviyo-drafts/${id}/`);
     } catch (error) {
@@ -290,7 +290,7 @@ export const klaviyoApi = {
 
 // Image upload and management API
 export interface KlaviyoImageItem {
-  id: number;
+  id: number | string;
   name: string;
   storage_path: string;
   original_filename: string;

@@ -54,6 +54,7 @@ htmlcov/
 .tox/
 .nox/
 .coverage.*
+coverage.json
 .cache
 .pytest_cache/
 

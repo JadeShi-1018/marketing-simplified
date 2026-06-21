@@ -12,7 +12,7 @@ import { useAuthStore } from '@/lib/authStore';
 import { validateLoginForm, hasValidationErrors } from '@/utils/validation';
 import { LoginRequest, FormValidation } from '@/types/auth';
 import { LOGIN_ERROR_MESSAGES, isNetworkError } from '@/lib/authMessages';
-import toast, { Toaster } from 'react-hot-toast';
+import toast from 'react-hot-toast';
 
 const SAVED_LOGIN_EMAIL_KEY = 'saved-login-email';
 
@@ -214,7 +214,6 @@ function LoginPageContent() {
 
   return (
     <>
-    <Toaster position="top-center" />
     <AuthFormWrapper title="Sign In">
       <form onSubmit={handleSubmit} className="space-y-6">
         <AuthFeedback
@@ -278,6 +277,16 @@ function LoginPageContent() {
           onGoogleLogin={handleGoogleLogin}
         />
       </form>
+
+      {/* Customer portal link */}
+      <div className="mt-6 text-center">
+        <p className="text-xs text-gray-400">
+          Are you a customer?{' '}
+          <Link href="/portal/login" className="text-[#3CCED7] hover:underline font-medium">
+            Go to Support Portal →
+          </Link>
+        </p>
+      </div>
     </AuthFormWrapper>
     </>
   );

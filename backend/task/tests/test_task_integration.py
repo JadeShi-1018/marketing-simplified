@@ -145,7 +145,7 @@ class TestTaskIntegration:
         )
 
         url = reverse('task-list')
-        response = authenticated_client.get(url, {'project_id': project2.id})
+        response = authenticated_client.get(url, {'project_id': project2.slug})
 
         assert response.status_code == status.HTTP_200_OK
         # Handle paginated response

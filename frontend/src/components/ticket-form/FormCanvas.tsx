@@ -13,7 +13,7 @@ import {
 } from './constants';
 
 interface Props {
-  formId: number;
+  formId: number | string;
   projectId: number;
   formName: string;
   formDescription: string;
@@ -74,7 +74,7 @@ export default function FormCanvas({
   onSaveForm,
   onDeleteForm,
 }: Props) {
-  const assignmentsHref = `/admin/ticket-forms/${formId}/assignments?project=${projectId}`;
+  const assignmentsHref = `/admin/ticket-forms/${formId}/assignments`;
   const titleInputClass =
     'mt-2 w-full border-0 bg-transparent p-0 text-xl font-semibold leading-tight text-gray-900 outline-none placeholder:text-gray-300 focus:border-b-2 focus:border-[#3CCED7] sm:text-[22px]';
 

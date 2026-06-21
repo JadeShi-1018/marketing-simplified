@@ -12,7 +12,8 @@ import {
 } from '@/types/csm';
 import { Organisation } from '@/types/organisation';
 import { OrganisationAPI } from '@/lib/api/organisationAPI';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { Plus, Pencil, Trash2, AlertCircle, ArrowLeft, Users, X } from 'lucide-react';
 
 // ── Create Form ──────────────────────────────────────────────────────────────
@@ -280,9 +281,9 @@ const EditForm: React.FC<EditFormProps> = ({ cu, queues, organisations, onSaved,
 
 const CustomerUsersPageContent: React.FC = () => {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectId = Number(searchParams.get('project'));
-  const projectValid = Number.isFinite(projectId) && projectId > 0;
+  const { activeProject } = useActiveProjectForFlatRoute();
+  const projectId = Number(activeProject?.id ?? 0);
+  const projectValid = projectId > 0;
 
   const [users, setUsers] = useState<CustomerUser[]>([]);
   const [queues, setQueues] = useState<Queue[]>([]);

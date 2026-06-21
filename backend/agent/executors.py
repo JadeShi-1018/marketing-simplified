@@ -76,6 +76,7 @@ class AnalyzeDataExecutor(BaseStepExecutor):
                 column_mapping=input_data.get('column_mapping'),
                 user_context=user_context,
                 generation_outputs=list(requested),
+                agent_session=self.orchestrator.session,
             )
 
             self.workflow_run.analysis_result = analysis
@@ -119,7 +120,7 @@ class AnalyzeDataExecutor(BaseStepExecutor):
 
 
 class CallDifyExecutor(BaseStepExecutor):
-    """Legacy step type — Dify has been replaced by Gemini. Returns error if called."""
+    """Legacy step type replaced by call_llm. Returns error if called."""
 
     def execute(self, input_data):
         return StepResult(
@@ -140,7 +141,7 @@ class CallLLMExecutor(BaseStepExecutor):
             if not client:
                 return StepResult(success=False, error='No LLM API key configured')
 
-            result = _call_llm(client, spreadsheet_data)
+            result = _call_llm(client, spreadsheet_data, agent_session=self.orchestrator.session)
 
             return StepResult(
                 success=True,
@@ -314,6 +315,7 @@ class GenerateMiroSnapshotExecutor(BaseStepExecutor):
             snapshot = call_gemini_miro_generator(
                 context,
                 user_id=str(self.orchestrator.user.id),
+                agent_session=self.orchestrator.session,
             )
 
             self.workflow_run.miro_snapshot = snapshot
@@ -367,7 +369,7 @@ class CreateMiroBoardExecutor(BaseStepExecutor):
                     sse_events=[{
                         'type': 'miro_board_created',
                         'content': f'Miro board created: {getattr(board, "title", "")}'.strip(),
-                        'data': {'board_id': str(getattr(board, 'id', None))},
+                        'data': {'board_id': str(getattr(board, 'id', None)), 'board_slug': getattr(board, 'slug', None)},
                     }],
                 )
 
@@ -517,7 +519,7 @@ class DetectColumnsExecutor(BaseStepExecutor):
                 headers = first_sheet.get('columns', [])
                 sample_rows = first_sheet.get('rows', [])[:3]
 
-            detection = detect_columns(headers, sample_rows=sample_rows)
+            detection = detect_columns(headers, sample_rows=sample_rows, agent_session=self.orchestrator.session)
             detection_dict = detection.to_dict()
 
             return StepResult(
@@ -837,7 +839,8 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
 
     def execute(self, input_data):
         import json
-        from .gemini_client import call_gemini_json, _get_api_key as _gemini_key
+        from .gemini_client import _get_api_key as _gemini_key
+        from .llm_client import call_llm as _call_llm_unified
 
         if not _gemini_key():
             logger.warning("GenerateCriteriaExecutor: GEMINI_API_KEY not set; skipping")
@@ -869,15 +872,20 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
             )
 
         try:
-            criteria = call_gemini_json(
+            _criteria_result = _call_llm_unified(
+                agent_session=self.orchestrator.session,
+                provider='gemini',
+                model='gemini-2.5-flash-lite',
                 system_prompt=_CRITERIA_SYSTEM_PROMPT,
                 user_prompt=(
                     f"Column names:\n{json.dumps(column_names)}\n\n"
                     f"Generate success criteria for these columns now."
                 ),
                 temperature=0.2,
-                timeout=120,
+                max_output_tokens=2048,
+                response_mime_type='application/json',
             )
+            criteria = json.loads(_criteria_result['text'])
 
             # Persist on the workflow run so downstream steps can always access it
             self.workflow_run.success_criteria = criteria

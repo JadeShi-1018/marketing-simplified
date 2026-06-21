@@ -6,7 +6,7 @@ import { ProjectAPI } from "@/lib/api/projectApi";
 interface AlertTaskFormProps {
   initialData?: Record<string, any>;
   onChange?: (data: Record<string, any>) => void;
-  projectId?: number | null;
+  projectId?: number | string | null;
 }
 
 const alertTypeOptions = [

@@ -30,10 +30,13 @@ class _BaseSetup(APITestCase):
         self.organization = Organization.objects.create(
             name='Test Org', email_domain='test.com',
         )
-        self.user = User.objects.create_user(
-            username='testuser', email='test@test.com',
-            password='testpass123', organization=self.organization,
+        self.user, created = User.objects.get_or_create(
+            username='testuser',
+            defaults={'email': 'test@test.com', 'organization': self.organization}
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.project = Project.objects.create(
             name='Test Project', organization=self.organization,
             owner=self.user,

@@ -8,6 +8,7 @@ import PriorityIcon, { type PriorityValue } from '@/priority/PriorityIcon';
 
 interface LinkedTask {
   id: number;
+  slug?: string;
   summary?: string | null;
   status?: string | null;
   type?: string | null;
@@ -15,8 +16,8 @@ interface LinkedTask {
 }
 
 interface Props {
-  decisionId: number;
-  projectId: number | null;
+  decisionId: number | string;
+  projectId: number | string | null;
   editable: boolean;
   onCreateTask: () => void;
   refreshKey?: number;
@@ -79,8 +80,10 @@ export default function DecisionLinkedTasksSection({
     };
   }, [decisionId, refreshKey]);
 
-  const linkHref = (taskId: number) =>
-    projectId ? `/tasks/${taskId}?project_id=${projectId}` : `/tasks/${taskId}`;
+  const linkHref = (task: LinkedTask) => {
+    const key = task.slug ?? task.id;
+    return `/tasks/${key}`;
+  };
 
   return (
     <section
@@ -122,7 +125,7 @@ export default function DecisionLinkedTasksSection({
           {tasks.map((task) => (
             <li key={task.id} className="py-2.5">
               <Link
-                href={linkHref(task.id)}
+                href={linkHref(task)}
                 className="group flex flex-col items-start gap-2 rounded-md px-2 py-1 transition hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
               >
                 <div className="min-w-0 flex-1">

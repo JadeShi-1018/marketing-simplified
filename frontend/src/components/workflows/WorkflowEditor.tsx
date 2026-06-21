@@ -14,7 +14,7 @@ import { useWorkflowGraph } from "@/hooks/useWorkflowGraph";
 import toast from "react-hot-toast";
 
 interface WorkflowEditorProps {
-  workflowId: number;
+  workflowId: number | string;
 }
 
 export type SelectionType = "node" | "connection" | "empty";

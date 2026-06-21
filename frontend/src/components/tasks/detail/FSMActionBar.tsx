@@ -71,7 +71,8 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
     Number(currentUser.id) === Number(task.owner.id);
 
   const status = task.status ?? 'DRAFT';
-  const id = task.id;
+  // Task action routes are slug-only; use slug (fall back to id for legacy rows).
+  const id = task.slug ?? task.id;
   if (!id) return null;
 
   const run = async (op: () => Promise<unknown>) => {

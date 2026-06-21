@@ -39,6 +39,7 @@ export interface AdCreativeFormData {
 
 export interface AdCreative {
   id: string;
+  slug?: string;
   name: string;
   status: 'ACTIVE' | 'IN_PROCESS' | 'WITH_ISSUES' | 'DELETED';
   call_to_action_type: string;
@@ -106,7 +107,7 @@ export const FacebookMetaAPI = {
    * GET /facebook_meta/{ad_creative_id}/
    */
   getAdCreative: async (
-    adCreativeId: string,
+    adCreativeId: number | string,
     params?: { fields?: string; thumbnail_width?: number; thumbnail_height?: number }
   ): Promise<AdCreative> => {
     const response = await api.get(`/api/facebook_meta/${adCreativeId}/`, { params });
@@ -127,7 +128,7 @@ export const FacebookMetaAPI = {
    * PATCH /facebook_meta/{ad_creative_id}/
    */
   updateAdCreative: async (
-    adCreativeId: string,
+    adCreativeId: number | string,
     data: Partial<{
       name: string;
       status: string;
@@ -142,7 +143,7 @@ export const FacebookMetaAPI = {
    * Delete an ad creative
    * DELETE /facebook_meta/{ad_creative_id}/
    */
-  deleteAdCreative: async (adCreativeId: string): Promise<{ success: boolean }> => {
+  deleteAdCreative: async (adCreativeId: number | string): Promise<{ success: boolean }> => {
     const response = await api.delete(`/api/facebook_meta/${adCreativeId}/`);
     return response.data;
   },
@@ -152,7 +153,7 @@ export const FacebookMetaAPI = {
    * GET /facebook_meta/{ad_creative_id}/preview/
    */
   getAdCreativePreview: async (
-    adCreativeId: string,
+    adCreativeId: number | string,
     params: {
       ad_format: string;
       width?: number;
@@ -173,7 +174,7 @@ export const FacebookMetaAPI = {
   },
 
   // Associate media files with ad creative
-  associateMedia: async (adCreativeId: string, photoIds: number[] = [], videoIds: number[] = []) => {
+  associateMedia: async (adCreativeId: number | string, photoIds: number[] = [], videoIds: number[] = []) => {
     const response = await api.post(`/api/facebook_meta/${adCreativeId}/associate-media/`, {
       photo_ids: photoIds,
       video_ids: videoIds

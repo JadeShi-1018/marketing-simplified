@@ -1,4 +1,5 @@
 import api from '../api';
+import { Id } from '@/types/common';
 import {
   CreatePatternPayload,
   ListPatternsResponse,
@@ -30,7 +31,7 @@ export const PatternAPI = {
 
   applyPattern: async (
     patternId: string,
-    payload: { spreadsheet_id: number; sheet_id: number }
+    payload: { spreadsheet_id: Id; sheet_id: Id }
   ): Promise<ApplyPatternResponse> => {
     const response = await api.post<ApplyPatternResponse>(`/api/spreadsheet/patterns/${patternId}/apply/`, payload);
     return response.data;

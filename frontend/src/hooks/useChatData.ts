@@ -15,9 +15,8 @@ export function useChatData(options: UseChatDataOptions = {}) {
   const { projectId, autoFetch = true } = options;
   
   // Get chats for the specific project (reactive)
-  const numericProjectId = projectId ? Number(projectId) : null;
   const chatsByProject = useChatStore(state => state.chatsByProject);
-  const chats = numericProjectId ? (chatsByProject[numericProjectId] || []) : [];
+  const chats = projectId ? (chatsByProject[projectId] || []) : [];
   
   // Use local loading state to prevent cross-component re-renders
   const [isLoading, setIsLoading] = useState(false);
@@ -29,18 +28,17 @@ export function useChatData(options: UseChatDataOptions = {}) {
     
     // Get fresh actions from store
     const { setChatsForProject } = useChatStore.getState();
-    const numericId = Number(projectId);
     
     try {
       setIsLoading(true);
       setError(null);
       
       const response = await getChats({
-        project_id: numericId,
+        project_id: projectId,
         limit: 100,
       });
       
-      setChatsForProject(numericId, response.results);
+      setChatsForProject(projectId, response.results);
     } catch (err: any) {
       const errorMsg = err?.response?.data?.detail || 'Failed to load chats';
       setError(errorMsg);

@@ -7,7 +7,7 @@ import { MeetingsAPI } from '@/lib/api/meetingsApi';
 import type { MeetingStatus } from '@/types/meeting';
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   currentStatus: MeetingStatus;
   availableTransitions: string[];

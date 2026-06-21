@@ -21,7 +21,7 @@ import type { AgendaItem } from '@/types/meeting';
 import AgendaItemRow from './AgendaItemRow';
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   items: AgendaItem[];
   readOnly: boolean;

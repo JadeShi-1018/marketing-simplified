@@ -45,7 +45,7 @@ function NavLink({
 
 export default function CsmSettingsSidebar({ projectId }: Props) {
   const pathname = usePathname();
-  const q = `?project=${projectId}`;
+  const q = '';
   const hub = `/admin/csm/settings${q}`;
   const supportProjects = `/admin/csm/settings/support-projects${q}`;
   const workTypes = `/admin/csm/settings/work-types${q}`;

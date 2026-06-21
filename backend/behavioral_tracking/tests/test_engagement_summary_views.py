@@ -45,15 +45,20 @@ def authed_client(user):
 @pytest.mark.django_db
 class TestTaskEngagementSummaryView:
     def test_requires_authentication(self, api_client, task):
-        response = api_client.get(_summary_url(task.id))
+        response = api_client.get(_summary_url(task.slug))
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_unknown_task_returns_404(self, authed_client):
         response = authed_client.get(_summary_url(999_999))
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    def test_no_events_returns_zeros(self, authed_client, task):
+    def test_numeric_id_of_existing_task_returns_404(self, authed_client, task):
+        # Lookups are slug-only; numeric IDs are never resolved.
         response = authed_client.get(_summary_url(task.id))
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_no_events_returns_zeros(self, authed_client, task):
+        response = authed_client.get(_summary_url(task.slug))
         assert response.status_code == status.HTTP_200_OK
         assert response.data == {
             "visits": 0,
@@ -73,7 +78,7 @@ class TestTaskEngagementSummaryView:
             event_type=EventType.TASK_WRITE,
             occurred_at=now,
         )
-        response = authed_client.get(_summary_url(task.id))
+        response = authed_client.get(_summary_url(task.slug))
         assert response.status_code == status.HTTP_200_OK
         assert response.data["visits"] == 1
         assert response.data["write_operations_count"] == 1
@@ -102,7 +107,7 @@ class TestTaskEngagementSummaryView:
             event_type=EventType.TASK_WRITE,
             occurred_at=now,
         )
-        response = authed_client.get(_summary_url(task.id))
+        response = authed_client.get(_summary_url(task.slug))
         assert response.status_code == status.HTTP_200_OK
         assert response.data["visits"] == 0
         assert response.data["write_operations_count"] == 0

@@ -3,7 +3,7 @@ import api from '../api';
 export const SLACK_OAUTH_STATE_STORAGE_KEY = 'slack_oauth_state';
 
 export interface SlackManageableProject {
-    id: number;
+    id: number | string;
     name: string;
 }
 
@@ -25,7 +25,7 @@ export interface SlackChannel {
 }
 
 export interface SlackRequestContext {
-    projectId?: number | null;
+    projectId?: number | string | null;
     organizationId?: number | null;
 }
 

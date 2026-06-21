@@ -27,13 +27,15 @@ User = get_user_model()
 
 class WorkflowModelTestCase(TestCase):
     """Test Workflow model"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(
             name='Test Project',
@@ -439,7 +441,7 @@ class WorkflowConnectionTestCase(TestCase):
         client.force_authenticate(user=user)
         
         response = client.post(
-            f'/api/workflows/{workflow.id}/nodes/',
+            f'/api/workflows/{workflow.slug}/nodes/',
             condition_data,
             format='json'
         )
@@ -475,14 +477,14 @@ class WorkflowConnectionTestCase(TestCase):
         }
         
         response1 = client.post(
-            f'/api/workflows/{workflow.id}/connections/',
+            f'/api/workflows/{workflow.slug}/connections/',
             conn_data1,
             format='json'
         )
         self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
         
         response2 = client.post(
-            f'/api/workflows/{workflow.id}/connections/',
+            f'/api/workflows/{workflow.slug}/connections/',
             conn_data2,
             format='json'
         )
@@ -1038,13 +1040,15 @@ class WorkflowValidatorTestCase(TestCase):
 
 class WorkflowAPITestCase(APITestCase):
     """Test Workflow API endpoints"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(
             name='Test Project',
@@ -1097,7 +1101,7 @@ class WorkflowAPITestCase(APITestCase):
         Workflow.objects.create(name='Workflow 1', project=self.project)
         Workflow.objects.create(name='Workflow 2', project=project2)
         
-        response = self.client.get(f'/api/workflows/?project_id={self.project.id}')
+        response = self.client.get(f'/api/workflows/?project_id={self.project.slug}')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
         self.assertEqual(response.data['results'][0]['project_id'], self.project.id)
@@ -1174,7 +1178,7 @@ class WorkflowAPITestCase(APITestCase):
             project=self.project
         )
         
-        response = self.client.get(f'/api/workflows/{workflow.id}/')
+        response = self.client.get(f'/api/workflows/{workflow.slug}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['name'], 'Detail Workflow')
     
@@ -1186,7 +1190,7 @@ class WorkflowAPITestCase(APITestCase):
         )
         
         data = {'name': 'Updated Name', 'description': 'Updated'}
-        response = self.client.patch(f'/api/workflows/{workflow.id}/', data, format='json')
+        response = self.client.patch(f'/api/workflows/{workflow.slug}/', data, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['name'], 'Updated Name')
     
@@ -1197,7 +1201,7 @@ class WorkflowAPITestCase(APITestCase):
             project=self.project
         )
         
-        response = self.client.delete(f'/api/workflows/{workflow.id}/')
+        response = self.client.delete(f'/api/workflows/{workflow.slug}/')
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
         # Record should be soft deleted (is_deleted=True) and excluded from list
@@ -1212,13 +1216,15 @@ class WorkflowAPITestCase(APITestCase):
 
 class WorkflowNodeAPITestCase(APITestCase):
     """Test WorkflowNode API endpoints"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         # Associate user with organization for organization-based permissions
@@ -1244,7 +1250,7 @@ class WorkflowNodeAPITestCase(APITestCase):
             'data': {'position': {'x': 100, 'y': 100}}
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/',
+            f'/api/workflows/{self.workflow.slug}/nodes/',
             data,
             format='json'
         )
@@ -1266,7 +1272,7 @@ class WorkflowNodeAPITestCase(APITestCase):
             data={}
         )
         
-        response = self.client.get(f'/api/workflows/{self.workflow.id}/nodes/')
+        response = self.client.get(f'/api/workflows/{self.workflow.slug}/nodes/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 2)
     
@@ -1281,7 +1287,7 @@ class WorkflowNodeAPITestCase(APITestCase):
         
         data = {'label': 'Updated Label'}
         response = self.client.patch(
-            f'/api/workflows/{self.workflow.id}/nodes/{node.id}/',
+            f'/api/workflows/{self.workflow.slug}/nodes/{node.id}/',
             data,
             format='json'
         )
@@ -1298,7 +1304,7 @@ class WorkflowNodeAPITestCase(APITestCase):
         )
         
         response = self.client.get(
-            f'/api/workflows/{self.workflow.id}/nodes/{node.id}/'
+            f'/api/workflows/{self.workflow.slug}/nodes/{node.id}/'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['id'], node.id)
@@ -1314,7 +1320,7 @@ class WorkflowNodeAPITestCase(APITestCase):
         )
         
         response = self.client.delete(
-            f'/api/workflows/{self.workflow.id}/nodes/{node.id}/'
+            f'/api/workflows/{self.workflow.slug}/nodes/{node.id}/'
         )
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
     
@@ -1330,7 +1336,7 @@ class WorkflowNodeAPITestCase(APITestCase):
             }
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/',
+            f'/api/workflows/{self.workflow.slug}/nodes/',
             data,
             format='json'
         )
@@ -1352,7 +1358,7 @@ class WorkflowNodeAPITestCase(APITestCase):
             }
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/',
+            f'/api/workflows/{self.workflow.slug}/nodes/',
             data,
             format='json'
         )
@@ -1373,7 +1379,7 @@ class WorkflowNodeAPITestCase(APITestCase):
             }
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/',
+            f'/api/workflows/{self.workflow.slug}/nodes/',
             data,
             format='json'
         )
@@ -1395,7 +1401,7 @@ class WorkflowNodeAPITestCase(APITestCase):
             }
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/',
+            f'/api/workflows/{self.workflow.slug}/nodes/',
             data,
             format='json'
         )
@@ -1405,13 +1411,15 @@ class WorkflowNodeAPITestCase(APITestCase):
 
 class WorkflowConnectionAPITestCase(APITestCase):
     """Test WorkflowConnection API endpoints"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         ProjectMember.objects.create(
@@ -1446,7 +1454,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'connection_type': 'sequential'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1467,7 +1475,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'connection_type': 'sequential'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1489,7 +1497,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'connection_type': 'sequential'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1511,7 +1519,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'connection_type': 'sequential'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1527,7 +1535,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             connection_type='sequential'
         )
         
-        response = self.client.get(f'/api/workflows/{self.workflow.id}/connections/')
+        response = self.client.get(f'/api/workflows/{self.workflow.slug}/connections/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
     
@@ -1541,7 +1549,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
         )
         
         response = self.client.get(
-            f'/api/workflows/{self.workflow.id}/connections/{connection.id}/'
+            f'/api/workflows/{self.workflow.slug}/connections/{connection.id}/'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['id'], connection.id)
@@ -1559,7 +1567,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
         
         data = {'priority': 10}
         response = self.client.patch(
-            f'/api/workflows/{self.workflow.id}/connections/{connection.id}/',
+            f'/api/workflows/{self.workflow.slug}/connections/{connection.id}/',
             data,
             format='json'
         )
@@ -1576,7 +1584,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
         )
         
         response = self.client.delete(
-            f'/api/workflows/{self.workflow.id}/connections/{connection.id}/'
+            f'/api/workflows/{self.workflow.slug}/connections/{connection.id}/'
         )
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
@@ -1607,7 +1615,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             }
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1637,7 +1645,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'condition_config': {'max_iterations': 10}
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1668,7 +1676,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'condition_config': {}  # Missing max_iterations
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1695,7 +1703,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'connection_type': 'parallel'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1718,7 +1726,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
             'condition_config': {}  # Empty condition_config
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -1748,7 +1756,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
         )
         
         response = self.client.get(
-            f'/api/workflows/{self.workflow.id}/connections/?connection_type=sequential'
+            f'/api/workflows/{self.workflow.slug}/connections/?connection_type=sequential'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
@@ -1776,7 +1784,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
         )
         
         response = self.client.get(
-            f'/api/workflows/{self.workflow.id}/connections/?source_node_id={self.start_node.id}'
+            f'/api/workflows/{self.workflow.slug}/connections/?source_node_id={self.start_node.id}'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
@@ -1804,7 +1812,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
         )
         
         response = self.client.get(
-            f'/api/workflows/{self.workflow.id}/connections/?target_node_id={self.end_node.id}'
+            f'/api/workflows/{self.workflow.slug}/connections/?target_node_id={self.end_node.id}'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 1)
@@ -1828,7 +1836,7 @@ class WorkflowConnectionAPITestCase(APITestCase):
         )
         
         response = self.client.get(
-            f'/api/workflows/{self.workflow.id}/connections/?ordering=-priority'
+            f'/api/workflows/{self.workflow.slug}/connections/?ordering=-priority'
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # Higher priority should come first
@@ -1838,13 +1846,15 @@ class WorkflowConnectionAPITestCase(APITestCase):
 
 class BatchOperationsAPITestCase(APITestCase):
     """Test batch operations for nodes and connections"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         ProjectMember.objects.create(
@@ -1870,7 +1880,7 @@ class BatchOperationsAPITestCase(APITestCase):
         }
         
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/batch/',
+            f'/api/workflows/{self.workflow.slug}/nodes/batch/',
             data,
             format='json'
         )
@@ -1897,7 +1907,7 @@ class BatchOperationsAPITestCase(APITestCase):
         initial_count = WorkflowNode.objects.filter(workflow=self.workflow).count()
         
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/batch/',
+            f'/api/workflows/{self.workflow.slug}/nodes/batch/',
             data,
             format='json'
         )
@@ -1932,7 +1942,7 @@ class BatchOperationsAPITestCase(APITestCase):
         }
         
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/batch/',
+            f'/api/workflows/{self.workflow.slug}/nodes/batch/',
             data,
             format='json'
         )
@@ -1991,7 +2001,7 @@ class BatchOperationsAPITestCase(APITestCase):
         }
         
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/batch/',
+            f'/api/workflows/{self.workflow.slug}/connections/batch/',
             data,
             format='json'
         )
@@ -2036,7 +2046,7 @@ class BatchOperationsAPITestCase(APITestCase):
         }
         
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/batch/',
+            f'/api/workflows/{self.workflow.slug}/connections/batch/',
             data,
             format='json'
         )
@@ -2090,7 +2100,7 @@ class BatchOperationsAPITestCase(APITestCase):
         }
         
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/batch/',
+            f'/api/workflows/{self.workflow.slug}/connections/batch/',
             data,
             format='json'
         )
@@ -2111,7 +2121,7 @@ class BatchOperationsAPITestCase(APITestCase):
         }
         
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/batch/',
+            f'/api/workflows/{self.workflow.slug}/nodes/batch/',
             data,
             format='json'
         )
@@ -2123,13 +2133,15 @@ class BatchOperationsAPITestCase(APITestCase):
 
 class WorkflowGraphAPITestCase(APITestCase):
     """Test workflow graph endpoint"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         ProjectMember.objects.create(
@@ -2169,7 +2181,7 @@ class WorkflowGraphAPITestCase(APITestCase):
     
     def test_get_workflow_graph(self):
         """Test getting complete workflow graph"""
-        response = self.client.get(f'/api/workflows/{self.workflow.id}/graph/')
+        response = self.client.get(f'/api/workflows/{self.workflow.slug}/graph/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('workflow', response.data)
@@ -2181,7 +2193,7 @@ class WorkflowGraphAPITestCase(APITestCase):
     
     def test_validate_workflow_endpoint(self):
         """Test workflow validation endpoint"""
-        response = self.client.post(f'/api/workflows/{self.workflow.id}/validate/')
+        response = self.client.post(f'/api/workflows/{self.workflow.slug}/validate/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('is_valid', response.data)
@@ -2251,7 +2263,7 @@ class WorkflowPermissionTestCase(APITestCase):
         """Test that user cannot access workflows from other projects"""
         self.client.force_authenticate(user=self.user1)
         
-        response = self.client.get(f'/api/workflows/{self.workflow2.id}/')
+        response = self.client.get(f'/api/workflows/{self.workflow2.slug}/')
         # Queryset filtering returns 404 Not Found (object doesn't exist in filtered queryset)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
@@ -2280,7 +2292,7 @@ class WorkflowPermissionTestCase(APITestCase):
             'data': {}
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow2.id}/nodes/',
+            f'/api/workflows/{self.workflow2.slug}/nodes/',
             data,
             format='json'
         )
@@ -2310,7 +2322,7 @@ class WorkflowPermissionTestCase(APITestCase):
             'connection_type': 'sequential'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow2.id}/connections/',
+            f'/api/workflows/{self.workflow2.slug}/connections/',
             data,
             format='json'
         )
@@ -2323,7 +2335,7 @@ class WorkflowPermissionTestCase(APITestCase):
         ProjectMember.objects.filter(user=self.user1, project=self.project1).update(is_active=False)
         
         self.client.force_authenticate(user=self.user1)
-        response = self.client.get(f'/api/workflows/{self.workflow1.id}/')
+        response = self.client.get(f'/api/workflows/{self.workflow1.slug}/')
         # Queryset filtering returns 404 Not Found (object doesn't exist in filtered queryset)
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
@@ -2337,24 +2349,26 @@ class WorkflowPermissionTestCase(APITestCase):
         
         # User1 should access it
         self.client.force_authenticate(user=self.user1)
-        response = self.client.get(f'/api/workflows/{global_workflow.id}/')
+        response = self.client.get(f'/api/workflows/{global_workflow.slug}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
         # User2 should also access it
         self.client.force_authenticate(user=self.user2)
-        response = self.client.get(f'/api/workflows/{global_workflow.id}/')
+        response = self.client.get(f'/api/workflows/{global_workflow.slug}/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
 
 class WorkflowAPIEdgeCasesTestCase(APITestCase):
     """Test edge cases and error handling for workflow API"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         # Associate user with organization for organization-based permissions
@@ -2399,7 +2413,7 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
             'data': {}
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/',
+            f'/api/workflows/{self.workflow.slug}/nodes/',
             data,
             format='json'
         )
@@ -2413,7 +2427,7 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
             'data': 'not a dict'  # Should be dict
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/nodes/',
+            f'/api/workflows/{self.workflow.slug}/nodes/',
             data,
             format='json'
         )
@@ -2440,7 +2454,7 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
             'connection_type': 'invalid_type'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -2454,7 +2468,7 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
             'connection_type': 'sequential'
         }
         response = self.client.post(
-            f'/api/workflows/{self.workflow.id}/connections/',
+            f'/api/workflows/{self.workflow.slug}/connections/',
             data,
             format='json'
         )
@@ -2467,12 +2481,12 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
     
     def test_get_nonexistent_node(self):
         """Test retrieving non-existent node"""
-        response = self.client.get(f'/api/workflows/{self.workflow.id}/nodes/99999/')
+        response = self.client.get(f'/api/workflows/{self.workflow.slug}/nodes/99999/')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_get_nonexistent_connection(self):
         """Test retrieving non-existent connection"""
-        response = self.client.get(f'/api/workflows/{self.workflow.id}/connections/99999/')
+        response = self.client.get(f'/api/workflows/{self.workflow.slug}/connections/99999/')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_update_workflow_with_put(self):
@@ -2490,7 +2504,7 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
             'is_active': True
         }
         response = self.client.put(
-            f'/api/workflows/{workflow.id}/',
+            f'/api/workflows/{workflow.slug}/',
             data,
             format='json'
         )
@@ -2513,7 +2527,7 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
             'data': {'position': {'x': 200, 'y': 200}}
         }
         response = self.client.put(
-            f'/api/workflows/{self.workflow.id}/nodes/{node.id}/',
+            f'/api/workflows/{self.workflow.slug}/nodes/{node.id}/',
             data,
             format='json'
         )
@@ -2550,7 +2564,7 @@ class WorkflowAPIEdgeCasesTestCase(APITestCase):
             'condition_config': {}
         }
         response = self.client.put(
-            f'/api/workflows/{self.workflow.id}/connections/{connection.id}/',
+            f'/api/workflows/{self.workflow.slug}/connections/{connection.id}/',
             data,
             format='json'
         )

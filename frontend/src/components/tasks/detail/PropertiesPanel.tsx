@@ -102,7 +102,7 @@ export default function PropertiesPanel({
     }
     setSaving(true);
     try {
-      await TaskAPI.updateTask(id, data);
+      await TaskAPI.updateTask(task.slug ?? id, data);
       await onUpdated();
       return true;
     } catch (e) {
@@ -119,7 +119,7 @@ export default function PropertiesPanel({
     setSavingTags(true);
     setSaving(true);
     try {
-      const response = await TaskAPI.updateTask(id, { tags: next });
+      const response = await TaskAPI.updateTask(task.slug ?? id, { tags: next });
       const savedTask = response.data as TaskData;
       const savedTags = Array.isArray(savedTask?.tags) ? savedTask.tags : next;
       setLocalTags(savedTags);
@@ -235,7 +235,7 @@ export default function PropertiesPanel({
       <div className={ROW}>
         <span className={LABEL}>Labels</span>
         <TaskLabelsPicker
-          projectId={task.project?.id ?? task.project_id}
+          projectId={task.project?.slug ?? task.project?.id ?? task.project_id}
           value={localTags}
           onChange={(next) => { void saveTags(next); }}
           disabled={readOnly}

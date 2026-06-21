@@ -216,7 +216,7 @@ export default function TemplatePreviewCanvas({ template, onBack }: TemplatePrev
       toast.success("Workflow created successfully");
 
       // Navigate to the new workflow canvas with new=1 parameter
-      const targetUrl = `/workflows/${newWorkflow.id}?new=1`;
+      const targetUrl = `/workflows/${newWorkflow.slug}?new=1`;
       console.log("[CREATE] Navigating to:", targetUrl);
       router.push(targetUrl);
     } catch (err) {

@@ -139,8 +139,10 @@ function barSlot(
   return { startIdx, span: endIdx - startIdx + 1 };
 }
 
+import { Id } from '@/types/common';
+
 interface GanttViewProps {
-  projectId: number | null;
+  projectId: Id | null;
   projectContextLoading: boolean;
 }
 
@@ -163,6 +165,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
   const [customPageInput, setCustomPageInput] = useState('6');
   const [dragState, setDragState] = useState<{
     rowId: number;
+    rowSlug?: string;
     side: 'left' | 'right';
     startClientX: number;
     origStartIdx: number;
@@ -360,7 +363,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
         const nextStartIso = formatLocalIsoDay(days[finalState.lastStartIdx]);
         const nextEndIso = formatLocalIsoDay(days[finalState.lastEndIdx]);
         try {
-          await TaskAPI.updateTask(finalState.rowId, {
+          await TaskAPI.updateTask(finalState.rowSlug ?? finalState.rowId, {
             planned_start_date: nextStartIso,
             due_date: nextEndIso,
           });
@@ -484,7 +487,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
             <button
               key={`left-${row.id}`}
               type="button"
-              onClick={() => router.push(`/tasks/${row.id}`)}
+              onClick={() => router.push(`/tasks/${row.slug}`)}
               className="flex w-full items-center gap-2 border-b border-gray-50 px-3 py-3 text-left transition hover:bg-gray-50/80"
               style={{ height: rowHeight }}
             >
@@ -625,7 +628,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
               type="button"
               onClick={() => {
                 if (dragState || suppressRowClickRef.current) return;
-                router.push(`/tasks/${row.id}`);
+                router.push(`/tasks/${row.slug}`);
               }}
               className="group relative z-[1] block border-b border-gray-50 text-left transition hover:bg-gray-50/80"
               style={{ width: `${timelineWidth}px`, height: rowHeight }}
@@ -692,6 +695,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
                           const orig = barSlot(effectiveStart, effectiveEnd, days);
                           setDragState({
                             rowId: row.id,
+                            rowSlug: row.slug,
                             side: 'left',
                             startClientX: e.clientX,
                             origStartIdx: orig.startIdx,
@@ -723,6 +727,7 @@ export default function GanttView({ projectId, projectContextLoading }: GanttVie
                           const orig = barSlot(effectiveStart, effectiveEnd, days);
                           setDragState({
                             rowId: row.id,
+                            rowSlug: row.slug,
                             side: 'right',
                             startClientX: e.clientX,
                             origStartIdx: orig.startIdx,

@@ -18,11 +18,11 @@ import type {
 } from '@/types/decision';
 
 interface Props {
-  projectId: number | null;
+  projectId: number | string | null;
   role?: string | null;
   canCreate: boolean;
   canDelete: boolean;
-  onNavigateToDecision: (id: number, projectId?: number | null) => void;
+  onNavigateToDecision: (id: number | string, projectId?: number | string | null) => void;
 }
 
 export default function DecisionsPageCard({
@@ -85,7 +85,7 @@ export default function DecisionsPageCard({
       if (draft.id == null) {
         throw new Error('Draft created without id');
       }
-      onNavigateToDecision(draft.id, projectId);
+      onNavigateToDecision(draft.slug ?? draft.id, projectId);
     } catch (err) {
       const detail =
         (err as any)?.response?.data?.detail ||
@@ -107,7 +107,7 @@ export default function DecisionsPageCard({
     const deleteProjectId = pendingDelete.projectId ?? projectId;
     setDeleting(true);
     try {
-      await DecisionAPI.deleteDecision(pendingDelete.id, deleteProjectId);
+      await DecisionAPI.deleteDecision(pendingDelete.slug ?? pendingDelete.id, deleteProjectId);
       toast.success('Decision deleted');
       setItems((prev) => prev.filter((d) => d.id !== pendingDelete.id));
       setGraph((prev) =>
@@ -213,7 +213,7 @@ export default function DecisionsPageCard({
             graph={graph}
             projectId={projectId}
             canEdit={canDelete}
-            onEditDecision={(node) => onNavigateToDecision(node.id, node.projectId ?? projectId)}
+            onEditDecision={(node) => onNavigateToDecision(node.slug ?? node.id, node.projectId ?? projectId)}
             canCreate={canCreate}
             onDeleteDecision={graphNodeForDelete}
             onOpenFullPage={onNavigateToDecision}

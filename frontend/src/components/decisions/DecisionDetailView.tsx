@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { nestedProjectPath } from "@/lib/projectNestedRoutes";
 import { OriginMeetingBlock } from "@/components/meetings/OriginMeetingBlock";
 import { openAgentSidePanel } from "@/lib/agentSidePanelStore";
 import SignalsPanel from "@/components/decisions/SignalsPanel";
@@ -44,8 +45,8 @@ const DecisionDetailView = ({
   const options = (decision.options || []) as DecisionOptionDraft[];
   const selectedOption = options.find((option) => option.isSelected);
   const decisionLink = projectId
-    ? `/decisions/${decision.id}?project_id=${projectId}`
-    : `/decisions/${decision.id}`;
+    ? nestedProjectPath(projectId, `/decisions/${decision.slug}`)
+    : `/decisions/${decision.slug}`;
 
   /** Open the Dashboard Agent side panel with the session that created this decision. */
   const handleOpenAgentSession = () => {

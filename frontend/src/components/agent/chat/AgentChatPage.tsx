@@ -7,6 +7,7 @@ import { WelcomeScreen } from "./WelcomeScreen"
 import { MessageList, type ChatMessage } from "./MessageList"
 import { ChatInput } from "./ChatInput"
 import { ActionBar } from "./ActionBar"
+import OnboardingTokenIntro from "./OnboardingTokenIntro"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import { AgentAPI } from "@/lib/api/agentApi"
 import {
@@ -39,6 +40,7 @@ import {
   type CalendarPreload,
 } from "@/lib/agentLaunchContext"
 import { getPendingMiroWorkflowRunIds } from "@/lib/agentMiroBoardStatus"
+import { agentMiroBoardHref } from "@/lib/agentMiroBoardHref"
 
 function pickRecommendedDecisionTree(
   data: AnalysisResult | null | undefined,
@@ -123,7 +125,7 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     type = "miro_status"
     navigateTo = "miro"
     navigateLabel = "Open Miro"
-    navigateHref = `/miro/${m.data.board_id}`
+    navigateHref = agentMiroBoardHref(m.data)
   } else if (eventType === "miro_generation_failed") {
     type = "error"
   } else if (m.message_type === "analysis" || hasPersistedAnalysisPayload(m.data)) {
@@ -286,7 +288,7 @@ function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMess
         type: "miro_status",
         navigateTo: "miro",
         navigateLabel: "Open Miro",
-        navigateHref: `/miro/${event.data.board_id}`,
+        navigateHref: agentMiroBoardHref(event.data),
         eventType,
         workflowRunId,
       },
@@ -339,7 +341,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const [approvalRequired, setApprovalRequired] = useState(false)
   const [generatedTaskIndexes, setGeneratedTaskIndexes] = useState<number[]>([])
   const [skippedTaskIndexes, setSkippedTaskIndexes] = useState<number[]>([])
-  const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number>>({})
+  const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number | string>>({})
   const [pendingTaskApproval, setPendingTaskApproval] = useState<PendingExternalApproval | null>(null)
   const [pendingDecisionApproval, setPendingDecisionApproval] = useState<PendingExternalApproval | null>(null)
   const [selectedTaskIndexes, setSelectedTaskIndexes] = useState<number[]>([])
@@ -655,8 +657,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       // clear them from the skipped list so the UI stays consistent.
       setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
       const pairs = created
-        .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-        .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+        .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+        .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
       setCreatedTaskIdByIndex(Object.fromEntries(pairs))
     } else {
       setGeneratedTaskIndexes([])
@@ -893,8 +895,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         setGeneratedTaskIndexes(Array.from(new Set(idxs)))
         setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
         const pairs = created
-          .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-          .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+          .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+          .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
         setCreatedTaskIdByIndex(Object.fromEntries(pairs))
       }
       if (lastTaskCreated) {
@@ -1494,8 +1496,8 @@ setStepState({
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -1864,8 +1866,8 @@ setStepState({
               .filter((n: unknown) => typeof n === "number" && Number.isFinite(n))
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -1924,7 +1926,13 @@ setStepState({
       (error) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        if (error.message === "quota_error") {
+          // The global UpgradeModal already explains the block; drop the optimistic
+          // thinking placeholder instead of leaving an "Error: quota_error" bubble.
+          setMessages((prev) => prev.filter((m) => m.id !== aiMsgId))
+        } else {
+          updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        }
         setIsStreaming(false)
       },
       () => {
@@ -2049,8 +2057,8 @@ setStepState({
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -2357,6 +2365,7 @@ setStepState({
 
   return (
     <div className="flex h-full flex-col">
+      <OnboardingTokenIntro />
       {!embeddedInFloating && (
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 shrink-0 bg-background">
           <h2 className="text-sm font-semibold truncate text-foreground">{sessionTitle}</h2>

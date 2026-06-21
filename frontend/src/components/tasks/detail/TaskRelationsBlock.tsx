@@ -83,7 +83,7 @@ function TreeNode({
   useEffect(() => {
     if (!task.id || childRel !== null) return;
     let cancelled = false;
-    TaskAPI.getRelations(task.id)
+    TaskAPI.getRelations(task.slug ?? task.id)
       .then((r) => { if (!cancelled && mountedRef.current) setChildRel(r); })
       .catch(() => {
         if (!cancelled && mountedRef.current)
@@ -105,7 +105,7 @@ function TreeNode({
     if (!expanded && !childRel) {
       setChildLoading(true);
       try {
-        const r = await TaskAPI.getRelations(task.id);
+        const r = await TaskAPI.getRelations(task.slug ?? task.id);
         if (mountedRef.current) setChildRel(r);
       } catch {
         if (mountedRef.current) setChildRel({ blocks: [], is_blocked_by: [], causes: [], is_caused_by: [], clones: [], is_cloned_by: [], relates_to: [] });
@@ -141,7 +141,7 @@ function TreeNode({
         <MiniPriority priority={(task as any).priority} />
 
         <Link
-          href={`/tasks/${task.id}`}
+          href={`/tasks/${task.slug}`}
           className="flex-1 truncate text-[12px] text-gray-800 hover:text-[#3CCED7] hover:underline"
         >
           {task.summary || `Task #${task.id}`}
@@ -202,7 +202,7 @@ export default function TaskRelationsBlock({
   useEffect(() => {
     let cancelled = false;
     if (loading || !task.id) return;
-    TaskAPI.getRelations(task.id)
+    TaskAPI.getRelations(task.slug ?? task.id)
       .then((data) => {
         if (!cancelled) setRel(data);
       })
@@ -216,15 +216,15 @@ export default function TaskRelationsBlock({
   // Batch-fetch relations for all linked tasks to populate the chain cache
   useEffect(() => {
     if (!rel) return;
-    const ids = GROUPS.flatMap((g) => (rel[g.key] as TaskRelationItem[]).map((i) => i.task.id))
-      .filter((id): id is number => id != null);
-    if (ids.length === 0) return;
+    const linked = GROUPS.flatMap((g) => (rel[g.key] as TaskRelationItem[]).map((i) => i.task))
+      .filter((t): t is TaskData => t?.id != null);
+    if (linked.length === 0) return;
 
     let cancelled = false;
     Promise.all(
-      ids.map((id) =>
-        TaskAPI.getRelations(id)
-          .then((r) => [id, r] as const)
+      linked.map((t) =>
+        TaskAPI.getRelations(t.slug ?? t.id!)
+          .then((r) => [t.id!, r] as const)
           .catch(() => null),
       ),
     ).then((results) => {
@@ -247,7 +247,7 @@ export default function TaskRelationsBlock({
     if (!task.id || !confirmRelationId) return;
     setRemoving(true);
     try {
-      await TaskAPI.deleteRelation(task.id, confirmRelationId);
+      await TaskAPI.deleteRelation(task.slug ?? task.id, confirmRelationId);
       setConfirmRelationId(null);
       setLocalKey((k) => k + 1);
       onMutated?.();
@@ -375,7 +375,7 @@ export default function TaskRelationsBlock({
                       <li key={item.relation_id} className={`flex items-center gap-2 py-1.5 ${isCircular ? 'bg-amber-50/40 -mx-1 rounded px-1' : ''}`}>
                         <MiniPriority priority={(item.task as any).priority} />
                         <Link
-                          href={`/tasks/${item.task.id}`}
+                          href={`/tasks/${item.task.slug}`}
                           className="flex-1 truncate text-sm text-gray-900 hover:text-[#3CCED7] hover:underline"
                         >
                           {item.task.summary}

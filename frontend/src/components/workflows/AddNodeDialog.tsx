@@ -7,7 +7,7 @@ import toast from "react-hot-toast";
 import { useWorkflowGraph } from "@/hooks/useWorkflowGraph";
 
 interface AddNodeDialogProps {
-  workflowId: number;
+  workflowId: number | string;
   isOpen: boolean;
   onClose: () => void;
   onNodeAdded: () => void;

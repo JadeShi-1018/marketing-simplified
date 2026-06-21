@@ -316,8 +316,10 @@ def _call_gemini_analysis(
     generation_outputs=None,
     user_context=None,
     validation_feedback=None,
+    agent_session=None,
 ):
     """Call Gemini to analyze spreadsheet data."""
+    from .llm_client import call_llm as _call_llm_unified
     from .gemini_client import call_gemini_json
     from .generation_registry import (
         build_analysis_prompt,
@@ -353,12 +355,25 @@ def _call_gemini_analysis(
         sorted(requested),
         'retry' if validation_feedback else 'initial',
     )
-    return call_gemini_json(
+    if agent_session is None:
+        return call_gemini_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            timeout=300,
+        )
+
+    result = _call_llm_unified(
+        agent_session=agent_session,
+        provider='gemini',
+        model='gemini-2.5-flash-lite',
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=0.3,
-        timeout=300,
+        max_output_tokens=4096,
+        response_mime_type='application/json',
     )
+    return json.loads(result['text'])
 
 
 def _assign_anomaly_ids(analysis):
@@ -393,6 +408,7 @@ def _call_gemini_calendar_from_analysis(
     user_id=None,
     success_criteria=None,
     user_context=None,
+    agent_session=None,
 ):
     """Suggest calendar events from spreadsheet + analysis context."""
     from .gemini_client import call_gemini_json
@@ -405,14 +421,31 @@ def _call_gemini_calendar_from_analysis(
     column_summary, cleaned_data, _criteria_text = _preprocess_spreadsheet(
         spreadsheet_data, success_criteria
     )
-    raw = call_gemini_json(
-        system_prompt=calendar_from_analysis_system_prompt(),
-        user_prompt=build_calendar_from_analysis_user_prompt(
-            column_summary, cleaned_data, analysis_result
-        ),
-        temperature=0.3,
-        timeout=120,
+    system_prompt = calendar_from_analysis_system_prompt()
+    user_prompt = build_calendar_from_analysis_user_prompt(
+        column_summary, cleaned_data, analysis_result
     )
+    if agent_session is None:
+        raw = call_gemini_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            timeout=120,
+        )
+    else:
+        from .llm_client import call_llm as _call_llm_unified
+
+        result = _call_llm_unified(
+            agent_session=agent_session,
+            provider='gemini',
+            model='gemini-2.5-flash-lite',
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            max_output_tokens=4096,
+            response_mime_type='application/json',
+        )
+        raw = json.loads(result['text'])
     logger.info("Calling Gemini for calendar events user_id=%s", user_id)
     return validate_calendar_events_response(raw)
 
@@ -442,6 +475,7 @@ def _run_analysis(
     column_mapping=None,
     generation_outputs=None,
     user_context=None,
+    agent_session=None,
 ):
     """Run analysis using Gemini, with Claude as fallback.
 
@@ -453,6 +487,7 @@ def _run_analysis(
         normalize_generation_outputs,
         validate_analysis_response,
     )
+    from stripe_meta.exceptions import QuotaError
 
     requested = frozenset(normalize_generation_outputs(generation_outputs))
 
@@ -470,6 +505,7 @@ def _run_analysis(
                     user_context=user_context,
                     generation_outputs=list(requested),
                     validation_feedback=validation_feedback,
+                    agent_session=agent_session,
                 )
                 return _assign_anomaly_ids(validate_analysis_response(raw, requested))
             except GenerationValidationError as exc:
@@ -482,6 +518,8 @@ def _run_analysis(
                     _ANALYSIS_VALIDATION_MAX_ATTEMPTS,
                     exc,
                 )
+            except QuotaError:
+                raise
             except Exception as e:
                 logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
                 break
@@ -490,8 +528,10 @@ def _run_analysis(
     client = _get_llm_client()
     if client:
         try:
-            raw = _call_llm(client, spreadsheet_data)
+            raw = _call_llm(client, spreadsheet_data, agent_session=agent_session)
             return _assign_anomaly_ids(_coerce_llm_analysis_for_requested(raw, requested))
+        except QuotaError:
+            raise
         except GenerationValidationError:
             raise
         except Exception as e:
@@ -647,6 +687,7 @@ def _call_gemini_chat(
     analysis_result=None,
     project_members=None,
     current_username='',
+    agent_session=None,
 ):
     """Call Gemini for post-analysis follow-up. Replaces _call_dify_chat."""
     from .gemini_client import call_gemini_json
@@ -660,12 +701,27 @@ def _call_gemini_chat(
     )
 
     try:
-        parsed = call_gemini_json(
-            system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            temperature=0.5,
-            timeout=120,
-        )
+        if agent_session is None:
+            parsed = call_gemini_json(
+                system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.5,
+                timeout=120,
+            )
+        else:
+            from .llm_client import call_llm as _call_llm_unified
+
+            result = _call_llm_unified(
+                agent_session=agent_session,
+                provider='gemini',
+                model='gemini-2.5-flash-lite',
+                system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.5,
+                max_output_tokens=4096,
+                response_mime_type='application/json',
+            )
+            parsed = json.loads(result['text'])
     except Exception as e:
         logger.error("Gemini chat call failed: %s", e)
         raise RuntimeError(f"Gemini chat failed: {e}") from e
@@ -700,6 +756,7 @@ def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
         snapshot = call_gemini_miro_generator(
             context,
             user_id=str(orchestrator.user.id),
+            agent_session=orchestrator.session,
         )
 
     board, persisted_snapshot = create_board_from_snapshot(
@@ -1442,7 +1499,11 @@ class AgentOrchestrator:
         )
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(
+                spreadsheet_data,
+                user_id=self.user.id,
+                agent_session=self.session,
+            )
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1488,7 +1549,11 @@ class AgentOrchestrator:
         spreadsheet_data = _extract_spreadsheet_data(spreadsheet)
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(
+                spreadsheet_data,
+                user_id=self.user.id,
+                agent_session=self.session,
+            )
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1553,7 +1618,11 @@ class AgentOrchestrator:
         }
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(
+                spreadsheet_data,
+                user_id=self.user.id,
+                agent_session=self.session,
+            )
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -2015,6 +2084,7 @@ class AgentOrchestrator:
                 workflow_run.analysis_result or {},
                 user_id=str(self.user.id),
                 success_criteria=workflow_run.success_criteria,
+                agent_session=self.session,
             )
             events = result.get('calendar_events', [])
             yield {
@@ -2319,6 +2389,7 @@ class AgentOrchestrator:
                         analysis_result=latest_run.analysis_result,
                         project_members=project_members,
                         current_username=self.user.username or '',
+                        agent_session=self.session,
                     )
                     follow_up_status = result.get("status", "completed")
                     reply = result.get("text") or result.get("reply", "")

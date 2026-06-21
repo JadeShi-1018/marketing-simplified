@@ -26,6 +26,9 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { useProjectStore } from '@/lib/projectStore';
+import {
+  isNestedProjectNavActive,
+} from '@/lib/projectNestedRoutes';
 
 const getInitials = (name?: string | null): string => {
   if (!name) return '?';
@@ -296,8 +299,14 @@ export default function DashboardSidebar() {
               const isOpen = hasChildren && expanded.includes(item.label);
               const isAgentPanelItem = item.href === AGENT_PANEL_NAV_HREF;
               const isActive =
-                !hasChildren && !isAgentPanelItem && pathname === item.href;
-              const childActive = hasChildren && item.children!.some((c) => pathname === c.href);
+                !hasChildren &&
+                !isAgentPanelItem &&
+                isNestedProjectNavActive(pathname ?? '', item.href, item.href);
+              const childActive =
+                hasChildren &&
+                item.children!.some((c) =>
+                  isNestedProjectNavActive(pathname ?? '', c.href, c.href),
+                );
 
               return (
                 <div key={item.label}>
@@ -353,7 +362,11 @@ export default function DashboardSidebar() {
                           </DropdownMenuLabel>
                           <DropdownMenuSeparator className="my-1" />
                           {item.children!.map((child) => {
-                            const childIsActive = pathname === child.href;
+                            const childIsActive = isNestedProjectNavActive(
+                              pathname ?? '',
+                              child.href,
+                              child.href,
+                            );
                             return (
                               <DropdownMenuItem
                                 key={child.href}
@@ -398,7 +411,11 @@ export default function DashboardSidebar() {
                   {hasChildren && isOpen && (
                     <div className="ml-8 mt-1 mb-1 hidden space-y-0.5 sm:block">
                       {item.children!.map((child) => {
-                        const childIsActive = pathname === child.href;
+                        const childIsActive = isNestedProjectNavActive(
+                          pathname ?? '',
+                          child.href,
+                          child.href,
+                        );
                         return (
                           <button
                             key={child.href}

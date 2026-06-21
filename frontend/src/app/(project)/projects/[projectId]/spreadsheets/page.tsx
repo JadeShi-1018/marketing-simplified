@@ -53,7 +53,7 @@ export default function SpreadsheetsListPage() {
       if (!projectId) return;
       try {
         const projects = await ProjectAPI.getProjects();
-        const currentProject = projects.find((p) => p.id === Number(projectId));
+        const currentProject = projects.find((p) => String(p.id) === String(projectId) || p.slug === projectId);
         setProject(currentProject || null);
       } catch (err) {
         console.error('Failed to load project:', err);
@@ -72,7 +72,7 @@ export default function SpreadsheetsListPage() {
     try {
       setLoading(true);
       setError(null);
-      const response = await SpreadsheetAPI.listSpreadsheets(Number(projectId), {
+      const response = await SpreadsheetAPI.listSpreadsheets(String(projectId), {
         page,
         page_size: PAGE_SIZE,
         search: searchQuery.trim() || undefined,
@@ -105,7 +105,7 @@ export default function SpreadsheetsListPage() {
 
     setCreating(true);
     try {
-      const listResp = await SpreadsheetAPI.listSpreadsheets(Number(projectId), {
+      const listResp = await SpreadsheetAPI.listSpreadsheets(String(projectId), {
         page: 1,
         page_size: 500,
         order_by: 'updated_at',
@@ -113,7 +113,7 @@ export default function SpreadsheetsListPage() {
       const names = (listResp.results || []).map((s) => s.name);
       let name = nextUntitledSpreadsheetName(names);
 
-      const tryCreate = async (n: string) => SpreadsheetAPI.createSpreadsheet(Number(projectId), { name: n });
+      const tryCreate = async (n: string) => SpreadsheetAPI.createSpreadsheet(String(projectId), { name: n });
 
       let newSpreadsheet: SpreadsheetData;
       try {
@@ -130,7 +130,7 @@ export default function SpreadsheetsListPage() {
       }
 
       toast.success('Spreadsheet created');
-      router.push(`/projects/${projectId}/spreadsheets/${newSpreadsheet.id}`);
+      router.push(`/projects/${project?.slug ?? projectId}/spreadsheets/${newSpreadsheet.slug}`);
     } catch (err: any) {
       console.error('Failed to create spreadsheet:', err);
       const errorMessage =
@@ -150,7 +150,7 @@ export default function SpreadsheetsListPage() {
       await SpreadsheetAPI.deleteSpreadsheet(spreadsheetIdToDelete);
       toast.success('Spreadsheet deleted successfully');
 
-      const response = await SpreadsheetAPI.listSpreadsheets(Number(projectId), {
+      const response = await SpreadsheetAPI.listSpreadsheets(String(projectId), {
         page,
         page_size: PAGE_SIZE,
         search: searchQuery.trim() || undefined,
@@ -162,7 +162,7 @@ export default function SpreadsheetsListPage() {
       if (results.length === 0 && page > 1) {
         const prevPage = page - 1;
         setPage(prevPage);
-        const retry = await SpreadsheetAPI.listSpreadsheets(Number(projectId), {
+        const retry = await SpreadsheetAPI.listSpreadsheets(String(projectId), {
           page: prevPage,
           page_size: PAGE_SIZE,
           search: searchQuery.trim() || undefined,
@@ -239,7 +239,7 @@ export default function SpreadsheetsListPage() {
       <tr
         key={spreadsheet.id}
         className="border-b border-gray-200 hover:bg-gray-50 transition-colors group cursor-pointer"
-        onClick={() => router.push(`/projects/${projectId}/spreadsheets/${spreadsheet.id}`)}
+        onClick={() => router.push(`/projects/${project?.slug ?? projectId}/spreadsheets/${spreadsheet.slug}`)}
       >
         <td className="px-4 py-3">
           <div className="flex items-center gap-3">

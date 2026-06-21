@@ -18,6 +18,18 @@ import {
   GenerationOutputKey,
 } from '@/types/agent';
 
+const QUOTA_CODES = new Set(['TOKEN_QUOTA_EXCEEDED', 'SINGLE_CALL_TOO_LARGE', 'PROJECT_HAS_NO_ORG']);
+
+function dispatchQuotaError(payload: Record<string, unknown>): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('quota:error', { detail: payload }));
+}
+
+function dispatchQuotaRefresh(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('quota:refresh'));
+}
+
 /** Build auth headers for SSE fetch requests (mirrors Axios interceptor logic). */
 function getSSEAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -104,19 +116,25 @@ export const AgentAPI = {
     })
       .then(async (response) => {
         if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          let errJson: Record<string, unknown> = {};
+          try { errJson = JSON.parse(errText); } catch { /* ignore */ }
+
+          // Pre-flight quota errors: TOKEN_QUOTA_EXCEEDED → 402, PROJECT_HAS_NO_ORG → 409
+          const qCode = errJson?.code as string | undefined;
+          if ((response.status === 402 || response.status === 409) && qCode && QUOTA_CODES.has(qCode)) {
+            dispatchQuotaError({ code: qCode, ...errJson });
+            onError?.(new Error('quota_error'));
+            return;
+          }
+
           let errMessage: string;
           if (response.status === 504) {
             errMessage = 'Request timed out. Please try again.';
           } else if (response.status >= 500) {
             errMessage = 'Server error. Please try again.';
           } else {
-            const errText = await response.text().catch(() => '');
-            try {
-              const errJson = JSON.parse(errText);
-              errMessage = errJson.detail || `Request failed (${response.status})`;
-            } catch {
-              errMessage = `Request failed (${response.status})`;
-            }
+            errMessage = (errJson?.detail as string) || `Request failed (${response.status})`;
           }
           throw new Error(errMessage);
         }
@@ -144,11 +162,20 @@ export const AgentAPI = {
             if (trimmed.startsWith('data: ')) {
               const jsonStr = trimmed.slice(6);
               try {
-                const event: SSEEvent = JSON.parse(jsonStr);
-                onEvent(event);
-                if (event.type === 'done') {
-                  onDone?.();
-                  return;
+                const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+                // In-stream quota errors: backend yields {code, message, ...} without a type field
+                const qCode = parsed?.code as string | undefined;
+                if (qCode && QUOTA_CODES.has(qCode)) {
+                  dispatchQuotaError({ code: qCode, ...parsed });
+                  // Drain the rest of the stream (backend sends a 'done' event after)
+                } else {
+                  const event = parsed as unknown as SSEEvent;
+                  onEvent(event);
+                  if (event.type === 'done') {
+                    dispatchQuotaRefresh();
+                    onDone?.();
+                    return;
+                  }
                 }
               } catch {
                 // skip malformed JSON
@@ -158,6 +185,7 @@ export const AgentAPI = {
         }
 
         // Stream ended without 'done' event
+        dispatchQuotaRefresh();
         onDone?.();
       })
       .catch((err) => {
@@ -228,19 +256,24 @@ export const AgentAPI = {
     })
       .then(async (response) => {
         if (!response.ok) {
+          const errText = await response.text().catch(() => '');
+          let errJson: Record<string, unknown> = {};
+          try { errJson = JSON.parse(errText); } catch { /* ignore */ }
+
+          const qCode = errJson?.code as string | undefined;
+          if ((response.status === 402 || response.status === 409) && qCode && QUOTA_CODES.has(qCode)) {
+            dispatchQuotaError({ code: qCode, ...errJson });
+            onError?.(new Error('quota_error'));
+            return;
+          }
+
           let errMessage: string;
           if (response.status === 504) {
             errMessage = 'Request timed out. Please try again.';
           } else if (response.status >= 500) {
             errMessage = 'Server error. Please try again.';
           } else {
-            const errText = await response.text().catch(() => '');
-            try {
-              const errJson = JSON.parse(errText);
-              errMessage = errJson.detail || `Upload failed (${response.status})`;
-            } catch {
-              errMessage = `Upload failed (${response.status})`;
-            }
+            errMessage = (errJson?.detail as string) || `Upload failed (${response.status})`;
           }
           throw new Error(errMessage);
         }
@@ -267,11 +300,18 @@ export const AgentAPI = {
             if (trimmed.startsWith('data: ')) {
               const jsonStr = trimmed.slice(6);
               try {
-                const event: SSEEvent = JSON.parse(jsonStr);
-                onEvent(event);
-                if (event.type === 'done') {
-                  onDone?.();
-                  return;
+                const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+                const qCode = parsed?.code as string | undefined;
+                if (qCode && QUOTA_CODES.has(qCode)) {
+                  dispatchQuotaError({ code: qCode, ...parsed });
+                } else {
+                  const event = parsed as unknown as SSEEvent;
+                  onEvent(event);
+                  if (event.type === 'done') {
+                    dispatchQuotaRefresh();
+                    onDone?.();
+                    return;
+                  }
                 }
               } catch {
                 // skip malformed JSON
@@ -280,6 +320,7 @@ export const AgentAPI = {
           }
         }
 
+        dispatchQuotaRefresh();
         onDone?.();
       })
       .catch((err) => {

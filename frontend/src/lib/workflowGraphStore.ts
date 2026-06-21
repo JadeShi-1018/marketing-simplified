@@ -43,46 +43,46 @@ interface WorkflowGraphState {
   // Graph Operations
   // ========================================
   
-  loadGraph: (workflowId: number) => Promise<void>;
+  loadGraph: (workflowId: number | string) => Promise<void>;
   clearGraph: () => void;
   
   // ========================================
   // Node Operations (with optimistic updates)
   // ========================================
   
-  addNode: (workflowId: number, nodeData: WorkflowNodeCreate) => Promise<WorkflowNode | null>;
+  addNode: (workflowId: number | string, nodeData: WorkflowNodeCreate) => Promise<WorkflowNode | null>;
   updateNode: (
-    workflowId: number,
+    workflowId: number | string,
     nodeId: number,
     updates: Partial<WorkflowNodeCreate>
   ) => Promise<WorkflowNode | null>;
-  removeNode: (workflowId: number, nodeId: number) => Promise<boolean>;
+  removeNode: (workflowId: number | string, nodeId: number) => Promise<boolean>;
   
   // ========================================
   // Connection Operations (with optimistic updates)
   // ========================================
   
   addConnection: (
-    workflowId: number,
+    workflowId: number | string,
     connectionData: WorkflowConnectionCreate
   ) => Promise<WorkflowConnection | null>;
   updateConnection: (
-    workflowId: number,
+    workflowId: number | string,
     connectionId: number,
     updates: Partial<WorkflowConnectionCreate>
   ) => Promise<WorkflowConnection | null>;
-  removeConnection: (workflowId: number, connectionId: number) => Promise<boolean>;
+  removeConnection: (workflowId: number | string, connectionId: number) => Promise<boolean>;
   
   // ========================================
   // Batch Operations
   // ========================================
   
   batchUpdateNodes: (
-    workflowId: number,
+    workflowId: number | string,
     operations: BatchNodeOperation
   ) => Promise<boolean>;
   batchUpdateConnections: (
-    workflowId: number,
+    workflowId: number | string,
     operations: BatchConnectionOperation
   ) => Promise<boolean>;
   
@@ -121,7 +121,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
   // Graph Operations
   // ========================================
 
-  loadGraph: async (workflowId: number) => {
+  loadGraph: async (workflowId: number | string) => {
     set({ loading: true, error: null });
     try {
       const graph = await WorkflowAPI.getGraph(workflowId);
@@ -164,7 +164,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
   // Node Operations (with optimistic updates)
   // ========================================
 
-  addNode: async (workflowId: number, nodeData: WorkflowNodeCreate) => {
+  addNode: async (workflowId: number | string, nodeData: WorkflowNodeCreate) => {
     const operationId = `add-node-${Date.now()}`;
     const { pendingOperations } = get();
     
@@ -222,7 +222,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
   },
 
   updateNode: async (
-    workflowId: number,
+    workflowId: number | string,
     nodeId: number,
     updates: Partial<WorkflowNodeCreate>
   ) => {
@@ -280,7 +280,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
     }
   },
 
-  removeNode: async (workflowId: number, nodeId: number) => {
+  removeNode: async (workflowId: number | string, nodeId: number) => {
     const operationId = `remove-node-${nodeId}-${Date.now()}`;
     const { nodes, connections, pendingOperations } = get();
     
@@ -344,7 +344,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
   // Connection Operations (with optimistic updates)
   // ========================================
 
-  addConnection: async (workflowId: number, connectionData: WorkflowConnectionCreate) => {
+  addConnection: async (workflowId: number | string, connectionData: WorkflowConnectionCreate) => {
     const operationId = `add-connection-${Date.now()}`;
     const { pendingOperations } = get();
     
@@ -411,7 +411,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
   },
 
   updateConnection: async (
-    workflowId: number,
+    workflowId: number | string,
     connectionId: number,
     updates: Partial<WorkflowConnectionCreate>
   ) => {
@@ -478,7 +478,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
     }
   },
 
-  removeConnection: async (workflowId: number, connectionId: number) => {
+  removeConnection: async (workflowId: number | string, connectionId: number) => {
     const operationId = `remove-connection-${connectionId}-${Date.now()}`;
     const { connections, pendingOperations } = get();
     
@@ -534,7 +534,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
   // Batch Operations
   // ========================================
 
-  batchUpdateNodes: async (workflowId: number, operations: BatchNodeOperation) => {
+  batchUpdateNodes: async (workflowId: number | string, operations: BatchNodeOperation) => {
     const operationId = `batch-nodes-${Date.now()}`;
     const { nodes, pendingOperations } = get();
     
@@ -636,7 +636,7 @@ export const useWorkflowGraphStore = create<WorkflowGraphState>((set, get) => ({
   },
 
   batchUpdateConnections: async (
-    workflowId: number,
+    workflowId: number | string,
     operations: BatchConnectionOperation
   ) => {
     const operationId = `batch-connections-${Date.now()}`;

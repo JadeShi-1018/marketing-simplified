@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth import get_user_model
 from django_fsm import FSMField, transition
 from django.contrib.contenttypes.models import ContentType
@@ -12,7 +13,7 @@ from django.core.files.uploadedfile import UploadedFile
 User = get_user_model()
 
 
-class Task(models.Model):
+class Task(SluggedResourceModelMixin, models.Model):
     class Status(models.TextChoices):
         DRAFT = 'DRAFT', 'Draft'
         SUBMITTED = 'SUBMITTED', 'Submitted'

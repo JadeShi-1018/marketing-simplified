@@ -96,7 +96,7 @@ export interface ListVariationsResult {
 }
 
 export interface ListAiVariationsParams {
-  project_id?: number;
+  project_id?: number | string;
   creative?: number;
   status?: AdCopyVariationStatus | AdCopyVariationStatus[] | string;
   source_mode?: AdCopyVariationSourceMode | '';
@@ -134,7 +134,7 @@ export async function listAiVariations(
   return { results: [], total: 0 };
 }
 
-export async function getLatestVariationBatch(projectId: number): Promise<{
+export async function getLatestVariationBatch(projectId: number | string): Promise<{
   batch_id: string | null;
   count: number;
   results: AdCopyVariation[];
@@ -146,7 +146,7 @@ export async function getLatestVariationBatch(projectId: number): Promise<{
 }
 
 export async function reviewVariationBatch(req: {
-  project_id: number;
+  project_id: number | string;
   batch_id: string;
   selected_ids: number[];
 }): Promise<{
@@ -160,7 +160,7 @@ export async function reviewVariationBatch(req: {
 }
 
 export async function bulkReviewVariations(req: {
-  project_id: number;
+  project_id: number | string;
   selected_ids: number[];
 }): Promise<{
   reviewed_count: number;
@@ -171,7 +171,7 @@ export async function bulkReviewVariations(req: {
 }
 
 export async function bulkDeleteVariations(req: {
-  project_id: number;
+  project_id: number | string;
   selected_ids: number[];
   status: AdCopyVariationStatus;
 }): Promise<{
@@ -182,14 +182,19 @@ export async function bulkDeleteVariations(req: {
   return data;
 }
 
+export async function getVariation(idOrSlug: number | string): Promise<AdCopyVariation> {
+  const { data } = await api.get(`${BASE}/${idOrSlug}/`);
+  return data as AdCopyVariation;
+}
+
 export async function updateVariation(
-  id: number,
+  id: number | string,
   fields: Partial<AdCopyVariationCopy & Pick<AdCopyVariation, 'status'>>
 ): Promise<AdCopyVariation> {
   const { data } = await api.patch<AdCopyVariation>(`${BASE}/${id}/`, fields);
   return data;
 }
 
-export async function deleteVariation(id: number): Promise<void> {
+export async function deleteVariation(id: number | string): Promise<void> {
   await api.delete(`${BASE}/${id}/`);
 }

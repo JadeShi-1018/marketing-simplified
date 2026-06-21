@@ -112,11 +112,24 @@ class AdCopyVariationCRUDTests(APITestCase):
             hook='retrieve hook',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertEqual(resp.data['hook'], 'retrieve hook')
         self.assertEqual(resp.data['source_mode'], 'custom')
+
+    def test_numeric_id_url_is_rejected(self):
+        """Resource lookups are slug-only — a numeric id must 404 (not resolve by pk)."""
+        row = AdCopyVariation.objects.create(
+            project=self.project,
+            creative=self.creative,
+            source_mode='custom',
+            hook='numeric reject',
+            created_by=self.user,
+        )
+        url = reverse('ad-copy-variation-detail', args=[row.id])
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_patch(self):
         row = AdCopyVariation.objects.create(
@@ -126,7 +139,7 @@ class AdCopyVariationCRUDTests(APITestCase):
             hook='before',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
         resp = self.client.patch(url, {'hook': 'after'}, format='json')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         row.refresh_from_db()
@@ -139,7 +152,7 @@ class AdCopyVariationCRUDTests(APITestCase):
             source_mode='existing',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
         resp = self.client.delete(url)
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(AdCopyVariation.objects.filter(pk=row.id).exists())
@@ -229,7 +242,7 @@ class AdCopyVariationCRUDTests(APITestCase):
             hook='before',
             created_by=self.user,
         )
-        url = reverse('ad-copy-variation-detail', args=[row.id])
+        url = reverse('ad-copy-variation-detail', args=[row.slug])
 
         resp = self.client.patch(
             url,
@@ -278,7 +291,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self._row(status_value='draft', project=self.other_project, creative=None, position=3)
 
         resp = self.client.get(reverse('ad-copy-variation-list'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'status': 'draft',
             'source_mode': 'existing',
             'creative': self.creative.id,
@@ -299,7 +312,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self._row(batch_id=other_batch, position=2)
 
         resp = self.client.get(reverse('ad-copy-variation-list'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'batch_id': str(wanted_batch),
         })
 
@@ -317,7 +330,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
         self._row(batch_id=other_project_batch, project=self.other_project, creative=None, position=1)
 
         resp = self.client.get(reverse('ad-copy-variation-latest-batch'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
         })
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
@@ -330,7 +343,7 @@ class AdCopyVariationDraftLifecycleTests(APITestCase):
 
     def test_latest_batch_returns_empty_when_project_has_no_batches(self):
         resp = self.client.get(reverse('ad-copy-variation-latest-batch'), {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
         })
 
         self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
@@ -790,7 +803,7 @@ class PermissionTests(APITestCase):
         self.assertIn(resp.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
     def test_detail_unauthenticated(self):
-        resp = self.client.get(reverse('ad-copy-variation-detail', args=[self.row.id]))
+        resp = self.client.get(reverse('ad-copy-variation-detail', args=[self.row.slug]))
         self.assertIn(resp.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
 
     def test_create_unauthenticated(self):

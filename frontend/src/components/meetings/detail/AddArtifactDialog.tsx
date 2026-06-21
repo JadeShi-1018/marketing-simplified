@@ -20,7 +20,7 @@ interface PickerRow {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   existingArtifacts: { artifact_type: string; artifact_id: number }[];
   generatedDecisionIds?: number[];

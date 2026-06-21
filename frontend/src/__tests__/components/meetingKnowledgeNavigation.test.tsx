@@ -21,6 +21,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
   it('Discovery cards show generated decision and task counts from API payloads', () => {
     const row: MeetingListItem = {
       id: 1,
+      slug: 'weekly-sync',
       title: 'Weekly sync',
       summary: 'Notes',
       scheduled_date: null,
@@ -33,7 +34,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
       decision_count: 1,
       task_count: 1,
       generated_decisions: [
-        { id: 101, title: 'Pause spend', url: '/decisions/101?project_id=2' },
+        { id: 101, title: 'Pause spend', url: '/decisions/101' },
       ],
       generated_tasks: [
         { id: 201, title: 'Update settings', url: '/tasks/201' },
@@ -67,7 +68,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
     expect(screen.getByTestId('meeting-card-contextual-knowledge')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Pause spend' })).toHaveAttribute(
       'href',
-      '/decisions/101?project_id=2',
+      '/decisions/101',
     );
     expect(screen.getByRole('link', { name: 'Update settings' })).toHaveAttribute(
       'href',
@@ -75,7 +76,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
     );
     expect(screen.getByRole('link', { name: /Full meeting workspace/i })).toHaveAttribute(
       'href',
-      '/projects/2/meetings/1#contextual-knowledge',
+      '/projects/2/meetings/weekly-sync#contextual-knowledge',
     );
   });
 
@@ -83,11 +84,11 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
     render(
       <>
         <MeetingSummaryKnowledgeNav
-          generatedDecisions={[{ id: 1, title: 'D1', url: '/decisions/1?project_id=3' }]}
+          generatedDecisions={[{ id: 1, title: 'D1', url: '/decisions/1' }]}
           generatedTasks={[{ id: 2, title: 'T2', url: '/tasks/2' }]}
         />
         <MeetingSummaryRelatedArtifacts
-          relatedDecisions={[{ id: 9, title: 'Rd9', url: '/decisions/9?project_id=3' }]}
+          relatedDecisions={[{ id: 9, title: 'Rd9', url: '/decisions/9' }]}
           relatedTasks={[{ id: 8, title: 'Rt8', url: '/tasks/8' }]}
         />
       </>,
@@ -98,7 +99,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
     expect(screen.getByTestId('meeting-summary-related-artifacts')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'D1' })).toHaveAttribute(
       'href',
-      '/decisions/1?project_id=3',
+      '/decisions/1',
     );
     expect(screen.getByRole('link', { name: 'T2' })).toHaveAttribute(
       'href',
@@ -106,7 +107,7 @@ describe('Meeting knowledge navigation (discovery + summary + detail hooks)', ()
     );
     expect(screen.getByRole('link', { name: 'Rd9' })).toHaveAttribute(
       'href',
-      '/decisions/9?project_id=3',
+      '/decisions/9',
     );
     expect(screen.getByRole('link', { name: 'Rt8' })).toHaveAttribute('href', '/tasks/8');
   });

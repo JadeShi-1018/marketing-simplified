@@ -83,8 +83,9 @@ def test_commit_requires_only_title():
     create_resp = client.post("/api/decisions/drafts/", {"title": "Title only"}, format="json")
     assert create_resp.status_code == 201
     decision_id = create_resp.data["id"]
+    decision_slug = create_resp.data["slug"]
 
-    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client.post(f"/api/decisions/{decision_slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 200
     decision = Decision.objects.get(pk=decision_id)
     assert decision.status == Decision.Status.COMMITTED
@@ -98,9 +99,10 @@ def test_commit_rejects_missing_title():
     create_resp = client.post("/api/decisions/drafts/", {"title": "Temporary"}, format="json")
     assert create_resp.status_code == 201
     decision_id = create_resp.data["id"]
+    decision_slug = create_resp.data["slug"]
     Decision.objects.filter(pk=decision_id).update(title="")
 
-    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client.post(f"/api/decisions/{decision_slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 400
     field_errors = commit_resp.data["error"]["details"]["fieldErrors"]
     assert field_errors == [{"field": "title", "message": "Title is required before commit."}]
@@ -114,16 +116,18 @@ def test_commit_review_archive_happy_path():
 
     create_resp = client.post("/api/decisions/drafts/", {"title": "Test Decision"}, format="json")
     assert create_resp.status_code == 201
-    decision_id = Decision.objects.get(title="Test Decision").id
+    created = Decision.objects.get(title="Test Decision")
+    decision_id = created.id
+    decision_slug = created.slug
 
     patch_resp = client.patch(
-        f"/api/decisions/drafts/{decision_id}/",
+        f"/api/decisions/drafts/{decision_slug}/",
         _make_commit_ready_payload(),
         format="json",
     )
     assert patch_resp.status_code == 200
 
-    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client.post(f"/api/decisions/{decision_slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 200
     decision = Decision.objects.get(pk=decision_id)
     assert decision.status == Decision.Status.COMMITTED
@@ -143,7 +147,7 @@ def test_commit_review_archive_happy_path():
         "decisionQuality": "GOOD",
     }
     review_resp = client.post(
-        f"/api/decisions/{decision_id}/reviews/",
+        f"/api/decisions/{decision_slug}/reviews/",
         review_payload,
         format="json",
     )
@@ -162,7 +166,7 @@ def test_commit_review_archive_happy_path():
     assert review_transition.to_status == Decision.Status.REVIEWED
 
     second_review_resp = client.post(
-        f"/api/decisions/{decision_id}/reviews/",
+        f"/api/decisions/{decision_slug}/reviews/",
         {
             "outcomeText": "Second outcome",
             "reflectionText": "Second reflection",
@@ -188,17 +192,18 @@ def test_patch_committed_decision_content():
     create_resp = client.post("/api/decisions/drafts/", {"title": "Original"}, format="json")
     assert create_resp.status_code == 201
     decision_id = create_resp.data["id"]
+    decision_slug = create_resp.data["slug"]
 
     client.patch(
-        f"/api/decisions/drafts/{decision_id}/",
+        f"/api/decisions/drafts/{decision_slug}/",
         _make_commit_ready_payload(),
         format="json",
     )
-    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client.post(f"/api/decisions/{decision_slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 200
 
     amend_resp = client.patch(
-        f"/api/decisions/{decision_id}/",
+        f"/api/decisions/{decision_slug}/",
         {"title": "Amended title", "contextSummary": "Updated context"},
         format="json",
     )

@@ -29,7 +29,7 @@ export default function VideoModal({
   onClose,
   title,
 }: {
-  creativeId: number | null;
+  creativeId: number | string | null;
   open: boolean;
   onClose: () => void;
   title?: string;

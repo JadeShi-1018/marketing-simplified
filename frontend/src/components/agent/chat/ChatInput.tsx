@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Paperclip, Send, X, FileSpreadsheet, ChevronDown, ChevronUp } from "lucide-react"
 import { cn } from "@/lib/utils"
+import TokenEstimator from "./TokenEstimator"
 
 const ACCEPTED_TYPES = ".csv,.xlsx,.xls"
 const MAX_FILE_SIZE = 10 * 1024 * 1024
@@ -200,6 +201,8 @@ export function ChatInput({ onSend, onFileUpload, disabled, placeholder, helperT
           <span className="sr-only">Send</span>
         </Button>
       </div>
+
+      <TokenEstimator message={input} />
 
       <div className="mt-2">
         <button

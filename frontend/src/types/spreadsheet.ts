@@ -2,6 +2,7 @@
 
 export interface SpreadsheetData {
   id: number;
+  slug?: string;
   project: number;
   name: string;
   created_at: string;

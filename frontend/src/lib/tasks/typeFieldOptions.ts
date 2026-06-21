@@ -7,7 +7,7 @@ import api from '@/lib/api';
 import type { FieldOption } from './typeFieldSchemas';
 
 export interface LoaderContext {
-  projectId?: number | null;
+  projectId?: number | string | null;
 }
 
 type Loader = (ctx?: LoaderContext) => Promise<FieldOption[]>;

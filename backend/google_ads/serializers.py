@@ -524,7 +524,7 @@ class AdSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ad
         fields = [
-            'id', 'google_ads_id', 'name', 'display_url',
+            'id', 'slug', 'google_ads_id', 'name', 'display_url',
             'added_by_google_ads', 'type', 'device_preference', 'system_managed_resource_source',
             'final_urls', 'final_mobile_urls', 'tracking_url_template', 'final_url_suffix',
             'status', 'created_at', 'updated_at',
@@ -705,7 +705,7 @@ class AdListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ad
         fields = [
-            'id', 'name', 'type', 'status', 'customer_account',
+            'id', 'slug', 'name', 'type', 'status', 'customer_account',
             'created_by', 'created_at', 'updated_at'
         ]
 

@@ -257,7 +257,7 @@ export const BudgetAPI = {
 
   getBudgetTask: (taskId: number) => api.get(`${TASKS}${taskId}/`),
 
-  getBudgetRequest: (taskId: number) => api.get(`${TASKS}${taskId}/`),
+  getBudgetRequest: (taskId: number | string) => api.get(`${TASKS}${taskId}/`),
 
   patchBudgetTask: (taskId: number, data: BudgetTaskPatchRequest) =>
     api.patch(`${TASKS}${taskId}/`, data),

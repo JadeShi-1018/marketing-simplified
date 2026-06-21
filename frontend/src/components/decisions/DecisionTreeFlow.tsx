@@ -134,7 +134,7 @@ const buildFlowEdge = (
 ): Edge => {
   const visuals = edgeVisuals(edge.edgeType);
   return {
-    id: `decision-edge-${edge.from}-${edge.to}-${edge.type ?? 'RELATED'}`,
+    id: `decision-edge-${edge.from}-${edge.to}-${edge.edgeType ?? 'RELATED'}`,
     source: flowNodeIdForDecision(edge.from),
     target: flowNodeIdForDecision(edge.to),
     data: { from: edge.from, to: edge.to, edgeType: edge.edgeType ?? 'RELATED' },
