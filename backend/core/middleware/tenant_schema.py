@@ -38,6 +38,7 @@ the TTL is a safe trade-off.
 
 from django.core.cache import cache
 from django.db import connection
+from psycopg2 import sql
 
 from core.services.tenant import slug_to_schema_name
 
@@ -49,22 +50,45 @@ class TenantSchemaMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        # DEBUG logging
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Check initial search_path from connection pool
+        with connection.cursor() as cursor:
+            cursor.execute('SHOW search_path')
+            initial_path = cursor.fetchone()[0]
+            logger.info(f'TenantSchemaMiddleware: Initial search_path from pool: {initial_path} for {request.path}')
+
         # CRITICAL: DRF JWT authentication happens at the view layer, not in
         # AuthenticationMiddleware. We must manually authenticate JWT tokens here
         # so _resolve_schema() can see the authenticated user.
         self._authenticate_jwt(request)
 
         schema = self._resolve_schema(request)
+        logger.info(f'TenantSchemaMiddleware: Setting search_path to {schema} for {request.path}')
 
-        # SET search_path accepts string literals (%s quoting by psycopg2),
-        # so this is injection-safe while being syntactically valid:
-        #   SET search_path TO 'org_acme_corp', public
+        # SET search_path requires unquoted identifiers, not string literals.
+        # Use psycopg2.sql.Identifier for injection-safe identifier composition:
+        #   SET search_path TO org_acme_corp, public
         with connection.cursor() as cursor:
-            cursor.execute('SET search_path TO %s, public', [schema])
+            cursor.execute(
+                sql.SQL('SET search_path TO {}, public').format(sql.Identifier(schema))
+            )
+            # Verify it was set
+            cursor.execute('SHOW search_path')
+            actual_path = cursor.fetchone()[0]
+            logger.info(f'TenantSchemaMiddleware: Confirmed search_path is now: {actual_path}')
 
         try:
             return self.get_response(request)
         finally:
+            # Check search_path before resetting
+            with connection.cursor() as cursor:
+                cursor.execute('SHOW search_path')
+                final_path = cursor.fetchone()[0]
+                logger.info(f'TenantSchemaMiddleware: Final search_path before reset: {final_path} for {request.path}')
+
             # CRITICAL: Django reuses DB connections across requests (connection
             # pool).  Without this reset the next request on the same connection
             # could inherit this tenant's search_path if the middleware exits

@@ -254,7 +254,8 @@ class CustomUser(AbstractUser):
         null=True,
         blank=True,
         related_name='active_users',
-        help_text="The currently active project for this user"
+        help_text="The currently active project for this user",
+        db_constraint=False  # CRITICAL: Project is in tenant schema, User in public schema
     )
 
     USERNAME_FIELD = 'email'

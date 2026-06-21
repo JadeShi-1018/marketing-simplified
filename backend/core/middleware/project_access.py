@@ -1,5 +1,6 @@
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
+from django.db import connection
 
 from core.models import ProjectMember
 
@@ -35,10 +36,28 @@ class CheckProjectAccessMiddleware(MiddlewareMixin):
         if not requires_project:
             return None
 
-        if user.active_project:
-            return None
+        # CRITICAL: TenantSchemaMiddleware may have already switched search_path
+        # to a tenant schema. User/Project metadata lives in public schema, so
+        # we must temporarily switch back to read active_project and memberships.
+        with connection.cursor() as cursor:
+            cursor.execute('SHOW search_path')
+            original_path = cursor.fetchone()[0]
 
-        has_membership = ProjectMember.objects.filter(user=user, is_active=True).exists()
+        # Temporarily switch to public for metadata queries
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
+
+        try:
+            if user.active_project:
+                return None
+
+            has_membership = ProjectMember.objects.filter(user=user, is_active=True).exists()
+        finally:
+            # Restore original search_path
+            # CRITICAL: Use f-string instead of %s parameter to avoid quoting the path
+            with connection.cursor() as cursor:
+                cursor.execute(f'SET search_path TO {original_path}')
+
         if not has_membership:
             return JsonResponse(
                 {

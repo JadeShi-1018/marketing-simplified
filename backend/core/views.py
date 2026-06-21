@@ -325,6 +325,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         """
         from django.db import connection
         from core.services.tenant import slug_to_schema_name
+        from psycopg2 import sql
 
         user = self.request.user
         organization = getattr(user, 'organization', None)
@@ -338,7 +339,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
             # the project gets created in the correct tenant schema.
             schema_name = slug_to_schema_name(organization.slug)
             with connection.cursor() as c:
-                c.execute('SET search_path TO %s, public', [schema_name])
+                c.execute(
+                    sql.SQL('SET search_path TO {}, public').format(sql.Identifier(schema_name))
+                )
 
         project = serializer.save(
             organization=organization,
@@ -354,9 +357,29 @@ class ProjectViewSet(viewsets.ModelViewSet):
         )
 
         # Set as active project if user has no active project
-        if not user.active_project:
-            user.active_project = project
-            user.save(update_fields=['active_project'])
+        # CRITICAL: user.active_project is a FK to Project, but User is in public schema
+        # and Project is in tenant schema. We must check and update in public schema
+        # to avoid cross-schema FK violations.
+        with connection.cursor() as cursor:
+            cursor.execute('SHOW search_path')
+            original_path = cursor.fetchone()[0]
+
+        # Switch to public schema to access user data
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
+
+        try:
+            # Re-fetch user from public schema to get fresh active_project value
+            from core.models import CustomUser
+            user = CustomUser.objects.get(pk=user.pk)
+
+            if not user.active_project_id:  # Use _id to avoid FK lookup
+                user.active_project_id = project.id
+                user.save(update_fields=['active_project'])
+        finally:
+            # Restore tenant schema
+            with connection.cursor() as cursor:
+                cursor.execute(f'SET search_path TO {original_path}')
 
         ensure_project_calendar(project)
 
