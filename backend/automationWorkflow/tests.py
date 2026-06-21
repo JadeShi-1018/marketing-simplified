@@ -27,13 +27,15 @@ User = get_user_model()
 
 class WorkflowModelTestCase(TestCase):
     """Test Workflow model"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(
             name='Test Project',
@@ -1038,13 +1040,15 @@ class WorkflowValidatorTestCase(TestCase):
 
 class WorkflowAPITestCase(APITestCase):
     """Test Workflow API endpoints"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(
             name='Test Project',
@@ -1212,13 +1216,15 @@ class WorkflowAPITestCase(APITestCase):
 
 class WorkflowNodeAPITestCase(APITestCase):
     """Test WorkflowNode API endpoints"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         # Associate user with organization for organization-based permissions
@@ -1405,13 +1411,15 @@ class WorkflowNodeAPITestCase(APITestCase):
 
 class WorkflowConnectionAPITestCase(APITestCase):
     """Test WorkflowConnection API endpoints"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         ProjectMember.objects.create(
@@ -1838,13 +1846,15 @@ class WorkflowConnectionAPITestCase(APITestCase):
 
 class BatchOperationsAPITestCase(APITestCase):
     """Test batch operations for nodes and connections"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         ProjectMember.objects.create(
@@ -2123,13 +2133,15 @@ class BatchOperationsAPITestCase(APITestCase):
 
 class WorkflowGraphAPITestCase(APITestCase):
     """Test workflow graph endpoint"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         ProjectMember.objects.create(
@@ -2348,13 +2360,15 @@ class WorkflowPermissionTestCase(APITestCase):
 
 class WorkflowAPIEdgeCasesTestCase(APITestCase):
     """Test edge cases and error handling for workflow API"""
-    
+
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com'},
         )
+        if created:
+            self.user.set_password('testpass123')
+            self.user.save()
         self.organization = Organization.objects.create(name='Test Organization')
         self.project = Project.objects.create(name='Test Project', organization=self.organization)
         # Associate user with organization for organization-based permissions

@@ -103,6 +103,7 @@ INSTALLED_APPS = [
     'customer',
     'tracking',
     'csm',
+    'portal',
 ]
 
 MIDDLEWARE = [
