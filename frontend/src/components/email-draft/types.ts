@@ -14,6 +14,7 @@ export type KlaviyoStatus =
 
 export interface EmailDraftRow {
   id: number;
+  slug?: string;
   title: string;
   subject?: string;
   fromName?: string;

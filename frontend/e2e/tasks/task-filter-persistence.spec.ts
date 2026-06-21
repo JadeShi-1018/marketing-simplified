@@ -4,6 +4,7 @@ import {
   deleteTaskById,
   navigateToTasksAndSelectProject,
   waitForTasksPageReady,
+  getActiveProjectSlug,
 } from './tasks-helpers';
 import { openFirstTaskFromListAndNavigate } from './task-workspace-helpers';
 
@@ -23,10 +24,10 @@ test.describe('Task list filter/sort persistence', () => {
 
   test.beforeEach(async ({ page }) => {
     // Fresh page load — state always resets on reload now.
-    await page.goto(`/tasks?project_id=${projectId}`);
+    await page.goto(`/projects/${encodeURIComponent(await getActiveProjectSlug(page))}/tasks`);
     await waitForTasksPageReady(page);
     fixtureSummary = `Persistence fixture ${Date.now()}`;
-    fixtureTaskId = await createDraftTaskViaApi(page, projectId, fixtureSummary);
+    fixtureTaskId = (await createDraftTaskViaApi(page, projectId, fixtureSummary)).id;
     await page.reload();
     await waitForTasksPageReady(page);
     await page.getByTestId('tab-tasks').click();

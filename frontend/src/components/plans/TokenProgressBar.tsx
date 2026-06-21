@@ -15,7 +15,9 @@ interface QuotaPreview {
 }
 
 interface TokenProgressBarProps {
-  projectId: number;
+  // Project routes now carry the slug, so projectId may be a slug
+  // string; the quota-preview endpoint resolves slug-or-id server-side.
+  projectId: number | string;
 }
 
 export default function TokenProgressBar({ projectId }: TokenProgressBarProps) {

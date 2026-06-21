@@ -13,7 +13,7 @@ interface UseCalendarViewOptions {
   currentDate: Date;
   calendarIds?: string[];
   activeEventTypes?: string[];
-  projectId?: number | null;
+  projectId?: number | string | null;
 }
 
 interface UseCalendarViewResult {

@@ -8,16 +8,18 @@ import { TASK_TYPE_DEFINITIONS, TASK_TYPE_ORDER_INDEX } from '@/lib/tasks/taskTy
 import TaskCardMini from './TaskCardMini';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 interface BoardViewProps {
   tasks: TaskData[];
   loading: boolean;
   error: string | null;
+  projectId?: string;
 }
 
 const COLUMN_PAGE_SIZE = 10;
 
-export default function BoardView({ tasks, loading, error }: BoardViewProps) {
+export default function BoardView({ tasks, loading, error, projectId }: BoardViewProps) {
   const router = useRouter();
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
@@ -279,7 +281,12 @@ export default function BoardView({ tasks, loading, error }: BoardViewProps) {
 
                   <button
                     type="button"
-                    onClick={() => router.push(`/tasks/new?type=${meta.value}`)}
+                    onClick={() => {
+                      const href = projectId
+                        ? nestedProjectPath(projectId, `/tasks/new?type=${meta.value}`)
+                        : `/tasks/new?type=${meta.value}`;
+                      router.push(href);
+                    }}
                     className="mt-1 inline-flex items-center justify-center gap-1 rounded-md border border-dashed border-gray-200 bg-transparent px-3 py-2 text-xs text-gray-400 transition hover:border-[#3CCED7] hover:text-[#3CCED7]"
                   >
                     <Plus className="h-3 w-3" />

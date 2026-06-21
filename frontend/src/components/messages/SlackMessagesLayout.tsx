@@ -8,7 +8,7 @@ import type { MessagesNavView } from '@/components/messages/LeftSidebar/NavRail'
 import HomeSidebar from '@/components/messages/LeftSidebar/HomeSidebar';
 
 interface SlackMessagesLayoutProps {
-  selectedProjectId: number | null;
+  selectedProjectId: number | string | null;
 
   chats: Chat[];
   currentChatId: number | null;

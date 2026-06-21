@@ -221,7 +221,7 @@ const buildSettingsPayload = (data: Partial<CreateEmailDraftData>) => {
 };
 
 export interface MailchimpTemplate {
-  id: number;
+  id: number | string;
   name: string;
   thumbnail?: string | null;
   description?: string | null;
@@ -235,10 +235,10 @@ export interface MailchimpTemplate {
 }
 
 export interface MailchimpDraftComment {
-  id: number;
+  id: number | string;
   body: string;
   status: "open" | "resolved";
-  author_id: number;
+  author_id: number | string;
   author_name: string;
   target_block_id?: string | null;
   resolved_by_id?: number | null;
@@ -263,7 +263,7 @@ export const mailchimpApi = {
   },
 
   // Get single email draft by ID
-  getEmailDraft: async (id: number): Promise<EmailDraft> => {
+  getEmailDraft: async (id: number | string): Promise<EmailDraft> => {
     try {
       const response = await api.get(`/api/mailchimp/email-drafts/${id}/`);
       return response.data;
@@ -305,7 +305,7 @@ export const mailchimpApi = {
 
   // Update email draft
   updateEmailDraft: async (
-    id: number,
+    id: number | string,
     data: Partial<CreateEmailDraftData>
   ): Promise<EmailDraft> => {
     try {
@@ -328,7 +328,7 @@ export const mailchimpApi = {
 
   // Partial update email draft (only updates CampaignSettings, not template content)
   patchEmailDraft: async (
-    id: number,
+    id: number | string,
     data: Partial<CreateEmailDraftData>
   ): Promise<EmailDraft> => {
     try {
@@ -354,7 +354,7 @@ export const mailchimpApi = {
 
   // Update template content for a draft (only updates template, not campaign settings)
   updateEmailDraftTemplateContent: async (
-    id: number,
+    id: number | string,
     templateData: {
       template?: {
         name?: string;
@@ -385,7 +385,7 @@ export const mailchimpApi = {
   },
 
   // Delete email draft
-  deleteEmailDraft: async (id: number): Promise<void> => {
+  deleteEmailDraft: async (id: number | string): Promise<void> => {
     try {
       await api.delete(`/api/mailchimp/email-drafts/${id}/`);
     } catch (error) {
@@ -395,7 +395,7 @@ export const mailchimpApi = {
   },
 
   // Preview email draft
-  previewEmailDraft: async (id: number): Promise<any> => {
+  previewEmailDraft: async (id: number | string): Promise<any> => {
     try {
       const response = await api.get(
         `/api/mailchimp/email-drafts/${id}/preview/`
@@ -451,7 +451,7 @@ export const mailchimpApi = {
   },
 
   updateTemplate: async (
-    id: number,
+    id: number | string,
     data: Partial<{
       name: string;
       type: string;
@@ -477,7 +477,7 @@ export const mailchimpApi = {
     }
   },
 
-  deleteTemplate: async (id: number): Promise<void> => {
+  deleteTemplate: async (id: number | string): Promise<void> => {
     try {
       await api.delete(`/api/mailchimp/templates/${id}/`);
     } catch (error) {
@@ -487,7 +487,7 @@ export const mailchimpApi = {
   },
 
   getEmailDraftComments: async (
-    draftId: number,
+    draftId: number | string,
     statusFilter?: "open" | "resolved"
   ): Promise<MailchimpDraftComment[]> => {
     try {
@@ -505,7 +505,7 @@ export const mailchimpApi = {
   },
 
   createEmailDraftComment: async (
-    draftId: number,
+    draftId: number | string,
     payload: { body: string; target_block_id?: string }
   ): Promise<MailchimpDraftComment> => {
     try {
@@ -522,8 +522,8 @@ export const mailchimpApi = {
   },
 
   updateEmailDraftComment: async (
-    draftId: number,
-    commentId: number,
+    draftId: number | string,
+    commentId: number | string,
     payload: { status: "open" | "resolved" }
   ): Promise<MailchimpDraftComment> => {
     try {

@@ -3,9 +3,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DecisionAPI } from '@/lib/api/decisionApi';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 interface Connection {
   id: number;
+  slug?: string | null;
   project_seq: number;
   title?: string | null;
 }
@@ -16,8 +18,8 @@ interface Edge {
 }
 
 interface Props {
-  decisionId: number | null;
-  projectId: number | null;
+  decisionId: number | string | null;
+  projectId: number | string | null;
   mySeq: number | null;
 }
 
@@ -59,8 +61,12 @@ export default function DecisionConnectionsAside({ decisionId, projectId, mySeq 
     .map((e) => connected.find((c) => c.project_seq === e.to_seq))
     .filter(Boolean) as Connection[];
 
-  const linkHref = (id: number) =>
-    projectId ? `/decisions/${id}?project_id=${projectId}` : `/decisions/${id}`;
+  const linkHref = (c: Connection) => {
+    const key = c.slug ?? c.id;
+    return projectId
+      ? nestedProjectPath(projectId, `/decisions/${key}`)
+      : `/decisions/${key}`;
+  };
 
   return (
     <section className="rounded-lg bg-white p-4 shadow-sm ring-1 ring-gray-100 sm:rounded-xl">
@@ -76,7 +82,7 @@ export default function DecisionConnectionsAside({ decisionId, projectId, mySeq 
             {parents.map((c) => (
               <li key={c.id} className="text-sm">
                 <Link
-                  href={linkHref(c.id)}
+                  href={linkHref(c)}
                   className="break-words text-gray-700 transition hover:text-[#3CCED7]"
                 >
                   #{c.project_seq} {c.title || 'Untitled'}
@@ -95,7 +101,7 @@ export default function DecisionConnectionsAside({ decisionId, projectId, mySeq 
             {children.map((c) => (
               <li key={c.id} className="text-sm">
                 <Link
-                  href={linkHref(c.id)}
+                  href={linkHref(c)}
                   className="break-words text-gray-700 transition hover:text-[#3CCED7]"
                 >
                   #{c.project_seq} {c.title || 'Untitled'}

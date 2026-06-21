@@ -19,7 +19,7 @@ interface Props {
   laneTotal: number;
   sortKey: MeetingSortKey;
   onSortChange: (key: MeetingSortKey) => void;
-  projectId: number;
+  projectId: number | string;
   onCreate?: () => void;
 }
 

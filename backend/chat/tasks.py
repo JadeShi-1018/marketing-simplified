@@ -10,6 +10,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage
 from .services import ChatService, OnlineStatusService
+from .url_helpers import build_messages_action_url
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -462,9 +463,13 @@ def notify_message_recipients(self, message_id: int):
                 body=message.content[:200] or "",
                 related_object_type="chat",
                 related_object_id=message.chat_id,
-                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&messageId={message.id}",
+                action_url=build_messages_action_url(
+                    message.chat.slug,
+                    message_id=message.id,
+                ),
                 metadata={
                     "chat_id": message.chat_id,
+                    "chat_slug": message.chat.slug,
                     "message_id": message.id,
                     "project_id": message.chat.project_id,
                     "message_preview": message.content[:200] or "",
@@ -524,9 +529,14 @@ def notify_message_recipients(self, message_id: int):
                 body=message.content[:200] or "",
                 related_object_type="chat",
                 related_object_id=message.chat_id,
-                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
+                action_url=build_messages_action_url(
+                    message.chat.slug,
+                    parent_message_id=root.id,
+                    thread_message_id=message.id,
+                ),
                 metadata={
                     "chat_id": message.chat_id,
+                    "chat_slug": message.chat.slug,
                     "root_message_id": root.id,
                     "message_id": message.id,
                     "project_id": message.chat.project_id,
@@ -612,13 +622,13 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
                     body=message.content[:200] or "[Attachment]",
                     related_object_type="chat",
                     related_object_id=message.chat_id,
-                    action_url=(
-                        f"/messages?chatId={message.chat_id}"
-                        f"&projectId={message.chat.project_id}"
-                        f"&messageId={message_id}"
+                    action_url=build_messages_action_url(
+                        message.chat.slug,
+                        message_id=message_id,
                     ),
                     metadata={
                         "chat_id": message.chat_id,
+                        "chat_slug": message.chat.slug,
                         "message_id": message_id,
                         "project_id": message.chat.project_id,
                         "emoji": emoji,

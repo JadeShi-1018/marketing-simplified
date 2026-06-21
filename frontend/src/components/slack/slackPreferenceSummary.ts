@@ -48,7 +48,7 @@ export const getManageablePreferences = (
 export const getScopedPreferences = (
   preferences: NotificationPreference[],
   manageableProjects: SlackManageableProject[],
-  selectedProjectId: number | 'ALL'
+  selectedProjectId: number | string | 'ALL'
 ) => {
   const manageablePreferences = getManageablePreferences(preferences, manageableProjects);
   if (selectedProjectId === 'ALL') {
@@ -71,7 +71,7 @@ export const buildPreferenceSummary = ({
   preferences: NotificationPreference[];
   manageableProjects: SlackManageableProject[];
   connection: SlackConnectionStatus | null;
-  selectedProjectId: number | 'ALL';
+  selectedProjectId: number | string | 'ALL';
 }): PreferenceSummary => {
   const scopedPreferences = getScopedPreferences(
     preferences,

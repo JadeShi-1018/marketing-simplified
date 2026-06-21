@@ -6,7 +6,7 @@ app_name = "behavioral_tracking"
 
 urlpatterns = [
     path(
-        "tasks/<int:task_id>/engagement-summary/",
+        "tasks/<str:task_id>/engagement-summary/",
         TaskEngagementSummaryView.as_view(),
         name="task-engagement-summary",
     ),

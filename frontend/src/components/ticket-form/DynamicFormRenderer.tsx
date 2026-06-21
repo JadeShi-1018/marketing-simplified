@@ -19,7 +19,7 @@ import {
 } from './constants';
 
 interface Props {
-  experienceGroupId: number;
+  experienceGroupId: number | string;
   schema: RequestFormResponse;
   projectId?: number;
   variant?: DynamicFormFieldVariant;

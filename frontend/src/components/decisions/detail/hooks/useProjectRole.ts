@@ -51,7 +51,7 @@ function resolveLevel(role?: string | null): number {
   return ROLE_LEVELS[role.trim()] ?? EDIT_MAX_LEVEL;
 }
 
-export function useProjectRole(projectId: number | null): ProjectRoleInfo {
+export function useProjectRole(projectId: number | string | null): ProjectRoleInfo {
   const user = useAuthStore((s) => s.user);
   const [role, setRole] = useState<string | null>(null);
   const [members, setMembers] = useState<ProjectMember[]>([]);

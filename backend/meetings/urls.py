@@ -14,32 +14,32 @@ from meetings.views import (
 
 router = DefaultRouter()
 router.register(
-    r"projects/(?P<project_id>\d+)/meetings",
+    r"projects/(?P<project_id>[^/.]+)/meetings",
     MeetingViewSet,
     basename="project-meetings",
 )
 router.register(
-    r"projects/(?P<project_id>\d+)/meetings/(?P<meeting_id>\d+)/agenda-items",
+    r"projects/(?P<project_id>[^/.]+)/meetings/(?P<meeting_id>[^/.]+)/agenda-items",
     AgendaItemViewSet,
     basename="project-meeting-agenda-items",
 )
 router.register(
-    r"projects/(?P<project_id>\d+)/meetings/(?P<meeting_id>\d+)/participants",
+    r"projects/(?P<project_id>[^/.]+)/meetings/(?P<meeting_id>[^/.]+)/participants",
     ParticipantLinkViewSet,
     basename="project-meeting-participants",
 )
 router.register(
-    r"projects/(?P<project_id>\d+)/meetings/(?P<meeting_id>\d+)/artifacts",
+    r"projects/(?P<project_id>[^/.]+)/meetings/(?P<meeting_id>[^/.]+)/artifacts",
     ArtifactLinkViewSet,
     basename="project-meeting-artifacts",
 )
 router.register(
-    r"projects/(?P<project_id>\d+)/meetings/(?P<meeting_id>\d+)/action-items",
+    r"projects/(?P<project_id>[^/.]+)/meetings/(?P<meeting_id>[^/.]+)/action-items",
     MeetingActionItemViewSet,
     basename="project-meeting-action-items",
 )
 router.register(
-    r"projects/(?P<project_id>\d+)/meetings/(?P<meeting_id>\d+)/audit-log",
+    r"projects/(?P<project_id>[^/.]+)/meetings/(?P<meeting_id>[^/.]+)/audit-log",
     MeetingAuditLogViewSet,
     basename="project-meeting-audit-log",
 )
@@ -47,17 +47,17 @@ router.register(
 
 urlpatterns = [
     path(
-        "projects/<int:project_id>/meetings/<int:meeting_id>/action-items/<int:pk>/convert-to-task/",
+        "projects/<str:project_id>/meetings/<str:meeting_id>/action-items/<int:pk>/convert-to-task/",
         MeetingActionItemViewSet.as_view({"post": "convert_to_task"}),
         name="project-meeting-action-item-convert-to-task",
     ),
     path(
-        "projects/<int:project_id>/meetings/<int:meeting_id>/action-items/bulk-convert-to-tasks/",
+        "projects/<str:project_id>/meetings/<str:meeting_id>/action-items/bulk-convert-to-tasks/",
         MeetingActionItemViewSet.as_view({"post": "bulk_convert_to_tasks"}),
         name="project-meeting-action-items-bulk-convert-to-tasks",
     ),
     path(
-        "projects/<int:project_id>/meetings/<int:meeting_id>/document/",
+        "projects/<str:project_id>/meetings/<str:meeting_id>/document/",
         MeetingDocumentAPIView.as_view(),
     ),
     path("", include(router.urls)),

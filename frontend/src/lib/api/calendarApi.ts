@@ -62,11 +62,11 @@ export interface CreateCalendarPayload {
   description?: string;
 }
 
-const withProjectScope = (projectId?: number | null) =>
+const withProjectScope = (projectId?: number | string | null) =>
   projectId != null ? { params: { project_id: projectId } } : {};
 
 export const CalendarAPI = {
-  listCalendars: (projectId?: number | null) =>
+  listCalendars: (projectId?: number | string | null) =>
     api.get<CalendarDTO[]>("/api/calendars/", withProjectScope(projectId)),
 
   createCalendar: (payload: CreateCalendarPayload) =>
@@ -87,7 +87,7 @@ export const CalendarAPI = {
   getDayView: (params: {
     date: string;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/day/", {
       params: {
@@ -100,7 +100,7 @@ export const CalendarAPI = {
   getWeekView: (params: {
     start_date: string;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/week/", {
       params: {
@@ -114,7 +114,7 @@ export const CalendarAPI = {
     year: number;
     month: number;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/month/", {
       params: {
@@ -129,7 +129,7 @@ export const CalendarAPI = {
     start_date: string;
     end_date?: string;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/agenda/", {
       params: {
@@ -155,7 +155,7 @@ export const CalendarAPI = {
   getDerivedEvents: (params: {
     start: string;
     end: string;
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<{ count: number; results: DerivedCalendarEventDTO[] }>("/api/derived-events/", {
       params: {
@@ -176,6 +176,8 @@ export interface DerivedCalendarEventDTO {
   end_time: string | null;
   decision_id: number | null;
   task_id: number | null;
+  decision_slug: string | null;
+  task_slug: string | null;
   review_id: number | null;
   project_id: number | null;  // For permission header on navigation
 }
@@ -189,6 +191,8 @@ export function derivedEventToEventDTO(event: DerivedCalendarEventDTO): EventDTO
     event_type: event.event_type,
     decision_id: event.decision_id,
     task_id: event.task_id,
+    decision_slug: event.decision_slug,
+    task_slug: event.task_slug,
     review_id: event.review_id,
     project_id: event.project_id,  // Used to build correct navigation URL with permission
   });

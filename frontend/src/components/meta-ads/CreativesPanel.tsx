@@ -175,7 +175,8 @@ export default function CreativesPanel({
               if (disableGenerateVariations) return;
               if (selectedCreativeCount === 1) {
                 const onlyId = Array.from(selectedIds)[0];
-                router.push(`/variations-studio?creative=${onlyId}`);
+                const onlySlug = rows.find((r) => r.id === onlyId)?.slug;
+                router.push(`/variations-studio?creative=${onlySlug ?? onlyId}`);
               } else {
                 router.push('/variations-studio');
               }
@@ -294,7 +295,7 @@ function CreativeRow({
 }) {
   const thumb = thumbnailOrFallback(c.thumbnail_url);
   const isVideo = c.object_type === 'VIDEO' || !!c.video_id;
-  const detailHref = `/meta-ads/creatives/${c.id}`;
+  const detailHref = `/meta-ads/creatives/${c.slug}`;
   const display = c.title || c.name || c.meta_creative_id;
   return (
     <tr

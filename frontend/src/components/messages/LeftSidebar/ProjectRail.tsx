@@ -5,8 +5,8 @@ import { FolderOpen } from 'lucide-react';
 import { ProjectAPI, type ProjectData } from '@/lib/api/projectApi';
 
 interface ProjectRailProps {
-  selectedProjectId: number | null;
-  onSelectProject: (projectId: number) => void;
+  selectedProjectId: number | string | null;
+  onSelectProject: (projectId: number | string) => void;
 }
 
 function getInitials(name: string): string {

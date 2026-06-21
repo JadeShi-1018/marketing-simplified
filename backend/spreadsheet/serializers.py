@@ -31,10 +31,10 @@ class SpreadsheetSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Spreadsheet
-        fields = [
+        fields = ['slug', 
             'id', 'project', 'name', 'created_at', 'updated_at', 'is_deleted'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'is_deleted']
+        read_only_fields = ['slug', 'id', 'created_at', 'updated_at', 'is_deleted']
 
 
 class SpreadsheetCreateSerializer(serializers.ModelSerializer):

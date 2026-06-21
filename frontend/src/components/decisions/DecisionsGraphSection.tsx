@@ -8,6 +8,7 @@ import DecisionTree, { type DecisionTreeHandle, type DecisionTreeViewMode } from
 import DecisionFullscreenPanel from '@/components/decisions/DecisionFullscreenPanel';
 import DecisionTreeDetailPanel from '@/components/decisions/DecisionTreeDetailPanel';
 import DecisionTreeNavigator from '@/components/decisions/DecisionTreeNavigator';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 
 const DecisionTreeFlow = dynamic(() => import('@/components/decisions/DecisionTreeFlow'), {
   ssr: false,
@@ -39,12 +40,12 @@ type DecisionGraphWindow = Window & {
 
 interface Props {
   graph: DecisionGraphResponse | null;
-  projectId?: number | null;
+  projectId?: number | string | null;
   canEdit: boolean;
   canCreate?: boolean;
   onEditDecision: (node: DecisionGraphNode) => void;
   onDeleteDecision?: (node: DecisionGraphNode) => void;
-  onOpenFullPage?: (id: number, projectId?: number | null) => void;
+  onOpenFullPage?: (idOrSlug: number | string, projectId?: number | string | null) => void;
   createRequestKey?: number;
   onDecisionUpdated?: (opts?: {
     fullReload?: boolean;
@@ -100,13 +101,17 @@ export default function DecisionsGraphSection({
   );
 
   const autoLinkAttemptedRef = useRef<number | null>(null);
+  const numericProjectId = useMemo(
+    () => (typeof projectId === 'string' ? parseInt(projectId, 10) : (projectId ?? null)),
+    [projectId],
+  );
   useEffect(() => {
     if (!isGraphMode || !canEdit || !linkingEnabled || nodes.length < 2) return;
     if (serverEdges.length > 0) return;
-    if (hasSavedDecisionGraphLayout(projectId)) return;
-    if (!projectId) return;
-    if (autoLinkAttemptedRef.current === projectId) return;
-    autoLinkAttemptedRef.current = projectId;
+    if (hasSavedDecisionGraphLayout(numericProjectId)) return;
+    if (!numericProjectId) return;
+    if (autoLinkAttemptedRef.current === numericProjectId) return;
+    autoLinkAttemptedRef.current = numericProjectId;
 
     void handleAutoLinkSequence().then((linked) => {
       if (linked) setLayoutResetKey((key) => key + 1);
@@ -117,23 +122,38 @@ export default function DecisionsGraphSection({
     isGraphMode,
     linkingEnabled,
     nodes.length,
-    projectId,
+    numericProjectId,
     serverEdges.length,
   ]);
 
   const selectedGraphNode = useMemo(
-    () => nodes.find((n) => n.id === fullscreenSelectedId) ?? null,
+    () =>
+      nodes.find(
+        (n) =>
+          String(n.id) === String(fullscreenSelectedId) ||
+          n.slug === fullscreenSelectedId,
+      ) ?? null,
     [nodes, fullscreenSelectedId],
+  );
+
+  const resolvedSelectedNodeId = useMemo(
+    () =>
+      selectedGraphNode?.id ??
+      (typeof fullscreenSelectedId === 'number' ? fullscreenSelectedId : null) ??
+      provisionalDecisionId,
+    [selectedGraphNode, fullscreenSelectedId, provisionalDecisionId],
   );
 
   const handleSelectNode = (id: number) => {
     setStartInEditMode(false);
-    updateMapUrl({ fullscreen: true, decisionId: id });
+    // URLs are slug-only; emit the decision slug, never the numeric id.
+    const slug = nodes.find((n) => n.id === id)?.slug;
+    updateMapUrl({ fullscreen: true, decisionId: slug ?? id });
   };
 
   const handleEditNodeInTree = (node: DecisionGraphNode) => {
     setStartInEditMode(true);
-    updateMapUrl({ fullscreen: true, decisionId: node.id });
+    updateMapUrl({ fullscreen: true, decisionId: node.slug ?? node.id });
   };
 
   const handleDeleteNodeInTree = async (node: DecisionGraphNode) => {
@@ -141,9 +161,9 @@ export default function DecisionsGraphSection({
     const title = node.title?.trim() || 'Untitled decision';
     if (!window.confirm(`Delete "${title}"?`)) return;
     try {
-      await DecisionAPI.deleteDecision(node.id, node.projectId ?? projectId ?? null);
+      await DecisionAPI.deleteDecision(node.slug ?? node.id, node.projectId ?? projectId ?? null);
       toast.success('Decision deleted');
-      if (fullscreenSelectedId === node.id) {
+      if (resolvedSelectedNodeId === node.id) {
         updateMapUrl({ decisionId: null });
         setStartInEditMode(false);
       }
@@ -170,7 +190,7 @@ export default function DecisionsGraphSection({
       if (draft.id == null) {
         throw new Error('Draft created without id');
       }
-      updateMapUrl({ fullscreen: true, decisionId: draft.id });
+      updateMapUrl({ fullscreen: true, decisionId: draft.slug ?? draft.id });
       setProvisionalDecisionId(draft.id);
       setStartInEditMode(true);
     } catch (err) {
@@ -196,7 +216,7 @@ export default function DecisionsGraphSection({
 
         const parentTopic = parentNode.topic || null;
         await DecisionAPI.patchDraft(
-          draft.id,
+          draft.slug ?? draft.id,
           {
             ...(parentTopic ? { topic: parentTopic } : {}),
             parentDecisionIds: [parentNode.id],
@@ -206,7 +226,7 @@ export default function DecisionsGraphSection({
 
         toast.success('Follow-up decision added');
         await onDecisionUpdated?.({ fullReload: true });
-        updateMapUrl({ fullscreen: true, decisionId: draft.id });
+        updateMapUrl({ fullscreen: true, decisionId: draft.slug ?? draft.id });
         setProvisionalDecisionId(draft.id);
         setStartInEditMode(true);
       } catch (err) {
@@ -273,7 +293,7 @@ export default function DecisionsGraphSection({
 
   const handleMoveDecisionToTopic = async (
     decisionId: number,
-    fromProjectId: number,
+    fromProjectId: number | string,
     topic: string,
   ) => {
     try {
@@ -357,10 +377,10 @@ export default function DecisionsGraphSection({
     onRenameTopic: canEdit ? handleRenameTopic : undefined,
     onCreateTopic: canEdit ? handleCreateTopic : undefined,
     onDeleteTopic: canEdit ? handleDeleteTopic : undefined,
-    getDecisionUrl: (id: number, pid?: number | null) =>
-      `/decisions/${id}${pid ? `?project_id=${pid}` : ''}`,
-    getReviewUrl: (id: number, pid?: number | null) =>
-      `/decisions/${id}${pid ? `?project_id=${pid}` : ''}`,
+    getDecisionUrl: (idOrSlug: number | string, pid?: number | string | null) =>
+      pid ? nestedProjectPath(pid, `/decisions/${idOrSlug}`) : `/decisions/${idOrSlug}`,
+    getReviewUrl: (idOrSlug: number | string, pid?: number | string | null) =>
+      pid ? nestedProjectPath(pid, `/decisions/${idOrSlug}/review`) : `/decisions/${idOrSlug}/review`,
   };
 
   const embeddedViewport = {
@@ -408,12 +428,12 @@ export default function DecisionsGraphSection({
       ref={embeddedTreeRef}
       nodes={nodes}
       edges={links.edges}
-      projectId={projectId}
+      projectId={numericProjectId}
       topics={graph?.topics ?? []}
       canEdit={canEdit}
       canCreate={canCreate}
       focusNodeId={focusNodeId}
-      selectedNodeId={fullscreen ? fullscreenSelectedId : null}
+      selectedNodeId={fullscreen ? resolvedSelectedNodeId : null}
       linkingEnabled={links.linkingEnabled}
       linkingDisabled={links.linkingDisabled}
       onCreateDecision={canCreate ? handleTreeCreateDecision : undefined}
@@ -445,12 +465,12 @@ export default function DecisionsGraphSection({
       ref={fullscreenTreeRef}
       nodes={nodes}
       edges={links.edges}
-      projectId={projectId}
+      projectId={numericProjectId}
       topics={graph?.topics ?? []}
       canEdit={canEdit}
       canCreate={canCreate}
       focusNodeId={focusNodeId}
-      selectedNodeId={fullscreen ? fullscreenSelectedId : null}
+      selectedNodeId={fullscreen ? resolvedSelectedNodeId : null}
       linkingEnabled={links.linkingEnabled}
       linkingDisabled={links.linkingDisabled}
       onCreateDecision={canCreate ? handleTreeCreateDecision : undefined}
@@ -471,9 +491,9 @@ export default function DecisionsGraphSection({
     <DecisionTree
       ref={fullscreenTreeRef}
       {...treeCommon}
-      autoFocusToday={!focusDateKey && focusNodeId == null && fullscreenSelectedId == null}
+      autoFocusToday={!focusDateKey && focusNodeId == null && resolvedSelectedNodeId == null}
       onZoomPercentChange={setFullscreenZoomPercent}
-      selectedNodeId={fullscreenSelectedId}
+      selectedNodeId={resolvedSelectedNodeId}
       onSelectNode={handleSelectNode}
     />
   );
@@ -524,26 +544,27 @@ export default function DecisionsGraphSection({
       title="Decision Map"
       splitLayout
     >
-      {creating && fullscreenSelectedId == null ? (
+      {creating && resolvedSelectedNodeId == null ? (
         <aside className="flex h-full w-[400px] shrink-0 flex-col items-center justify-center gap-2 border-r border-gray-200 bg-gray-50 text-sm text-gray-500">
           <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
           Creating decision…
         </aside>
       ) : null}
-      {fullscreenSelectedId != null ? (
+      {resolvedSelectedNodeId != null ? (
         <DecisionTreeDetailPanel
-          key={fullscreenSelectedId}
-          decisionId={fullscreenSelectedId}
-          projectId={selectedGraphNode?.projectId ?? projectId ?? null}
+          key={resolvedSelectedNodeId}
+          decisionId={resolvedSelectedNodeId}
+          decisionSlug={selectedGraphNode?.slug ?? null}
+          projectId={projectId ?? selectedGraphNode?.projectId ?? null}
           graphNodeStatus={selectedGraphNode?.status ?? 'DRAFT'}
           canEdit={canEdit}
           startInEditMode={startInEditMode}
           onStartInEditModeConsumed={() => setStartInEditMode(false)}
-          isProvisional={fullscreenSelectedId === provisionalDecisionId}
+          isProvisional={resolvedSelectedNodeId === provisionalDecisionId}
           onProvisionalSaved={() => setProvisionalDecisionId(null)}
           onDiscardProvisional={discardProvisionalDecision}
           onClose={() => {
-            if (fullscreenSelectedId === provisionalDecisionId) {
+            if (resolvedSelectedNodeId === provisionalDecisionId) {
               void discardProvisionalDecision();
               return;
             }

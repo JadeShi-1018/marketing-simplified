@@ -85,8 +85,9 @@ function ApprovalActions({
   const [loading, setLoading] = useState<"approve" | "reject" | null>(null);
 
   const handleApproval = async (action: "approve" | "reject") => {
-    const taskId = parseInt(notification.related_object_id, 10);
-    if (isNaN(taskId)) {
+    // Task action routes are slug-only; prefer the slug, fall back to the raw id.
+    const taskId = notification.related_object_slug ?? notification.related_object_id;
+    if (!taskId) {
       toast.error("Invalid task ID");
       return;
     }

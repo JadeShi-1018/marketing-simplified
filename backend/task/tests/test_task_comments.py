@@ -54,7 +54,7 @@ class TaskCommentAPITest(APITestCase):
 
     def test_create_task_comment_success(self):
         """Authenticated project member can create a comment on a task."""
-        url = self._get_comments_url(self.task.id)
+        url = self._get_comments_url(self.task.slug)
         data = {"body": "First task comment"}
 
         response = self.client.post(url, data, format="json")
@@ -78,7 +78,7 @@ class TaskCommentAPITest(APITestCase):
         TaskComment.objects.create(task=self.task, user=self.user, body="Comment 1")
         TaskComment.objects.create(task=self.task, user=self.user, body="Comment 2")
 
-        url = self._get_comments_url(self.task.id)
+        url = self._get_comments_url(self.task.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -98,7 +98,7 @@ class TaskCommentAPITest(APITestCase):
         """Unauthenticated requests cannot create or list comments."""
         self.client.force_authenticate(user=None)
 
-        url = self._get_comments_url(self.task.id)
+        url = self._get_comments_url(self.task.slug)
 
         # List
         response_get = self.client.get(url)
@@ -114,7 +114,7 @@ class TaskCommentAPITest(APITestCase):
         # Authenticate as other_user (not a member of project)
         self.client.force_authenticate(user=self.other_user)
 
-        url = self._get_comments_url(self.task.id)
+        url = self._get_comments_url(self.task.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -123,7 +123,7 @@ class TaskCommentAPITest(APITestCase):
         """Non-project member cannot create task comments."""
         self.client.force_authenticate(user=self.other_user)
 
-        url = self._get_comments_url(self.task.id)
+        url = self._get_comments_url(self.task.slug)
         response = self.client.post(url, {"body": "Should not work"}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -131,14 +131,14 @@ class TaskCommentAPITest(APITestCase):
 
     def test_create_comment_for_nonexistent_task(self):
         """Creating comment for non-existent task returns 404."""
-        url = self._get_comments_url(999999)
+        url = self._get_comments_url("nonexistent-task")
         response = self.client.post(url, {"body": "Test"}, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_list_comments_for_nonexistent_task(self):
         """Listing comments for non-existent task returns 404."""
-        url = self._get_comments_url(999999)
+        url = self._get_comments_url("nonexistent-task")
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -5,8 +5,8 @@ import { ChevronDown, FolderOpen, Check } from 'lucide-react';
 import { ProjectAPI, type ProjectData } from '@/lib/api/projectApi';
 
 interface ProjectSelectorProps {
-  selectedProjectId: number | null;
-  onSelectProject: (projectId: number) => void;
+  selectedProjectId: number | string | null;
+  onSelectProject: (projectId: number | string) => void;
 }
 
 export default function ProjectSelector({
@@ -31,10 +31,13 @@ export default function ProjectSelector({
           // Check localStorage for last selected project
           const savedProjectId = localStorage.getItem('messages_selected_project');
           if (savedProjectId) {
-            const savedId = parseInt(savedProjectId, 10);
-            const exists = projectList.some(p => p.id === savedId);
-            if (exists) {
-              onSelectProject(savedId);
+            const matched = projectList.find(
+              (p) =>
+                String(p.id) === savedProjectId ||
+                (p.slug !== undefined && p.slug === savedProjectId)
+            );
+            if (matched) {
+              onSelectProject(matched.id);
             } else {
               onSelectProject(projectList[0].id);
             }
@@ -64,13 +67,22 @@ export default function ProjectSelector({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleSelectProject = (projectId: number) => {
+  const isProjectSelected = (project: ProjectData) => {
+    if (selectedProjectId === null) return false;
+    return (
+      project.id === selectedProjectId ||
+      String(project.id) === String(selectedProjectId) ||
+      (project.slug !== undefined && project.slug === selectedProjectId)
+    );
+  };
+
+  const handleSelectProject = (projectId: number | string) => {
     onSelectProject(projectId);
     localStorage.setItem('messages_selected_project', String(projectId));
     setIsOpen(false);
   };
 
-  const selectedProject = projects.find(p => p.id === selectedProjectId);
+  const selectedProject = projects.find(isProjectSelected);
 
   if (isLoading) {
     return (
@@ -108,38 +120,41 @@ export default function ProjectSelector({
       {/* Dropdown */}
       {isOpen && (
         <div className="task-tab-scrollbar absolute top-full left-0 mt-1 w-full min-w-[250px] bg-white border border-gray-200 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              onClick={() => handleSelectProject(project.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left ${
-                project.id === selectedProjectId ? 'bg-[#3CCED7]/10' : ''
-              }`}
-            >
-              <FolderOpen
-                className={`w-4 h-4 flex-shrink-0 ${
-                  project.id === selectedProjectId ? 'text-[#3CCED7]' : 'text-gray-400'
+          {projects.map((project) => {
+            const isSelected = isProjectSelected(project);
+            return (
+              <button
+                key={project.id}
+                onClick={() => handleSelectProject(project.id)}
+                className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors text-left ${
+                  isSelected ? 'bg-[#3CCED7]/10' : ''
                 }`}
-              />
-              <div className="flex-1 min-w-0">
-                <p
-                  className={`text-sm font-medium truncate ${
-                    project.id === selectedProjectId ? 'text-[#3CCED7]' : 'text-gray-700'
+              >
+                <FolderOpen
+                  className={`w-4 h-4 flex-shrink-0 ${
+                    isSelected ? 'text-[#3CCED7]' : 'text-gray-400'
                   }`}
-                >
-                  {project.name}
-                </p>
-                {project.member_count && (
-                  <p className="text-xs text-gray-500">
-                    {project.member_count} member{project.member_count !== 1 ? 's' : ''}
+                />
+                <div className="flex-1 min-w-0">
+                  <p
+                    className={`text-sm font-medium truncate ${
+                      isSelected ? 'text-[#3CCED7]' : 'text-gray-700'
+                    }`}
+                  >
+                    {project.name}
                   </p>
+                  {project.member_count && (
+                    <p className="text-xs text-gray-500">
+                      {project.member_count} member{project.member_count !== 1 ? 's' : ''}
+                    </p>
+                  )}
+                </div>
+                {isSelected && (
+                  <Check className="w-4 h-4 text-[#3CCED7] flex-shrink-0" />
                 )}
-              </div>
-              {project.id === selectedProjectId && (
-                <Check className="w-4 h-4 text-[#3CCED7] flex-shrink-0" />
-              )}
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

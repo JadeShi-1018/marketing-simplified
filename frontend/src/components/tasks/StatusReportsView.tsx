@@ -29,6 +29,7 @@ import { formatTaskDateShort } from '@/lib/tasks/taskDates';
 
 interface TaskStub {
   id: number;
+  slug?: string;
   summary: string;
   type: string;
   status: string;
@@ -243,7 +244,7 @@ function SectionCard({ icon, title, count, children }: {
 function TaskRow({ task }: { task: TaskStub }) {
   return (
     <a
-      href={`/tasks/${task.id}`}
+      href={`/tasks/${task.slug}`}
       target="_blank"
       rel="noreferrer"
       className="flex items-start gap-2 rounded-lg px-2 py-1.5 text-sm transition hover:bg-gray-50"
@@ -264,9 +265,11 @@ function EmptyState({ text }: { text: string }) {
   return <p className="text-xs text-gray-400 italic">{text}</p>;
 }
 
+import { Id } from '@/types/common';
+
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function StatusReportsView({ projectId }: { projectId: number | null }) {
+export default function StatusReportsView({ projectId }: { projectId: Id | null }) {
   const [period, setPeriod] = useState<'week' | 'month' | 'custom'>('week');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');

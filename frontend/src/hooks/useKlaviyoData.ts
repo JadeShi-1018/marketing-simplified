@@ -1,6 +1,7 @@
 // Klaviyo Draft Types
 export interface KlaviyoDraft {
   id: number;
+  slug?: string;
   user: number | null;
   name: string | null;
   subject: string;

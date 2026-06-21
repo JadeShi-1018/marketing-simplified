@@ -10,7 +10,8 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { GoogleAdsAPI } from '@/lib/api/googleAdsApi';
 
 function GoogleAdsDetailPageContent() {
-  const { adId } = useParams();
+  const params = useParams<{ adId: string }>();
+  const adId = params?.adId ? String(params.adId) : null;
   const router = useRouter();
   const { user, logout } = useAuth();
   const { currentAd, loading, fetchAd } = useGoogleAdsData();
@@ -33,7 +34,7 @@ function GoogleAdsDetailPageContent() {
 
   useEffect(() => {
     if (adId) {
-      fetchAd(parseInt(adId as string));
+      fetchAd(adId);
     }
   }, [adId, fetchAd]);
 

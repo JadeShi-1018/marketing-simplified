@@ -16,12 +16,12 @@ class QueueSerializer(serializers.ModelSerializer):
     class Meta:
         model = Queue
         fields = [
-            'id', 'project', 'organisation', 'organisation_name',
+            'id', 'slug', 'project', 'organisation', 'organisation_name',
             'name', 'description',
             'tier', 'tier_display',
             'display_order', 'is_active', 'created_at',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'slug', 'created_at']
 
 
 class QueueAgentSerializer(serializers.ModelSerializer):
@@ -302,11 +302,11 @@ class TicketFormListSerializer(serializers.ModelSerializer):
     class Meta:
         model = TicketForm
         fields = [
-            'id', 'project', 'name', 'description',
+            'id', 'slug', 'project', 'name', 'description',
             'is_default', 'is_active', 'assignment_count',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'assignment_count']
+        read_only_fields = ['id', 'slug', 'created_at', 'updated_at', 'assignment_count']
 
 
 class TicketFormDetailSerializer(serializers.ModelSerializer):
@@ -315,11 +315,11 @@ class TicketFormDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = TicketForm
         fields = [
-            'id', 'project', 'name', 'description',
+            'id', 'slug', 'project', 'name', 'description',
             'is_default', 'is_active', 'fields',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'project', 'is_default', 'created_at', 'updated_at', 'fields']
+        read_only_fields = ['id', 'slug', 'project', 'is_default', 'created_at', 'updated_at', 'fields']
 
 
 class TicketFormCreateSerializer(serializers.ModelSerializer):

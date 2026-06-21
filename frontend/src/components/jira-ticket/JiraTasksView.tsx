@@ -24,6 +24,7 @@ interface MemberOption {
 
 export type JiraTaskItem = {
   id: number | string;
+  slug?: string;
   summary: string;
   type: string;
   status: string;
@@ -40,6 +41,7 @@ export type JiraTaskItem = {
   issueKey?: string;
   content_type?: string;
   object_id?: string;
+  linked_object_slug?: string | null;
   statusRaw?: string;
 };
 
@@ -298,7 +300,7 @@ const JiraTasksList = ({
                       <span className="text-slate-400" title="From decision">
                         From{" "}
                         <Link
-                          href={`/decisions/${task.object_id}${task.projectId ? `?project_id=${task.projectId}` : ""}`}
+                          href={`/decisions/${task.linked_object_slug ?? task.object_id}`}
                           className="text-indigo-600 hover:text-indigo-800 hover:underline"
                           onClick={(e) => e.stopPropagation()}
                         >
@@ -686,7 +688,7 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
     if (Number.isNaN(taskId)) return;
     setSavingDescription(true);
     try {
-      await TaskAPI.updateTask(taskId, { description: descriptionDraft });
+      await TaskAPI.updateTask(selectedTask.slug ?? taskId, { description: descriptionDraft });
       setDescriptionOverrides((prev) => ({
         ...prev,
         [selectedTask.id]: descriptionDraft,
@@ -720,9 +722,10 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
     if (!editingSubtaskId || !subtaskSummaryDraft.trim()) return;
     setSavingSubtaskSummary(true);
     try {
-      await TaskAPI.updateTask(editingSubtaskId, {
-        summary: subtaskSummaryDraft.trim(),
-      });
+      await TaskAPI.updateTask(
+        subtasks.find((t) => t.id === editingSubtaskId)?.slug ?? editingSubtaskId,
+        { summary: subtaskSummaryDraft.trim() },
+      );
       setSubtasks((prev) =>
         prev.map((t) =>
           t.id === editingSubtaskId
@@ -776,7 +779,7 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
     if (Number.isNaN(taskId)) return;
     setSavingAssignee(true);
     try {
-      const response = await TaskAPI.updateTask(taskId, {
+      const response = await TaskAPI.updateTask(selectedTask.slug ?? taskId, {
         owner_id: ownerId ? Number(ownerId) : null,
       } as any);
       const updated = response.data as TaskData;
@@ -809,7 +812,7 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
     if (Number.isNaN(taskId)) return;
     setSavingApprover(true);
     try {
-      const response = await TaskAPI.updateTask(taskId, {
+      const response = await TaskAPI.updateTask(selectedTask.slug ?? taskId, {
         current_approver_id: approverId ? Number(approverId) : undefined,
       });
       const updated = response.data as TaskData;
@@ -843,7 +846,7 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
     setSavingDueDate(true);
     try {
       const value = dueDate || undefined;
-      const response = await TaskAPI.updateTask(taskId, { due_date: value });
+      const response = await TaskAPI.updateTask(selectedTask.slug ?? taskId, { due_date: value });
       const updated = response.data as TaskData;
       const key = selectedTask.id;
       setDetailsOverrides((prev) => ({
@@ -1014,7 +1017,7 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
                         <span className="text-slate-400 text-[11px]">
                           From{" "}
                           <Link
-                            href={`/decisions/${selectedTask.object_id}${selectedTask.projectId ? `?project_id=${selectedTask.projectId}` : ""}`}
+                            href={`/decisions/${selectedTask.linked_object_slug ?? selectedTask.object_id}`}
                             className="text-indigo-600 hover:text-indigo-800 hover:underline"
                           >
                             Decision #{selectedTask.object_id}
@@ -1229,7 +1232,7 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   if (subtask.id)
-                                    router.push(`/tasks/${subtask.id}`);
+                                    router.push(`/tasks/${subtask.slug}`);
                                 }}
                                 className="text-xs text-slate-500 hover:text-indigo-600"
                               >
@@ -1419,7 +1422,7 @@ const JiraTasksView: React.FC<JiraTasksViewProps> = ({
         onConfirm={async () => {
           if (!taskToDelete) return;
           try {
-            await TaskAPI.deleteTask(Number(taskToDelete.id));
+            await TaskAPI.deleteTask(taskToDelete.slug ?? Number(taskToDelete.id));
             toast.success("Task deleted");
             onTaskUpdate?.();
           } catch (err: unknown) {

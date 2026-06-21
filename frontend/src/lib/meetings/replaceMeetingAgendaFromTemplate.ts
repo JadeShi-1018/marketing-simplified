@@ -6,8 +6,8 @@ import type { NestedAgendaTemplateSection } from '@/lib/meetings/meetingTemplate
  * and returns layout_config with nested item ids aligned to backend agenda ids.
  */
 export async function replaceAgendaAndLayoutFromNested(
-  projectId: number,
-  meetingId: number,
+  projectId: number | string,
+  meetingId: number | string,
   blocks: unknown[],
   nestedSections: NestedAgendaTemplateSection[],
 ): Promise<{ blocks: unknown[]; nestedSections: NestedAgendaTemplateSection[] }> {

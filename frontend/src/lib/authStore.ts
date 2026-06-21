@@ -42,7 +42,7 @@ interface AuthState {
   // Authentication actions
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string; statusCode?: number; errorCode?: string }>;
   logout: () => Promise<void>;
-  getCurrentUser: () => Promise<{ success: boolean; error?: string }>;
+  getCurrentUser: () => Promise<{ success: boolean; error?: string; retryable?: boolean }>;
   getUserTeams: () => Promise<{ success: boolean; error?: string }>;
   refreshOrganizationAccessToken: () => Promise<{ success: boolean; error?: string }>;
   

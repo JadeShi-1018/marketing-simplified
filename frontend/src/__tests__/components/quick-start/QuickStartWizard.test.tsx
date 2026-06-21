@@ -15,6 +15,7 @@ jest.mock('next/navigation', () => ({
     push: mockPush,
     back: jest.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 jest.mock('react-hot-toast', () => ({
@@ -126,9 +127,11 @@ describe('QuickStartWizard', () => {
       created: {
         task_ids: [1, 2],
         spreadsheet_ids: [3],
+        spreadsheet_slugs: ['q1-meta-budget'],
         calendar_event_ids: ['evt-1'],
         decision_ids: [],
         miro_board_ids: [],
+        miro_board_slugs: [],
       },
       summary: {
         tasks: 2,
@@ -203,7 +206,7 @@ describe('QuickStartWizard', () => {
       expect.objectContaining({
         projectId: 42,
         projectName: 'Q1 Meta Launch',
-        spreadsheetId: 3,
+        spreadsheetId: 'q1-meta-budget',
       })
     );
     expect(mockPush).toHaveBeenCalledWith('/overview');

@@ -8,7 +8,7 @@ import { TaskRelationsResponse, TaskRelationItem, userDisplayName } from '@/type
 import LinkTaskModal from './LinkTaskModal';
 
 interface LinkedWorkItemsProps {
-  taskId: number;
+  taskId: number | string;
 }
 
 // Relationship type labels for display
@@ -81,8 +81,8 @@ export default function LinkedWorkItems({ taskId }: LinkedWorkItemsProps) {
     setIsModalOpen(false);
   };
 
-  const handleTaskClick = (taskId: number) => {
-    router.push(`/tasks/${taskId}`);
+  const handleTaskClick = (taskKey: number | string) => {
+    router.push(`/tasks/${taskKey}`);
   };
 
   // Get all non-empty relationship groups
@@ -140,7 +140,7 @@ export default function LinkedWorkItems({ taskId }: LinkedWorkItemsProps) {
                   return (
                     <div
                       key={item.relation_id}
-                      onClick={() => task.id && handleTaskClick(task.id)}
+                      onClick={() => task.id && handleTaskClick(task.slug ?? task.id)}
                       className="flex cursor-pointer items-center justify-between px-3 py-2 transition-colors hover:bg-slate-50"
                     >
                       <div className="flex flex-1 items-center space-x-3">

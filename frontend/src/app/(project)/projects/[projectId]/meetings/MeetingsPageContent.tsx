@@ -74,7 +74,7 @@ function MeetingsPageInner() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const projectIdParam = params?.projectId as string | undefined;
-  const projectId = projectIdParam ? Number(projectIdParam) : NaN;
+  const projectId = projectIdParam ?? '';
   const currentUserIdRaw = useAuthStore((state) => state.user?.id);
   const currentUserId = useMemo(() => {
     if (currentUserIdRaw == null) return undefined;
@@ -154,7 +154,7 @@ function MeetingsPageInner() {
   );
 
   useEffect(() => {
-    if (!projectId || Number.isNaN(projectId)) {
+    if (!projectId) {
       setError('Project ID is required');
       setProject(null);
       setAvailableProjects([]);
@@ -170,7 +170,7 @@ function MeetingsPageInner() {
 
         const projects = await ProjectAPI.getProjects();
         setAvailableProjects(projects);
-        let current = projects.find((p) => Number(p.id) === projectId) || null;
+        let current = projects.find((p) => String(p.id) === projectId || p.slug === projectId) || null;
         if (!current) {
           try {
             current = await ProjectAPI.getProject(projectId);
@@ -201,7 +201,7 @@ function MeetingsPageInner() {
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId || Number.isNaN(projectId)) return;
+    if (!projectId) return;
     void fetchUnifiedMeetingTemplateOptions()
       .then(setUnifiedTemplateOptions)
       .catch((err) => {
@@ -211,7 +211,7 @@ function MeetingsPageInner() {
   }, [projectId]);
 
   useEffect(() => {
-    if (!projectId || Number.isNaN(projectId)) {
+    if (!projectId) {
       setListLoading(false);
       setListPage(null);
       return;
@@ -259,7 +259,7 @@ function MeetingsPageInner() {
   }, [projectId, listMeetingsFetchKey, pageLoading]);
 
   const refetchList = useCallback(async () => {
-    if (!projectId || Number.isNaN(projectId)) return;
+    if (!projectId) return;
     try {
       const data = await MeetingsAPI.listMeetingsPaginated(
         projectId,
@@ -272,8 +272,8 @@ function MeetingsPageInner() {
   }, [projectId, listMeetingsApiParams]);
 
   const handleProjectSelect = (nextProjectIdRaw: string) => {
-    const nextProjectId = Number(nextProjectIdRaw);
-    if (!Number.isFinite(nextProjectId) || Number.isNaN(nextProjectId)) return;
+    const nextProjectId = nextProjectIdRaw;
+    if (!nextProjectId) return;
     if (nextProjectId === projectId) return;
     router.push(`/projects/${nextProjectId}/meetings`);
   };
@@ -304,7 +304,7 @@ function MeetingsPageInner() {
     scheduledTime?: string;
     participantUserIds: number[];
   }) => {
-    if (!projectId || Number.isNaN(projectId)) {
+    if (!projectId) {
       toast.error('Project ID is required');
       return;
     }
@@ -383,7 +383,7 @@ function MeetingsPageInner() {
       setSelectedMeetingId(null);
       setRightPanelOpen(false);
       await refetchList();
-      router.push(`/projects/${projectId}/meetings/${meeting.id}`);
+      router.push(`/projects/${project?.slug ?? projectId}/meetings/${meeting.slug}`);
     } catch (err: unknown) {
       console.error('Failed to create meeting:', err);
       toast.error(formatMeetingsApiError(err, 'Failed to create meeting'));
@@ -752,9 +752,9 @@ function MeetingsPageInner() {
                       <select
                         id="meetings-project-select"
                         value={
-                          Number.isFinite(projectId) &&
-                          projectsForSelect.some((p) => p.id === projectId)
-                            ? String(projectId)
+                          projectId &&
+                          projectsForSelect.some((p) => String(p.id) === projectId || p.slug === projectId)
+                            ? (projectsForSelect.find((p) => String(p.id) === projectId || p.slug === projectId)?.slug || projectId)
                             : ''
                         }
                         disabled={pageLoading || projectsForSelect.length === 0}
@@ -764,7 +764,7 @@ function MeetingsPageInner() {
                       >
                         {projectsForSelect.length > 0 ? (
                           projectsForSelect.map((p) => (
-                            <option key={p.id} value={String(p.id)}>
+                            <option key={p.id} value={p.slug || String(p.id)}>
                               {p.name}
                             </option>
                           ))
@@ -846,7 +846,7 @@ function MeetingsPageInner() {
                             setRightPanelOpen(true);
                           }}
                           memberLabel={memberLabel}
-                          projectId={Number.isFinite(projectId) ? projectId : undefined}
+                          projectId={projectId}
                           count={incomingRows.length}
                           page={1}
                           pageSize={Math.max(1, incomingRows.length || 1)}
@@ -884,7 +884,7 @@ function MeetingsPageInner() {
                             setRightPanelOpen(true);
                           }}
                           memberLabel={memberLabel}
-                          projectId={Number.isFinite(projectId) ? projectId : undefined}
+                          projectId={projectId}
                           count={completedRows.length}
                           page={1}
                           pageSize={Math.max(1, completedRows.length || 1)}
@@ -942,8 +942,7 @@ function MeetingsPageInner() {
             open={
               selectedMeetingId != null &&
               rightPanelOpen &&
-              Number.isFinite(projectId) &&
-              !Number.isNaN(projectId)
+              projectId !== ''
             }
             onOpenChange={(open) => {
               if (!open) setRightPanelOpen(false);
@@ -956,8 +955,7 @@ function MeetingsPageInner() {
             >
               <DialogTitle className="sr-only">Meeting details</DialogTitle>
               {selectedMeetingId != null &&
-              Number.isFinite(projectId) &&
-              !Number.isNaN(projectId) ? (
+              projectId !== '' ? (
                 <MeetingSummaryPanel
                   key={selectedMeetingId}
                   projectId={projectId}
@@ -981,7 +979,7 @@ function MeetingsPageInner() {
           open={isCreateModalOpen}
           onOpenChange={setIsCreateModalOpen}
           creating={creating}
-          projectId={Number.isFinite(projectId) ? projectId : 0}
+          projectId={projectId}
           templateOptions={unifiedTemplateOptions}
           onSubmit={handleCreate}
         />

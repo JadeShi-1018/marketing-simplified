@@ -21,11 +21,11 @@ class BoardSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Board
-        fields = [
+        fields = ['slug', 
             'id', 'project_id', 'title', 'share_token', 'viewport',
             'is_archived', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'share_token', 'created_at', 'updated_at']
+        read_only_fields = ['slug', 'id', 'share_token', 'created_at', 'updated_at']
 
     def to_representation(self, instance):
         """Convert project FK to project_id in response"""

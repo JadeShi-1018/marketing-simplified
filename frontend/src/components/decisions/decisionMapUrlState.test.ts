@@ -19,7 +19,7 @@ describe('decisionMapUrlState', () => {
       fullscreen: true,
       decisionId: 42,
     });
-    expect(next.toString()).toBe('project_id=1&map=graph&fullscreen=1&decision=42');
+    expect(next.toString()).toBe('map=graph&fullscreen=1&decision=42');
     expect(readDecisionMapUrlState(next)).toEqual({
       mode: 'tree',
       fullscreen: true,

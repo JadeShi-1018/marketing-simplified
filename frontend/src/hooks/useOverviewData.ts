@@ -121,7 +121,7 @@ export interface UseOverviewDataReturn {
   errors: Record<string, string>;
 }
 
-export function useOverviewData(projectId: number | null | undefined): UseOverviewDataReturn {
+export function useOverviewData(projectId: number | string | null | undefined): UseOverviewDataReturn {
   const [data, setData] = useState<OverviewMock>(EMPTY_DATA);
   const [alerts, setAlerts] = useState<AlertData[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -268,7 +268,7 @@ export function useOverviewData(projectId: number | null | undefined): UseOvervi
         const pool = upcomingMeetings.slice(0, 5);
         const aiResults = await Promise.allSettled(
           pool.map((m) =>
-            MeetingsAPI.listMeetingActionItems(pid, m.id).then((items) => ({
+            MeetingsAPI.listMeetingActionItems(pid, m.slug ?? m.id).then((items) => ({
               meetingId: m.id,
               meetingTitle: m.title,
               items,

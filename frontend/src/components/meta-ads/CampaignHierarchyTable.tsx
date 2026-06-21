@@ -207,7 +207,7 @@ export default function CampaignHierarchyTable({
                       </td>
                       <td className="px-4 py-2.5">
                         <Link
-                          href={`/meta-ads/campaigns/${c.id}`}
+                          href={`/meta-ads/campaigns/${c.slug}`}
                           className="block max-w-[420px] truncate text-xs font-medium text-gray-900 hover:text-[#1a9ba3]"
                         >
                           {c.name || c.meta_campaign_id}
@@ -377,7 +377,7 @@ function AdSetInset({
                     </td>
                     <td className="px-3 py-1.5">
                       <Link
-                        href={`/meta-ads/adsets/${a.id}`}
+                        href={`/meta-ads/adsets/${a.slug}`}
                         className="block max-w-[420px] truncate text-xs text-gray-900 hover:text-[#1a9ba3]"
                       >
                         {a.name || a.meta_adset_id}
@@ -562,7 +562,7 @@ function AdsInset({
                       </span>
                       {ad.creative?.meta_creative_id && (
                         <Link
-                          href={`/meta-ads/creatives/${ad.creative.id}`}
+                          href={`/meta-ads/creatives/${ad.creative.slug}`}
                           className="font-mono text-gray-400 hover:text-[#1a9ba3]"
                         >
                           creative {ad.creative.meta_creative_id}

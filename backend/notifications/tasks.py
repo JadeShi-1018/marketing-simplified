@@ -161,7 +161,7 @@ def fire_task_overdue_notifications() -> int:
                 body=f"This task was due on {task.due_date}.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=task_action_url(task.id),
+                action_url=task_action_url(task.slug),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -224,7 +224,7 @@ def fire_decision_deadline_notifications() -> int:
         )
         label = decision.title or f"Decision #{decision.project_seq}"
         action_url = (
-            decision_action_url(decision.id, decision.project_id)
+            decision_action_url(decision.slug, decision.project_id)
             if decision.project_id
             else ""
         )
@@ -329,7 +329,7 @@ def fire_meeting_starting_soon_notifications() -> int:
                     body=f"Your meeting starts in {start_label}.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=meeting_action_url(meeting.id, meeting.project_id),
+                    action_url=meeting_action_url(meeting.slug, meeting.project_id),
                     metadata={
                         "change_type": "meeting_start",
                         "start_time": start_label,
@@ -362,6 +362,7 @@ def fire_message_reminders() -> int:
     has arrived and have not yet been dispatched.
     """
     from chat.models import MessageReminder
+    from chat.url_helpers import build_messages_action_url
     from notifications.models import NotificationCategory, NotificationEventType
     from notifications.services import create_notification
 
@@ -386,7 +387,7 @@ def fire_message_reminders() -> int:
             chat = message.chat
 
             # Build action URL to navigate to the message
-            action_url = f"/messages?chatId={chat.id}&messageId={message.id}&projectId={chat.project_id}"
+            action_url = build_messages_action_url(chat.slug, message_id=message.id)
 
             # Truncate message content for notification body
             content_preview = message.content[:200] if message.content else "[Attachment]"

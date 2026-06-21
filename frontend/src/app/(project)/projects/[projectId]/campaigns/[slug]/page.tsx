@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
@@ -25,12 +25,12 @@ import SaveAsTemplateDialog from '@/components/campaigns/modals/SaveAsTemplateDi
 
 export default function CampaignV2DetailPage() {
   const router = useRouter();
-  const params = useParams();
-  const searchParams = useSearchParams();
-  const campaignId = params?.id as string;
-  const projectIdParam = searchParams?.get('project_id');
+  const params = useParams<{ projectId: string; slug: string }>();
+  const campaignId = params?.slug as string;
+
+  // Nested route — project slug comes from the path segment.
+  const projectId = String(params?.projectId || '');
   const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
 
   const { currentCampaign, loading, error, fetchCampaign, updateCampaign } = useCampaignData();
 

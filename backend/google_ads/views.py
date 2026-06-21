@@ -8,6 +8,8 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.http import Http404
+
+from core.slug_mixins import resolve_pk_for  # resolve an ad id that may be a slug or a legacy pk
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.conf import settings
@@ -77,7 +79,7 @@ class AdDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_object(self):
         """Get ad object"""
-        ad_id = self.kwargs['ad_id']
+        ad_id = resolve_pk_for(Ad, self.kwargs['ad_id'])
         return get_object_or_404(
             self.get_queryset(),
             id=ad_id
@@ -137,7 +139,7 @@ class AdByAccountView(generics.RetrieveUpdateDestroyAPIView):
     def get_object(self):
         """Get specific ad based on customer_id and ad_id"""
         customer_id = self.kwargs['customer_id']
-        ad_id = self.kwargs['ad_id']
+        ad_id = resolve_pk_for(Ad, self.kwargs['ad_id'])
         return get_object_or_404(
             Ad,
             customer_account__customer_id=customer_id,
@@ -157,6 +159,7 @@ def get_ad(request, ad_id):
     Get single ad
     GET /google_ads/{ad_id}
     """
+    ad_id = resolve_pk_for(Ad, ad_id)
     try:
         ad = get_object_or_404(
             Ad.objects.select_related('customer_account', 'created_by'),
@@ -188,7 +191,7 @@ class AdUpdateView(generics.UpdateAPIView):
 
     def get_object(self):
         """Get ad object to update"""
-        ad_id = self.kwargs['ad_id']
+        ad_id = resolve_pk_for(Ad, self.kwargs['ad_id'])
         return get_object_or_404(
             self.get_queryset(),
             id=ad_id
@@ -210,7 +213,7 @@ class AdDeleteView(generics.DestroyAPIView):
 
     def get_object(self):
         """Get ad object to delete"""
-        ad_id = self.kwargs['ad_id']
+        ad_id = resolve_pk_for(Ad, self.kwargs['ad_id'])
         return get_object_or_404(
             self.get_queryset(),
             id=ad_id
@@ -323,7 +326,7 @@ def get_preview_data(request, token):
                     preview = existing_preview
                 else:
                     # Create new preview
-                    ad = get_object_or_404(Ad, id=ad_id)
+                    ad = get_object_or_404(Ad, id=resolve_pk_for(Ad, ad_id))
                     # Map device from payload (MOBILE/DESKTOP) to device_type
                     device_payload = payload.get('device', 'MOBILE')
                     device_type = device_payload if device_payload in ['MOBILE', 'DESKTOP', 'TABLET', 'CONNECTED_TV', 'OTHER', 'UNSPECIFIED', 'UNKNOWN'] else 'DESKTOP'

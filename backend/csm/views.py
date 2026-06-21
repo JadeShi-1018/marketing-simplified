@@ -13,6 +13,7 @@ from asgiref.sync import async_to_sync
 from core.admin_permissions import IsCsmAccessAllowed
 from core.permissions import IsProjectMember
 from core.viewset_mixins import ProjectScopedViewSetMixin
+from core.slug_mixins import SlugLookupViewSetMixin
 
 from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification,
@@ -62,7 +63,8 @@ def _raise_drf_validation(exc):
     raise ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages)
 
 
-class QueueViewSet(viewsets.ModelViewSet):
+class QueueViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
+    # Slug-only lookups; numeric path segments return 404.
     """
     Queue CRUD.
 
@@ -785,7 +787,8 @@ class TicketViewSet(viewsets.ModelViewSet):
         return Response(TicketSerializer(ticket).data)
 
 
-class TicketFormViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+class TicketFormViewSet(SlugLookupViewSetMixin, ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    # Slug-only lookups; numeric path segments return 404.
     """
     Admin ticket form builder API.
 

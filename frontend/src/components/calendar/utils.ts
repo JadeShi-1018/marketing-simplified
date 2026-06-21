@@ -19,7 +19,7 @@ export const VIEW_SHORTCUTS: Record<CalendarViewType, string> = {
 
 export const CALENDAR_FILTER_STORAGE_KEY = "calendar:selected_calendar_id";
 
-export function calendarFilterStorageKey(projectId?: number | null): string {
+export function calendarFilterStorageKey(projectId?: number | string | null): string {
   if (projectId == null) {
     return CALENDAR_FILTER_STORAGE_KEY;
   }

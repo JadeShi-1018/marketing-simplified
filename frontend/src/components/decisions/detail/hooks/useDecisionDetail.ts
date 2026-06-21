@@ -34,7 +34,7 @@ export function extractError(err: any, fallback: string): string {
   );
 }
 
-export function useDecisionDetail(decisionId: number | null, projectId: number | null) {
+export function useDecisionDetail(decisionId: number | string | null, projectId: number | string | null) {
   const [state, setState] = useState<DecisionDetailState>({
     kind: 'unknown',
     draft: null,

@@ -157,7 +157,7 @@ class TestMeetingOriginOnCreate(TestCase):
             type="asset",
         )
         response = self.client.patch(
-            f"/api/tasks/{t.id}/",
+            f"/api/tasks/{t.slug}/",
             {"summary": "New title", "origin_meeting_id": self.meeting.id},
             format="json",
         )
@@ -170,9 +170,9 @@ class TestMeetingOriginOnCreate(TestCase):
             {"title": "D"},
             format="json",
         )
-        decision_id = create_resp.data["id"]
+        decision_slug = create_resp.data["slug"]
         patch = self.client.patch(
-            f"/api/decisions/drafts/{decision_id}/",
+            f"/api/decisions/drafts/{decision_slug}/",
             {"title": "Updated", "origin_meeting_id": self.meeting.id},
             format="json",
         )
@@ -250,7 +250,7 @@ class TestMeetingOriginOnCreate(TestCase):
             format="json",
         )
         self.assertEqual(create.status_code, status.HTTP_201_CREATED)
-        task_id = create.data["id"]
+        task_slug = create.data["slug"]
         other = Meeting.objects.create(
             project=self.project,
             title="Other meeting",
@@ -258,7 +258,7 @@ class TestMeetingOriginOnCreate(TestCase):
             objective="o",
         )
         patch = self.client.patch(
-            f"/api/tasks/{task_id}/",
+            f"/api/tasks/{task_slug}/",
             {"origin_meeting_id": other.id},
             format="json",
         )
@@ -274,7 +274,7 @@ class TestMeetingOriginOnCreate(TestCase):
             type="asset",
         )
         patch = self.client.patch(
-            f"/api/tasks/{t.id}/",
+            f"/api/tasks/{t.slug}/",
             {"origin_meeting_id": self.meeting.id},
             format="json",
         )
@@ -292,7 +292,7 @@ class TestMeetingOriginOnCreate(TestCase):
             format="json",
         )
         self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
-        decision_id = create_resp.data["id"]
+        decision_slug = create_resp.data["slug"]
         other = Meeting.objects.create(
             project=self.project,
             title="M2",
@@ -300,7 +300,7 @@ class TestMeetingOriginOnCreate(TestCase):
             objective="o",
         )
         patch = self.client.patch(
-            f"/api/decisions/drafts/{decision_id}/",
+            f"/api/decisions/drafts/{decision_slug}/",
             {"title": "T", "origin_meeting_id": other.id},
             format="json",
         )
@@ -315,7 +315,7 @@ class TestMeetingOriginOnCreate(TestCase):
             description="d",
             type="asset",
         )
-        response = self.client.get(f"/api/tasks/{t.id}/")
+        response = self.client.get(f"/api/tasks/{t.slug}/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("origin_meeting", response.data)
         self.assertIsNone(response.data["origin_meeting"])
@@ -328,7 +328,7 @@ class TestMeetingOriginOnCreate(TestCase):
             format="json",
         )
         self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
-        response = self.client.get(f"/api/decisions/drafts/{create_resp.data['id']}/")
+        response = self.client.get(f"/api/decisions/drafts/{create_resp.data['slug']}/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("origin_meeting", response.data)
         self.assertIsNone(response.data["origin_meeting"])

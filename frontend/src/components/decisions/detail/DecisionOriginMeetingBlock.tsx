@@ -1,12 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { CalendarDays } from 'lucide-react';
 import type { OriginMeetingPayload } from '@/types/meeting';
 
 interface Props {
   origin?: OriginMeetingPayload | null;
-  projectId?: number | null;
+  projectId?: number | string | null;
 }
 
 function formatDate(value?: string | null): string {
@@ -19,10 +20,13 @@ function formatDate(value?: string | null): string {
 export default function DecisionOriginMeetingBlock({ origin, projectId }: Props) {
   if (!origin || !origin.id) return null;
 
-  const meetingId = origin.id;
-  const href = projectId
-    ? `/meetings/${meetingId}?project_id=${projectId}`
-    : `/meetings/${meetingId}`;
+  const meetingKey = origin.slug ?? origin.id;
+  const href =
+    origin.detail_url ??
+    origin.url ??
+    (projectId
+      ? nestedProjectPath(projectId, `/meetings/${meetingKey}`)
+      : `/meetings/${meetingKey}`);
 
   const title = origin.title?.trim() || 'Meeting';
   const dateLabel = formatDate((origin as any).originTimestamp ?? (origin as any).scheduled_date ?? (origin as any).scheduled_start);

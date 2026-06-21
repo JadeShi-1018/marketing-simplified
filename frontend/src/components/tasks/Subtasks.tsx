@@ -8,8 +8,8 @@ import { TaskData, userDisplayName } from '@/types/task';
 import SubtaskModal from './SubtaskModal';
 
 interface SubtasksProps {
-  taskId: number;
-  taskProjectId?: number;
+  taskId: number | string;
+  taskProjectId?: number | string;
   parentTaskIsSubtask?: boolean;
 }
 
@@ -49,8 +49,8 @@ export default function Subtasks({ taskId, taskProjectId, parentTaskIsSubtask }:
     setIsModalOpen(false);
   };
 
-  const handleTaskClick = (subtaskId: number) => {
-    router.push(`/tasks/${subtaskId}`);
+  const handleTaskClick = (subtaskKey: number | string) => {
+    router.push(`/tasks/${subtaskKey}`);
   };
 
   return (
@@ -100,7 +100,7 @@ export default function Subtasks({ taskId, taskProjectId, parentTaskIsSubtask }:
           {subtasks.map((subtask) => (
             <div
               key={subtask.id}
-              onClick={() => subtask.id && handleTaskClick(subtask.id)}
+              onClick={() => subtask.id && handleTaskClick(subtask.slug ?? subtask.id)}
               className="flex cursor-pointer items-center justify-between px-3 py-2 transition-colors hover:bg-slate-50"
             >
               <div className="flex flex-1 items-center space-x-3">

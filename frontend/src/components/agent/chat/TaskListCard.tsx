@@ -28,7 +28,7 @@ interface TaskListCardProps {
   /** Indexes of recommendations the user explicitly chose NOT to create (approval flow). */
   skippedTaskIndexes?: number[]
   /** Map from recommended task index -> created Task ID for deep-link navigation. */
-  createdTaskIdByIndex?: Record<number, number>
+  createdTaskIdByIndex?: Record<number, number | string>
   /** When true (approval off), but tasks not yet created, show a generating state. */
   generating?: boolean
   /** When true, render selection + destination + create actions. */
@@ -95,7 +95,8 @@ export function TaskListCard({
 
   const handleRowClick = (idx: number) => {
     const taskId = createdTaskIdByIndex?.[idx]
-    if (taskId != null && Number.isFinite(taskId)) {
+    if (taskId != null) {
+      // taskId may be a numeric ID or a slug string
       window.location.href = `/tasks/${taskId}`
       return
     }

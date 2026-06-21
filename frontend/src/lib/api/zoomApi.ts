@@ -52,8 +52,8 @@ export const zoomApi = {
    * Persist Zoom identity on the MediaJira meeting (ZoomMeetingData). Call after createMeeting.
    */
   linkMeetingData: async (
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: ZoomMeetingLinkPayload,
   ): Promise<void> => {
     await api.post('/api/v1/zoom/meetings/link/', {

@@ -134,6 +134,7 @@ interface WorkflowHoverContentProps {
   description?: string
   stepTypes: WorkflowStepType[]
   workflowId: string
+  workflowSlug: string
   currentStatus: AgentWorkflowDefinition["status"]
   triggerConfig?: WorkflowTriggerConfig
   onStatusChange: (id: string, newStatus: string) => void
@@ -146,6 +147,7 @@ export function WorkflowHoverContent({
   description,
   stepTypes,
   workflowId,
+  workflowSlug,
   currentStatus,
   triggerConfig,
   onStatusChange,
@@ -259,7 +261,7 @@ export function WorkflowHoverContent({
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation()
-                    router.push(`/workflows/${workflowId}?openTrigger=true`)
+                    router.push(`/workflows/${workflowSlug}?openTrigger=true`)
                   }}
                   className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-700 transition hover:bg-gray-200"
                 >

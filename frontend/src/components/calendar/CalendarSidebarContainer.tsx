@@ -4,7 +4,7 @@ import { CalendarSidebarPanel } from "@/components/calendar/CalendarSidebarPanel
 
 type CalendarSidebarContainerProps = {
   currentDate: Date;
-  projectId?: number | null;
+  projectId?: number | string | null;
   onVisibleCalendarsChange: (calendarIds: string[] | undefined) => void;
   onDateChange: (next: Date) => void;
   selectedCalendarId: string | null;

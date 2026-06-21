@@ -56,7 +56,7 @@ export default function WorkflowCard({
     return () => document.removeEventListener("mousedown", handler)
   }, [menuOpen])
 
-  const openEditor = () => router.push(`/workflows/${workflow.id}`)
+  const openEditor = () => router.push(`/workflows/${workflow.slug}`)
 
   const handleStatusChange = (id: string, newStatus: string) => {
     setLocalStatus(newStatus as AgentWorkflowDefinition["status"])
@@ -71,6 +71,7 @@ export default function WorkflowCard({
           description={workflow.description}
           stepTypes={workflow.step_types ?? []}
           workflowId={workflow.id}
+          workflowSlug={workflow.slug}
           currentStatus={localStatus}
           triggerConfig={workflow.trigger_config}
           onStatusChange={handleStatusChange}

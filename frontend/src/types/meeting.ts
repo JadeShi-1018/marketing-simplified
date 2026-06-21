@@ -5,6 +5,7 @@ export type MeetingStatus = 'draft' | 'planned' | 'in_progress' | 'completed' | 
 /** In-app path + label from the API for contextual navigation (meetings ↔ decisions ↔ tasks). */
 export interface KnowledgeNavigationLink {
   id: number;
+  slug?: string | null;
   title: string;
   /** Preferred deep link; falls back to ``url`` when absent. */
   url: string;
@@ -16,6 +17,7 @@ export interface KnowledgeNavigationLink {
 /** Task/decision detail: meeting this artifact was generated from (reverse nav). */
 export interface OriginMeetingPayload {
   id: number;
+  slug?: string | null;
   title: string;
   /** Deep link to the meeting workspace (preferred when present). */
   url: string;
@@ -92,6 +94,7 @@ export interface ZoomPostMeeting {
 
 export interface Meeting {
   id: number;
+  slug?: string | null;
   project: number;
   title: string;
   meeting_type: string;
@@ -135,6 +138,7 @@ export interface MeetingListTag {
 
 export interface MeetingListItem {
   id: number;
+  slug?: string | null;
   title: string;
   summary: string;
   scheduled_date: string | null;
@@ -325,6 +329,7 @@ export interface MeetingActionItem {
   created_at?: string;
   updated_at?: string;
   converted_task_id: number | null;
+  converted_task_slug?: string | null;
 }
 
 export interface MeetingActionItemCreateRequest {

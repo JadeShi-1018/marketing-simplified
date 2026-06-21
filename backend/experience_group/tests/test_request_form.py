@@ -31,7 +31,7 @@ def _answers(**kwargs):
 
 class TestRequestForm:
     def test_returns_default_form(self, member_client, experience_group, default_form, user):
-        response = member_client.get(_request_form_url(experience_group.id))
+        response = member_client.get(_request_form_url(experience_group.slug))
         assert response.status_code == status.HTTP_200_OK
         assert response.data['form_id'] == default_form.id
         assert response.data['experience_group_id'] == experience_group.id
@@ -45,16 +45,16 @@ class TestRequestForm:
         self, member_client, experience_group, default_form, eg_specific_form,
     ):
         TicketFormAssignment.objects.create(form=eg_specific_form, experience_group=experience_group)
-        response = member_client.get(_request_form_url(experience_group.id))
+        response = member_client.get(_request_form_url(experience_group.slug))
         assert response.status_code == status.HTTP_200_OK
         assert response.data['form_id'] == eg_specific_form.id
 
     def test_404_when_no_form_configured(self, member_client, experience_group):
-        response = member_client.get(_request_form_url(experience_group.id))
+        response = member_client.get(_request_form_url(experience_group.slug))
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_non_member_forbidden(self, outsider_client, experience_group, default_form):
-        response = outsider_client.get(_request_form_url(experience_group.id))
+        response = outsider_client.get(_request_form_url(experience_group.slug))
         # Detail routes hide inaccessible objects (404) rather than 403
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -70,7 +70,7 @@ class TestSubmitRequest:
                 work_type=work_type.id,
             )),
         }
-        response = member_client.post(_submit_url(experience_group.id), payload)
+        response = member_client.post(_submit_url(experience_group.slug), payload)
         assert response.status_code == status.HTTP_201_CREATED
         assert Ticket.objects.filter(pk=response.data['ticket_id']).exists()
         assert TicketFormSubmission.objects.filter(pk=response.data['submission_id']).exists()
@@ -82,7 +82,7 @@ class TestSubmitRequest:
 
     def test_required_summary_blocks_submit(self, member_client, experience_group, default_form, csm_queue):
         payload = {'answers': json.dumps(_answers(summary=''))}
-        response = member_client.post(_submit_url(experience_group.id), payload)
+        response = member_client.post(_submit_url(experience_group.slug), payload)
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'summary' in response.data
 
@@ -101,7 +101,7 @@ class TestSubmitRequest:
                 link='https://example.com',
             )),
         }
-        response = member_client.post(_submit_url(experience_group.id), payload)
+        response = member_client.post(_submit_url(experience_group.slug), payload)
         assert response.status_code == status.HTTP_201_CREATED
 
     def test_rejects_eleventh_file(
@@ -122,7 +122,7 @@ class TestSubmitRequest:
                 for i in range(11)
             ],
         }
-        response = member_client.post(_submit_url(experience_group.id), payload, format='multipart')
+        response = member_client.post(_submit_url(experience_group.slug), payload, format='multipart')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'attachments' in response.data
 
@@ -145,7 +145,7 @@ class TestSubmitRequest:
                 content_type='application/pdf',
             ),
         }
-        response = member_client.post(_submit_url(experience_group.id), payload, format='multipart')
+        response = member_client.post(_submit_url(experience_group.slug), payload, format='multipart')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert 'attachments.invoice' in response.data
 
@@ -164,6 +164,6 @@ class TestSubmitRequest:
             )),
             'invoice': SimpleUploadedFile('invoice.pdf', b'%PDF-1.4', content_type='application/pdf'),
         }
-        response = member_client.post(_submit_url(experience_group.id), payload, format='multipart')
+        response = member_client.post(_submit_url(experience_group.slug), payload, format='multipart')
         assert response.status_code == status.HTTP_201_CREATED
         assert TicketAttachment.objects.filter(ticket_id=response.data['ticket_id']).count() == 1
