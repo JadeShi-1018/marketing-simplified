@@ -28,7 +28,7 @@ export default function TasksV2Page() {
   const params = useParams();
   const searchParams = useSearchParams();
 
-  // SMP-539: nested route — project slug comes from the path segment.
+  // Nested route — project slug comes from the path segment.
   const projectId = (params?.projectId as string) || '';
   const drawerTaskSlugFromPath =
     typeof params?.taskSlug === 'string' ? params.taskSlug.trim() : '';

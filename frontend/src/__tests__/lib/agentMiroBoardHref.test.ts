@@ -1,5 +1,5 @@
 /**
- * SMP-539 upgrade — the agent Miro deep-link is slug-only.
+ * The agent Miro deep-link is slug-only.
  *
  * `miro_board_created` events now carry `board_slug`; `agentMiroBoardHref` reads
  * it directly and must never put a board id/UUID in the URL (no fallback).

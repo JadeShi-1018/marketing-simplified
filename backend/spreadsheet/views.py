@@ -81,9 +81,10 @@ class SpreadsheetListView(APIView):
         if not project_id:
             raise ValidationError({'project_id': 'project_id is required'})
         
-        # project_id query param tolerates a numeric pk OR a project slug.
+        # project_id query param tolerates a numeric pk OR a project slug; the
+        # frontend sends the slug, so resolving to a pk first avoids a spurious 404.
         project = get_object_or_404(Project, pk=resolve_project_pk(project_id))
-        
+
         # Get queryset with select_related to avoid N+1 queries
         queryset = Spreadsheet.objects.filter(project=project, is_deleted=False).select_related('project')
         

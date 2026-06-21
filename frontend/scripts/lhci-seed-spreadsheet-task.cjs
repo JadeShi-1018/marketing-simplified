@@ -43,7 +43,7 @@ async function findSpreadsheetIdByName(baseUrl, token, projectId) {
   const data = await res.json();
   const rows = data.results || [];
   const found = rows.find((r) => r.name === SPREADSHEET_NAME);
-  // Spreadsheet detail pages are slug-only (SMP-539) — return the slug, not the numeric id.
+  // Spreadsheet detail pages are slug-only — return the slug, not the numeric id.
   return found && found.slug ? String(found.slug) : null;
 }
 
@@ -70,7 +70,7 @@ async function createSpreadsheet(baseUrl, token, projectId) {
   }
   const data = await res.json();
   if (!data.slug) throw new Error('LHCI create spreadsheet: response missing slug');
-  // Spreadsheet detail pages are slug-only (SMP-539) — return the slug, not the numeric id.
+  // Spreadsheet detail pages are slug-only — return the slug, not the numeric id.
   return String(data.slug);
 }
 

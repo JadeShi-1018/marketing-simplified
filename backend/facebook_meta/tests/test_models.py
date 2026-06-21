@@ -368,7 +368,7 @@ class AdCreativeModelTest(TestCase):
         self.assertIsNotNone(ad_creative)
 
     def test_ad_creative_gets_slug_from_name(self):
-        """SMP-539 Batch H: slug is generated from name on save."""
+        """Slug is generated from name on save."""
         ad_creative = AdCreative.objects.create(
             id='creative_slug_1',
             actor=self.user,
@@ -378,7 +378,7 @@ class AdCreativeModelTest(TestCase):
         self.assertEqual(ad_creative.slug, 'summer-sale-creative')
 
     def test_ad_creative_blank_name_gets_fallback_slug(self):
-        """SMP-539 Batch H: blank name falls back to a non-numeric slug."""
+        """Blank name falls back to a non-numeric slug."""
         ad_creative = AdCreative.objects.create(
             id='creative_slug_2',
             actor=self.user,

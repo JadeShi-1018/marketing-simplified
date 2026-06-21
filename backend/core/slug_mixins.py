@@ -86,6 +86,9 @@ def resolve_project_pk(value):
     value = str(value).strip()
     if value == '':
         return None
+    # Numeric string -> treated as a legacy PK here. This is the opposite of
+    # resolve_lookup_kwargs (path-segment lookups), where a numeric string is a
+    # slug. Use this PK-leaning resolver for query-param filters like ?project_id=.
     if value.isdigit():
         return int(value)
     return Project.objects.filter(slug=value).values_list('id', flat=True).first()
@@ -103,6 +106,8 @@ def resolve_pk_for(model, value):
     value = str(value).strip()
     if value == '':
         return None
+    # Numeric string -> legacy PK (same convention as resolve_project_pk, the
+    # opposite of resolve_lookup_kwargs). For query-param/body values, not URL paths.
     if value.isdigit():
         return int(value)
     return model.objects.filter(slug=value).values_list('pk', flat=True).first()
@@ -120,4 +125,8 @@ def resolve_lookup_kwargs(lookup_value, pk_field='pk', slug_field='slug'):
         uuid.UUID(lookup_value)
         return {pk_field: lookup_value}
     except ValueError:
+        # Anything non-UUID -> slug, INCLUDING a numeric string. This is the key
+        # divergence from resolve_project_pk/resolve_pk_for (where numeric -> PK):
+        # here "123" filters slug='123', so legacy integer URLs no longer match and
+        # 404. Use this for path-segment lookups, where slugs are the public contract.
         return {slug_field: lookup_value}

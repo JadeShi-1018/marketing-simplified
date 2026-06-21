@@ -1,5 +1,5 @@
 """
-SMP-539: slug-only resource lookups.
+Slug-only resource lookups.
 
 Covers the shared slug infrastructure:
 - slug generation rules (source field, duplicates, numeric titles, empty fallback, rename stability)
@@ -209,7 +209,7 @@ class SlugOnlyApiLookupTest(APITestCase):
 
 class QaRegressionTest(APITestCase):
     """
-    Regressions found and fixed during SMP-539 QA. Each guards a slug fix that the
+    Regressions found and fixed during QA. Each guards a slug fix that the
     widened ``id: number | string`` type had hidden from the compiler.
     """
 
@@ -354,7 +354,7 @@ class SlugBackfillTest(APITestCase):
 
 
 class SlugOnlyApiLookupExtraModulesTest(APITestCase):
-    """Defence-in-depth for the remaining slug-mixin modules (SMP-539).
+    """Defence-in-depth for the remaining slug-mixin modules.
 
     SlugOnlyApiLookupTest above covers task/project/meeting/decision/spreadsheet/
     workflow. These modules share the same SlugLookupViewSetMixin, so the contract
@@ -437,7 +437,7 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
             created_by=self.user,
         )
 
-        # SMP-539: admin/CSM internal resources (experience_group, csm).
+        # Admin/CSM internal resources (experience_group, csm).
         from experience_group.models import ExperienceGroup
         from customer.models import CustomerOrganisation
         from csm.models import CustomerUser, Queue, TicketForm
@@ -548,7 +548,7 @@ class SlugOnlyApiLookupExtraModulesTest(APITestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_experience_group_list_accepts_project_slug(self):
-        # SMP-539 Batch D: admin list `?project=` resolves a project slug
+        # Admin list `?project=` resolves a project slug
         # (not just a numeric pk). Before the fix this returned HTTP 400.
         response = self.client.get(
             f"/api/experience-groups/?project={self.project.slug}"

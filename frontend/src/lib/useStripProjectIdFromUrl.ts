@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 const STRIP_KEYS = ['project_id', 'projectId', 'project'] as const;
 
 /**
- * SMP-539: project context must not live in browser URLs on main app routes.
+ * Project context must not live in browser URLs on main app routes.
  * Strips legacy project query params without using them for app logic.
  */
 export function useStripProjectIdFromUrl() {

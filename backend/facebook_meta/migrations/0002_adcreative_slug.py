@@ -1,4 +1,4 @@
-"""SMP-539 Batch H: add a human-readable slug to facebook_meta.AdCreative.
+"""Add a human-readable slug to facebook_meta.AdCreative.
 
 3-step (AddField nullable+unique -> backfill -> AlterField not-null) so it is
 safe on tables that already hold data. Creative names may be blank or

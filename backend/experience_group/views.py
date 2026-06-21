@@ -26,7 +26,7 @@ from .serializers import ExperienceGroupSerializer, ExperienceGroupListSerialize
 
 
 class ExperienceGroupViewSet(SlugLookupViewSetMixin, ProjectScopedViewSetMixin, viewsets.ModelViewSet):
-    # SMP-539: slug-only lookups; numeric path segments 404.
+    # Slug-only lookups; numeric path segments return 404.
     queryset = ExperienceGroup.objects.all()
     serializer_class = ExperienceGroupSerializer
     permission_classes = [IsAuthenticated, IsProjectMember]

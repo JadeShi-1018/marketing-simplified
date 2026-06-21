@@ -829,6 +829,8 @@ class ProjectPkOrSlugField(serializers.Field):
             self.fail('invalid')
 
     def to_representation(self, value):
+        # to_internal_value stores a Project instance, but this can also run on a
+        # raw pk (e.g. serializing a model field), so handle both forms.
         if isinstance(value, Project):
             return value.pk
         return value

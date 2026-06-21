@@ -7,7 +7,7 @@ from core.slug_mixins import SluggedResourceModelMixin
 
 
 class Queue(SluggedResourceModelMixin, TimeStampedModel):
-    # SMP-539: slug-only URLs. Source: name.
+    # Slug-only URLs. Slug is derived from name.
     slug_source_field = 'name'
 
     TIER_CHOICES = [
@@ -394,7 +394,7 @@ class CsmWorkType(TimeStampedModel):
 
 
 class TicketForm(SluggedResourceModelMixin, TimeStampedModel):
-    # SMP-539: slug-only URLs. Source: name.
+    # Slug-only URLs. Slug is derived from name.
     slug_source_field = 'name'
 
     project = models.ForeignKey(

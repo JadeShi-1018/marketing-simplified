@@ -47,7 +47,7 @@ function DecisionDetailContent() {
   const activeProject = useProjectStore((s) => s.activeProject);
 
   const decisionId = String(params.decisionId);
-  // SMP-539: nested route — project slug comes from the path segment.
+  // Nested route — project slug comes from the path segment.
   const projectId = String(params.projectId);
 
   const { canEdit, canApproveOrReview, members } = useProjectRole(projectId);

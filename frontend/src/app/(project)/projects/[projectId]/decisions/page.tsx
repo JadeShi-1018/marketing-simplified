@@ -38,7 +38,7 @@ function DecisionsV2Content() {
   const params = useParams();
   const user = useAuthStore((s) => s.user);
 
-  // SMP-539: nested route — project slug comes from the path segment.
+  // Nested route — project slug comes from the path segment.
   const projectId = (params?.projectId as string) || '';
 
   const role = useMemo(() => {

@@ -1,5 +1,5 @@
 /**
- * SMP-539 — flat routes are the default (`/tasks`, `/campaigns`, …).
+ * Flat routes are the default (`/tasks`, `/campaigns`, …).
  * Nested `/projects/<key>/…` routes remain valid when opened directly; project
  * context comes from the Zustand store, not the URL.
  */
@@ -58,6 +58,7 @@ export function nestedProjectPath(
   return flatAppPath(suffix);
 }
 
+/** @deprecated Project arg is ignored — kept so existing callers compile while emitting flat paths. */
 export function nestedProjectPathFromProject(
   _project: ProjectKeySource | null | undefined,
   suffix: string,
@@ -85,6 +86,11 @@ export function pathnameMatchesProjectResource(
   return new RegExp(`^/projects/[^/]+${escaped}(/|$)`).test(pathname);
 }
 
+/**
+ * A sidebar item stays highlighted whether the user is on the flat route
+ * (`/tasks`) or a nested deep link (`/projects/<key>/tasks`), so match against
+ * the resolved href, the nested-resource pattern, and the flat href in turn.
+ */
 export function isNestedProjectNavActive(
   pathname: string,
   flatHref: string,

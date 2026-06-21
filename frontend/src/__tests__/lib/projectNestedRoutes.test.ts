@@ -14,7 +14,7 @@ describe('projectNestedRoutes', () => {
     expect(flatAppPath('/tasks/new?type=asset')).toBe('/tasks/new?type=asset');
   });
 
-  it('nestedProjectPath returns flat paths for navigation (SMP-539 default)', () => {
+  it('nestedProjectPath returns flat paths for navigation (flat default)', () => {
     expect(nestedProjectPath('acme', '/campaigns')).toBe('/campaigns');
     expect(nestedProjectPath(null, '/tasks')).toBe('/tasks');
     expect(nestedProjectPathFromProject(null, '/decisions')).toBe('/decisions');

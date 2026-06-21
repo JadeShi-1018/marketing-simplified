@@ -8,7 +8,7 @@ User = get_user_model()
                                                                                                                                                                  
                                                                                                                                                                    
 class ExperienceGroup(SluggedResourceModelMixin, models.Model):
-    # SMP-539: slug-only URLs (admin/CSM internal resources). Source: name.
+    # Slug-only URLs (admin/CSM internal resources). Slug is derived from name.
     slug_source_field = 'name'
 
     class PublishStatus(models.TextChoices):

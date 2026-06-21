@@ -9,7 +9,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.http import Http404
 
-from core.slug_mixins import resolve_pk_for  # SMP-539 Batch G: slug-or-pk ad lookups
+from core.slug_mixins import resolve_pk_for  # resolve an ad id that may be a slug or a legacy pk
 from django.core.exceptions import ValidationError
 from django.core.files.storage import default_storage
 from django.conf import settings

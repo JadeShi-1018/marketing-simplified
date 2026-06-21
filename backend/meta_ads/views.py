@@ -18,7 +18,7 @@ from django.db.models import IntegerField, OuterRef, Subquery, Sum
 from django.http import StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 
-from core.slug_mixins import resolve_pk_for  # SMP-539 Batch F: slug-or-pk detail lookups
+from core.slug_mixins import resolve_pk_for  # resolve a detail id that may be a slug or a legacy pk
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView

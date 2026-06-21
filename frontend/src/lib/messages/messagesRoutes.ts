@@ -1,5 +1,5 @@
 /**
- * Canonical browser URLs for /messages (SMP-539 Batch C).
+ * Canonical browser URLs for /messages.
  */
 
 import type { Chat } from '@/types/chat';
@@ -11,6 +11,8 @@ export type MessagesQueryParams = {
   fileId?: number | null;
 };
 
+// Legacy /messages URLs carried chat/project context in the query string; these
+// keys are stripped/translated so the slug in the path is the only source of truth.
 const LEGACY_CHAT_QUERY_KEYS = ['chatId', 'projectId', 'project_id'] as const;
 
 export function buildMessagesPath(
@@ -93,7 +95,8 @@ export function translateLegacyMessagesActionUrl(actionUrl: string): string | nu
       });
     }
 
-    // Legacy query-only URL — caller must resolve chatId → slug
+    // Legacy query-only URL — we can't synthesize the path slug here, so signal
+    // the caller (which has chat data) to resolve chatId → slug itself.
     if (chatId) return null;
 
     stripLegacyMessagesQuery(url.searchParams);
@@ -144,6 +147,12 @@ export function normalizeProjectKey(
   return raw;
 }
 
+/**
+ * Look up a project's chats tolerating slug/id key drift: the store may have been
+ * populated under the numeric id while the active project is keyed by slug (or
+ * vice versa), so fall back through canonical → id → slug until a non-empty list
+ * is found.
+ */
 export function chatsForProjectKey(
   chatsByProject: Record<number | string, Chat[] | undefined>,
   projectKey: number | string | null,

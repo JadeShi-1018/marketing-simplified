@@ -1,4 +1,4 @@
-"""SMP-539 Batch F: add human-readable slugs to Meta ad resources.
+"""Add human-readable slugs to Meta ad resources.
 
 3-step per model (AddField nullable+unique -> backfill -> AlterField not-null)
 so it is safe to apply on tables that already hold data. Ad names are often

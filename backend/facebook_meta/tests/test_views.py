@@ -51,7 +51,7 @@ class GetAdCreativeViewTest(TestCase):
         self.assertEqual(response.data['title'], 'Test Title')
     
     def test_get_ad_creative_invalid_id_format(self):
-        """SMP-539 Batch H: a non-numeric id is treated as a slug; unknown -> 404."""
+        """A non-numeric id is treated as a slug; unknown -> 404."""
         response = self.client.get('/api/facebook_meta/abc123/')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -418,7 +418,7 @@ class AdCreativeDeleteViewTest(TestCase):
         self.assertFalse(AdCreative.objects.filter(id='123456789').exists())
     
     def test_delete_ad_creative_invalid_id_format(self):
-        """SMP-539 Batch H: a non-numeric id is treated as a slug; unknown -> 404."""
+        """A non-numeric id is treated as a slug; unknown -> 404."""
         response = self.client.delete('/api/facebook_meta/abc123/')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -593,7 +593,7 @@ class ViewIntegrationTest(TestCase):
                 else:
                     response = self.client.get(view_url)
 
-                # SMP-539 Batch H: non-numeric ids are slugs now; unknown -> 404.
+                # Non-numeric ids are slugs now; unknown -> 404.
                 self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
         # 2. Test non-existent resources

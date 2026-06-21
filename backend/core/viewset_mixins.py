@@ -35,9 +35,9 @@ class ProjectScopedViewSetMixin:
         return member_ids
 
     def _parse_project_id(self, raw):
-        # Accept either a numeric pk or a project slug (SMP-539 Batch D):
-        # the frontend now passes `?project=<slug>`. resolve_project_pk handles
-        # blank/None and unknown values by returning None.
+        # Accept either a numeric pk or a project slug: the frontend passes
+        # `?project=<slug>`. resolve_project_pk handles blank/None and unknown
+        # values by returning None.
         from core.slug_mixins import resolve_project_pk
         return resolve_project_pk(raw)
 

@@ -90,8 +90,8 @@ class TaskSerializer(serializers.ModelSerializer):
     revision_round = serializers.IntegerField(read_only=True)
     revision_label = serializers.SerializerMethodField()
     origin_meeting = serializers.SerializerMethodField()
-    # SMP-539 Batch E1: deep-link carries a meeting slug (or legacy pk); resolved
-    # to a pk in create(). CharField so a slug string passes field validation.
+    # Deep-link carries a meeting slug (or legacy pk); resolved to a pk in
+    # create(). CharField so a slug string passes field validation.
     origin_meeting_id = serializers.CharField(
         write_only=True,
         required=False,
@@ -508,7 +508,7 @@ class TaskSerializer(serializers.ModelSerializer):
         create_as_draft = validated_data.pop('create_as_draft', False)
         origin_meeting_id = validated_data.pop('origin_meeting_id', None)
         if origin_meeting_id is not None:
-            # SMP-539 Batch E1: deep-link may pass a meeting slug or a legacy pk.
+            # Deep-link may pass a meeting slug or a legacy pk.
             from core.slug_mixins import resolve_pk_for
             from meetings.models import Meeting
             origin_meeting_id = resolve_pk_for(Meeting, origin_meeting_id)

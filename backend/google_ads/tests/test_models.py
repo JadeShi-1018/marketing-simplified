@@ -208,7 +208,7 @@ class AdModelTest(TestCase):
         self.assertEqual(ad.status, 'DRAFT')
 
     def test_ad_gets_slug_from_name(self):
-        """SMP-539 Batch G: slug is generated from the ad name on save."""
+        """Slug is generated from the ad name on save."""
         ad = create_test_ad(self.user, self.customer_account, name='Spring Promo Ad')
         self.assertEqual(ad.slug, 'spring-promo-ad')
 

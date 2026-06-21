@@ -1,4 +1,4 @@
-"""Browser-facing /messages URL builders (SMP-539 Batch C)."""
+"""Browser-facing /messages URL builders."""
 from urllib.parse import urlencode
 
 

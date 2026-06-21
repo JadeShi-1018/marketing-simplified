@@ -115,11 +115,11 @@ describe("notificationRoutes", () => {
   });
 });
 
-// SMP-539 — slug routing. Each resource uses `related_object_slug ?? related_object_id`,
+// Slug routing. Each resource uses `related_object_slug ?? related_object_id`,
 // so when a slug is present the URL must use it and only fall back to the numeric id
 // when there is none. Guards the recurring "list/notification dropped the slug → 404
-// on the numeric id" regression class (the D/H QA bugs).
-describe("notificationRoutes — slug routing (SMP-539)", () => {
+// on the numeric id" regression class.
+describe("notificationRoutes — slug routing", () => {
   it("uses the task slug in the URL when related_object_slug is present", () => {
     const target = buildNotificationFullPageTarget(
       makeNotification({

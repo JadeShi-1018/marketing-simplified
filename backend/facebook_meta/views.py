@@ -164,9 +164,9 @@ class AdCreativeDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_object(self):
         """Resolve the ad creative by slug, falling back to its (string) pk.
 
-        SMP-539 Batch H. AdCreative.id is a CharField (the external Meta creative
-        id, a numeric string), so we must NOT coerce to int — look up by slug
-        first, then by the raw pk value for legacy/back-compat links.
+        AdCreative.id is a CharField (the external Meta creative id, a numeric
+        string), so we must NOT coerce to int — look up by slug first, then by
+        the raw pk value for legacy/back-compat links.
         """
         raw = self.kwargs['ad_creative_id']
         obj = (

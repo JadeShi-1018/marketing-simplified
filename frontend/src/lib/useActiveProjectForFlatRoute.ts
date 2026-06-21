@@ -5,7 +5,7 @@ import { useStripProjectIdFromUrl } from '@/lib/useStripProjectIdFromUrl';
 
 /**
  * Flat list routes (`/tasks`, `/decisions`, …) resolve the active project from the
- * Zustand store only — never from `?project_id=` (SMP-539).
+ * Zustand store only — never from `?project_id=`.
  */
 export function useActiveProjectForFlatRoute() {
   useStripProjectIdFromUrl();

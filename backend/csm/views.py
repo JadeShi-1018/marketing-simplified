@@ -64,7 +64,7 @@ def _raise_drf_validation(exc):
 
 
 class QueueViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
-    # SMP-539: slug-only lookups; numeric path segments 404.
+    # Slug-only lookups; numeric path segments return 404.
     """
     Queue CRUD.
 
@@ -788,7 +788,7 @@ class TicketViewSet(viewsets.ModelViewSet):
 
 
 class TicketFormViewSet(SlugLookupViewSetMixin, ProjectScopedViewSetMixin, viewsets.ModelViewSet):
-    # SMP-539: slug-only lookups; numeric path segments 404.
+    # Slug-only lookups; numeric path segments return 404.
     """
     Admin ticket form builder API.
 

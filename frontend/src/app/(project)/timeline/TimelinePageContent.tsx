@@ -26,7 +26,7 @@ export function TimelinePageContent() {
   const setActiveProject = useProjectStore((s) => s.setActiveProject);
   const projectId = activeProject?.slug || activeProject?.id || null;
 
-  // SMP-539 Batch E1: carry the meeting slug (or legacy pk) through as-is;
+  // Carry the meeting slug (or legacy pk) through as-is;
   // the backend resolves slug-or-pk on task create.
   const originMeetingIdNum = useMemo(
     () => originMeetingIdParam || null,

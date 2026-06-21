@@ -868,7 +868,7 @@ def quota_preview(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # SMP-539: frontend now passes the project slug (project routes are slug-only).
+    # The frontend passes the project slug (project routes are slug-only).
     # resolve_project_pk accepts either a numeric pk (legacy) or a slug.
     try:
         project = Project.objects.select_related('organization').get(id=resolve_project_pk(project_id))

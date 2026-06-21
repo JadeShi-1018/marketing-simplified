@@ -1,4 +1,4 @@
-# Merge migration: unifies the meeting-slug branch (SMP-539) with the
+# Merge migration: unifies the meeting-slug branch with the
 # audit-log changes that landed on prod-preview. No schema operations.
 
 from django.db import migrations

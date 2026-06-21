@@ -1,4 +1,4 @@
-"""SMP-539 Batch G: add a human-readable slug to google_ads.Ad.
+"""Add a human-readable slug to google_ads.Ad.
 
 3-step (AddField nullable+unique -> backfill -> AlterField not-null) so it is
 safe on tables that already hold data. `Ad.name` is unique but may be blank, so

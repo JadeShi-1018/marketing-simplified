@@ -28,7 +28,7 @@ export default function CampaignV2DetailPage() {
   const params = useParams<{ projectId: string; slug: string }>();
   const campaignId = params?.slug as string;
 
-  // SMP-539: nested route — project slug comes from the path segment.
+  // Nested route — project slug comes from the path segment.
   const projectId = String(params?.projectId || '');
   const activeProject = useProjectStore((s) => s.activeProject);
 

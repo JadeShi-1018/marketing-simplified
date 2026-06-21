@@ -59,7 +59,7 @@ export default function TemplateV2DetailPage() {
   const params = useParams<{ projectId: string; id: string }>();
   const templateId = params?.id as string;
 
-  // SMP-539: nested route — project slug comes from the path segment.
+  // Nested route — project slug comes from the path segment.
   const projectId = String(params?.projectId || '');
 
   const { data, loading, error, refresh, update, archive, unarchive, destroy } =

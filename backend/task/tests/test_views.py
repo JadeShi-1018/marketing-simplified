@@ -2060,7 +2060,7 @@ class TaskAPITest(TestCase):
     def test_list_tasks_with_project_ids_invalid_format(self):
         """An unresolvable project_id (unknown slug/numeric) is treated as no-access → 403.
 
-        Under slug-only lookups (SMP-539) project_id is resolved via resolve_project_pk,
+        Under slug-only lookups project_id is resolved via resolve_project_pk,
         so a value that matches no project resolves to None and falls outside the user's
         accessible projects — same path as the inaccessible-project case above.
         """

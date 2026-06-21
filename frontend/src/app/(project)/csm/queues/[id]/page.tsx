@@ -38,7 +38,7 @@ const QueueDetailContent: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      // SMP-539: queue is fetched by slug; nested sub-resources use the
+      // Queue is fetched by slug; nested sub-resources use the
       // resolved numeric id (their routes are id-keyed).
       const queueData = await CsmAPI.getQueue(queueId);
       const [agentsData, teamsData, counts] = await Promise.all([

@@ -15,7 +15,7 @@ interface QuotaPreview {
 }
 
 interface TokenProgressBarProps {
-  // SMP-539: project routes now carry the slug, so projectId may be a slug
+  // Project routes now carry the slug, so projectId may be a slug
   // string; the quota-preview endpoint resolves slug-or-id server-side.
   projectId: number | string;
 }
