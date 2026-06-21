@@ -1,6 +1,5 @@
 import json
 import uuid
-from unittest import skip
 from unittest.mock import patch, MagicMock
 
 from django.test import TestCase, override_settings
@@ -978,12 +977,11 @@ class CalendarAgentTests(TestCase):
     # handle_message routing                                              #
     # ------------------------------------------------------------------ #
 
-    @skip("Broken on prod-preview (AGENT-10 / call_llm refactor 1165a9b3d) — mock target is stale, the calendar workflow calls Gemini via agent.services so the mock is bypassed (HTTP 401). Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.llm_client.call_llm')
-    def test_handle_message_routes_to_calendar_when_context_provided(self, mock_call_llm):
+    @patch('agent.gemini_client.call_gemini')
+    def test_handle_message_routes_to_calendar_when_context_provided(self, mock_call_gemini):
         """handle_message with calendar_context skips general chat and calls Gemini calendar."""
-        mock_call_llm.return_value = {'text': '{"answer": "You have 1 event.", "create_events": []}', 'usage': {'input': 10, 'output': 20}}
+        mock_call_gemini.return_value = '{"answer": "You have 1 event.", "create_events": []}'
 
         calendar_context = {'type': 'calendar', 'calendarIds': [], 'currentView': 'week'}
         chunks = list(self.orchestrator.handle_message(
@@ -993,7 +991,7 @@ class CalendarAgentTests(TestCase):
         types = [c['type'] for c in chunks]
         self.assertIn('text', types)
         self.assertIn('done', types)
-        self.assertTrue(mock_call_llm.called)
+        self.assertTrue(mock_call_gemini.called)
 
     @patch('agent.services.requests.post')
     def test_handle_message_without_calendar_context_skips_calendar(self, mock_post):
@@ -1058,12 +1056,11 @@ class CalendarAgentTests(TestCase):
     # answer_calendar_question — Dify response handling                  #
     # ------------------------------------------------------------------ #
 
-    @skip("Broken on prod-preview (AGENT-10 / call_llm refactor 1165a9b3d) — mock target is stale, the calendar workflow calls Gemini via agent.services so the mock is bypassed (HTTP 401). Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.llm_client.call_llm')
-    def test_answer_calendar_question_yields_text_chunk(self, mock_call_llm):
+    @patch('agent.gemini_client.call_gemini')
+    def test_answer_calendar_question_yields_text_chunk(self, mock_call_gemini):
         """A successful Gemini response yields a text chunk with the answer."""
-        mock_call_llm.return_value = {'text': '{"answer": "You have 2 events this week.", "create_events": []}', 'usage': {'input': 10, 'output': 20}}
+        mock_call_gemini.return_value = '{"answer": "You have 2 events this week.", "create_events": []}'
 
         self._make_calendar_and_event(days_offset=1)
         context = {'type': 'calendar', 'calendarIds': []}
@@ -1071,16 +1068,15 @@ class CalendarAgentTests(TestCase):
         text_chunks = [c for c in chunks if c['type'] == 'text' and 'events this week' in c.get('content', '')]
         self.assertTrue(len(text_chunks) > 0)
 
-    @skip("Broken on prod-preview (AGENT-10 / call_llm refactor 1165a9b3d) — mock target is stale, the calendar workflow calls Gemini via agent.services so the mock is bypassed (HTTP 401). Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.llm_client.call_llm')
-    def test_answer_calendar_question_creates_event_from_dify(self, mock_call_llm):
+    @patch('agent.gemini_client.call_gemini')
+    def test_answer_calendar_question_creates_event_from_dify(self, mock_call_gemini):
         """When Gemini returns create_events, the events are created in the DB."""
         from calendars.models import Calendar as CalendarModel, Event as EventModel
         CalendarModel.objects.create(
             organization=self.org, owner=self.user, name='My Calendar',
         )
-        mock_call_llm.return_value = {'text': json.dumps({
+        mock_call_gemini.return_value = json.dumps({
             'answer': 'I have scheduled a meeting for you.',
             'create_events': [{
                 'title': 'AI Scheduled Meeting',
@@ -1088,7 +1084,7 @@ class CalendarAgentTests(TestCase):
                 'start_datetime': '2026-04-01T10:00:00+00:00',
                 'end_datetime': '2026-04-01T11:00:00+00:00',
             }]
-        }), 'usage': {'input': 10, 'output': 20}}
+        })
 
         before_count = EventModel.objects.filter(organization=self.org).count()
         context = {'type': 'calendar', 'calendarIds': []}
@@ -2222,7 +2218,6 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
             user=self.user, project=self.project,
         )
 
-    @skip("Broken on prod-preview (AGENT-10 agent-workflow changes) — AnalyzeDataExecutor path no longer matches this mock setup. Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch('agent.executors.cache')
     @patch('agent.services._run_analysis')
     def test_executor_passes_user_context_to_run_analysis(self, mock_analysis, mock_cache):
@@ -2242,6 +2237,7 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
 
         class FakeOrch:
             user = self.user
+            session = self.session
 
         executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
         executor.execute({'spreadsheet_data': {'name': 'test', 'sheets': [{'columns': [], 'rows': []}]}})
@@ -2250,7 +2246,6 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
         _, kwargs = mock_analysis.call_args
         self.assertEqual(kwargs.get('user_context'), 'Prioritize high-spend campaigns')
 
-    @skip("Broken on prod-preview (AGENT-10 agent-workflow changes) — AnalyzeDataExecutor path no longer matches this mock setup. Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch('agent.executors.cache')
     @patch('agent.services._run_analysis')
     def test_executor_passes_none_when_context_empty(self, mock_analysis, mock_cache):
@@ -2270,6 +2265,7 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
 
         class FakeOrch:
             user = self.user
+            session = self.session
 
         executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
         executor.execute({'spreadsheet_data': {'name': 'test', 'sheets': []}})
