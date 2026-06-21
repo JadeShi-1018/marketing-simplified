@@ -323,11 +323,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
         If the user has no Organization yet, one is auto-created from their
         email prefix and they become its admin (via CustomerUser).
         """
+        from django.db import connection
+        from core.services.tenant import slug_to_schema_name
+
         user = self.request.user
         organization = getattr(user, 'organization', None)
 
         if not organization:
             organization = self._auto_create_organization(user)
+
+            # CRITICAL: Middleware already ran and set search_path based on the
+            # user's organization_id (which was null at request start). Now that
+            # we've created an org mid-request, explicitly switch search_path so
+            # the project gets created in the correct tenant schema.
+            schema_name = slug_to_schema_name(organization.slug)
+            with connection.cursor() as c:
+                c.execute('SET search_path TO %s, public', [schema_name])
 
         project = serializer.save(
             organization=organization,

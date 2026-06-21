@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
 from django.utils.text import slugify
@@ -26,21 +26,46 @@ class Organization(TimeStampedModel):
     stripe_customer_id = models.CharField(max_length=255, null=True, blank=True)
 
     def save(self, *args, **kwargs):
+        is_new = self.pk is None
         if not self.slug:
             self.slug = self._generate_unique_slug()
-        super().save(*args, **kwargs)
+        # transaction.atomic() creates a savepoint when an outer transaction
+        # already exists (e.g. called from a view wrapped in atomic()), so
+        # nesting is safe.  If provision_tenant_schema() raises, the savepoint
+        # is released and both the INSERT and the CREATE SCHEMA are rolled back
+        # — satisfying the AC "no org record without a corresponding schema".
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if is_new:
+                # Synchronous by design: must share this transaction so that
+                # schema-creation failure rolls back the org row atomically.
+                # Org creation is low-frequency; the extra latency is acceptable.
+                from core.services.tenant import provision_tenant_schema
+                provision_tenant_schema(self.slug)
     
     def _generate_unique_slug(self):
         """Generate a unique slug from the organization name"""
+        import uuid
+
         base_slug = slugify(self.name)
+
+        # Fallback: if slugify returns empty (e.g. for Chinese/Korean names),
+        # use allow_unicode=True to preserve Unicode characters
+        if not base_slug:
+            base_slug = slugify(self.name, allow_unicode=True)
+
+        # Last resort: if still empty, use a UUID-based slug
+        if not base_slug:
+            base_slug = f"org-{uuid.uuid4().hex[:8]}"
+
         slug = base_slug
         counter = 1
-        
+
         # Keep checking until we find a unique slug
         while Organization.objects.filter(slug=slug).exclude(pk=self.pk).exists():
             slug = f"{base_slug}-{counter}"
             counter += 1
-            
+
         return slug
 
     def __str__(self):

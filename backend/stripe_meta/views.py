@@ -572,6 +572,9 @@ def create_organization(request):
 
         validated_data = serializer.validated_data
 
+        from django.db import connection
+        from core.services.tenant import slug_to_schema_name
+
         organization = Organization.objects.create(
             name=validated_data['name'],
             desc=validated_data.get('description', ''),
@@ -582,6 +585,13 @@ def create_organization(request):
         user = request.user
         user.organization = organization
         user.save()
+
+        # CRITICAL: Switch search_path immediately after creating org so any
+        # subsequent operations in this request (or future org-specific logic)
+        # use the correct tenant schema.
+        schema_name = slug_to_schema_name(organization.slug)
+        with connection.cursor() as c:
+            c.execute('SET search_path TO %s, public', [schema_name])
 
         # Align with all other org-creation paths: CSM records + billing admin
         from customer.models import CustomerOrganisation

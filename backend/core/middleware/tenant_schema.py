@@ -1,0 +1,166 @@
+"""
+Per-request PostgreSQL search_path switcher.
+
+How it works
+------------
+1. After Django's AuthenticationMiddleware populates request.user, this
+   middleware resolves which org schema the request belongs to.
+2. It issues SET search_path TO <schema>, public for the current DB
+   connection so that all subsequent ORM queries in the same request run
+   against the correct tenant schema automatically — without any change to
+   view or model code.
+3. A finally block resets the search_path to 'public' before returning the
+   connection to Django's connection pool, preventing cross-request pollution.
+
+Placement in MIDDLEWARE (settings.py)
+--------------------------------------
+Must appear AFTER 'django.contrib.auth.middleware.AuthenticationMiddleware'
+(so request.user is available) and BEFORE any custom middleware that issues
+DB queries scoped to a project or org.
+
+Recommended position (see settings.py line ~121):
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.tenant_schema.TenantSchemaMiddleware',   # ← add here
+    'core.middleware.project_access.CheckProjectAccessMiddleware',
+
+Schema resolution priority
+--------------------------
+1. Authenticated user  → user.organization.slug  (JWT-backed, not spoofable)
+2. X-Organization-Slug header → validated against DB + cache (service calls)
+3. Fallback → 'public'  (login, register, health-check, etc.)
+
+Caching
+-------
+Org slug lookups are cached (Django default cache, TTL = 5 min) to avoid an
+extra DB round-trip on every request.  Org slugs change extremely rarely;
+the TTL is a safe trade-off.
+"""
+
+from django.core.cache import cache
+from django.db import connection
+
+from core.services.tenant import slug_to_schema_name
+
+_CACHE_TTL = 300  # seconds (5 minutes)
+
+
+class TenantSchemaMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # CRITICAL: DRF JWT authentication happens at the view layer, not in
+        # AuthenticationMiddleware. We must manually authenticate JWT tokens here
+        # so _resolve_schema() can see the authenticated user.
+        self._authenticate_jwt(request)
+
+        schema = self._resolve_schema(request)
+
+        # SET search_path accepts string literals (%s quoting by psycopg2),
+        # so this is injection-safe while being syntactically valid:
+        #   SET search_path TO 'org_acme_corp', public
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO %s, public', [schema])
+
+        try:
+            return self.get_response(request)
+        finally:
+            # CRITICAL: Django reuses DB connections across requests (connection
+            # pool).  Without this reset the next request on the same connection
+            # could inherit this tenant's search_path if the middleware exits
+            # early (e.g. a short-circuit 403 before _resolve_schema runs again).
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO public')
+
+    # ------------------------------------------------------------------
+    # Schema resolution
+    # ------------------------------------------------------------------
+
+    def _resolve_schema(self, request) -> str:
+        # Priority 1: authenticated user (comes from signed JWT — cannot be forged)
+        if request.user.is_authenticated:
+            org_id = getattr(request.user, 'organization_id', None)
+            if org_id:
+                slug = self._get_slug_by_org_id(org_id)
+                if slug:
+                    return slug_to_schema_name(slug)
+
+        # Priority 2: X-Organization-Slug header (inter-service calls).
+        # MUST be validated: any client can set arbitrary headers, so we
+        # confirm the slug exists in the DB before trusting it.
+        header_slug = request.headers.get('X-Organization-Slug')
+        if header_slug and self._validate_slug(header_slug):
+            return slug_to_schema_name(header_slug)
+
+        # Fallback: public schema (unauthenticated endpoints, health checks…)
+        return 'public'
+
+    # ------------------------------------------------------------------
+    # JWT Authentication
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _authenticate_jwt(request):
+        """
+        Manually authenticate JWT tokens so we can resolve the tenant schema
+        based on the authenticated user. DRF's authentication normally runs at
+        the view layer, but we need it earlier.
+        """
+        from rest_framework_simplejwt.authentication import JWTAuthentication
+        from rest_framework.exceptions import AuthenticationFailed
+
+        # Skip if already authenticated (e.g. session auth)
+        if request.user.is_authenticated:
+            return
+
+        try:
+            jwt_auth = JWTAuthentication()
+            auth_result = jwt_auth.authenticate(request)
+            if auth_result is not None:
+                user, token = auth_result
+                request.user = user
+                request.auth = token
+        except AuthenticationFailed:
+            # Invalid/expired token - leave as AnonymousUser
+            pass
+        except Exception:
+            # Any other error - leave as AnonymousUser
+            pass
+
+    # ------------------------------------------------------------------
+    # Cache-backed helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_slug_by_org_id(org_id: int) -> str | None:
+        """Return the slug for *org_id*, hitting the cache first."""
+        cache_key = f'tenant:slug:{org_id}'
+        slug = cache.get(cache_key)
+        if slug is None:
+            from core.models import Organization
+            try:
+                slug = (
+                    Organization.objects
+                    .values_list('slug', flat=True)
+                    .get(pk=org_id)
+                )
+                cache.set(cache_key, slug, _CACHE_TTL)
+            except Organization.DoesNotExist:
+                return None
+        return slug
+
+    @staticmethod
+    def _validate_slug(slug: str) -> bool:
+        """
+        Return True if *slug* corresponds to an active Organization.
+        Result is cached to avoid a DB hit on every request that sends the header.
+        """
+        cache_key = f'tenant:valid:{slug}'
+        result = cache.get(cache_key)
+        if result is None:
+            from core.models import Organization
+            result = Organization.objects.filter(
+                slug=slug, is_active=True
+            ).exists()
+            cache.set(cache_key, result, _CACHE_TTL)
+        return result
