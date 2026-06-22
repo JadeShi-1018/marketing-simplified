@@ -9,23 +9,23 @@ app_name = 'spreadsheet'
 urlpatterns = [
     # Spreadsheet CRUD
     path('spreadsheets/', views.SpreadsheetListView.as_view(), name='spreadsheet-list'),
-    path('spreadsheets/<int:id>/', views.SpreadsheetDetailView.as_view(), name='spreadsheet-detail'),
+    path('spreadsheets/<str:id>/', views.SpreadsheetDetailView.as_view(), name='spreadsheet-detail'),
     
     # Sheet CRUD
-    path('spreadsheets/<int:spreadsheet_id>/sheets/', views.SheetListView.as_view(), name='sheet-list'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:id>/', views.SheetDetailView.as_view(), name='sheet-detail'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/resize/', views.SheetResizeView.as_view(), name='sheet-resize'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/sort/', views.SheetSortView.as_view(), name='sheet-sort'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/reorder-rows/', views.SheetReorderView.as_view(), name='sheet-reorder-rows'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/', views.SheetListView.as_view(), name='sheet-list'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:id>/', views.SheetDetailView.as_view(), name='sheet-detail'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/resize/', views.SheetResizeView.as_view(), name='sheet-resize'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/sort/', views.SheetSortView.as_view(), name='sheet-sort'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/reorder-rows/', views.SheetReorderView.as_view(), name='sheet-reorder-rows'),
 
     # Rows and Columns (read-only)
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/rows/', views.SheetRowListView.as_view(), name='sheet-row-list'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/columns/', views.SheetColumnListView.as_view(), name='sheet-column-list'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/rows/insert/', views.SheetRowInsertView.as_view(), name='sheet-row-insert'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/columns/insert/', views.SheetColumnInsertView.as_view(), name='sheet-column-insert'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/rows/delete/', views.SheetRowDeleteView.as_view(), name='sheet-row-delete'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/columns/delete/', views.SheetColumnDeleteView.as_view(), name='sheet-column-delete'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/operations/<int:operation_id>/revert/', views.SheetStructureOperationRevertView.as_view(), name='sheet-operation-revert'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/rows/', views.SheetRowListView.as_view(), name='sheet-row-list'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/columns/', views.SheetColumnListView.as_view(), name='sheet-column-list'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/rows/insert/', views.SheetRowInsertView.as_view(), name='sheet-row-insert'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/columns/insert/', views.SheetColumnInsertView.as_view(), name='sheet-column-insert'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/rows/delete/', views.SheetRowDeleteView.as_view(), name='sheet-row-delete'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/columns/delete/', views.SheetColumnDeleteView.as_view(), name='sheet-column-delete'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/operations/<int:operation_id>/revert/', views.SheetStructureOperationRevertView.as_view(), name='sheet-operation-revert'),
 
     # Sheet-id-only endpoints
     path('sheets/<int:sheet_id>/rows/insert/', views.SheetRowInsertByIdView.as_view(), name='sheet-row-insert-by-id'),
@@ -35,15 +35,15 @@ urlpatterns = [
     path('sheets/<int:sheet_id>/operations/<int:operation_id>/revert/', views.SheetOperationRevertByIdView.as_view(), name='sheet-operation-revert-by-id'),
     
     # Cells
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/cells/range/', views.CellRangeReadView.as_view(), name='cell-range-read'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/cells/batch/', views.CellBatchUpdateView.as_view(), name='cell-batch-update'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/cells/import-finalize/', views.ImportFinalizeView.as_view(), name='cell-import-finalize'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/pivot-config/', views.PivotConfigView.as_view(), name='pivot-config'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/pivot-recompute/', views.PivotRecomputeView.as_view(), name='pivot-recompute'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/highlights/', views.SpreadsheetHighlightListView.as_view(), name='sheet-highlight-list'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/highlights/batch/', views.SpreadsheetHighlightBatchView.as_view(), name='sheet-highlight-batch'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/cell-formats/', views.SpreadsheetCellFormatListView.as_view(), name='sheet-cell-format-list'),
-    path('spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/cell-formats/batch/', views.SpreadsheetCellFormatBatchView.as_view(), name='sheet-cell-format-batch'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/cells/range/', views.CellRangeReadView.as_view(), name='cell-range-read'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/cells/batch/', views.CellBatchUpdateView.as_view(), name='cell-batch-update'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/cells/import-finalize/', views.ImportFinalizeView.as_view(), name='cell-import-finalize'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/pivot-config/', views.PivotConfigView.as_view(), name='pivot-config'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/pivot-recompute/', views.PivotRecomputeView.as_view(), name='pivot-recompute'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/highlights/', views.SpreadsheetHighlightListView.as_view(), name='sheet-highlight-list'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/highlights/batch/', views.SpreadsheetHighlightBatchView.as_view(), name='sheet-highlight-batch'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/cell-formats/', views.SpreadsheetCellFormatListView.as_view(), name='sheet-cell-format-list'),
+    path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/cell-formats/batch/', views.SpreadsheetCellFormatBatchView.as_view(), name='sheet-cell-format-batch'),
 
     # Workflow patterns
     path('patterns/', views.WorkflowPatternListCreateView.as_view(), name='pattern-list'),

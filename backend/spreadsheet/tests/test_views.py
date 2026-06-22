@@ -91,7 +91,7 @@ class SpreadsheetListViewTest(TestCase):
     def test_list_spreadsheets_success(self):
         """Test successful spreadsheet list retrieval"""
         url = '/api/spreadsheet/spreadsheets/'
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('results', response.data)
@@ -124,7 +124,7 @@ class SpreadsheetListViewTest(TestCase):
         
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'page': 1,
             'page_size': 10
         })
@@ -142,7 +142,7 @@ class SpreadsheetListViewTest(TestCase):
         
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'search': 'Searchable'
         })
         
@@ -156,7 +156,7 @@ class SpreadsheetListViewTest(TestCase):
         """Test spreadsheet list ordering by created_at"""
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'order_by': 'created_at'
         })
         
@@ -173,7 +173,7 @@ class SpreadsheetListViewTest(TestCase):
         """Test spreadsheet list ordering by name"""
         url = '/api/spreadsheet/spreadsheets/'
         response = self.client.get(url, {
-            'project_id': self.project.id,
+            'project_id': self.project.slug,
             'order_by': 'name'
         })
         
@@ -191,7 +191,7 @@ class SpreadsheetListViewTest(TestCase):
         deleted_spreadsheet.save()
         
         url = '/api/spreadsheet/spreadsheets/'
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['count'], 2)  # Only non-deleted
@@ -200,7 +200,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_success(self):
         """Test successful spreadsheet creation"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': 'New Spreadsheet'}
         
         response = self.client.post(url, data, format='json')
@@ -240,7 +240,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_duplicate_name(self):
         """Test creating spreadsheet with duplicate name fails"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': 'Duplicate Name'}
         
         # Create first spreadsheet
@@ -254,7 +254,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_missing_name(self):
         """Test creating spreadsheet without name field"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {}
         
         response = self.client.post(url, data, format='json')
@@ -264,7 +264,7 @@ class SpreadsheetListViewTest(TestCase):
     
     def test_create_spreadsheet_empty_name(self):
         """Test creating spreadsheet with empty name"""
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': ''}
         
         response = self.client.post(url, data, format='json')
@@ -276,7 +276,7 @@ class SpreadsheetListViewTest(TestCase):
         """Test that authentication is required for creating spreadsheet"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.id}'
+        url = f'/api/spreadsheet/spreadsheets/?project_id={self.project.slug}'
         data = {'name': 'Unauthenticated'}
         
         response = self.client.post(url, data, format='json')
@@ -288,7 +288,7 @@ class SpreadsheetListViewTest(TestCase):
         self.client.logout()
         
         url = '/api/spreadsheet/spreadsheets/'
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
@@ -308,7 +308,7 @@ class SpreadsheetDetailViewTest(TestCase):
     
     def test_retrieve_spreadsheet_success(self):
         """Test successful spreadsheet retrieval"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -328,14 +328,14 @@ class SpreadsheetDetailViewTest(TestCase):
         self.spreadsheet.is_deleted = True
         self.spreadsheet.save()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_update_spreadsheet_success(self):
         """Test successful spreadsheet update"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         data = {'name': 'Updated Spreadsheet'}
         
         response = self.client.put(url, data, format='json')
@@ -350,7 +350,7 @@ class SpreadsheetDetailViewTest(TestCase):
     
     def test_update_spreadsheet_updates_timestamp(self):
         """Test that updating spreadsheet name updates the updated_at timestamp"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         
 
         original_updated_at = self.spreadsheet.updated_at
@@ -369,7 +369,7 @@ class SpreadsheetDetailViewTest(TestCase):
         """Test updating spreadsheet with duplicate name fails"""
         spreadsheet2 = create_test_spreadsheet(self.project, name='Other Name')
         
-        url = f'/api/spreadsheet/spreadsheets/{spreadsheet2.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{spreadsheet2.slug}/'
         data = {'name': 'Test Spreadsheet'}  # Same as self.spreadsheet.name
         
         response = self.client.put(url, data, format='json')
@@ -388,7 +388,7 @@ class SpreadsheetDetailViewTest(TestCase):
     
     def test_update_spreadsheet_empty_name(self):
         """Test updating spreadsheet with empty name"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         data = {'name': ''}
         
         response = self.client.put(url, data, format='json')
@@ -398,7 +398,7 @@ class SpreadsheetDetailViewTest(TestCase):
     
     def test_delete_spreadsheet_success(self):
         """Test successful spreadsheet deletion (soft delete)"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -422,7 +422,7 @@ class SpreadsheetDetailViewTest(TestCase):
         """Test that authentication is required for updating spreadsheet"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         data = {'name': 'Unauthenticated Update'}
         
         response = self.client.put(url, data, format='json')
@@ -433,7 +433,7 @@ class SpreadsheetDetailViewTest(TestCase):
         """Test that authentication is required for deleting spreadsheet"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -459,7 +459,7 @@ class SheetListViewTest(TestCase):
     
     def test_list_sheets_success(self):
         """Test successful sheet list retrieval"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -483,7 +483,7 @@ class SheetListViewTest(TestCase):
         for i in range(3, 23):
             create_test_sheet(self.spreadsheet, name=f'Sheet {i}', position=i)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         response = self.client.get(url, {
             'page': 1,
             'page_size': 10
@@ -497,7 +497,7 @@ class SheetListViewTest(TestCase):
     
     def test_list_sheets_order_by_position(self):
         """Test sheet list ordering by position"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         response = self.client.get(url, {'order_by': 'position'})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -511,7 +511,7 @@ class SheetListViewTest(TestCase):
     
     def test_list_sheets_order_by_name(self):
         """Test sheet list ordering by name"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         response = self.client.get(url, {'order_by': 'name'})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -523,7 +523,7 @@ class SheetListViewTest(TestCase):
     
     def test_list_sheets_order_by_created_at(self):
         """Test sheet list ordering by created_at"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         response = self.client.get(url, {'order_by': 'created_at'})
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -541,7 +541,7 @@ class SheetListViewTest(TestCase):
         deleted_sheet.is_deleted = True
         deleted_sheet.save()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -551,7 +551,7 @@ class SheetListViewTest(TestCase):
     
     def test_create_sheet_success(self):
         """Test successful sheet creation"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         data = {'name': 'New Sheet'}
         
         response = self.client.post(url, data, format='json')
@@ -582,7 +582,7 @@ class SheetListViewTest(TestCase):
     
     def test_create_sheet_duplicate_name(self):
         """Test creating sheet with duplicate name fails"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         data = {'name': 'Duplicate Name'}
         
         # Create first sheet
@@ -596,7 +596,7 @@ class SheetListViewTest(TestCase):
     
     def test_create_sheet_position_read_only(self):
         """Test that position cannot be provided in create"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         data = {'name': 'New Sheet', 'position': 5}
         
         response = self.client.post(url, data, format='json')
@@ -606,7 +606,7 @@ class SheetListViewTest(TestCase):
     
     def test_create_sheet_missing_name(self):
         """Test creating sheet without name field"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         data = {}
         
         response = self.client.post(url, data, format='json')
@@ -616,7 +616,7 @@ class SheetListViewTest(TestCase):
     
     def test_create_sheet_empty_name(self):
         """Test creating sheet with empty name"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         data = {'name': ''}
         
         response = self.client.post(url, data, format='json')
@@ -628,7 +628,7 @@ class SheetListViewTest(TestCase):
         """Test that authentication is required for creating sheet"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         data = {'name': 'Unauthenticated'}
         
         response = self.client.post(url, data, format='json')
@@ -639,7 +639,7 @@ class SheetListViewTest(TestCase):
         """Test that authentication is required for listing sheets"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -661,7 +661,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_retrieve_sheet_success(self):
         """Test successful sheet retrieval"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -672,7 +672,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_retrieve_sheet_not_found(self):
         """Test retrieving non-existent sheet"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/99999/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/99999/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -682,7 +682,7 @@ class SheetDetailViewTest(TestCase):
         spreadsheet2 = create_test_spreadsheet(self.project, name='Spreadsheet 2')
         sheet2 = create_test_sheet(spreadsheet2, name='Sheet 2', position=0)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{sheet2.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{sheet2.id}/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -692,14 +692,14 @@ class SheetDetailViewTest(TestCase):
         self.sheet.is_deleted = True
         self.sheet.save()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_update_sheet_success(self):
         """Test successful sheet update"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         data = {'name': 'Updated Sheet'}
         
         response = self.client.put(url, data, format='json')
@@ -716,7 +716,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_update_sheet_updates_timestamp(self):
         """Test that updating sheet name updates the updated_at timestamp"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         
         original_updated_at = self.sheet.updated_at
         time.sleep(0.1)
@@ -734,7 +734,7 @@ class SheetDetailViewTest(TestCase):
         """Test updating sheet with duplicate name fails"""
         sheet2 = create_test_sheet(self.spreadsheet, name='Other Name', position=1)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{sheet2.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{sheet2.id}/'
         data = {'name': 'Test Sheet'}  # Same as self.sheet.name
         
         response = self.client.put(url, data, format='json')
@@ -744,7 +744,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_update_sheet_position_read_only(self):
         """Test that position cannot be updated"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         data = {'name': 'Updated Sheet', 'position': 5}
         
         response = self.client.put(url, data, format='json')
@@ -754,7 +754,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_update_sheet_not_found(self):
         """Test updating non-existent sheet"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/99999/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/99999/'
         data = {'name': 'Updated Name'}
         
         response = self.client.put(url, data, format='json')
@@ -763,7 +763,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_update_sheet_empty_name(self):
         """Test updating sheet with empty name"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         data = {'name': ''}
         
         response = self.client.put(url, data, format='json')
@@ -773,7 +773,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_delete_sheet_success(self):
         """Test successful sheet deletion (soft delete)"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -788,7 +788,7 @@ class SheetDetailViewTest(TestCase):
     
     def test_delete_sheet_not_found(self):
         """Test deleting non-existent sheet"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/99999/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/99999/'
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -797,7 +797,7 @@ class SheetDetailViewTest(TestCase):
         """Test that authentication is required for updating sheet"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         data = {'name': 'Unauthenticated Update'}
         
         response = self.client.put(url, data, format='json')
@@ -808,7 +808,7 @@ class SheetDetailViewTest(TestCase):
         """Test that authentication is required for deleting sheet"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -827,7 +827,7 @@ class ProjectSheetDeleteViewTest(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def test_project_sheet_delete_success(self):
-        url = f'/api/projects/{self.project.id}/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/'
+        url = f'/api/projects/{self.project.slug}/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/'
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -836,7 +836,7 @@ class ProjectSheetDeleteViewTest(TestCase):
         self.assertTrue(self.sheet.is_deleted)
 
         # Deleted sheet should not appear in sheet list
-        list_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/'
+        list_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/'
         list_response = self.client.get(list_url)
         self.assertEqual(list_response.status_code, status.HTTP_200_OK)
         sheet_ids = [s['id'] for s in list_response.data['results']]
@@ -846,7 +846,7 @@ class ProjectSheetDeleteViewTest(TestCase):
         spreadsheet2 = create_test_spreadsheet(self.project, name='Spreadsheet 2')
         sheet2 = create_test_sheet(spreadsheet2, name='Sheet 2', position=0)
 
-        url = f'/api/projects/{self.project.id}/spreadsheets/{self.spreadsheet.id}/sheets/{sheet2.id}/'
+        url = f'/api/projects/{self.project.slug}/spreadsheets/{self.spreadsheet.slug}/sheets/{sheet2.id}/'
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -874,7 +874,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_success(self):
         """Test successful row list retrieval"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -895,7 +895,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_invalid_sheet_id(self):
         """Test list rows with non-existent sheet_id"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/99999/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/99999/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -905,7 +905,7 @@ class SheetRowListViewTest(TestCase):
         spreadsheet2 = create_test_spreadsheet(self.project, name='Spreadsheet 2')
         sheet2 = create_test_sheet(spreadsheet2, name='Sheet 2', position=1)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{sheet2.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{sheet2.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -916,7 +916,7 @@ class SheetRowListViewTest(TestCase):
         for i in range(3, 23):
             create_test_sheet_row(self.sheet, position=i)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url, {
             'offset': 0,
             'row_limit': 10
@@ -935,7 +935,7 @@ class SheetRowListViewTest(TestCase):
         for i in range(3, 13):
             create_test_sheet_row(self.sheet, position=i)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url, {
             'offset': 5,
             'row_limit': 5
@@ -954,7 +954,7 @@ class SheetRowListViewTest(TestCase):
         for i in range(3, 600):
             create_test_sheet_row(self.sheet, position=i)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url, {
             'offset': 0,
             'row_limit': 1000  # Should be clamped to 500
@@ -966,7 +966,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_default_pagination(self):
         """Test row list with default pagination parameters"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -976,7 +976,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_ordered_by_position(self):
         """Test that rows are ordered by position"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -992,7 +992,7 @@ class SheetRowListViewTest(TestCase):
         deleted_row.is_deleted = True
         deleted_row.save()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1006,7 +1006,7 @@ class SheetRowListViewTest(TestCase):
         for i in range(3, 15):
             create_test_sheet_row(self.sheet, position=i)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url, {
             'offset': 0,
             'row_limit': 10
@@ -1018,7 +1018,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_has_more_false(self):
         """Test has_more flag when no more rows exist"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url, {
             'offset': 0,
             'row_limit': 10
@@ -1032,7 +1032,7 @@ class SheetRowListViewTest(TestCase):
         """Test list rows for sheet with no rows"""
         sheet2 = create_test_sheet(self.spreadsheet, name='Empty Sheet', position=1)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{sheet2.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{sheet2.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1044,14 +1044,14 @@ class SheetRowListViewTest(TestCase):
         """Test that authentication is required for listing rows"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
     def test_list_rows_read_only_no_post(self):
         """Test that POST is not allowed on row list endpoint (read-only)"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.post(url, {}, format='json')
         
         # Read-only endpoint should return 405 Method Not Allowed
@@ -1059,7 +1059,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_read_only_no_put(self):
         """Test that PUT is not allowed on row list endpoint (read-only)"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.put(url, {}, format='json')
         
         # Read-only endpoint should return 405 Method Not Allowed
@@ -1067,7 +1067,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_read_only_no_patch(self):
         """Test that PATCH is not allowed on row list endpoint (read-only)"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.patch(url, {}, format='json')
         
         # Read-only endpoint should return 405 Method Not Allowed
@@ -1075,7 +1075,7 @@ class SheetRowListViewTest(TestCase):
     
     def test_list_rows_read_only_no_delete(self):
         """Test that DELETE is not allowed on row list endpoint (read-only)"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.delete(url)
         
         # Read-only endpoint should return 405 Method Not Allowed
@@ -1089,7 +1089,7 @@ class SheetRowListViewTest(TestCase):
         
         # Note: There's no detail endpoint for rows, but if there were, it should return 404
         # For now, verify the row doesn't appear in list
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1105,7 +1105,7 @@ class SheetRowListViewTest(TestCase):
         row_sheet2_2 = create_test_sheet_row(sheet2, position=1)
         
         # Request list for sheet1 (self.sheet)
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1125,7 +1125,7 @@ class SheetRowListViewTest(TestCase):
         for i in range(5):
             create_test_sheet_row(self.sheet, position=i)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/'
         
         # Test offset=0 limit=2 -> returns positions [0,1]
         response1 = self.client.get(url, {'offset': 0, 'row_limit': 2})
@@ -1172,7 +1172,7 @@ class SheetRowInsertViewTest(TestCase):
         )
 
     def test_insert_row_shifts_positions_and_creates_row(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/insert/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1197,7 +1197,7 @@ class SheetRowInsertViewTest(TestCase):
         original_row_id = cell.row_id
         original_column_id = cell.column_id
 
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/insert/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1207,7 +1207,7 @@ class SheetRowInsertViewTest(TestCase):
         self.assertEqual(cell.column_id, original_column_id)
 
     def test_insert_row_multiple_count(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/insert/'
         response = self.client.post(url, {'position': 1, 'count': 2}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1222,19 +1222,19 @@ class SheetRowInsertViewTest(TestCase):
         self.assertTrue({1, 2}.issubset(inserted_positions))
 
     def test_insert_row_at_end(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/insert/'
         response = self.client.post(url, {'position': 3, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(SheetRow.objects.filter(sheet=self.sheet, position=3, is_deleted=False).exists())
 
     def test_revert_row_insert(self):
-        insert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/insert/'
+        insert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/insert/'
         insert_response = self.client.post(insert_url, {'position': 1, 'count': 1}, format='json')
         self.assertEqual(insert_response.status_code, status.HTTP_201_CREATED)
 
         operation_id = insert_response.data['operation_id']
-        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
+        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
         revert_response = self.client.post(revert_url, {}, format='json')
         self.assertEqual(revert_response.status_code, status.HTTP_200_OK)
 
@@ -1281,7 +1281,7 @@ class SheetColumnListViewTest(TestCase):
     
     def test_list_columns_success(self):
         """Test successful column list retrieval"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1302,7 +1302,7 @@ class SheetColumnListViewTest(TestCase):
     
     def test_list_columns_invalid_sheet_id(self):
         """Test list columns with non-existent sheet_id"""
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/99999/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/99999/columns/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -1312,7 +1312,7 @@ class SheetColumnListViewTest(TestCase):
         spreadsheet2 = create_test_spreadsheet(self.project, name='Spreadsheet 2')
         sheet2 = create_test_sheet(spreadsheet2, name='Sheet 2', position=1)
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{sheet2.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{sheet2.id}/columns/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -1328,7 +1328,7 @@ class SheetColumnListViewTest(TestCase):
                 name=SheetService._generate_column_name(i)
             )
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url, {
             'offset': 0,
             'column_limit': 10
@@ -1352,7 +1352,7 @@ class SheetColumnListViewTest(TestCase):
                 name=SheetService._generate_column_name(i)
             )
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url, {
             'offset': 5,
             'column_limit': 5
@@ -1376,7 +1376,7 @@ class SheetColumnListViewTest(TestCase):
                 name=SheetService._generate_column_name(i)
             )
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url, {
             'column_limit': 500  # Request 500, should be clamped to 200
         })
@@ -1404,7 +1404,7 @@ class SheetColumnListViewTest(TestCase):
             name=SheetService._generate_column_name(18)
         )
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1421,7 +1421,7 @@ class SheetColumnListViewTest(TestCase):
         column_to_delete.is_deleted = True
         column_to_delete.save()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1432,7 +1432,7 @@ class SheetColumnListViewTest(TestCase):
         """Test that authentication is required for listing columns"""
         self.client.logout()
         
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
     
@@ -1448,7 +1448,7 @@ class SheetColumnListViewTest(TestCase):
             name=SheetService._generate_column_name(0)
         )
         
-        url = f'/api/spreadsheet/spreadsheets/{other_spreadsheet.id}/sheets/{other_sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{other_spreadsheet.slug}/sheets/{other_sheet.id}/columns/'
         # Authenticated user (self.user) does not own other_project, so it should be 404
         response = self.client.get(url)
         # self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND) will add this in the future after involve CustomUser.
@@ -1471,7 +1471,7 @@ class SheetColumnListViewTest(TestCase):
         )
         
         # Request list for sheet1 (self.sheet)
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1515,7 +1515,7 @@ class SheetColumnInsertViewTest(TestCase):
         )
 
     def test_insert_column_shifts_positions_and_creates_column(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/insert/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1540,7 +1540,7 @@ class SheetColumnInsertViewTest(TestCase):
         original_row_id = cell.row_id
         original_column_id = cell.column_id
 
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/insert/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1550,7 +1550,7 @@ class SheetColumnInsertViewTest(TestCase):
         self.assertEqual(cell.column_id, original_column_id)
 
     def test_insert_column_multiple_count(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/insert/'
         response = self.client.post(url, {'position': 1, 'count': 2}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -1565,19 +1565,19 @@ class SheetColumnInsertViewTest(TestCase):
         self.assertTrue({1, 2}.issubset(inserted_positions))
 
     def test_insert_column_at_end(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/insert/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/insert/'
         response = self.client.post(url, {'position': 3, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(SheetColumn.objects.filter(sheet=self.sheet, position=3, is_deleted=False).exists())
 
     def test_revert_column_insert(self):
-        insert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/insert/'
+        insert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/insert/'
         insert_response = self.client.post(insert_url, {'position': 1, 'count': 1}, format='json')
         self.assertEqual(insert_response.status_code, status.HTTP_201_CREATED)
 
         operation_id = insert_response.data['operation_id']
-        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
+        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
         revert_response = self.client.post(revert_url, {}, format='json')
         self.assertEqual(revert_response.status_code, status.HTTP_200_OK)
 
@@ -1613,7 +1613,7 @@ class SheetRowDeleteViewTest(TestCase):
         )
 
     def test_delete_row_shifts_positions_and_soft_deletes(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/delete/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/delete/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1633,7 +1633,7 @@ class SheetRowDeleteViewTest(TestCase):
         cell = Cell.objects.create(sheet=self.sheet, row=self.row1, column=self.col0)
         original_row_id = cell.row_id
 
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/delete/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/delete/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -1641,12 +1641,12 @@ class SheetRowDeleteViewTest(TestCase):
         self.assertEqual(cell.row_id, original_row_id)
 
     def test_revert_row_delete(self):
-        delete_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/rows/delete/'
+        delete_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/rows/delete/'
         delete_response = self.client.post(delete_url, {'position': 1, 'count': 1}, format='json')
         self.assertEqual(delete_response.status_code, status.HTTP_200_OK)
 
         operation_id = delete_response.data['operation_id']
-        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
+        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
         revert_response = self.client.post(revert_url, {}, format='json')
         self.assertEqual(revert_response.status_code, status.HTTP_200_OK)
 
@@ -1693,7 +1693,7 @@ class SheetColumnDeleteViewTest(TestCase):
         )
 
     def test_delete_column_shifts_positions_and_soft_deletes(self):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/delete/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/delete/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1713,7 +1713,7 @@ class SheetColumnDeleteViewTest(TestCase):
         cell = Cell.objects.create(sheet=self.sheet, row=self.row0, column=self.col1)
         original_column_id = cell.column_id
 
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/delete/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/delete/'
         response = self.client.post(url, {'position': 1, 'count': 1}, format='json')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -1721,12 +1721,12 @@ class SheetColumnDeleteViewTest(TestCase):
         self.assertEqual(cell.column_id, original_column_id)
 
     def test_revert_column_delete(self):
-        delete_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/columns/delete/'
+        delete_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/columns/delete/'
         delete_response = self.client.post(delete_url, {'position': 1, 'count': 1}, format='json')
         self.assertEqual(delete_response.status_code, status.HTTP_200_OK)
 
         operation_id = delete_response.data['operation_id']
-        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
+        revert_url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/operations/{operation_id}/revert/'
         revert_response = self.client.post(revert_url, {}, format='json')
         self.assertEqual(revert_response.status_code, status.HTTP_200_OK)
 
@@ -1753,7 +1753,7 @@ class CellRangeReadViewTest(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
         url = (
-            f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/batch/'
+            f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/batch/'
         )
         r = self.client.post(
             url,
@@ -1777,7 +1777,7 @@ class CellRangeReadViewTest(TestCase):
         if extra:
             body.update(extra)
         url = (
-            f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/range/'
+            f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/range/'
         )
         return self.client.post(url, body, format='json')
 
@@ -1811,7 +1811,7 @@ class CellBatchUpdateDependencyTest(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _batch(self, operations):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/batch/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/batch/'
         return self.client.post(url, {'operations': operations, 'auto_expand': True}, format='json')
 
     def test_batch_update_recalculates_dependents(self):
@@ -2379,7 +2379,7 @@ class CellBatchUpdateLargeImportTest(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _batch(self, operations, import_mode=False, import_id=None, chunk_index=None):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/batch/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/batch/'
         payload = {'operations': operations, 'auto_expand': True}
         if import_mode:
             payload['import_mode'] = True
@@ -2439,10 +2439,10 @@ class CellBatchImportModePivotTest(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _batch_url(self):
-        return f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/batch/'
+        return f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/batch/'
 
     def _finalize_url(self):
-        return f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/import-finalize/'
+        return f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/import-finalize/'
 
     def test_batch_update_import_mode_skips_pivot_recompute(self):
         from unittest.mock import patch
@@ -2566,7 +2566,7 @@ class CellBatchUpdateConcurrentColumnCreateTest(TestCase):
 
         client = APIClient()
         client.force_authenticate(user=self.user)
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/batch/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/batch/'
         operations = [
             {'operation': 'set', 'row': r, 'column': c, 'raw_input': f'{r},{c}'}
             for r in range(3)
@@ -2602,7 +2602,7 @@ class CellBatchUpdateAutoExpandFalseTest(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def _batch(self, operations, auto_expand):
-        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.id}/sheets/{self.sheet.id}/cells/batch/'
+        url = f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/sheets/{self.sheet.id}/cells/batch/'
         payload = {
             'operations': operations,
             'auto_expand': auto_expand,

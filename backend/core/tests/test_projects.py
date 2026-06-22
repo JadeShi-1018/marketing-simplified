@@ -130,7 +130,7 @@ class TestProjectViewSet:
 
     def test_set_active_project(self, authenticated_client, project, project2, user):
         """set_active action should update user's active project"""
-        url = reverse('project-set-active', kwargs={'pk': project2.id})
+        url = reverse('project-set-active', kwargs={'pk': project2.slug})
 
         response = authenticated_client.post(url)
 
@@ -153,7 +153,7 @@ class TestProjectViewSet:
         )
         # Don't create membership
 
-        url = reverse('project-set-active', kwargs={'pk': other_project.id})
+        url = reverse('project-set-active', kwargs={'pk': other_project.slug})
 
         response = authenticated_client.post(url)
 
@@ -164,7 +164,7 @@ class TestProjectViewSet:
 
     def test_get_project_details(self, authenticated_client, project):
         """Get project details should return full project data"""
-        url = reverse('project-detail', kwargs={'pk': project.id})
+        url = reverse('project-detail', kwargs={'pk': project.slug})
 
         response = authenticated_client.get(url)
 
@@ -179,7 +179,7 @@ class TestProjectViewSet:
         calendar = ensure_project_calendar(project)
         assert calendar.is_deleted is False
 
-        url = reverse('project-detail', kwargs={'pk': project.id})
+        url = reverse('project-detail', kwargs={'pk': project.slug})
         response = authenticated_client.delete(url)
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -198,7 +198,7 @@ class TestProjectViewSet:
         )
         # Don't create membership
 
-        url = reverse('project-detail', kwargs={'pk': other_project.id})
+        url = reverse('project-detail', kwargs={'pk': other_project.slug})
 
         response = authenticated_client.get(url)
 
@@ -220,7 +220,7 @@ class TestProjectViewSet:
         client = APIClient()
         client.force_authenticate(user=user2)
 
-        url = reverse('project-detail', kwargs={'pk': project.id})
+        url = reverse('project-detail', kwargs={'pk': project.slug})
         payload = {"name": "Updated Name"}
 
         response = client.patch(url, payload, format='json')
@@ -229,7 +229,7 @@ class TestProjectViewSet:
 
     def test_update_project_by_owner(self, authenticated_client, project):
         """Owner can update project"""
-        url = reverse('project-detail', kwargs={'pk': project.id})
+        url = reverse('project-detail', kwargs={'pk': project.slug})
         payload = {"name": "Updated Name"}
 
         response = authenticated_client.patch(url, payload, format='json')
@@ -249,7 +249,7 @@ class TestProjectViewSet:
             kpis={"ctr": {"target": 0.02}}
         )
 
-        url = reverse('project-detail', kwargs={'pk': other_project.id})
+        url = reverse('project-detail', kwargs={'pk': other_project.slug})
 
         response = authenticated_client.get(url)
 

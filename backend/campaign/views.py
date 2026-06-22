@@ -4,6 +4,7 @@ Campaign Management Module - Views
 """
 
 from rest_framework import viewsets, status, permissions
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_project_pk, resolve_lookup_kwargs
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -57,7 +58,7 @@ from .serializers import (
 # Campaign ViewSet
 # ============================================================================
 
-class CampaignViewSet(viewsets.ModelViewSet):
+class CampaignViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for Campaign CRUD operations and status transitions.
     
@@ -104,9 +105,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
         # Apply filters
         project_id = self.request.query_params.get('project')
         if project_id:
-            if project_id not in [str(pid) for pid in accessible_project_ids]:
+            resolved_pid = resolve_project_pk(project_id)
+            if resolved_pid is None or resolved_pid not in accessible_project_ids:
                 raise PermissionDenied('You do not have access to this project.')
-            queryset = queryset.filter(project_id=project_id)
+            queryset = queryset.filter(project_id=resolved_pid)
         
         status_filter = self.request.query_params.get('status')
         if status_filter:
@@ -368,7 +370,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
         # Use lookup_url_kwarg to get the campaign ID from URL
         campaign_id = kwargs.get(self.lookup_url_kwarg) or kwargs.get('pk')
         try:
-            campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+            campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
         except Campaign.DoesNotExist:
             from rest_framework.exceptions import NotFound
             raise NotFound('Campaign not found.')
@@ -514,7 +516,7 @@ class PerformanceCheckInViewSet(viewsets.ModelViewSet):
         
         # Verify campaign access
         try:
-            campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+            campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
         except Campaign.DoesNotExist:
             return PerformanceCheckIn.objects.none()
         
@@ -522,7 +524,7 @@ class PerformanceCheckInViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('You do not have access to this campaign.')
         
         queryset = PerformanceCheckIn.objects.filter(
-            campaign_id=campaign_id
+            campaign=campaign
         ).select_related('campaign', 'checked_by')
         
         # Apply filters
@@ -548,7 +550,7 @@ class PerformanceCheckInViewSet(viewsets.ModelViewSet):
         """Create check-in with automatic user assignment"""
         campaign_id = self.kwargs.get('campaign_id')
         try:
-            campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+            campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
         except Campaign.DoesNotExist:
             raise DRFValidationError({'campaign': 'Campaign not found'})
         
@@ -583,7 +585,7 @@ class PerformanceSnapshotViewSet(viewsets.ModelViewSet):
         
         # Verify campaign access
         try:
-            campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+            campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
         except Campaign.DoesNotExist:
             return PerformanceSnapshot.objects.none()
         
@@ -591,7 +593,7 @@ class PerformanceSnapshotViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('You do not have access to this campaign.')
         
         queryset = PerformanceSnapshot.objects.filter(
-            campaign_id=campaign_id
+            campaign=campaign
         ).select_related('campaign', 'snapshot_by')
         
         # Apply filters
@@ -621,7 +623,7 @@ class PerformanceSnapshotViewSet(viewsets.ModelViewSet):
         """Create snapshot with automatic user assignment"""
         campaign_id = self.kwargs.get('campaign_id')
         try:
-            campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+            campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
         except Campaign.DoesNotExist:
             raise DRFValidationError({'campaign': 'Campaign not found'})
         
@@ -674,7 +676,7 @@ class CampaignAttachmentViewSet(viewsets.ModelViewSet):
         
         # Verify campaign access
         try:
-            campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+            campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
         except Campaign.DoesNotExist:
             return CampaignAttachment.objects.none()
         
@@ -682,7 +684,7 @@ class CampaignAttachmentViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('You do not have access to this campaign.')
         
         queryset = CampaignAttachment.objects.filter(
-            campaign_id=campaign_id
+            campaign=campaign
         ).select_related('campaign', 'uploaded_by')
         
         # Apply filters
@@ -708,7 +710,7 @@ class CampaignAttachmentViewSet(viewsets.ModelViewSet):
         """Create attachment with automatic user assignment"""
         campaign_id = self.kwargs.get('campaign_id') or self.kwargs.get('id')
         try:
-            campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+            campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
         except Campaign.DoesNotExist:
             raise DRFValidationError({'campaign': 'Campaign not found'})
         
@@ -732,7 +734,7 @@ class CampaignAttachmentViewSet(viewsets.ModelViewSet):
 # Campaign Template ViewSet
 # ============================================================================
 
-class CampaignTemplateViewSet(viewsets.ModelViewSet):
+class CampaignTemplateViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for Campaign Template CRUD operations.
     
@@ -861,7 +863,8 @@ class CampaignTaskLinkViewSet(viewsets.GenericViewSet):
         campaign_id = request.query_params.get('campaign')
         task_id = request.query_params.get('task')
         if campaign_id:
-            qs = qs.filter(campaign_id=campaign_id)
+            campaign = Campaign.objects.filter(**resolve_lookup_kwargs(campaign_id)).first()
+            qs = qs.filter(campaign=campaign) if campaign else qs.none()
         if task_id:
             qs = qs.filter(task_id=task_id)
         serializer = CampaignTaskLinkSerializer(qs.order_by('-created_at'), many=True, context={'request': request})
@@ -903,7 +906,7 @@ class CampaignDecisionLinkViewSet(viewsets.GenericViewSet):
         campaign_id = self.request.query_params.get('campaign')
         if campaign_id:
             try:
-                campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+                campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
                 if not has_project_access(self.request.user, campaign.project):
                     raise PermissionDenied('You do not have access to this campaign')
                 queryset = queryset.filter(campaign_id=campaign_id)
@@ -963,7 +966,7 @@ class CampaignCalendarLinkViewSet(viewsets.GenericViewSet):
         campaign_id = self.request.query_params.get('campaign')
         if campaign_id:
             try:
-                campaign = Campaign.objects.get(id=campaign_id, is_deleted=False)
+                campaign = Campaign.objects.get(**resolve_lookup_kwargs(campaign_id), is_deleted=False)
                 if not has_project_access(self.request.user, campaign.project):
                     raise PermissionDenied('You do not have access to this campaign')
                 queryset = queryset.filter(campaign_id=campaign_id)

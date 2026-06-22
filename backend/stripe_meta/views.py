@@ -28,6 +28,7 @@ from .tasks import settle_final_overage
 from rest_framework.pagination import PageNumberPagination
 from django.db import transaction
 from core.models import Organization, CustomUser, Project
+from core.slug_mixins import resolve_project_pk
 
 # Configure Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -877,8 +878,10 @@ def quota_preview(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # The frontend passes the project slug (project routes are slug-only).
+    # resolve_project_pk accepts either a numeric pk (legacy) or a slug.
     try:
-        project = Project.objects.select_related('organization').get(id=project_id)
+        project = Project.objects.select_related('organization').get(id=resolve_project_pk(project_id))
     except Project.DoesNotExist:
         return Response(
             {'error': 'Project not found', 'code': 'PROJECT_NOT_FOUND'},

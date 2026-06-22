@@ -1,4 +1,5 @@
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth import get_user_model
 from django_fsm import FSMField, transition
 
@@ -8,7 +9,7 @@ from django.utils import timezone
 User = get_user_model()
 
 
-class EmailDraft(TimeStampedModel):
+class EmailDraft(SluggedResourceModelMixin, TimeStampedModel):
     """
     Represents an editable email draft before sending or scheduling.
     Stores metadata (name, subject, status) and links to structured content blocks.

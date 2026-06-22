@@ -60,7 +60,7 @@ urlpatterns = [
     
     # Nested routes for performance tracking
     path(
-        'campaigns/<uuid:campaign_id>/check-ins/',
+        'campaigns/<str:campaign_id>/check-ins/',
         PerformanceCheckInViewSet.as_view({
             'get': 'list',
             'post': 'create'
@@ -68,7 +68,7 @@ urlpatterns = [
         name='campaign-check-ins-list'
     ),
     path(
-        'campaigns/<uuid:campaign_id>/check-ins/<uuid:id>/',
+        'campaigns/<str:campaign_id>/check-ins/<uuid:id>/',
         PerformanceCheckInViewSet.as_view({
             'get': 'retrieve',
             'put': 'update',
@@ -80,7 +80,7 @@ urlpatterns = [
     
     # Nested routes for performance snapshots
     path(
-        'campaigns/<uuid:campaign_id>/performance-snapshots/',
+        'campaigns/<str:campaign_id>/performance-snapshots/',
         PerformanceSnapshotViewSet.as_view({
             'get': 'list',
             'post': 'create'
@@ -88,7 +88,7 @@ urlpatterns = [
         name='campaign-performance-snapshots-list'
     ),
     path(
-        'campaigns/<uuid:campaign_id>/performance-snapshots/<uuid:id>/',
+        'campaigns/<str:campaign_id>/performance-snapshots/<uuid:id>/',
         PerformanceSnapshotViewSet.as_view({
             'get': 'retrieve',
             'put': 'update',
@@ -98,7 +98,7 @@ urlpatterns = [
         name='campaign-performance-snapshots-detail'
     ),
     path(
-        'campaigns/<uuid:campaign_id>/performance-snapshots/<uuid:id>/screenshot/',
+        'campaigns/<str:campaign_id>/performance-snapshots/<uuid:id>/screenshot/',
         PerformanceSnapshotViewSet.as_view({
             'post': 'upload_screenshot'
         }),
@@ -107,7 +107,7 @@ urlpatterns = [
     
     # Nested routes for campaign attachments
     path(
-        'campaigns/<uuid:id>/attachments/',
+        'campaigns/<str:id>/attachments/',
         CampaignAttachmentViewSet.as_view({
             'get': 'list',
             'post': 'create'
@@ -115,7 +115,7 @@ urlpatterns = [
         name='campaign-attachments-list'
     ),
     path(
-        'campaigns/<uuid:id>/attachments/<uuid:attachment_id>/',
+        'campaigns/<str:id>/attachments/<uuid:attachment_id>/',
         CampaignAttachmentViewSet.as_view({
             'get': 'retrieve',
             'delete': 'destroy'

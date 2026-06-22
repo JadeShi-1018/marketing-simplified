@@ -8,7 +8,7 @@ import { calculateOptimalHandles } from "@/lib/handleCalculation";
 import toast from "react-hot-toast";
 
 interface CreateConnectionDialogProps {
-  workflowId: number;
+  workflowId: number | string;
   isOpen: boolean;
   onClose: () => void;
   onConnectionCreated: () => void;

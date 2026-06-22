@@ -10,7 +10,7 @@ import ConfirmDialog from "@/components/common/ConfirmDialog";
 
 interface NodeEditorProps {
   nodeId: number;
-  workflowId: number;
+  workflowId: number | string;
 }
 
 const NODE_CATEGORIES: { value: NodeType; label: string }[] = [

@@ -5,17 +5,17 @@ const STORAGE_KEY = 'mediajira.quick_start.post_create_guide';
 const PROGRESS_KEY = 'mediajira.quick_start.post_create_progress';
 
 export interface QuickStartPostCreateGuide {
-  projectId: number;
+  projectId: number | string;
   projectName: string;
   summary: QuickStartConfirmSummary;
   enabledModules: QuickStartSelectedModules;
-  spreadsheetId: number | null;
+  spreadsheetId: string | null;
   miroBoardId: string | null;
   createdAt: number;
 }
 
 export interface QuickStartChecklistProgress {
-  projectId: number;
+  projectId: number | string;
   completedStepIds: string[];
 }
 
@@ -56,7 +56,7 @@ export function clearQuickStartPostCreateGuide(): void {
 }
 
 export function readQuickStartChecklistProgress(
-  projectId: number
+  projectId: number | string
 ): QuickStartChecklistProgress {
   if (typeof window === 'undefined') {
     return { projectId, completedStepIds: [] };
@@ -75,7 +75,7 @@ export function readQuickStartChecklistProgress(
 }
 
 export function markQuickStartChecklistStepComplete(
-  projectId: number,
+  projectId: number | string,
   stepId: string
 ): string[] {
   if (typeof window === 'undefined') return [];
@@ -96,7 +96,7 @@ export function markQuickStartChecklistStepComplete(
 }
 
 export function shouldShowQuickStartPostCreateGuide(
-  activeProjectId: number | null | undefined
+  activeProjectId: number | string | null | undefined
 ): QuickStartPostCreateGuide | null {
   const guide = readQuickStartPostCreateGuide();
   if (!guide || !activeProjectId) return null;

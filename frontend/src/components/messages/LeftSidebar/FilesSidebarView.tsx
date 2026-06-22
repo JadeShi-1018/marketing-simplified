@@ -4,6 +4,7 @@ import { FileText, Image as ImageIcon, Film, File, Download } from 'lucide-react
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
 import { listAccessibleChatFiles } from '@/lib/api/attachmentApi';
+import { buildMessagesPath } from '@/lib/messages/messagesRoutes';
 import { useChatStore } from '@/lib/chatStore';
 import type { ChatFileListItem } from '@/types/chat';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -26,7 +27,7 @@ function getFileIcon(row: ChatFileListItem) {
   return <File className="w-4 h-4 text-gray-500" />;
 }
 
-export default function FilesSidebarView({ selectedProjectId }: { selectedProjectId: number }) {
+export default function FilesSidebarView({ selectedProjectId }: { selectedProjectId: number | string }) {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,19 +103,23 @@ export default function FilesSidebarView({ selectedProjectId }: { selectedProjec
             key={row.id}
             type="button"
             onClick={() => {
-              // Jump to the chat that contains this file (and try to scroll to the specific message).
               if (!row.chat?.id) return;
-              const params = new URLSearchParams();
-              params.set('projectId', String(selectedProjectId));
-              params.set('chatId', String(row.chat.id));
-              params.set('fileId', String(row.id));
-              params.set('jumpId', `${row.id}-${Date.now()}`);
+              const chatSlug =
+                row.chat.slug ??
+                useChatStore
+                  .getState()
+                  .chatsByProject[selectedProjectId ?? '']?.find((c) => c.id === row.chat?.id)?.slug;
+              if (!chatSlug) return;
               const timelineMessageId = row.thread_root_message_id ?? row.message_id;
-              if (timelineMessageId) params.set('messageId', String(timelineMessageId));
-              if (row.thread_root_message_id && row.message_id) {
-                params.set('threadMessageId', String(row.message_id));
-              }
-              router.push(`/messages?${params.toString()}`);
+              router.push(
+                buildMessagesPath(chatSlug, {
+                  messageId: timelineMessageId ?? undefined,
+                  threadMessageId:
+                    row.thread_root_message_id && row.message_id ? row.message_id : undefined,
+                  fileId: row.id,
+                  jumpId: `${row.id}-${Date.now()}`,
+                }),
+              );
             }}
             className="w-full text-left px-3 py-2 flex gap-2 hover:bg-gray-50"
           >

@@ -26,7 +26,7 @@ function NotionV2ListContent() {
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<StatusFilter>('all');
-  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   const fetchDrafts = useCallback(async () => {
@@ -73,7 +73,7 @@ function NotionV2ListContent() {
       });
       if (!created?.id) throw new Error('Draft created but id is missing');
       toast.success('Draft created');
-      router.push(`/notion/${created.id}`);
+      router.push(`/notion/${created.slug}`);
     } catch (error: any) {
       console.error('Failed to create draft', error);
       toast.error(error?.response?.data?.detail || 'Failed to create draft');
@@ -83,19 +83,19 @@ function NotionV2ListContent() {
   }, [creating, router]);
 
   const handleOpen = useCallback(
-    (id: number) => {
-      router.push(`/notion/${id}`);
+    (idOrSlug: number | string) => {
+      router.push(`/notion/${idOrSlug}`);
     },
     [router]
   );
 
   const handleDuplicate = useCallback(
-    async (id: number) => {
+    async (id: number | string) => {
       try {
         const created = await NotionDraftAPI.duplicateDraft(id);
         if (!created?.id) throw new Error('Duplicated draft id missing');
         toast.success('Draft duplicated');
-        router.push(`/notion/${created.id}`);
+        router.push(`/notion/${created.slug}`);
       } catch (error: any) {
         console.error('Failed to duplicate draft', error);
         toast.error(error?.response?.data?.detail || 'Failed to duplicate draft');
@@ -104,7 +104,7 @@ function NotionV2ListContent() {
     [router]
   );
 
-  const handleExport = useCallback(async (id: number, title: string) => {
+  const handleExport = useCallback(async (id: number | string, title: string) => {
     try {
       const blob = await NotionDraftAPI.exportDraft(id);
       const safeName = (title || 'draft').replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_') || 'draft';
@@ -128,7 +128,7 @@ function NotionV2ListContent() {
     setDeleting(true);
     try {
       await NotionDraftAPI.deleteDraft(pendingDeleteId);
-      setDrafts((prev) => prev.filter((d) => d.id !== pendingDeleteId));
+      setDrafts((prev) => prev.filter((d) => (d.slug ?? d.id) !== pendingDeleteId));
       toast.success('Draft deleted');
       setPendingDeleteId(null);
     } catch (error: any) {
@@ -139,7 +139,7 @@ function NotionV2ListContent() {
     }
   }, [pendingDeleteId]);
 
-  const deletingTarget = drafts.find((d) => d.id === pendingDeleteId);
+  const deletingTarget = drafts.find((d) => (d.slug ?? d.id) === pendingDeleteId);
 
   return (
     <DashboardLayout>

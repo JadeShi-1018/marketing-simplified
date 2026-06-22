@@ -8,20 +8,14 @@ import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { Button } from '@/components/ui/button';
 import { MeetingDocumentEditor } from '@/components/meetings/MeetingDocumentEditor';
 
-const normalizeNumberParam = (value: unknown) => {
-  const raw = Array.isArray(value) ? value[0] : value;
-  if (typeof raw !== 'string') return NaN;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : NaN;
-};
-
 export default function MeetingDocumentPage() {
   const params = useParams();
   const router = useRouter();
-  const projectId = normalizeNumberParam(params?.projectId);
-  const meetingId = normalizeNumberParam(params?.meetingId);
+  const projectId = (Array.isArray(params?.projectId) ? params.projectId[0] : (params?.projectId as string)) ?? '';
+  const meetingId = (Array.isArray(params?.meetingId) ? params.meetingId[0] : (params?.meetingId as string)) ?? '';
 
-  if (!Number.isFinite(projectId) || !Number.isFinite(meetingId)) {
+  if (!projectId || !meetingId) {
+
     return (
       <ProtectedRoute>
         <Layout>

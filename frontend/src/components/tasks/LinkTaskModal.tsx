@@ -9,7 +9,7 @@ interface LinkTaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLinkAdded: () => void;
-  sourceTaskId: number;
+  sourceTaskId: number | string;
 }
 
 const RELATIONSHIP_TYPES = [
@@ -38,7 +38,7 @@ export default function LinkTaskModal({
   const [relationshipType, setRelationshipType] = useState<string>('blocks');
   const [searchQuery, setSearchQuery] = useState('');
   const [tasks, setTasks] = useState<TaskData[]>([]);
-  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | string | null>(null);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -89,7 +89,7 @@ export default function LinkTaskModal({
         
         // Filter tasks: exclude current task only, show all other tasks from API
         const filtered = allTasks.filter((task: TaskData) => {
-          return task.id !== sourceTaskId;
+          return task.id != null && String(task.id) !== String(sourceTaskId);
         });
         
         console.log('[LinkTaskModal] Filtered tasks:', {
@@ -158,7 +158,7 @@ export default function LinkTaskModal({
     }
   };
 
-  const handleTaskSelect = (taskId: number) => {
+  const handleTaskSelect = (taskId: number | string) => {
     setSelectedTaskId(taskId);
     setError(null);
   };

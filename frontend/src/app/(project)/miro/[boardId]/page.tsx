@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react";
+import { Id } from "@/types/common";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
@@ -122,7 +123,7 @@ function MiroBoardPage() {
   const linkedConnectorSigRef = useRef<Map<string, string>>(new Map());
 
   const loadProjectBoards = useCallback(
-    async (projectId: number) => {
+    async (projectId: Id) => {
       setIsBoardsLoading(true);
       try {
         const allBoards = await miroApi.getBoards();
@@ -371,7 +372,7 @@ function MiroBoardPage() {
         viewport: { x: 0, y: 0, zoom: 1 },
       });
       setIsCreateModalOpen(false);
-      router.push(`/miro/${created.id}`);
+      router.push(`/miro/${created.slug}`);
     } catch (err) {
       console.error("Failed to create board:", err);
     } finally {
@@ -411,7 +412,7 @@ function MiroBoardPage() {
         setProjectBoards(nextProjectBoards);
         if (targetBoardId === boardId) {
           if (nextProjectBoards.length > 0) {
-            router.push(`/miro/${nextProjectBoards[0].id}`);
+            router.push(`/miro/${nextProjectBoards[0].slug ?? nextProjectBoards[0].id}`);
           } else {
             router.push("/miro");
           }

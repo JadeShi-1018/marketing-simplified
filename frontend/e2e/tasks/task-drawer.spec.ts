@@ -4,29 +4,31 @@ import {
   deleteTaskById,
   navigateToTasksAndSelectProject,
   waitForTasksPageReady,
+  getActiveProjectSlug,
 } from './tasks-helpers';
 
 test.describe('Quick task drawer', () => {
   test.describe.configure({ mode: 'serial' });
 
   let projectId: number;
+  let projectSlug: string;
   let fixtureTaskIds: number[] = [];
 
   test.beforeAll(async ({ browser }) => {
     const context = await browser.newContext({ storageState: 'e2e/.auth/user.json' });
     const page = await context.newPage();
     projectId = await navigateToTasksAndSelectProject(page);
+    projectSlug = await getActiveProjectSlug(page);
     await context.close();
   });
 
   test.beforeEach(async ({ page }) => {
     fixtureTaskIds = [];
-    await page.goto(`/tasks?project_id=${projectId}`);
+    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
     await waitForTasksPageReady(page);
-    fixtureTaskIds.push(
-      await createDraftTaskViaApi(page, projectId, `Drawer fixture ${Date.now()} A`),
-      await createDraftTaskViaApi(page, projectId, `Drawer fixture ${Date.now()} B`),
-    );
+    const a = await createDraftTaskViaApi(page, projectId, `Drawer fixture ${Date.now()} A`);
+    const b = await createDraftTaskViaApi(page, projectId, `Drawer fixture ${Date.now()} B`);
+    fixtureTaskIds.push(a.id, b.id);
     await page.reload();
     await waitForTasksPageReady(page);
     await page.getByTestId('tab-tasks').click();
@@ -41,24 +43,19 @@ test.describe('Quick task drawer', () => {
     fixtureTaskIds = [];
   });
 
-  test('clicking a task row opens the drawer without navigating', async ({ page }) => {
+  test('clicking a task row opens the drawer without navigating away from the list', async ({ page }) => {
     const firstSummary = page.getByTestId('task-row-open').first();
     await expect(firstSummary).toBeVisible({ timeout: 10_000 });
     await firstSummary.click();
 
-    // URL should stay on /tasks (no navigation)
-    await expect(page).toHaveURL(/\/tasks(\?|$)/, { timeout: 5_000 });
-
-    // Drawer should appear
+    await expect(page).toHaveURL(/\/projects\/[^/]+\/tasks\/[^/?#]+/, { timeout: 5_000 });
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
   });
 
-  test('drawer shows task content', async ({ page }) => {
+  test('drawer shows task summary instead of numeric id', async ({ page }) => {
     await page.getByTestId('task-row-open').first().click();
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
-
-    // Should show a task ID label
-    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).not.toBeVisible({ timeout: 3_000 });
   });
 
   test('drawer can be closed with X button', async ({ page }) => {
@@ -81,41 +78,35 @@ test.describe('Quick task drawer', () => {
     await page.getByTestId('task-row-open').first().click();
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 
-    // Click the backdrop (left side of the overlay, outside the panel)
     await page.getByTestId('task-drawer-backdrop').click();
     await expect(page.getByTestId('task-drawer')).not.toBeVisible({ timeout: 5_000 });
   });
 
-  test('"Open full page" button navigates to task detail', async ({ page }) => {
+  test('"Open full page" button navigates to slug task detail', async ({ page }) => {
     await page.getByTestId('task-row-open').first().click();
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 
     await page.getByTestId('task-drawer-open-full').click();
-    await page.waitForURL(/\/tasks\/\d+/, { timeout: 10_000 });
+    await page.waitForURL(/\/tasks\/[^/?#]+/, { timeout: 10_000 });
+    expect(page.url()).not.toMatch(/\/tasks\/\d+(\?|$|\/)/);
   });
 
   test('task list remains visible behind the drawer', async ({ page }) => {
     await page.getByTestId('task-row-open').first().click();
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
-
-    // Task list still in DOM
     await expect(page.getByTestId('task-list')).toBeAttached();
   });
 
   test('j/k nav buttons appear when multiple tasks are visible', async ({ page }) => {
     const rows = page.getByTestId('task-row-open');
     const count = await rows.count();
-    // Only run if there are at least 2 tasks
     if (count < 2) return;
 
     await rows.first().click();
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 
-    // Nav buttons should be visible
     await expect(page.getByTestId('drawer-nav-prev')).toBeVisible({ timeout: 5_000 });
     await expect(page.getByTestId('drawer-nav-next')).toBeVisible({ timeout: 5_000 });
-
-    // First task: prev button should be disabled
     await expect(page.getByTestId('drawer-nav-prev')).toBeDisabled();
     await expect(page.getByTestId('drawer-nav-next')).not.toBeDisabled();
   });
@@ -128,13 +119,9 @@ test.describe('Quick task drawer', () => {
     await rows.first().click();
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 
-    const firstLabel = await page.getByTestId('task-drawer').getByText(/Task #\d+/).textContent();
-
-    // Press j to move to next task
+    const firstUrl = page.url();
     await page.keyboard.press('j');
-
-    // Wait for the task # to change
-    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).not.toHaveText(firstLabel ?? '', { timeout: 5_000 });
+    await expect.poll(() => page.url()).not.toBe(firstUrl);
   });
 
   test('k key navigates to previous task after j', async ({ page }) => {
@@ -145,14 +132,14 @@ test.describe('Quick task drawer', () => {
     await rows.first().click();
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 
-    const firstLabel = await page.getByTestId('task-drawer').getByText(/Task #\d+/).textContent();
-
+    const firstUrl = page.url();
     await page.keyboard.press('j');
-    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).not.toHaveText(firstLabel ?? '', { timeout: 5_000 });
+    await expect.poll(() => page.url()).not.toBe(firstUrl);
 
-    // k should go back to the first task
+    const secondUrl = page.url();
     await page.keyboard.press('k');
-    await expect(page.getByTestId('task-drawer').getByText(/Task #\d+/)).toHaveText(firstLabel ?? '', { timeout: 5_000 });
+    await expect.poll(() => page.url()).toBe(firstUrl);
+    expect(page.url()).not.toBe(secondUrl);
   });
 
   test('priority chip opens dropdown when clicked', async ({ page }) => {
@@ -163,7 +150,6 @@ test.describe('Quick task drawer', () => {
     await expect(priorityTrigger).toBeVisible({ timeout: 10_000 });
     await priorityTrigger.click();
 
-    // Priority options should appear
     await expect(page.getByRole('button', { name: /urgent/i }).or(page.getByRole('button', { name: /high/i })).first()).toBeVisible({ timeout: 3_000 });
   });
 });

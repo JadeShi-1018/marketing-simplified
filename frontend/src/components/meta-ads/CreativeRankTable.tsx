@@ -215,7 +215,7 @@ function Row({
   const learningUnknown = row.is_in_learning === null;
   const thumb = thumbnailOrFallback(row.thumbnail_url);
   const isVideo = row.object_type === "VIDEO" || !!row.video_id;
-  const detailHref = `/meta-ads/creatives/${row.id}`;
+  const detailHref = `/meta-ads/creatives/${row.slug}`;
   const altText = row.name || row.title || "Creative thumbnail";
   const display = row.title || row.name || row.meta_creative_id;
   const isSelected = selection?.selectedIds.has(row.id) ?? false;

@@ -56,7 +56,7 @@ export const linearApi = {
   },
 
   importIssues: async (body: {
-    project_id: number;
+    project_id: number | string;
     team_id: string;
     issue_ids: string[];
   }): Promise<LinearImportResult> => {
@@ -64,8 +64,8 @@ export const linearApi = {
     return response.data;
   },
 
-  pushTask: async (body: { task_id: number; team_id?: string }): Promise<LinearPushTaskResult> => {
-    const payload: { task_id: number; team_id?: string } = { task_id: body.task_id };
+  pushTask: async (body: { task_id: number | string; team_id?: string }): Promise<LinearPushTaskResult> => {
+    const payload: { task_id: number | string; team_id?: string } = { task_id: body.task_id };
     if (body.team_id) {
       payload.team_id = body.team_id;
     }

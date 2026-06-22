@@ -34,7 +34,7 @@ export default function TaskDescriptionBlock({
     if (!task.id || value === lastSaved.current) return;
     setSaving(true);
     try {
-      await TaskAPI.updateTask(task.id, { description: value });
+      await TaskAPI.updateTask(task.slug ?? task.id, { description: value });
       lastSaved.current = value;
       await onUpdated();
     } catch (e) {

@@ -1,4 +1,5 @@
 from django.db import models, transaction
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
 from django.utils.text import slugify
@@ -266,7 +267,7 @@ class CustomUser(AbstractUser):
     def __str__(self):
         return self.email 
 
-class Project(TimeStampedModel):
+class Project(SluggedResourceModelMixin, TimeStampedModel):
     """
     Project model - Top-level container for all workspace activities.
     Stores media buyer configuration collected during onboarding wizard.

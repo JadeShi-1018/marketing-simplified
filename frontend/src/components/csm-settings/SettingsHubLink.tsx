@@ -11,7 +11,7 @@ interface Props {
 export default function SettingsHubLink({ projectId }: Props) {
   return (
     <Link
-      href={`/admin/csm/settings?project=${projectId}`}
+      href="/admin/csm/settings"
       className={SECONDARY_BUTTON_CLASS}
     >
       <ArrowLeft className="h-4 w-4" aria-hidden />

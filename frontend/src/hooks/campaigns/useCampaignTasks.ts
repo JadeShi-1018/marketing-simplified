@@ -26,7 +26,7 @@ export function useCampaignTasks(campaignId: string | null) {
         (linksRes.data as any)?.results || (linksRes.data as any) || [];
       const tasks = await Promise.all(
         links.map((l) =>
-          TaskAPI.getTask(l.task)
+          TaskAPI.getTask(l.task_slug ?? l.task)
             .then((r) => r.data as TaskData)
             .catch(() => null)
         )

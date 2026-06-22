@@ -14,7 +14,7 @@ import {
 import { useAuthStore } from '@/lib/authStore';
 
 interface Props {
-  projectId: number | null;
+  projectId: number | string | null;
   projectName?: string | null;
 }
 

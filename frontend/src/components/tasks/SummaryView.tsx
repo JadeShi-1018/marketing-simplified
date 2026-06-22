@@ -58,7 +58,7 @@ const eventLabel = (eventType?: string): string => {
 };
 
 interface SummaryViewProps {
-  projectId: number | null;
+  projectId: number | string | null;
   projectContextLoading?: boolean;
 }
 

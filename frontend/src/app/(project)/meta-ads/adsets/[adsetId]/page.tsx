@@ -71,12 +71,12 @@ export default function AdSetDetailPage({
 }: {
   params: { adsetId: string };
 }) {
-  const adsetId = Number(params.adsetId);
+  const adsetId = String(params.adsetId);
   return (
     <ProtectedRoute>
       <DashboardLayout>
         <div className="p-6">
-          {Number.isFinite(adsetId) ? (
+          {adsetId ? (
             <AdSetDetailContent adsetId={adsetId} />
           ) : (
             <div className="text-sm text-gray-500">Invalid ad set id.</div>
@@ -87,7 +87,7 @@ export default function AdSetDetailPage({
   );
 }
 
-function AdSetDetailContent({ adsetId }: { adsetId: number }) {
+function AdSetDetailContent({ adsetId }: { adsetId: string }) {
   const router = useRouter();
   const [days, setDays] = useState<number>(28);
   const [detail, setDetail] = useState<MetaAdSetDetail | null>(null);
@@ -152,7 +152,7 @@ function AdSetDetailContent({ adsetId }: { adsetId: number }) {
         </Link>
         <ChevronRight className="h-3.5 w-3.5 text-gray-300" />
         <Link
-          href={`/meta-ads/campaigns/${detail.campaign.id}`}
+          href={`/meta-ads/campaigns/${detail.campaign.slug}`}
           className="truncate hover:text-[#1a9ba3]"
         >
           {detail.campaign.name || detail.campaign.meta_campaign_id}
@@ -297,7 +297,7 @@ function AdSetDetailContent({ adsetId }: { adsetId: number }) {
                           <td className="px-3 py-2">
                             {ad.creative ? (
                               <Link
-                                href={`/meta-ads/creatives/${ad.creative.id}`}
+                                href={`/meta-ads/creatives/${ad.creative.slug}`}
                                 className="block h-10 w-10 overflow-hidden rounded-md border border-gray-200 bg-gray-50 transition-shadow hover:border-[#3CCED7]/60 hover:shadow"
                               >
                                 {thumb ? (
@@ -329,7 +329,7 @@ function AdSetDetailContent({ adsetId }: { adsetId: number }) {
                               </span>
                               {ad.creative?.meta_creative_id && (
                                 <Link
-                                  href={`/meta-ads/creatives/${ad.creative.id}`}
+                                  href={`/meta-ads/creatives/${ad.creative.slug}`}
                                   className="font-mono text-gray-400 hover:text-[#1a9ba3]"
                                 >
                                   creative {ad.creative.meta_creative_id}
@@ -396,7 +396,7 @@ function AdSetDetailContent({ adsetId }: { adsetId: number }) {
                 <dt>Campaign</dt>
                 <dd className="max-w-[200px] truncate">
                   <Link
-                    href={`/meta-ads/campaigns/${detail.campaign.id}`}
+                    href={`/meta-ads/campaigns/${detail.campaign.slug}`}
                     className="text-gray-700 hover:text-[#1a9ba3]"
                   >
                     {detail.campaign.name || detail.campaign.meta_campaign_id}

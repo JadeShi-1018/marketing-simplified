@@ -5,6 +5,8 @@ from rest_framework.exceptions import PermissionDenied, ValidationError as DRFVa
 from alerting.models import AlertTask
 from alerting.serializers import AlertTaskSerializer
 from core.models import ProjectMember
+from core.slug_mixins import resolve_pk_for
+from task.models import Task
 
 
 class AlertTaskListCreateView(generics.ListCreateAPIView):
@@ -30,9 +32,9 @@ class AlertTaskListCreateView(generics.ListCreateAPIView):
             task__project_id__in=accessible_project_ids
         )
 
-        task_id = self.request.query_params.get("task_id")
-        if task_id:
-            queryset = queryset.filter(task_id=task_id)
+        task_pk = resolve_pk_for(Task, self.request.query_params.get("task_id"))
+        if task_pk:
+            queryset = queryset.filter(task_id=task_pk)
 
         status_value = self.request.query_params.get("status")
         if status_value:

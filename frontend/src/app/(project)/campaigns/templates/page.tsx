@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
 import { Button } from '@/components/ui/button';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { useCampaignTemplates } from '@/hooks/campaigns/useCampaignTemplates';
 import TemplateListTable from '@/components/campaigns/templates/TemplateListTable';
 import type { TemplateSharingScope } from '@/types/campaign';
@@ -21,10 +21,7 @@ const SCOPE_OPTIONS: Array<{ value: string; label: string }> = [
 
 export default function TemplatesListV2Page() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectIdParam = searchParams?.get('project_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
+  const { projectId, activeProject } = useActiveProjectForFlatRoute();
 
   const { items, loading, error, refresh } = useCampaignTemplates();
   const [searchQuery, setSearchQuery] = useState('');
@@ -119,7 +116,7 @@ export default function TemplatesListV2Page() {
           loading={loading}
           errorMessage={errorMessage}
           showArchived={showArchived}
-          onRowClick={(t) => router.push(`/campaigns/templates/${t.id}`)}
+          onRowClick={(t) => router.push(`/campaigns/templates/${t.slug}`)}
         />
       </div>
       <ChatFAB />

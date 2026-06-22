@@ -5,7 +5,7 @@ export interface OriginActionItemPayload {
   id: number;
   title: string;
   meeting_id: number;
-  project_id?: number;
+  project_id?: number | string;
   detail_url?: string;
   url?: string;
 }
@@ -42,10 +42,12 @@ export interface TaskTag {
 // Type for getting an existing task
 export interface TaskData {
   id?: number;
+  /** URL-friendly identifier; present on all API responses. */
+  slug?: string;
   owner?: UserSummary;
   owner_id?: number | null; // Write-only for updates
   created_by?: UserSummary | null;
-  project_id: number; // Required for creation
+  project_id: number | string; // Required for creation
   /** Task type; valid values come from GET /api/task-types/ */
   type: string;
   summary: string;
@@ -56,6 +58,8 @@ export interface TaskData {
   due_date?: string; // Date field
   content_type?: string;
   object_id?: string;
+  /** Slug of the linked object (e.g. decision slug) for slug-based navigation */
+  linked_object_slug?: string | null;
   project?: ProjectSummary;
   status?:
     | "DRAFT"
@@ -99,7 +103,7 @@ export interface TaskData {
 
 // Type for creating a new task (current_approver_id is user ID)
 export interface CreateTaskData {
-  project_id: number;
+  project_id: number | string;
   /** Task type; valid values come from GET /api/task-types/ */
   type: string;
   summary: string;
@@ -113,7 +117,7 @@ export interface CreateTaskData {
   /** Draft-only: persisted create-panel state (backend stores JSON) */
   draft_payload?: unknown | null;
   /** When set, creates ``MeetingTaskOrigin`` on the server (same project as task). */
-  origin_meeting_id?: number;
+  origin_meeting_id?: number | string;
   /** Stored on task JSON field (omit to leave empty). */
   tags?: TaskTag[];
 }
@@ -133,6 +137,7 @@ export function userDisplayName(u: { name?: string; username?: string; email?: s
 
 export interface ProjectSummary {
   id: number;
+  slug?: string;
   name: string;
 }
 
@@ -177,7 +182,7 @@ export interface TaskRelationsResponse {
 }
 
 export interface TaskRelationAddRequest {
-  target_task_id: number;
+  target_task_id: number | string;
   relationship_type: 'causes' | 'blocks' | 'clones' | 'relates_to';
 }
 
@@ -197,7 +202,7 @@ export interface TaskAttachment {
 
 // Shared filter shape for task list/board/timeline views
 export interface TaskListFilters {
-  project_id?: number;
+  project_id?: number | string;
   type?: string | string[];
   status?: string | string[];
   priority?: string | string[];
@@ -222,6 +227,7 @@ export interface GanttLegendItem {
 
 export interface GanttRow {
   id: number;
+  slug?: string;
   display_key: string;
   summary: string;
   status_label: string;
@@ -289,12 +295,13 @@ export interface TaskFieldHistoryEntry {
 
 export interface IntelligenceTaskStub {
   id: number;
+  slug?: string;
   summary: string;
   status: string;
   priority: string | null;
   type: string;
   due_date: string | null;
-  project_id: number;
+  project_id: number | string;
   owner: { id: number; username: string } | null;
   current_approver: { id: number; username: string } | null;
   updated_at: string | null;
@@ -352,16 +359,18 @@ export interface TaskIntelligencePayload {
 
 export interface WorkCycleTaskStub {
   id: number;
+  slug?: string;
   summary: string;
   status: string;
   priority: string | null;
   type: string;
   due_date: string | null;
-  project_id: number;
+  project_id: number | string;
 }
 
 export interface WorkCycleFieldEntry {
   task_id: number;
+  task_slug?: string | null;
   task_summary: string;
   old_value: string | null;
   new_value: string | null;
@@ -386,12 +395,13 @@ export interface WorkCycleHistoryPayload {
 
 export interface MyActionsTaskStub {
   id: number;
+  slug?: string;
   summary: string;
   status: string;
   priority: string | null;
   type: string;
   due_date: string | null;
-  project_id: number;
+  project_id: number | string;
   owner: { id: number; username: string } | null;
   current_approver: { id: number; username: string } | null;
   updated_at: string | null;

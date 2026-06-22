@@ -22,7 +22,8 @@ const normalizeApiError = (error: any, fallbackMessage: string) => {
 
 export interface MiroBoard {
   id: string;
-  project_id: number;
+  slug: string;
+  project_id: number | string;
   title: string;
   share_token: string;
   viewport: {
@@ -37,7 +38,7 @@ export interface MiroBoard {
 }
 
 export interface CreateMiroBoardData {
-  project_id: number;
+  project_id: number | string;
   title: string;
   viewport?: {
     x?: number;
@@ -161,7 +162,7 @@ export interface LatestProjectBoardResponse {
 
 export interface BoardAccessResponse {
   board_id: string;
-  project_id: number;
+  project_id: number | string;
   last_accessed_at: string;
 }
 
@@ -202,7 +203,7 @@ export const miroApi = {
     }
   },
 
-  getLatestProjectBoard: async (projectId: number): Promise<LatestProjectBoardResponse> => {
+  getLatestProjectBoard: async (projectId: number | string): Promise<LatestProjectBoardResponse> => {
     try {
       const response = await api.get(`/api/miro/projects/${projectId}/latest-board/`);
       return response.data;

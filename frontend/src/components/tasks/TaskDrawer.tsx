@@ -23,15 +23,22 @@ import TaskFieldHistoryBlock from '@/components/tasks/detail/TaskFieldHistoryBlo
 import PropertiesPanel from '@/components/tasks/detail/PropertiesPanel';
 
 interface TaskDrawerProps {
-  taskId: number | null;
+  taskSlug: string | null;
   onClose: () => void;
   onTaskUpdate?: () => void;
-  taskIds?: number[];
+  taskSlugs?: string[];
   onNavigate?: (dir: 'next' | 'prev') => void;
   externalRefreshKey?: number;
 }
 
-export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = [], onNavigate, externalRefreshKey }: TaskDrawerProps) {
+export default function TaskDrawer({
+  taskSlug,
+  onClose,
+  onTaskUpdate,
+  taskSlugs = [],
+  onNavigate,
+  externalRefreshKey,
+}: TaskDrawerProps) {
   const router = useRouter();
   const updateTaskInStore = useTaskStore((s) => s.updateTask);
 
@@ -48,30 +55,26 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
 
   const panelRef = useRef<HTMLDivElement>(null);
 
-  // Animate in when taskId becomes non-null
   useEffect(() => {
-    if (taskId !== null) {
-      // Small timeout to allow DOM to mount before triggering transition
+    if (taskSlug !== null) {
       const raf = requestAnimationFrame(() => setVisible(true));
       return () => cancelAnimationFrame(raf);
-    } else {
-      setVisible(false);
     }
-  }, [taskId]);
+    setVisible(false);
+  }, [taskSlug]);
 
-  // Reset delete dialog and tab when the task changes or drawer closes
   useEffect(() => {
     setDeleteConfirmOpen(false);
     setDeleteBusy(false);
     setActiveTab('details');
-  }, [taskId]);
+  }, [taskSlug]);
 
   const load = useCallback(async (silent = false): Promise<TaskData | null> => {
-    if (!taskId) return null;
+    if (!taskSlug) return null;
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const resp = await TaskAPI.getTask(taskId);
+      const resp = await TaskAPI.getTask(taskSlug);
       const fresh = normalizeTaskFromApi(resp.data);
       setTask(fresh);
       if (fresh.id) updateTaskInStore(fresh.id, fresh);
@@ -82,25 +85,25 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [taskId, updateTaskInStore]);
+  }, [taskSlug, updateTaskInStore]);
 
   useEffect(() => {
-    if (taskId === null) {
+    if (taskSlug === null) {
       setTask(null);
       setMembers([]);
       setError(null);
       return;
     }
     void load();
-  }, [taskId, load]);
+  }, [taskSlug, load]);
 
   useEffect(() => {
-    if (externalRefreshKey && taskId !== null) void load();
+    if (externalRefreshKey && taskSlug !== null) void load();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externalRefreshKey]);
 
   useEffect(() => {
-    const pid = task?.project?.id ?? task?.project_id;
+    const pid = task?.project?.slug ?? task?.project?.id ?? task?.project_id;
     if (!pid) return;
     let cancelled = false;
     ProjectAPI.getProjectMembers(pid)
@@ -113,7 +116,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     return () => {
       cancelled = true;
     };
-  }, [task?.project?.id, task?.project_id]);
+  }, [task?.project?.id, task?.project_id, task?.project?.slug]);
 
   const onMutated = useCallback(async (updatedTask?: TaskData) => {
     if (updatedTask?.id) {
@@ -125,20 +128,15 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
       }
     }
     setRefreshKey((k) => k + 1);
-    // Fetch authoritative single-task data first.
     const fresh = await load(true);
-    // Await the full list refresh so fetchTasks finishes before we re-assert.
     await onTaskUpdate?.();
-    // Re-assert the single task so the list filter sees correct tags even if
-    // the list endpoint returned stale/empty tag data for this task.
     if (fresh?.id) {
       updateTaskInStore(fresh.id, fresh);
     }
   }, [load, onTaskUpdate, updateTaskInStore]);
 
-  // Keyboard handler: Escape closes, j/k navigates (skip when an input or lightbox is focused)
   useEffect(() => {
-    if (taskId === null) return;
+    if (taskSlug === null) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { onClose(); return; }
       const tag = (e.target as HTMLElement)?.tagName;
@@ -150,11 +148,10 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     };
     document.addEventListener('keydown', handler);
     return () => document.removeEventListener('keydown', handler);
-  }, [taskId, onClose, onNavigate, attachmentPreviewOpen]);
+  }, [taskSlug, onClose, onNavigate, attachmentPreviewOpen]);
 
-  // Prevent body scroll while drawer is open
   useEffect(() => {
-    if (taskId !== null) {
+    if (taskSlug !== null) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
@@ -162,15 +159,17 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
     return () => {
       document.body.style.overflow = '';
     };
-  }, [taskId]);
+  }, [taskSlug]);
 
   const currentUser = useAuthStore((s) => s.user);
 
-  if (taskId === null) return null;
+  if (taskSlug === null) return null;
 
-  const currentIndex = taskIds.indexOf(taskId);
+  const currentIndex = taskSlugs.indexOf(taskSlug);
   const hasPrev = currentIndex > 0;
-  const hasNext = currentIndex !== -1 && currentIndex < taskIds.length - 1;
+  const hasNext = currentIndex !== -1 && currentIndex < taskSlugs.length - 1;
+  const fullPageSlug = task?.slug ?? taskSlug;
+  const drawerLabel = task?.summary?.trim() || taskSlug;
 
   const isOwner = currentUser?.id != null && task?.owner?.id != null &&
     Number(currentUser.id) === Number(task.owner.id);
@@ -183,7 +182,8 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
   );
   const readOnly = task?.status === 'LOCKED' || (!isOwner && !isApprover && !creatorCanEditUnassignedDraft);
   const taskShell = (task ?? {
-    id: taskId ?? undefined,
+    id: undefined,
+    slug: taskSlug,
     summary: '',
     description: '',
     status: 'DRAFT',
@@ -199,7 +199,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      {/* Backdrop */}
       <div
         data-testid="task-drawer-backdrop"
         className={`absolute inset-0 bg-black/30 transition-opacity duration-300 ${visible ? 'opacity-100' : 'opacity-0'}`}
@@ -207,7 +206,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
         aria-hidden="true"
       />
 
-      {/* Slide-in panel */}
       <div
         ref={panelRef}
         data-testid="task-drawer"
@@ -215,11 +213,15 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           visible ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
-        {/* Drawer header */}
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-gray-100 bg-white px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-gray-500">Task #{taskId}</span>
-            {onNavigate && taskIds.length > 1 && (
+          <div className="flex min-w-0 items-center gap-2">
+            <span
+              className="max-w-[240px] truncate text-xs font-medium text-gray-500"
+              title={drawerLabel}
+            >
+              {loading && !task?.summary ? 'Loading…' : drawerLabel}
+            </span>
+            {onNavigate && taskSlugs.length > 1 && (
               <div className="flex items-center gap-0.5">
                 <button
                   type="button"
@@ -248,11 +250,11 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           </div>
           <div className="flex items-center gap-1">
             <a
-              href={`/tasks/${taskId}`}
+              href={`/tasks/${fullPageSlug}`}
               data-testid="task-drawer-open-full"
               onClick={(e) => {
                 e.preventDefault();
-                router.push(`/tasks/${taskId}`);
+                router.push(`/tasks/${fullPageSlug}`);
               }}
               title="Open full page"
               aria-label="Open full page"
@@ -273,7 +275,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           </div>
         </div>
 
-        {/* Tab bar */}
         <div className="sticky top-[53px] z-10 flex border-b border-gray-100 bg-white px-4">
           {(['details', 'history'] as const).map((tab) => (
             <button
@@ -292,7 +293,6 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           ))}
         </div>
 
-        {/* Drawer body */}
         <div className="px-4 py-4 space-y-4">
           {error && !loading && (
             <div className="rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-600">{error}</div>
@@ -381,7 +381,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
         title="Delete task"
         message={
           task
-            ? `"${task.summary || `Task #${task.id}`}" will be permanently removed. This cannot be undone.`
+            ? `"${task.summary || task.slug || 'Task'}" will be permanently removed. This cannot be undone.`
             : ''
         }
         type="danger"
@@ -391,7 +391,7 @@ export default function TaskDrawer({ taskId, onClose, onTaskUpdate, taskIds = []
           if (!task?.id || deleteBusy) return;
           setDeleteBusy(true);
           try {
-            await TaskAPI.deleteTask(task.id);
+            await TaskAPI.deleteTask(task.slug ?? task.id);
             toast.success('Task deleted');
             setDeleteConfirmOpen(false);
             onTaskUpdate?.();

@@ -23,7 +23,7 @@ class WorkflowSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Workflow
-        fields = [
+        fields = ['slug', 
             "id",
             "name",
             "description",
@@ -36,7 +36,7 @@ class WorkflowSerializer(serializers.ModelSerializer):
             "updated_at",
             "is_deleted",
         ]
-        read_only_fields = [
+        read_only_fields = ['slug', 
             "id",
             "organization_id",
             "created_by_id",

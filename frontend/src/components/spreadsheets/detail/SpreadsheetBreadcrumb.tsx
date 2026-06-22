@@ -1,18 +1,19 @@
 'use client';
 
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { ArrowLeft } from 'lucide-react';
 
+import { Id } from '@/types/common';
+
 interface Props {
-  projectId: number | null;
+  projectId: Id | null;
   projectName?: string | null;
   spreadsheetName?: string | null;
 }
 
 export default function SpreadsheetBreadcrumb({ projectId, projectName, spreadsheetName }: Props) {
-  const listHref = projectId
-    ? `/spreadsheets?project_id=${projectId}`
-    : '/spreadsheets';
+  const listHref = nestedProjectPath(projectId, '/spreadsheets');
   return (
     <nav
       aria-label="Breadcrumb"

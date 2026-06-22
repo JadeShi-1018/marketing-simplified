@@ -70,7 +70,7 @@ class TaskSubtaskAPITest(APITestCase):
             child_task=self.child_task
         )
 
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -80,7 +80,7 @@ class TaskSubtaskAPITest(APITestCase):
 
     def test_list_subtasks_empty(self):
         """Listing subtasks for task with no subtasks returns empty list."""
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -88,7 +88,7 @@ class TaskSubtaskAPITest(APITestCase):
 
     def test_add_subtask_success(self):
         """Authenticated project member can add a subtask to a task."""
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         data = {"child_task_id": self.child_task.id}
 
         response = self.client.post(url, data, format="json")
@@ -108,7 +108,7 @@ class TaskSubtaskAPITest(APITestCase):
         """Unauthenticated requests cannot add subtasks."""
         self.client.force_authenticate(user=None)
 
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         data = {"child_task_id": self.child_task.id}
 
         response = self.client.post(url, data, format="json")
@@ -118,7 +118,7 @@ class TaskSubtaskAPITest(APITestCase):
         """Non-project member cannot add subtasks."""
         self.client.force_authenticate(user=self.other_user)
 
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         data = {"child_task_id": self.child_task.id}
 
         response = self.client.post(url, data, format="json")
@@ -126,7 +126,7 @@ class TaskSubtaskAPITest(APITestCase):
 
     def test_add_subtask_invalid_child_task_id(self):
         """Adding subtask with invalid child_task_id returns 400."""
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         data = {"child_task_id": 999999}
 
         response = self.client.post(url, data, format="json")
@@ -134,7 +134,7 @@ class TaskSubtaskAPITest(APITestCase):
 
     def test_add_subtask_self_reference(self):
         """Adding task as its own subtask should fail."""
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         data = {"child_task_id": self.parent_task.id}
 
         response = self.client.post(url, data, format="json")
@@ -158,7 +158,7 @@ class TaskSubtaskAPITest(APITestCase):
         )
 
         # Try to add child_task as subtask of parent_task (should fail)
-        url = self._get_subtasks_url(self.parent_task.id)
+        url = self._get_subtasks_url(self.parent_task.slug)
         data = {"child_task_id": self.child_task.id}
 
         response = self.client.post(url, data, format="json")
@@ -175,7 +175,7 @@ class TaskSubtaskAPITest(APITestCase):
             child_task=self.child_task
         )
 
-        url = self._get_subtask_detail_url(self.parent_task.id, self.child_task.id)
+        url = self._get_subtask_detail_url(self.parent_task.slug, self.child_task.slug)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -196,7 +196,7 @@ class TaskSubtaskAPITest(APITestCase):
         )
 
         self.client.force_authenticate(user=None)
-        url = self._get_subtask_detail_url(self.parent_task.id, self.child_task.id)
+        url = self._get_subtask_detail_url(self.parent_task.slug, self.child_task.slug)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -209,21 +209,21 @@ class TaskSubtaskAPITest(APITestCase):
         )
 
         self.client.force_authenticate(user=self.other_user)
-        url = self._get_subtask_detail_url(self.parent_task.id, self.child_task.id)
+        url = self._get_subtask_detail_url(self.parent_task.slug, self.child_task.slug)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_delete_subtask_nonexistent_relationship(self):
         """Deleting non-existent subtask relationship returns 404."""
-        url = self._get_subtask_detail_url(self.parent_task.id, self.child_task.id)
+        url = self._get_subtask_detail_url(self.parent_task.slug, self.child_task.slug)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_subtask_nonexistent_task(self):
         """Deleting subtask for non-existent parent task returns 404."""
-        url = self._get_subtask_detail_url(999999, self.child_task.id)
+        url = self._get_subtask_detail_url("nonexistent-task", self.child_task.slug)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

@@ -24,6 +24,7 @@ import { OptimizationAPI } from "@/lib/api/optimizationApi";
 import { ClientCommunicationAPI } from "@/lib/api/clientCommunicationApi";
 import type { CreateTaskData } from "@/types/task";
 import type { DecisionRiskLevel } from "@/types/decision";
+import { Id } from "@/types/common";
 import { ScalingPlanForm } from "@/components/tasks/ScalingPlanForm";
 import AlertTaskForm from "@/components/tasks/AlertTaskForm";
 import { ExperimentForm } from "@/components/tasks/ExperimentForm";
@@ -35,13 +36,13 @@ import NewClientCommunicationForm, {
 interface DecisionTaskCreateModalProps {
   isOpen: boolean;
   onClose: () => void;
-  decisionId: number;
+  decisionId: Id;
   decisionTitle: string;
   decisionSummary?: string | null;
   decisionSeq?: number | null;
   selectedOptionText?: string | null;
   decisionLink: string;
-  projectId?: number | null;
+  projectId?: Id | null;
   projectName?: string | null;
   decisionRiskLevel?: DecisionRiskLevel | null;
   decisionApprovedBy?: number | null;
@@ -563,12 +564,12 @@ const DecisionTaskCreateModal = ({
         return;
       }
 
-      const createdTask: { id: number } = maybeCreatedTask as { id: number };
+      const createdTask = maybeCreatedTask as { id: number; slug?: string | null };
 
       try {
         await TaskAPI.linkTask(createdTask.id, "decision", String(decisionId));
       } catch (linkErr: any) {
-        await TaskAPI.deleteTask(createdTask.id);
+        await TaskAPI.deleteTask(createdTask.slug ?? createdTask.id);
         throw linkErr;
       }
 
@@ -580,7 +581,7 @@ const DecisionTaskCreateModal = ({
             createdTask,
           );
         } catch (typeErr: any) {
-          await TaskAPI.deleteTask(createdTask.id);
+          await TaskAPI.deleteTask(createdTask.slug ?? createdTask.id);
           throw typeErr;
         }
       }

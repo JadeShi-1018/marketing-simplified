@@ -200,7 +200,7 @@ class AdCreativeDetailSerializer(serializers.ModelSerializer):
         model = AdCreative
         fields = [
             # Core fields
-            'id', 'actor_id', 'name', 'status',
+            'id', 'slug', 'actor_id', 'name', 'status',
             
             # Content fields
             'body', 'title', 'image_hash', 'image_url', 'video_id', 'thumbnail_id', 'thumbnail_url',

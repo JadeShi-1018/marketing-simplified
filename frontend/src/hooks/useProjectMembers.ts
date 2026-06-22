@@ -10,14 +10,19 @@ interface UseProjectMembersResult {
   refetch: () => void;
 }
 
-export function useProjectMembers(projectId: number | null | undefined): UseProjectMembersResult {
+export function useProjectMembers(projectId: number | string | null | undefined): UseProjectMembersResult {
   const [members, setMembers] = useState<ProjectMemberData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const latestProjectIdRef = useRef<number | null>(null);
+  const latestProjectIdRef = useRef<number | string | null>(null);
 
   const fetchMembers = useCallback(async () => {
-    if (typeof projectId !== 'number' || projectId <= 0) {
+    // Slug ids are strings; guard empty/null and any non-positive legacy numeric id.
+    if (
+      projectId == null ||
+      projectId === '' ||
+      (typeof projectId === 'number' && projectId <= 0)
+    ) {
       setMembers([]);
       return;
     }

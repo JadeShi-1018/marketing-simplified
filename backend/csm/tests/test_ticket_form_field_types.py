@@ -86,7 +86,7 @@ class TestBulkFieldsAllTypes:
         form = TicketForm.objects.create(project=project, name='All types')
         ensure_system_fields(form)
         payload = {'fields': _base_system_fields() + _all_custom_fields()}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_200_OK
         assert form.fields.exclude(field_key__in=TicketFormField.SYSTEM_FIELD_KEYS).count() == 6
 
@@ -96,7 +96,7 @@ class TestBulkFieldsAllTypes:
         payload = {'fields': _base_system_fields() + [
             {'field_key': 'due_at', 'label': 'Due at', 'field_type': 'timestamp', 'sort_order': 4},
         ]}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_rejects_dropdown_without_options(self, member_client, project):
@@ -105,7 +105,7 @@ class TestBulkFieldsAllTypes:
         payload = {'fields': _base_system_fields() + [
             {'field_key': 'priority', 'label': 'Priority', 'field_type': 'dropdown', 'sort_order': 4, 'options': []},
         ]}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
@@ -133,7 +133,7 @@ class TestSubmitCustomFieldTypes:
             'owner': user.id,
         }
         response = member_client.post(
-            _submit_url(experience_group.id),
+            _submit_url(experience_group.slug),
             {'answers': json.dumps(answers)},
         )
         assert response.status_code == status.HTTP_201_CREATED
@@ -157,7 +157,7 @@ class TestSubmitCustomFieldTypes:
             'link': 'not-a-url',
         }
         response = member_client.post(
-            _submit_url(experience_group.id),
+            _submit_url(experience_group.slug),
             {'answers': json.dumps(answers)},
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -180,7 +180,7 @@ class TestSubmitCustomFieldTypes:
             'owner': 999999,
         }
         response = member_client.post(
-            _submit_url(experience_group.id),
+            _submit_url(experience_group.slug),
             {'answers': json.dumps(answers)},
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST

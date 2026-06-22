@@ -1,3 +1,5 @@
+import { Id } from '@/types/common';
+
 export type PatternStepType =
   | 'APPLY_FORMULA'
   | 'INSERT_ROW'
@@ -188,8 +190,8 @@ export interface WorkflowPatternSummary {
   name: string;
   description?: string;
   version?: number;
-  origin_spreadsheet_id?: number | null;
-  origin_sheet_id?: number | null;
+  origin_spreadsheet_id?: Id | null;
+  origin_sheet_id?: Id | null;
   createdAt: string;
   is_archived?: boolean;
 }
@@ -270,8 +272,8 @@ export interface CreatePatternPayload {
   name: string;
   description?: string;
   origin?: {
-    spreadsheet_id?: number | null;
-    sheet_id?: number | null;
+    spreadsheet_id?: Id | null;
+    sheet_id?: Id | null;
   };
   steps: CreatePatternStepPayload[];
 }

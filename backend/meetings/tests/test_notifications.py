@@ -79,7 +79,7 @@ class MeetingNotificationSSETests(TestCase):
         POST /api/projects/{id}/meetings/ with participant_user_ids must call
         publish_notification_to_redis for each participant (except the creator).
         """
-        url = f"/api/projects/{self.project.id}/meetings/"
+        url = f"/api/projects/{self.project.slug}/meetings/"
         payload = {
             "title": "Kickoff",
             "meeting_type": "planning",
@@ -108,7 +108,7 @@ class MeetingNotificationSSETests(TestCase):
     @patch(_PUBLISH_PATH)
     def test_create_meeting_without_participants_does_not_fire_publish(self, mock_publish):
         """Creating a meeting with no participants → no SSE push."""
-        url = f"/api/projects/{self.project.id}/meetings/"
+        url = f"/api/projects/{self.project.slug}/meetings/"
         payload = {
             "title": "Solo planning",
             "meeting_type": "solo",
@@ -131,7 +131,7 @@ class MeetingNotificationSSETests(TestCase):
             title="Planning",
             type_definition=self._meeting_type(slug="link-test"),
         )
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/participants/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/participants/"
         r = self.client.post(url, {"user": self.user_b.id}, format="json")
         self.assertIn(r.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
 
@@ -154,7 +154,7 @@ class MeetingNotificationSSETests(TestCase):
         )
         link = ParticipantLink.objects.create(meeting=meeting, user=self.user_b)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/participants/{link.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/participants/{link.id}/"
         r = self.client.delete(url)
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
 
@@ -184,7 +184,7 @@ class MeetingNotificationSSETests(TestCase):
         )
         link = ParticipantLink.objects.create(meeting=meeting, user=self.user_a)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/participants/{link.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/participants/{link.id}/"
         r = self.client.delete(url)
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
         mock_publish.assert_not_called()
@@ -204,7 +204,7 @@ class MeetingNotificationSSETests(TestCase):
         )
         ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
         r = self.client.patch(
             url,
             {"scheduled_date": "2099-12-31"},
@@ -230,7 +230,7 @@ class MeetingNotificationSSETests(TestCase):
         )
         ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
         r = self.client.patch(
             url,
             {"external_reference": "Room B"},
@@ -347,13 +347,13 @@ class TaskNotificationSSETests(TestCase):
             format="json",
         )
         self.assertEqual(r_create.status_code, status.HTTP_201_CREATED)
-        task_id = r_create.data["id"]
+        task_slug = r_create.data["slug"]
 
         mock_publish.reset_mock()  # clear any calls from create
 
         # Reassign to owner (allowed while in DRAFT status).
         r_update = self.client.patch(
-            f"/api/tasks/{task_id}/",
+            f"/api/tasks/{task_slug}/",
             {"owner_id": self.owner.id},
             format="json",
         )
@@ -399,7 +399,7 @@ class TaskNotificationSSETests(TestCase):
 
         # Change the due date (creator/approver → owner notification expected).
         r_update = self.client.patch(
-            f"/api/tasks/{task_id}/",
+            f"/api/tasks/{task.slug}/",
             {"due_date": "2099-06-30"},
             format="json",
         )
@@ -458,7 +458,7 @@ class AgendaSectionNotificationTests(TestCase):
         self.client.force_authenticate(user=self.organiser)
 
     def _patch_layout(self, layout_config):
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/"
         return self.client.patch(url, {"layout_config": layout_config}, format="json")
 
     @patch(_PUBLISH_PATH)
@@ -591,13 +591,13 @@ class AgendaItemDedupNotificationTests(TestCase):
         self.client.force_authenticate(user=self.editor)
 
         # Create one agenda item via API
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/agenda-items/"
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/agenda-items/"
         r = self.client.post(url, {"content": "Original text", "order_index": 0}, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
         self.agenda_item_id = r.data["id"]
 
     def _patch_item(self, content):
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/agenda-items/{self.agenda_item_id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/agenda-items/{self.agenda_item_id}/"
         return self.client.patch(url, {"content": content}, format="json")
 
     @patch(_PUBLISH_PATH)
@@ -736,7 +736,7 @@ class AgendaItemCreateDeleteNotificationTests(TestCase):
 
         self.client.force_authenticate(user=self.actor)
         self.items_url = (
-            f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/agenda-items/"
+            f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/agenda-items/"
         )
 
     @patch(_PUBLISH_PATH)
@@ -901,7 +901,7 @@ class MeetingDocumentNotificationTests(TestCase):
             notify_collaborators=False,
         )
 
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/document/"
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/document/"
         r = self.client.patch(url, {"content": "Updated draft by editor"}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 
@@ -939,7 +939,7 @@ class MeetingDocumentNotificationTests(TestCase):
             notify_collaborators=False,
         )
 
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/document/"
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/document/"
         r = self.client.patch(url, {"content": "Identical content"}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         mock_publish.assert_not_called()

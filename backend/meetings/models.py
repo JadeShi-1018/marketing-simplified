@@ -29,6 +29,7 @@ provenance links to decisions/tasks.
 """
 
 from django.conf import settings
+from core.slug_mixins import SluggedResourceModelMixin
 from django.db import models
 import uuid
 
@@ -92,7 +93,7 @@ class MeetingTagDefinition(models.Model):
         return f"#{self.slug} ({self.project_id})"
 
 
-class Meeting(TimeStampedModel):
+class Meeting(SluggedResourceModelMixin, TimeStampedModel):
     """
     Single meeting, strictly **project-scoped**.
 

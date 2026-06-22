@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 
 export interface EmailDraft {
   id: number;
+  slug?: string;
   subject?: string; // May come from settings.subject_line
   preview_text?: string;
   from_name?: string; // May come from settings.from_name
@@ -49,8 +50,8 @@ export interface CreateEmailDraftData {
   preview_text?: string;
   from_name: string;
   reply_to: string;
-  templateId?: number;
-  template_id?: number;
+  templateId?: number | string;
+  template_id?: number | string;
   template_data?: {
     template: {
       name: string;

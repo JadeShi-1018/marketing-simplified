@@ -17,6 +17,7 @@ import toast from 'react-hot-toast';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { ProjectMemberPicker } from '@/components/meetings/ProjectMemberPicker';
+import { Id } from '@/types/common';
 import type { UnifiedMeetingTemplateOption } from '@/lib/meetings/unifiedMeetingTemplates';
 
 type QuickCreateSubmitPayload = {
@@ -32,7 +33,7 @@ type QuickCreateMeetingModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   creating: boolean;
-  projectId: number;
+  projectId: Id;
   templateOptions: UnifiedMeetingTemplateOption[];
   onSubmit: (payload: QuickCreateSubmitPayload) => Promise<void>;
 };

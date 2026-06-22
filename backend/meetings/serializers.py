@@ -88,7 +88,7 @@ class MeetingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Meeting
-        fields = [
+        fields = ['slug', 
             "id",
             "project",
             "title",
@@ -117,7 +117,7 @@ class MeetingSerializer(serializers.ModelSerializer):
             "participant_user_ids",
             "zoom_post_meeting",
         ]
-        read_only_fields = [
+        read_only_fields = ['slug', 
             "id",
             "project",
             "meeting_type_slug",
@@ -399,6 +399,7 @@ class MeetingListSerializer(serializers.ModelSerializer):
         model = Meeting
         fields = [
             "id",
+            "slug",
             "title",
             "summary",
             "scheduled_date",

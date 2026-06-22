@@ -7,7 +7,7 @@ import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
 
 interface TaskSharePreviewProps {
-  taskId: number;
+  taskId: number | string;
   className?: string;
 }
 
@@ -88,7 +88,7 @@ export default function TaskSharePreview({ taskId, className = '' }: TaskSharePr
 
   return (
     <Link
-      href={`/tasks/${task.id}`}
+      href={`/tasks/${task.slug}`}
       className={`block rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition hover:border-indigo-400 ${className}`}
     >
       <div className="flex items-start gap-3">

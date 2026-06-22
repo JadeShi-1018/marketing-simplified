@@ -11,7 +11,7 @@ from meetings.models import Meeting, MeetingActionItem, MeetingTaskOrigin, Meeti
 from task.models import Task
 
 
-def _action_items_base(project_id: int, meeting_id: int) -> str:
+def _action_items_base(project_id, meeting_id) -> str:
     return f"/api/projects/{project_id}/meetings/{meeting_id}/action-items"
 
 
@@ -58,7 +58,7 @@ class ActionItemTaskIntegrationTests(TestCase):
         self.client.force_authenticate(user=self.user)
 
     def test_create_list_action_items(self):
-        base = _action_items_base(self.project.id, self.meeting.id)
+        base = _action_items_base(self.project.slug, self.meeting.slug)
         r = self.client.post(
             base + "/",
             {"title": "Follow up", "description": "Do the thing", "order_index": 0},
@@ -82,7 +82,7 @@ class ActionItemTaskIntegrationTests(TestCase):
             order_index=0,
         )
         url = (
-            f"{_action_items_base(self.project.id, self.meeting.id)}"
+            f"{_action_items_base(self.project.slug, self.meeting.slug)}"
             f"/{ai.id}/convert-to-task/"
         )
         r = self.client.post(
@@ -108,7 +108,7 @@ class ActionItemTaskIntegrationTests(TestCase):
         self.assertEqual(task.origin_action_item_id, ai.id)
         self.assertEqual(task.owner_id, self.owner_b.id)
 
-        detail = self.client.get(f"/api/tasks/{task_id}/")
+        detail = self.client.get(f"/api/tasks/{task.slug}/")
         self.assertEqual(detail.status_code, status.HTTP_200_OK)
         self.assertEqual(detail.data["origin_meeting"]["id"], self.meeting.id)
         self.assertEqual(detail.data["origin_action_item"]["id"], ai.id)
@@ -122,7 +122,7 @@ class ActionItemTaskIntegrationTests(TestCase):
             order_index=0,
         )
         url = (
-            f"{_action_items_base(self.project.id, self.meeting.id)}"
+            f"{_action_items_base(self.project.slug, self.meeting.slug)}"
             f"/{ai.id}/convert-to-task/"
         )
         r1 = self.client.post(url, {"type": "execution"}, format="json")
@@ -138,7 +138,7 @@ class ActionItemTaskIntegrationTests(TestCase):
             meeting=self.meeting, title="B", description="", order_index=1
         )
         url = (
-            f"{_action_items_base(self.project.id, self.meeting.id)}"
+            f"{_action_items_base(self.project.slug, self.meeting.slug)}"
             f"/bulk-convert-to-task/"
         )
         r = self.client.post(
@@ -161,12 +161,12 @@ class ActionItemTaskIntegrationTests(TestCase):
             meeting=self.meeting, title="T", description="", order_index=0
         )
         self.client.post(
-            f"{_action_items_base(self.project.id, self.meeting.id)}/{ai.id}/convert-to-task/",
+            f"{_action_items_base(self.project.slug, self.meeting.slug)}/{ai.id}/convert-to-task/",
             {"type": "execution"},
             format="json",
         )
         r = self.client.get(
-            f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/tasks/",
+            f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/tasks/",
         )
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         if isinstance(r.data, dict) and "results" in r.data:
@@ -180,7 +180,7 @@ class ActionItemTaskIntegrationTests(TestCase):
             meeting=self.meeting, title="A", description="", order_index=0
         )
         url = (
-            f"{_action_items_base(self.project.id, self.meeting.id)}"
+            f"{_action_items_base(self.project.slug, self.meeting.slug)}"
             f"/bulk-convert-to-task/"
         )
         r = self.client.post(

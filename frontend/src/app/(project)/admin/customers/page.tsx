@@ -14,7 +14,8 @@ import { ExperienceGroupListItem } from '@/types/experienceGroup';
 import { Region } from '@/types/region';
 import { Organisation } from '@/types/organisation';
 import { Plus, Pencil, Trash2, AlertCircle, X, Users, ArrowLeft } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 
 // ── Group selector shared between Create and Edit forms ───────────────────────
 
@@ -484,9 +485,9 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, 
 
 const CustomersPage: React.FC = () => {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectId = Number(searchParams.get('project'));
-  const projectValid = Number.isFinite(projectId) && projectId > 0;
+  const { activeProject } = useActiveProjectForFlatRoute();
+  const projectId = Number(activeProject?.id ?? 0);
+  const projectValid = projectId > 0;
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [groups, setGroups] = useState<ExperienceGroupListItem[]>([]);

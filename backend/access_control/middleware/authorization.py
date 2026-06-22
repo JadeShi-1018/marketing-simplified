@@ -36,6 +36,14 @@ class AuthorizationMiddleware:
         if not user or not user.is_authenticated:
             return None
 
+        # Superusers bypass module-level authorization. The @require_* decorators
+        # in this module already short-circuit for superusers ("Org admin
+        # (superuser) can always proceed"); this middleware was missing the same
+        # bypass, so superusers were denied any module whose RBAC permissions
+        # had not been seeded.
+        if getattr(user, 'is_superuser', False):
+            return None
+
         # Parse the module from the path, e.g. /api/assets/... → ASSET
         parts = request.path.strip('/').split('/')
         if len(parts) < 2 or parts[0] != 'api':

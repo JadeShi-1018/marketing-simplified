@@ -18,7 +18,7 @@ function SpreadsheetProjectChoosePageContent({
   projects: ProjectData[];
   loading: boolean;
   error: string | null;
-  onSelectProject: (id: number) => void;
+  onSelectProject: (id: number | string) => void;
 }) {
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
@@ -159,7 +159,7 @@ export const WithProjects: Story = {
     docs: { description: { story: 'Project cards; click to select and navigate to spreadsheets list.' } },
   },
   render: () => {
-    const [selected, setSelected] = useState<number | null>(null);
+    const [selected, setSelected] = useState<number | string | null>(null);
     return (
       <SpreadsheetProjectChoosePageContent
         projects={mockProjects}

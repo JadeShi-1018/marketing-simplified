@@ -176,7 +176,7 @@ class OptimizationAPITest(TestCase):
         )
 
         # Filter by task_id
-        url = f"/api/optimization/optimizations/?task_id={self.task.id}"
+        url = f"/api/optimization/optimizations/?task_id={self.task.slug}"
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = self._results(response)

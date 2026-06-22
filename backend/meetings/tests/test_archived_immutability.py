@@ -44,7 +44,7 @@ class TestArchivedMeetingImmutability(TestCase):
         )
 
     def _url(self, path):
-        return f"/api/projects/{self.project.id}/meetings/{self.meeting.id}{path}"
+        return f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}{path}"
 
     # ------------------------------------------------------------------
     # Meeting-level writes → 403
@@ -255,7 +255,7 @@ class TestArchivedMeetingImmutability(TestCase):
         # No action items → _validate_transition_to_archived passes (unresolved count == 0).
         meeting = _meeting(self.project, status=Meeting.STATUS_COMPLETED)
         self.assertEqual(meeting.action_items.filter(is_resolved=False).count(), 0)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "archived"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         meeting.refresh_from_db()
@@ -264,7 +264,7 @@ class TestArchivedMeetingImmutability(TestCase):
 
     def test_direct_patch_of_is_archived_is_ignored(self):
         meeting = _meeting(self.project, status=Meeting.STATUS_DRAFT)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
         res = self.client.patch(url, {"is_archived": True}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         meeting.refresh_from_db()
@@ -336,7 +336,7 @@ class TestArchivedMeetingImmutability(TestCase):
             MeetingActionItem.objects.create(
                 meeting=meeting, title=f"Item {i}", description="", order_index=i
             )
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "archived"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("20", str(res.data))
@@ -348,7 +348,7 @@ class TestArchivedMeetingImmutability(TestCase):
                 meeting=meeting, title=f"Item {i}", description="",
                 order_index=i, is_resolved=True
             )
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "archived"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         meeting.refresh_from_db()
@@ -366,7 +366,7 @@ class TestArchivedMeetingImmutability(TestCase):
             ProjectMember.objects.create(user=u, project=self.project, is_active=True)
             ParticipantLink.objects.create(meeting=meeting, user=u)
             users.append(u)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "in_progress"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 

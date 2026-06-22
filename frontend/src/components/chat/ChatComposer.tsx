@@ -133,7 +133,7 @@ export interface ChatComposerProps {
   /** Numeric chat id — used for localStorage draft key and typing events. */
   chatId?: number | null;
   /** Project id scopes localStorage drafts so cleanup cannot delete another project's drafts. */
-  projectId?: number | null;
+  projectId?: number | string | null;
   onTypingStart?: () => void;
   onTypingStop?: () => void;
   replyingTo?: Message | null;
@@ -178,8 +178,8 @@ const EmojiPicker = dynamic(() => import('emoji-picker-react'), {
 // ---------------------------------------------------------------------------
 
 const LEGACY_DRAFT_KEY = (chatId: number) => `chat_draft_v1_${chatId}`;
-const PROJECT_DRAFT_KEY = (projectId: number, chatId: number) => `chat_draft_v2_${projectId}_${chatId}`;
-const DRAFT_KEY = (chatId: number, projectId?: number | null) => (
+const PROJECT_DRAFT_KEY = (projectId: number | string, chatId: number) => `chat_draft_v2_${projectId}_${chatId}`;
+const DRAFT_KEY = (chatId: number, projectId?: number | string | null) => (
   projectId ? PROJECT_DRAFT_KEY(projectId, chatId) : LEGACY_DRAFT_KEY(chatId)
 );
 type RecordingMode = 'audio' | 'video';

@@ -7,7 +7,7 @@ import { browseChannels, addParticipant } from '@/lib/api/chatApi';
 import type { BrowseChannelRow } from '@/lib/api/chatApi';
 
 interface BrowseChannelsDialogProps {
-  projectId: number;
+  projectId: number | string;
   currentUserId: number;
   onClose: () => void;
   onJoinedChannel?: (chatId: number) => void;

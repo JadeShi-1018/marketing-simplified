@@ -30,10 +30,10 @@ urlpatterns = [
     path('api/', include(router.urls)),
     
     # Additional API endpoints
-    path('api/drafts/<int:draft_id>/blocks/', views.DraftBlocksView.as_view(), name='draft-blocks'),
-    path('api/drafts/<int:draft_id>/export/', views.ExportDraftView.as_view(), name='export-draft'),
-    path('api/drafts/<int:draft_id>/duplicate/', views.DuplicateDraftView.as_view(), name='duplicate-draft'),
-    path('api/drafts/<int:draft_id>/revisions/', views.DraftRevisionsListView.as_view(), name='draft-revisions'),
+    path('api/drafts/<str:draft_id>/blocks/', views.DraftBlocksView.as_view(), name='draft-blocks'),
+    path('api/drafts/<str:draft_id>/export/', views.ExportDraftView.as_view(), name='export-draft'),
+    path('api/drafts/<str:draft_id>/duplicate/', views.DuplicateDraftView.as_view(), name='duplicate-draft'),
+    path('api/drafts/<str:draft_id>/revisions/', views.DraftRevisionsListView.as_view(), name='draft-revisions'),
     
     # Custom Admin API endpoints (Backend only - no templates required)
     path('ops/drafts/', admin.draft_list_api, name='ops_draft_list'),

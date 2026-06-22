@@ -7,7 +7,7 @@ import toast from "react-hot-toast";
 
 interface ConnectionEditorProps {
   connectionId: number;
-  workflowId: number;
+  workflowId: number | string;
 }
 
 const EVENT_TYPES = [
