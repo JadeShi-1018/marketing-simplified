@@ -45,6 +45,7 @@ export function ConversationList({ conversations, loading, onClaimed }: Conversa
       const ticket = await CsmConversationAPI.claim(conv.id);
       const ticketSummary: TicketSummary = {
         id: ticket.id,
+        title: ticket.title,
         status: ticket.status,
         status_display: ticket.status_display,
         assigned_to_name: ticket.assigned_to_name,
