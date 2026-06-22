@@ -20,11 +20,15 @@ A robust CI/CD pipeline ensures that every code change is automatically built, t
 ### How Are Backend and Frontend Tested?
 
 - **Backend (Django):**
-  - All migrations are applied, then all unit and integration tests are run inside the backend Docker container:
+  - All migrations are applied, then backend tests are run in parallel inside the backend Docker container using:
     ```bash
-    python manage.py test
+    pytest
     ```
-  - This ensures the database schema is current and backend logic is validated.
+  - Excluded tests that are not thread-safe under parallel execution are run serially afterwards:
+    ```bash
+    pytest -o addopts='' --ds=backend.settings --timeout=300 metric_upload/tests/integration asset/tests/test_tasks.py budget_approval/tests/test_concurrency.py
+    ```
+  - This ensures all backend logic is validated efficiently.
 
 - **Frontend (Next.js):**
   - The frontend Docker container runs:
