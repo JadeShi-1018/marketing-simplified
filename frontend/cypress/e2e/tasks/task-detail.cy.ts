@@ -22,7 +22,7 @@ describe("Task detail page", () => {
     });
 
     openFirstTaskFromList();
-    cy.url().should("match", /\/tasks\/\d+/, { timeout: 10_000 });
+    cy.url().should("match", /\/tasks\/[\w-]+/, { timeout: 10_000 });
   });
 
   it("shows description, comments, attachments, subtasks, navigation, and no error or stuck loading", () => {

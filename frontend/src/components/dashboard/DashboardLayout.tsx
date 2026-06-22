@@ -23,6 +23,7 @@ import { NotificationDrawerProvider } from '@/components/notifications/Notificat
 import NotificationDrawer from '@/components/notifications/NotificationDrawer';
 import { useNotificationSSE } from '@/hooks/useNotificationSSE';
 import { useStripProjectIdFromUrl } from '@/lib/useStripProjectIdFromUrl';
+import { useGuardedRouterPush } from '@/contexts/UnsavedChangesGuardContext';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -125,6 +126,7 @@ export default function DashboardLayout({
   );
   const pathname = usePathname();
   const router = useRouter();
+  const guardedPush = useGuardedRouterPush(router.push);
   const breadcrumb = useMemo(() => getBreadcrumb(pathname), [pathname]);
   const showBack = !!pathname && !ROOT_PATHS.has(pathname);
   const handleBack = () => {
@@ -132,7 +134,7 @@ export default function DashboardLayout({
     const parent = segments.length > 1 ? '/' + segments.slice(0, -1).join('/') : '/overview';
     // /admin maps to Django admin — navigate to project selection instead
     const safePath = parent === '/admin' ? '/select-project' : parent;
-    router.push(safePath);
+    guardedPush(safePath);
   };
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);

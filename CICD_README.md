@@ -20,7 +20,12 @@ A robust CI/CD pipeline ensures that every code change is automatically built, t
 ### How Are Backend and Frontend Tested?
 
 - **Backend (Django):**
-  - All migrations are applied, then backend tests are run in parallel inside the backend Docker container using:
+  - CI first checks that model changes have committed migration files, then applies migrations:
+    ```bash
+    python manage.py makemigrations --check --dry-run --settings=backend.ci_settings
+    python manage.py migrate --noinput --settings=backend.ci_settings
+    ```
+  - Backend tests are run inside the backend Docker container with `pytest`. The default `backend/pytest.ini` config uses pytest-xdist (`-n auto`) for parallel execution:
     ```bash
     pytest
     ```
@@ -56,16 +61,21 @@ To ensure your code passes CI/CD and integrates smoothly with the team:
 
 **Current workflow:**
 
-1. When you add a new Django model, you must also update the CI/CD workflow file (`.github/workflows/mediajira-ci.yml`) to include the following template for your app:
-   ```yaml
-   python manage.py makemigrations your_app_name &&
-   python manage.py migrate your_app_name &&
+1. Generate migrations locally for the app you changed:
+   ```bash
+   python manage.py makemigrations your_app_name
    ```
-   Add these lines in the backend test step, following the existing pattern for other apps.
 
-2. In the future, the preferred approach will be to generate migration files locally and commit them to git, rather than relying on CI/CD to generate migrations. This will improve reliability and team collaboration.
+2. Review the generated migration file, run it locally, and commit it with the model change:
+   ```bash
+   python manage.py migrate
+   ```
 
-**Never rely on CI/CD to generate migrations for you in the long term!**
+3. CI verifies this contract with `makemigrations --check --dry-run`. If you forget to commit a migration, CI fails instead of generating one for you.
+
+The workflow still contains a few legacy per-app `makemigrations` calls for existing apps. These should be no-ops after the dry-run check passes, and new apps should not copy that pattern.
+
+**Do not rely on CI/CD to generate migrations.** Migration files are source code and must be reviewed and committed by the developer who changed the model.
 
 ---
 

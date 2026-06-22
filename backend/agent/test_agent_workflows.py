@@ -1093,10 +1093,10 @@ class CalendarAgentTests(TestCase):
         self.assertEqual(after_count, before_count + 1)
 
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
-    @patch('agent.llm_client.call_llm')
-    def test_answer_calendar_question_dify_error_yields_error_chunk(self, mock_call_llm):
+    @patch('agent.gemini_client.call_gemini')
+    def test_answer_calendar_question_gemini_error_yields_error_chunk(self, mock_call_gemini):
         """A Gemini error yields an error chunk without raising."""
-        mock_call_llm.side_effect = Exception('Network timeout')
+        mock_call_gemini.side_effect = Exception('Network timeout')
         context = {'type': 'calendar', 'calendarIds': []}
         chunks = list(self.orchestrator.answer_calendar_question('What is on my calendar?', context))
         error_chunks = [c for c in chunks if c['type'] == 'error']
