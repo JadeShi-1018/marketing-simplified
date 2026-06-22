@@ -119,12 +119,17 @@ class CustomerOrganisation(models.Model):
 
 
 class CustomerStatusLabel(models.Model):
-    """Customer status label (e.g., Gold, Silver, Partner, Internal)"""
+    """Customer status label (e.g., Gold, Silver, Partner, Internal).
 
-    organisation = models.ForeignKey(
-        'CustomerOrganisation',
+    Project-scoped: one shared set of labels per project, consistent with the
+    other CSM workspace settings (work types, support projects) and with how
+    customers themselves are project-scoped.
+    """
+
+    project = models.ForeignKey(
+        'core.Project',
         on_delete=models.CASCADE,
-        related_name='status_labels',
+        related_name='customer_status_labels',
     )
     name = models.CharField(max_length=100)
     color = models.CharField(max_length=20)
@@ -137,8 +142,8 @@ class CustomerStatusLabel(models.Model):
         ordering = ['order', 'name']
         constraints = [
             models.UniqueConstraint(
-                fields=['organisation', 'name'],
-                name='customer_status_label_unique_name_per_org',
+                fields=['project', 'name'],
+                name='customer_status_label_unique_name_per_project',
             )
         ]
 

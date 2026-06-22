@@ -48,6 +48,8 @@ class CustomerOrganisationSerializer(serializers.ModelSerializer):
     
 class CustomerSerializer(serializers.ModelSerializer):
     experience_group_name = serializers.SerializerMethodField(read_only=True)
+    status_label_name = serializers.CharField(source='status_label.name', read_only=True, default=None)
+    status_label_color = serializers.CharField(source='status_label.color', read_only=True, default=None)
 
     class Meta:
         model = Customer
@@ -61,11 +63,17 @@ class CustomerSerializer(serializers.ModelSerializer):
             'experience_group_name',
             'region',
             'organisation',
+            'status_label',
+            'status_label_name',
+            'status_label_color',
             'is_active',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'experience_group_name']
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'experience_group_name',
+            'status_label_name', 'status_label_color',
+        ]
 
     def get_experience_group_name(self, obj):
         if obj.experience_group_id:
@@ -105,18 +113,15 @@ class CustomerSerializer(serializers.ModelSerializer):
 
 
 class CustomerStatusLabelSerializer(serializers.ModelSerializer):
-    organisation_name = serializers.CharField(
-        source='organisation.name', read_only=True, default=None
-    )
-
     class Meta:
         model = CustomerStatusLabel
         fields = [
-            'id', 'organisation', 'organisation_name',
+            'id', 'project',
             'name', 'color', 'order', 'is_active',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        # project is set from the ?project= query param by the viewset.
+        read_only_fields = ['id', 'project', 'created_at', 'updated_at']
 
 
 class CustomerInternalNoteSerializer(serializers.ModelSerializer):

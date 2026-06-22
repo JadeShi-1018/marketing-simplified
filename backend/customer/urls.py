@@ -28,6 +28,7 @@ organisations_detial = CustomerOrganisationViewSet.as_view({
 organisations_my_admin = CustomerOrganisationViewSet.as_view({'get': 'my_admin_orgs'})
 
 status_labels_list = CustomerStatusLabelViewSet.as_view({'get': 'list', 'post': 'create'})
+status_labels_reorder = CustomerStatusLabelViewSet.as_view({'put': 'reorder'})
 status_labels_detail = CustomerStatusLabelViewSet.as_view({
     'get': 'retrieve',
     'patch': 'partial_update',
@@ -53,6 +54,7 @@ urlpatterns = [
     path('organisations/my-admin-orgs/', organisations_my_admin, name='organisation-my-admin-orgs'),
     path('organisations/<int:pk>/', organisations_detial, name='organisation-detail'),
     path('customer-status-labels/', status_labels_list, name='customer-status-label-list'),
+    path('customer-status-labels/reorder/', status_labels_reorder, name='customer-status-label-reorder'),
     path('customer-status-labels/<int:pk>/', status_labels_detail, name='customer-status-label-detail'),
     path('customer-internal-notes/', internal_notes_list, name='customer-internal-note-list'),
     path('customer-internal-notes/<int:pk>/', internal_notes_detail, name='customer-internal-note-detail'),

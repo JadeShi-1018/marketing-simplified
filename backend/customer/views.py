@@ -146,32 +146,75 @@ class CustomerViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class CustomerStatusLabelViewSet(viewsets.ModelViewSet):
+class CustomerStatusLabelViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """Project-scoped customer status labels — one shared set per project."""
     serializer_class = CustomerStatusLabelSerializer
-    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        from core.admin_utils import get_csm_admin_org_ids
-        queryset = CustomerStatusLabel.objects.filter(is_active=True)
-        admin_org_ids = get_csm_admin_org_ids(self.request.user)
-        return queryset.filter(organisation_id__in=admin_org_ids).order_by('order', 'name')
+        qs = CustomerStatusLabel.objects.filter(is_active=True)
+        if self.action in ('list', 'reorder'):
+            project_id = self.get_required_project_id()
+            return qs.filter(project_id=project_id).order_by('order', 'name')
+        return self.filter_by_accessible_projects(qs)
+
+    def perform_create(self, serializer):
+        serializer.save(project_id=self.get_required_project_id())
 
     def destroy(self, request, *args, **kwargs):
-        """Delete label — check if it's in use by customers"""
+        """Delete a label.
+
+        If the label is in use on one or more customers, the first attempt is
+        blocked with a confirmation warning (HTTP 409). The client re-issues the
+        request with ``?force=true`` to confirm; deletion then proceeds and the
+        affected customers' ``status_label`` is cleared (FK is SET_NULL).
+        """
         instance = self.get_object()
+        force = str(request.query_params.get('force', '')).lower() in ('1', 'true', 'yes')
         customer_count = instance.customers.count()
-        if customer_count > 0:
+        if customer_count > 0 and not force:
             return Response(
                 {
                     'detail': (
-                        f'Cannot delete: {customer_count} customer(s) use this label. '
-                        'Reassign them first.'
-                    )
+                        f'This label is used by {customer_count} customer(s). '
+                        'Deleting it will remove the label from those customers. '
+                        'Confirm to proceed.'
+                    ),
+                    'customer_count': customer_count,
+                    'requires_confirmation': True,
                 },
-                status=status.HTTP_400_BAD_REQUEST,
+                status=status.HTTP_409_CONFLICT,
             )
         instance.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=['put'], url_path='reorder')
+    def reorder(self, request):
+        """Persist a new label order. Body: {"ids": [<label_id>, ...]}."""
+        ids = request.data.get('ids')
+        if not isinstance(ids, list) or not ids:
+            return Response(
+                {'ids': 'A non-empty list of label ids is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Scope to labels the user administers — reuse the same queryset filter.
+        labels = list(self.get_queryset().filter(pk__in=ids))
+        found_ids = {label.pk for label in labels}
+        missing = [pk for pk in ids if pk not in found_ids]
+        if missing:
+            return Response(
+                {'ids': f'Label ids not found or not accessible: {missing}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        by_id = {label.pk: label for label in labels}
+        for index, pk in enumerate(ids):
+            by_id[pk].order = index
+        CustomerStatusLabel.objects.bulk_update(by_id.values(), ['order', 'updated_at'])
+
+        serializer = self.get_serializer(self.get_queryset(), many=True)
+        return Response(serializer.data)
 
 
 class CustomerInternalNoteViewSet(viewsets.ModelViewSet):
@@ -180,7 +223,11 @@ class CustomerInternalNoteViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        return CustomerInternalNote.objects.select_related('author', 'customer')
+        qs = CustomerInternalNote.objects.select_related('author', 'customer')
+        customer_id = self.request.query_params.get('customer')
+        if customer_id:
+            qs = qs.filter(customer_id=customer_id)
+        return qs
 
     def perform_create(self, serializer):
         """Automatically set author to current user"""
@@ -188,7 +235,9 @@ class CustomerInternalNoteViewSet(viewsets.ModelViewSet):
         self._record_audit('note.created', note)
 
     def perform_update(self, serializer):
-        """Mark as edited and record audit log"""
+        """Only the author may edit their own note."""
+        if serializer.instance.author != self.request.user:
+            raise PermissionDenied("You can only edit your own notes.")
         note = serializer.save(is_edited=True)
         self._record_audit('note.edited', note)
 
@@ -206,24 +255,24 @@ class CustomerInternalNoteViewSet(viewsets.ModelViewSet):
         instance.delete()
 
     def _record_audit(self, event_type, note):
-        """Record audit log entry"""
+        """Record audit log entry. Snapshot the plain-text body (not the JSON)."""
         CustomerInternalNoteAuditLog.objects.create(
             customer=note.customer,
             actor=self.request.user,
             event_type=event_type,
             note_id=note.id,
-            note_body=note.body[:500] if note.body else None,
+            note_body=(note.body_text or '')[:500] or None,
         )
 
 
 class CustomerInternalNoteAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only audit log for internal note changes"""
+    """Read-only audit log for internal note changes (agents/admins only)."""
     serializer_class = CustomerInternalNoteAuditLogSerializer
-    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        from core.admin_utils import get_csm_admin_org_ids
-        queryset = CustomerInternalNoteAuditLog.objects.all()
-        admin_org_ids = get_csm_admin_org_ids(self.request.user)
-        # Filter to customers where user is CSM admin
-        return queryset.filter(customer__organisation_id__in=admin_org_ids)
+        qs = CustomerInternalNoteAuditLog.objects.select_related('actor', 'customer')
+        customer_id = self.request.query_params.get('customer')
+        if customer_id:
+            qs = qs.filter(customer_id=customer_id)
+        return qs
