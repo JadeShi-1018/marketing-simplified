@@ -38,11 +38,11 @@ A robust CI/CD pipeline ensures that every code change is automatically built, t
 - **Frontend (Next.js):**
   - The frontend Docker container runs:
     ```bash
-    npm run lint
+    npx next lint --max-warnings 9999
     npm run build
     npm test
     ```
-  - Linting checks code style, build ensures production readiness, and tests validate UI and integration.
+  - Linting checks code style (errors block CI, warnings are allowed up to 9999), build ensures production readiness with TypeScript type checking enforced (`ignoreBuildErrors: false`), and tests validate UI and integration.
   - During integration tests, all API requests from the frontend are routed through nginx to the backend, exactly as in real deployment.
 
 ---
