@@ -49,7 +49,7 @@ const Harness = () => {
 describe("useTaskFilterParams", () => {
   it("parses initial query params into filters", () => {
     render(<Harness />);
-    expect(screen.getByTestId("project-id").textContent).toBe("123");
+    expect(screen.getByTestId("project-id").textContent).toBe("");
     // multi-select should parse to an array; stringifying shows comma separation in textContent
     expect(screen.getByTestId("priority").textContent).toContain("HIGH");
     expect(screen.getByTestId("include-subtasks").textContent).toBe("true");

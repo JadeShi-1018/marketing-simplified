@@ -15,7 +15,7 @@ interface Props {
   onIncomingSortChange: (key: MeetingSortKey) => void;
   completedSort: MeetingSortKey;
   onCompletedSortChange: (key: MeetingSortKey) => void;
-  projectId: number;
+  projectId: number | string;
   onCreate: () => void;
 }
 

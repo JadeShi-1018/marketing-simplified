@@ -190,7 +190,7 @@ class TaskAPITest(TestCase):
             owner=self.user,
             current_approver=self.approver,
         )
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
 
         response = self.client.patch(url, {'tags': 'One, #Two, one'}, format='json')
 
@@ -290,8 +290,8 @@ class TaskAPITest(TestCase):
             format='json',
         )
         self.assertEqual(create.status_code, status.HTTP_201_CREATED)
-        task_id = create.data['id']
-        patch_url = reverse('task-detail', kwargs={'pk': task_id})
+        task_slug = create.data['slug']
+        patch_url = reverse('task-detail', kwargs={'pk': task_slug})
         bad = self.client.patch(
             patch_url,
             {'start_date': '2026-06-15'},
@@ -320,7 +320,7 @@ class TaskAPITest(TestCase):
         task = Task.objects.get(pk=task_id)
         self.assertEqual(task.status, Task.Status.SUBMITTED)
 
-        patch_url = reverse('task-detail', kwargs={'pk': task_id})
+        patch_url = reverse('task-detail', kwargs={'pk': task.slug})
         patch_response = self.client.patch(
             patch_url,
             {'draft_payload': {'version': 1}},
@@ -415,7 +415,7 @@ class TaskAPITest(TestCase):
         )
         
         # Test GET task detail
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -453,7 +453,7 @@ class TaskAPITest(TestCase):
             current_approver=self.user,
             project=self.project,
         )
-        url = reverse('task-pin', kwargs={'pk': task.id})
+        url = reverse('task-pin', kwargs={'pk': task.slug})
 
         response = self.approver_client.post(url)
 
@@ -472,7 +472,7 @@ class TaskAPITest(TestCase):
         )
         TaskPin.objects.create(task=task, user=self.user)
         TaskPin.objects.create(task=task, user=self.approver)
-        url = reverse('task-pin', kwargs={'pk': task.id})
+        url = reverse('task-pin', kwargs={'pk': task.slug})
 
         response = self.client.delete(url)
 
@@ -534,7 +534,7 @@ class TaskAPITest(TestCase):
         TaskRelation.objects.create(source_task=source, target_task=doomed, relationship_type='blocks')
         TaskRelation.objects.create(source_task=doomed, target_task=target, relationship_type='blocks')
 
-        response = self.client.delete(reverse('task-detail', kwargs={'pk': doomed.id}))
+        response = self.client.delete(reverse('task-detail', kwargs={'pk': doomed.slug}))
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(Task.objects.filter(pk=doomed.id).exists())
@@ -602,7 +602,7 @@ class TaskAPITest(TestCase):
         )
         
         # Test link
-        url = reverse('task-link', kwargs={'pk': task.id})
+        url = reverse('task-link', kwargs={'pk': task.slug})
         data = {
             'content_type': 'budgetrequest',
             'object_id': budget_request.id
@@ -635,7 +635,7 @@ class TaskAPITest(TestCase):
         )
         
         # Test link
-        url = reverse('task-link', kwargs={'pk': task.id})
+        url = reverse('task-link', kwargs={'pk': task.slug})
         data = {
             'content_type': 'asset',
             'object_id': asset.id
@@ -668,7 +668,7 @@ class TaskAPITest(TestCase):
         )
         
         # Test link
-        url = reverse('task-link', kwargs={'pk': task.id})
+        url = reverse('task-link', kwargs={'pk': task.slug})
         data = {
             'content_type': 'retrospectivetask',
             'object_id': str(retrospective.id)  # UUID needs to be converted to string
@@ -693,7 +693,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
         
-        url = reverse('task-link', kwargs={'pk': task.id})
+        url = reverse('task-link', kwargs={'pk': task.slug})
         data = {
             'content_type': 'invalid_model',
             'object_id': 1
@@ -712,7 +712,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
         
-        url = reverse('task-link', kwargs={'pk': task.id})
+        url = reverse('task-link', kwargs={'pk': task.slug})
         data = {
             'content_type': 'budgetrequest',
             'object_id': 99999  # Non-existent ID
@@ -743,7 +743,7 @@ class TaskAPITest(TestCase):
         )
         
         # Link first object
-        url = reverse('task-link', kwargs={'pk': task.id})
+        url = reverse('task-link', kwargs={'pk': task.slug})
         data1 = {
             'content_type': 'budgetrequest',
             'object_id': budget_request1.id
@@ -790,7 +790,7 @@ class TaskAPITest(TestCase):
             ad_channel=self.ad_channel
         )
 
-        url = reverse('task-link', kwargs={'pk': task.id})
+        url = reverse('task-link', kwargs={'pk': task.slug})
         data = {
             'content_type': 'budgetrequest',
             'object_id': budget_request.id
@@ -876,7 +876,7 @@ class TaskAPITest(TestCase):
             organization=self.organization
         )
         url = reverse('task-list')
-        response = self.client.get(url, {'project_id': other_project.id})
+        response = self.client.get(url, {'project_id': other_project.slug})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertIn('detail', response.data)
@@ -907,7 +907,7 @@ class TaskAPITest(TestCase):
         self.assertEqual(tasks[0]['type'], 'budget')
         
         # Test filter by project_id
-        response = self.client.get(url, {'project_id': self.project.id})
+        response = self.client.get(url, {'project_id': self.project.slug})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         tasks = response.data if isinstance(response.data, list) else response.data.get('results', response.data)
         self.assertEqual(len(tasks), 2)
@@ -1082,7 +1082,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
         
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1107,7 +1107,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
         
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         data = {
             'summary': 'Updated Summary',
             'description': 'Updated description',
@@ -1135,7 +1135,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
 
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         response = self.client.patch(
             url,
             {'summary': 'Creator Update'},
@@ -1183,7 +1183,7 @@ class TaskAPITest(TestCase):
             changed_by=self.user,
         )
 
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         detail_response = self.client.get(url)
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.data['created_by']['id'], self.user.id)
@@ -1221,7 +1221,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
 
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         response = viewer_client.patch(
             url,
             {'summary': 'Unauthorized Update'},
@@ -1256,7 +1256,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
 
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         response = viewer_client.patch(
             url,
             {'summary': 'Unauthorized Update'},
@@ -1276,7 +1276,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
 
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         response = self.client.patch(url, {'project_id': None}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1302,7 +1302,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
         
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         data = {'project_id': 99999}  # Non-existent project
         
         response = self.client.patch(url, data, format='json')
@@ -1319,7 +1319,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
         
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         data = {
             'summary': 'Updated Summary',
             'type': 'asset'  # Try to change type
@@ -1348,7 +1348,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
 
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         data = {
             'action': 'approve',
             'comment': 'Approved for budget allocation'
@@ -1395,7 +1395,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         data = {'action': 'approve', 'comment': 'Should not work'}
         
         response = self.client.post(url, data, format='json')
@@ -1414,7 +1414,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
 
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         data = {
             'action': 'reject',
             'comment': 'Insufficient budget documentation'
@@ -1460,7 +1460,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         data = {'action': 'reject', 'comment': 'Should not work'}
         
         response = self.client.post(url, data, format='json')
@@ -1489,7 +1489,7 @@ class TaskAPITest(TestCase):
             step_number=1
         )
         
-        url = reverse('task-cancel', kwargs={'pk': task.id})
+        url = reverse('task-cancel', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1509,7 +1509,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-cancel', kwargs={'pk': task.id})
+        url = reverse('task-cancel', kwargs={'pk': task.slug})
         data = {'comment': 'Should not work'}
         
         response = self.client.post(url, data, format='json')
@@ -1538,7 +1538,7 @@ class TaskAPITest(TestCase):
         )
         
         # Approve again (second step)
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         data = {'action': 'approve', 'comment': 'Second approval'}
 
         response = self.approver_client.post(url, data, format='json')
@@ -1581,7 +1581,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
 
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         data = {'action': 'invalid_action', 'comment': 'Should not work'}
 
         response = self.approver_client.post(url, data, format='json')
@@ -1600,7 +1600,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
 
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         data = {'comment': 'Should not work'}
 
         response = self.approver_client.post(url, data, format='json')
@@ -1636,7 +1636,7 @@ class TaskAPITest(TestCase):
             step_number=2
         )
         
-        url = reverse('task-approval-history', kwargs={'pk': task.id})
+        url = reverse('task-approval-history', kwargs={'pk': task.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1668,7 +1668,7 @@ class TaskAPITest(TestCase):
             project=self.project
         )
         
-        url = reverse('task-approval-history', kwargs={'pk': task.id})
+        url = reverse('task-approval-history', kwargs={'pk': task.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1693,7 +1693,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-revise', kwargs={'pk': task.id})
+        url = reverse('task-revise', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1714,7 +1714,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-revise', kwargs={'pk': task.id})
+        url = reverse('task-revise', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1735,7 +1735,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-revise', kwargs={'pk': task.id})
+        url = reverse('task-revise', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -1752,7 +1752,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-revise', kwargs={'pk': task.id})
+        url = reverse('task-revise', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1780,7 +1780,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-forward', kwargs={'pk': task.id})
+        url = reverse('task-forward', kwargs={'pk': task.slug})
         data = {
             'next_approver_id': new_approver.id,
             'comment': 'Forwarded for next approval'
@@ -1812,7 +1812,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-forward', kwargs={'pk': task.id})
+        url = reverse('task-forward', kwargs={'pk': task.slug})
         data = {
             'next_approver_id': new_approver.id,
             'comment': 'Should not work'
@@ -1834,7 +1834,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-forward', kwargs={'pk': task.id})
+        url = reverse('task-forward', kwargs={'pk': task.slug})
         data = {
             'comment': 'Should not work without next_approver_id'
         }
@@ -1855,7 +1855,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-forward', kwargs={'pk': task.id})
+        url = reverse('task-forward', kwargs={'pk': task.slug})
         data = {
             'next_approver_id': 99999,  # Non-existent user
             'comment': 'Should not work'
@@ -1877,7 +1877,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-start-review', kwargs={'pk': task.id})
+        url = reverse('task-start-review', kwargs={'pk': task.slug})
         response = self.approver_client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1898,7 +1898,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-start-review', kwargs={'pk': task.id})
+        url = reverse('task-start-review', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -1927,7 +1927,7 @@ class TaskAPITest(TestCase):
         )
         br.submit(); br.send_for_review(); br.approve(); br.save()
 
-        url = reverse('task-lock', kwargs={'pk': task.id})
+        url = reverse('task-lock', kwargs={'pk': task.slug})
         response = self.approver_client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -1948,7 +1948,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver
         )
         
-        url = reverse('task-lock', kwargs={'pk': task.id})
+        url = reverse('task-lock', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -1983,7 +1983,7 @@ class TaskAPITest(TestCase):
 
         url = reverse('task-list')
         # Test with first project
-        response = self.client.get(url, {"project_id": q4_campaign.id})
+        response = self.client.get(url, {"project_id": q4_campaign.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
@@ -1993,7 +1993,7 @@ class TaskAPITest(TestCase):
         self.assertNotIn(task_social.summary, summaries)
 
         # Test with second project
-        response = self.client.get(url, {"project_id": social_launch.id})
+        response = self.client.get(url, {"project_id": social_launch.slug})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
         summaries = [t["summary"] for t in results]
@@ -2029,7 +2029,7 @@ class TaskAPITest(TestCase):
         )
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": q4_campaign.id})
+        response = self.client.get(url, {"project_id": q4_campaign.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
@@ -2053,16 +2053,21 @@ class TaskAPITest(TestCase):
         # user is NOT a member of external_project
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": external_project.id})
+        response = self.client.get(url, {"project_id": external_project.slug})
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_list_tasks_with_project_ids_invalid_format(self):
-        """project_id must be an integer."""
+        """An unresolvable project_id (unknown slug/numeric) is treated as no-access → 403.
+
+        Under slug-only lookups project_id is resolved via resolve_project_pk,
+        so a value that matches no project resolves to None and falls outside the user's
+        accessible projects — same path as the inaccessible-project case above.
+        """
         url = reverse('task-list')
         response = self.client.get(url, {"project_id": "invalid"})
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_list_tasks_with_project_ids_overrides_active_campaign(self):
         """project_id should override active_project default filtering."""
@@ -2086,7 +2091,7 @@ class TaskAPITest(TestCase):
         )
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": brand_rebuild.id})
+        response = self.client.get(url, {"project_id": brand_rebuild.slug})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
@@ -2117,7 +2122,7 @@ class TaskAPITest(TestCase):
         )
 
         url = reverse('task-list')
-        response = self.client.get(url, {"project_id": q4_campaign.id, "type": "budget"})
+        response = self.client.get(url, {"project_id": q4_campaign.slug, "type": "budget"})
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data.get("results", response.data)
@@ -2152,7 +2157,7 @@ class TaskAPITest(TestCase):
             project=self.project,
         )
 
-        url = reverse('task-start-review', kwargs={'pk': task.id})
+        url = reverse('task-start-review', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -2182,7 +2187,7 @@ class TaskAPITest(TestCase):
             current_approver=self.approver,
         )
 
-        url = reverse('task-start-review', kwargs={'pk': task.id})
+        url = reverse('task-start-review', kwargs={'pk': task.slug})
         response = self.approver_client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -2234,7 +2239,7 @@ class TaskAPITest(TestCase):
         step1_client = APIClient()
         step1_client.force_authenticate(user=step1_approver)
 
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         response = step1_client.post(url, {'action': 'approve', 'comment': 'Step 1 done'}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -2301,7 +2306,7 @@ class TaskAPITest(TestCase):
         step2_client = APIClient()
         step2_client.force_authenticate(user=step2_approver)
 
-        url = reverse('task-make-approval', kwargs={'pk': task.id})
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
         response = step2_client.post(url, {'action': 'approve', 'comment': 'Final approval'}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -2364,7 +2369,7 @@ class TaskAPITest(TestCase):
             step_number=1
         )
 
-        url = reverse('task-lock', kwargs={'pk': task.id})
+        url = reverse('task-lock', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
 
         # Must be blocked: only 1 of 2 approvals completed
@@ -2418,7 +2423,7 @@ class TaskAPITest(TestCase):
             is_approved=True, comment='Step 2', step_number=2
         )
 
-        url = reverse('task-lock', kwargs={'pk': task.id})
+        url = reverse('task-lock', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
 
         # Must succeed: all 2 of 2 approvals are done
@@ -2453,7 +2458,7 @@ class TaskAPITest(TestCase):
         )
         br.submit(); br.send_for_review(); br.approve(); br.save()
 
-        url = reverse('task-lock', kwargs={'pk': task.id})
+        url = reverse('task-lock', kwargs={'pk': task.slug})
         response = self.approver_client.post(url, {}, format='json')
 
         # Must succeed: legacy mode has no minimum requirement
@@ -2507,7 +2512,7 @@ class TaskAPITest(TestCase):
             is_approved=True, comment='Step 1', step_number=1
         )
 
-        url = reverse('task-lock', kwargs={'pk': task.id})
+        url = reverse('task-lock', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
@@ -2564,7 +2569,7 @@ class TaskAPITest(TestCase):
             is_approved=True, comment='Step 2', step_number=2
         )
 
-        url = reverse('task-lock', kwargs={'pk': task.id})
+        url = reverse('task-lock', kwargs={'pk': task.slug})
         response = self.client.post(url, {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -2609,7 +2614,7 @@ class TaskAPITest(TestCase):
             is_approved=True, comment='Step 1', step_number=1
         )
 
-        url = reverse('task-detail', kwargs={'pk': task.id})
+        url = reverse('task-detail', kwargs={'pk': task.slug})
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)

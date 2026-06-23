@@ -46,16 +46,15 @@ http {
     real_ip_recursive on;
 
 
-    # Upstream servers
-    upstream frontend {
-        server frontend:3000 max_fails=3 fail_timeout=30s;
-        keepalive 32;
-    }
-
-    upstream backend {
-        server backend:8000 max_fails=3 fail_timeout=30s;
-        keepalive 32;
-    }
+    # SMP-539 Q8: do NOT use static upstream{} blocks. A static
+    # `server backend:8000` is DNS-resolved once at startup and cached, so
+    # after the backend container restarts with a new IP nginx keeps proxying
+    # to the dead IP and returns 502 until reloaded. The hostnames are instead
+    # referenced as variables in proxy_pass below, forcing per-request re-
+    # resolution via the `resolver`. Trade-off: variable proxy_pass bypasses
+    # upstream keepalive pooling. (Single server each, so no failover lost.)
+    # NOTE (prod/preview): infra may prefer keeping upstream{} + an nginx
+    # reload on deploy if keepalive to the backend matters under load.
 
 
     server {
@@ -66,6 +65,11 @@ http {
         ssl_certificate_key /etc/letsencrypt/live/mediajirapv.dpdns.org/privkey.pem;
 
         client_max_body_size 110m;
+
+        # SMP-539 Q8: hostnames as variables so proxy_pass re-resolves via the
+        # resolver per request (picks up container IP changes without reload).
+        set $backend_host "backend:8000";
+        set $frontend_host "frontend:3000";
 
         # Enhanced health check endpoint for monitoring
         location = /health {
@@ -93,7 +97,7 @@ http {
         # Specific API endpoint routing rules (more specific routes first)
         # Core/Projects API endpoints
         location /api/core/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -111,7 +115,7 @@ http {
 
         # Campaigns API endpoints
         location /api/campaigns/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -128,7 +132,7 @@ http {
 
         # Reports API endpoints
         location /api/reports/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -145,7 +149,7 @@ http {
 
         # Dashboard API endpoints
         location /api/dashboard/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -162,7 +166,7 @@ http {
 
         # Optimization API endpoints
         location /api/optimization/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -179,7 +183,7 @@ http {
 
         # Backend API routes - explicitly pass request URI with variables (must come before catch-all)
         location /api/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -202,7 +206,7 @@ http {
 
         # Auth routes - explicitly pass request URI with variables
         location /auth/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -219,7 +223,7 @@ http {
 
         # User preferences routes - explicitly pass request URI with variables
         location /users/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -236,7 +240,7 @@ http {
 
         # WebSocket routes (Channels) - explicitly pass request URI with variables
         location /ws/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection "upgrade";
@@ -250,7 +254,7 @@ http {
 
         # Static files - explicitly pass request URI with variables
         location /static/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -268,7 +272,7 @@ http {
 
         # Media files (user uploads) - explicitly pass request URI with variables
         location /media/ {
-            proxy_pass http://backend$request_uri;
+            proxy_pass http://$backend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -286,7 +290,7 @@ http {
 
         # Frontend routes (catch-all - must be last)
         location / {
-            proxy_pass http://frontend$request_uri;
+            proxy_pass http://$frontend_host$request_uri;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';

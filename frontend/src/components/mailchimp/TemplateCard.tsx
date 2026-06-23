@@ -3,8 +3,8 @@ import { MailchimpTemplate } from "@/lib/api/mailchimpApi";
 
 interface TemplateCardProps {
   template: MailchimpTemplate;
-  onApply: (templateId: number) => void;
-  onPreview?: (templateId: number) => void;
+  onApply: (templateId: string | number) => void;
+  onPreview?: (templateId: string | number) => void;
   disabled?: boolean;
 }
 

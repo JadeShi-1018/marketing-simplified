@@ -28,7 +28,7 @@ import { calculateOptimalHandles } from "@/lib/handleCalculation";
 import toast from "react-hot-toast";
 
 interface WorkflowCanvasProps {
-  workflowId: number;
+  workflowId: number | string;
   selection: Selection;
   onSelectionChange: (selection: Selection) => void;
   refreshTrigger?: number;
@@ -100,7 +100,7 @@ export default function WorkflowCanvas({
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   
   // Track current workflow and initialization state
-  const currentWorkflowRef = useRef<number | null>(null);
+  const currentWorkflowRef = useRef<number | string | null>(null);
   const isInitialLoadRef = useRef(true); // Track if this is the first load after mount/refresh
 
   // Initialize nodes and edges when workflow loads or changes

@@ -22,6 +22,7 @@ import type { MeetingListItem } from '@/types/meeting';
 import { NotificationDrawerProvider } from '@/components/notifications/NotificationDrawerProvider';
 import NotificationDrawer from '@/components/notifications/NotificationDrawer';
 import { useNotificationSSE } from '@/hooks/useNotificationSSE';
+import { useStripProjectIdFromUrl } from '@/lib/useStripProjectIdFromUrl';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -113,6 +114,7 @@ export default function DashboardLayout({
 }: DashboardLayoutProps) {
   // Establish the SSE connection for real-time notification push.
   useNotificationSSE();
+  useStripProjectIdFromUrl();
 
   const {
     upcomingMeetingsPanelOpen: isPanelOpen,

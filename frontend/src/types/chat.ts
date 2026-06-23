@@ -39,8 +39,9 @@ export interface ChatParticipant {
 
 export interface Chat {
   id: number;
-  project_id: number;
-  project?: number; // Backend may send this instead of project_id
+  slug: string;
+  project_id: number | string;
+  project?: number | string; // Backend may send this instead of project_id
   type: ChatType;
   name?: string | null;
   topic?: string | null;
@@ -92,6 +93,7 @@ export interface MissingForwardedAttachment {
 
 export interface ChatContext {
   id: number;
+  slug: string;
   type: ChatType;
   name?: string | null;
 }
@@ -179,7 +181,7 @@ export interface Message {
 
 export interface CreateChatRequest {
   type: ChatType;
-  project_id: number;
+  project_id: number | string;
   participant_ids: number[];
   name?: string;
 }
@@ -235,7 +237,7 @@ export interface ForwardBatchResponse {
 }
 
 export interface GetChatsParams {
-  project_id?: number;
+  project_id?: number | string;
   type?: ChatType;
   limit?: number;
   offset?: number;
@@ -331,7 +333,7 @@ export interface WebSocketMessage {
 
 export interface ChatState {
   // Data
-  chatsByProject: Record<number, Chat[]>; // Keyed by project_id
+  chatsByProject: Record<number | string, Chat[]>; // Keyed by project_id
   currentChatId: number | null;  // For Messages page
   widgetChatId: number | null;   // For Chat Widget (independent)
   messages: Record<number, Message[]>; // Keyed by chat_id
@@ -345,21 +347,21 @@ export interface ChatState {
   // UI State
   isWidgetOpen: boolean;
   isMessagePageOpen: boolean;
-  selectedProjectId: number | null;
-  widgetProjectId: number | null;  // Widget's own project selection
+  selectedProjectId: number | string | null;
+  widgetProjectId: number | string | null;  // Widget's own project selection
   currentView: 'list' | 'chat';
   widgetView: 'list' | 'chat';     // Widget's own view state
   isLoading: boolean;
   
   // Actions
-  setChatsForProject: (projectId: number, chats: Chat[]) => void;
-  getChatsForProject: (projectId: number | null) => Chat[];
+  setChatsForProject: (projectId: number | string, chats: Chat[]) => void;
+  getChatsForProject: (projectId: number | string | null) => Chat[];
   addChat: (chat: Chat) => void;
   removeChat: (chatId: number) => void;
   updateChat: (chatId: number, updates: Partial<Chat>) => void;
   setCurrentChat: (chatId: number | null) => void;
   setWidgetChat: (chatId: number | null) => void;
-  setWidgetProjectId: (projectId: number | null) => void;
+  setWidgetProjectId: (projectId: number | string | null) => void;
   setWidgetView: (view: 'list' | 'chat') => void;
   
   setMessages: (chatId: number, messages: Message[]) => void;
@@ -388,7 +390,7 @@ export interface ChatState {
   openWidget: () => void;
   closeWidget: () => void;
   setMessagePageOpen: (isOpen: boolean) => void;
-  setSelectedProjectId: (projectId: number | null) => void;
+  setSelectedProjectId: (projectId: number | string | null) => void;
   setView: (view: 'list' | 'chat') => void;
   
   setLoading: (loading: boolean) => void;
@@ -500,10 +502,13 @@ export interface MessageItemProps {
   onRemind?: (messageId: number) => void;
   isPinned?: boolean;
   isSaved?: boolean;
+  /** Canonical chat slug for copy-link URLs. */
+  chatSlug?: string;
 }
 
 export interface MessageListProps {
   messages: Message[];
+  chatSlug?: string;
   currentUserId: number;
   onLoadMore: () => void;
   hasMore: boolean;
@@ -552,7 +557,7 @@ export interface CreateChatDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
-  onChatCreated: (chatId: number) => void;
+  onChatCreated: (chatId: number, chatSlug?: string) => void;
   /** When set, only group (channel) creation is shown — for Slack-style “Add channel”. */
   variant?: 'default' | 'channel';
 }
@@ -567,11 +572,12 @@ export interface ChatStarRow {
 }
 
 export interface ParticipantSelectorProps {
-  projectId: string;
+  projectId: number | string;
   selectedIds: number[];
   onSelect: (ids: number[]) => void;
   maxSelection?: number;
   currentUserId: number;
+  allowSolo?: boolean;
 }
 
 // ==================== Project Member Types ====================

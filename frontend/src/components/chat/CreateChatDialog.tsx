@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useAuthStore } from '@/lib/authStore';
+import { useProjectStore } from '@/lib/projectStore';
 import { useChatData } from '@/hooks/useChatData';
 import { findPrivateChat } from '@/lib/api/chatApi';
 import type { CreateChatDialogProps, ChatType } from '@/types/chat';
@@ -19,6 +20,7 @@ export default function CreateChatDialog({
 }: CreateChatDialogProps) {
   // Use selectors for stable references
   const user = useAuthStore(state => state.user);
+  const activeProject = useProjectStore(state => state.activeProject);
   const { createNewChat } = useChatData({ projectId });
   
   const [chatType, setChatType] = useState<ChatType>(
@@ -40,7 +42,7 @@ export default function CreateChatDialog({
       return selectedParticipants.length === 1;
     }
     if (variant === 'channel') {
-      return selectedParticipants.length >= 1 && normalizeLimitedName(groupName, MAX_CHANNEL_NAME_LENGTH) !== '';
+      return normalizeLimitedName(groupName, MAX_CHANNEL_NAME_LENGTH) !== '';
     }
     return selectedParticipants.length >= 2 && normalizeLimitedName(groupName, MAX_CHANNEL_NAME_LENGTH) !== '';
   };
@@ -64,17 +66,23 @@ export default function CreateChatDialog({
   const handleCreate = async () => {
     if (!isValid() || !user || isCreating) return;
 
+    const projectApiId = activeProject?.id ?? projectId;
+    if (!projectApiId) {
+      toast.error('Select a project before creating a channel');
+      return;
+    }
+
     try {
       setIsCreating(true);
 
       // For private chats, check if one already exists
       if (chatType === 'private' && selectedParticipants.length === 1) {
-        const existingChat = await findPrivateChat(parseInt(projectId), selectedParticipants[0]);
+        const existingChat = await findPrivateChat(projectApiId, selectedParticipants[0]);
         
         if (existingChat) {
           toast.success('Opening existing chat with this user');
           resetForm();
-          onChatCreated(existingChat.id);
+          onChatCreated(existingChat.id, existingChat.slug);
           return;
         }
       }
@@ -82,13 +90,13 @@ export default function CreateChatDialog({
       // Backend will automatically add current user to participants
       const newChat = await createNewChat({
         type: chatType,
-        project_id: parseInt(projectId),
+        project_id: projectApiId,
         participant_ids: selectedParticipants,
         name: chatType === 'group' ? normalizeLimitedName(groupName, MAX_CHANNEL_NAME_LENGTH) : undefined,
       });
 
       resetForm();
-      onChatCreated(newChat.id);
+      onChatCreated(newChat.id, newChat.slug);
     } catch (error: any) {
       console.error('Error creating chat:', error);
       console.error('Error response:', error?.response?.data);
@@ -215,14 +223,16 @@ export default function CreateChatDialog({
           {/* Participant Selector */}
           <div>
             <label className="text-sm font-medium text-gray-700 mb-2 block">
-              {chatType === 'private' ? 'Select Participant' : 'Select Participants'}{' '}
-              <span className="text-red-500">*</span>
+              {chatType === 'private' ? 'Select Participant' : 'Select Participants'}
+              {(chatType === 'private' || variant !== 'channel') && (
+                <span className="text-red-500"> *</span>
+              )}
             </label>
             <p className="text-xs text-gray-500 mb-2">
               {chatType === 'private'
                 ? 'Select 1 team member for private chat'
                 : variant === 'channel'
-                  ? 'Select at least one team member for the channel'
+                  ? 'Optional: add teammates now, or create a solo channel and invite later'
                   : 'Select at least 2 team members for group chat'}
             </p>
             <ParticipantSelector
@@ -231,6 +241,7 @@ export default function CreateChatDialog({
               onSelect={setSelectedParticipants}
               maxSelection={chatType === 'private' ? 1 : undefined}
               currentUserId={user?.id ? Number(user.id) : 0}
+              allowSolo={variant === 'channel'}
             />
           </div>
 

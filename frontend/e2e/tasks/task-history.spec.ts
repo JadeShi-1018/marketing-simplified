@@ -4,17 +4,21 @@ import {
   deleteTaskById,
   waitForTasksPageReady,
   createDraftTaskViaApi,
+  getActiveProjectSlug,
+  buildTasksListDrawerUrl,
 } from './tasks-helpers';
 
 test.describe('Task field history', () => {
   test.describe.configure({ mode: 'serial' });
   let createdTaskId: number | null = null;
   let projectId: number;
+  let projectSlug: string;
 
   test.beforeAll(async ({ browser }) => {
     const context = await browser.newContext({ storageState: 'e2e/.auth/user.json' });
     const page = await context.newPage();
     projectId = await navigateToTasksAndSelectProject(page);
+    projectSlug = await getActiveProjectSlug(page);
     await context.close();
   });
 
@@ -26,13 +30,13 @@ test.describe('Task field history', () => {
   });
 
   test('task creation entry appears in History tab', async ({ page }) => {
-    await page.goto(`/tasks?project_id=${projectId}`);
+    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
     await waitForTasksPageReady(page);
-    createdTaskId = await createDraftTaskViaApi(page, projectId, 'History fixture Created Test');
+    const fixture = await createDraftTaskViaApi(page, projectId, 'History fixture Created Test');
+    createdTaskId = fixture.id;
     expect(createdTaskId).toBeTruthy();
 
-    // Navigate straight to the drawer for the created task instead of relying on list position.
-    await page.goto(`/tasks?project_id=${projectId}&drawerTaskId=${createdTaskId}`);
+    await page.goto(buildTasksListDrawerUrl(projectSlug, fixture.slug));
     await waitForTasksPageReady(page);
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 
@@ -45,7 +49,7 @@ test.describe('Task field history', () => {
   });
 
   test('backend rejects task creation without approver', async ({ page }) => {
-    await page.goto(`/tasks?project_id=${projectId}`);
+    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
     await expect(page.getByTestId('tab-tasks')).toBeVisible({ timeout: 15_000 });
 
     const token: string | null = await page.evaluate(() => {
@@ -89,13 +93,13 @@ test.describe('Task field history', () => {
   });
 
   test('attachment upload and delete appear in History tab', async ({ page }) => {
-    await page.goto(`/tasks?project_id=${projectId}`);
+    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
     await waitForTasksPageReady(page);
-    createdTaskId = await createDraftTaskViaApi(page, projectId, 'History fixture Attachment Test');
+    const fixture = await createDraftTaskViaApi(page, projectId, 'History fixture Attachment Test');
+    createdTaskId = fixture.id;
     expect(createdTaskId).toBeTruthy();
 
-    // Open the task drawer directly.
-    await page.goto(`/tasks?project_id=${projectId}&drawerTaskId=${createdTaskId}`);
+    await page.goto(buildTasksListDrawerUrl(projectSlug, fixture.slug));
     await waitForTasksPageReady(page);
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 
@@ -143,9 +147,10 @@ test.describe('Task field history', () => {
   });
 
   test('field change recorded with correct before/after values', async ({ page }) => {
-    await page.goto(`/tasks?project_id=${projectId}`);
+    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
     await waitForTasksPageReady(page);
-    createdTaskId = await createDraftTaskViaApi(page, projectId, 'History fixture Field Change Test');
+    const fixture = await createDraftTaskViaApi(page, projectId, 'History fixture Field Change Test');
+    createdTaskId = fixture.id;
     expect(createdTaskId).toBeTruthy();
 
     // Update the task priority via API
@@ -162,8 +167,7 @@ test.describe('Task field history', () => {
       data: { priority: 'HIGH' },
     });
 
-    // Open the task drawer directly.
-    await page.goto(`/tasks?project_id=${projectId}&drawerTaskId=${createdTaskId}`);
+    await page.goto(buildTasksListDrawerUrl(projectSlug, fixture.slug));
     await waitForTasksPageReady(page);
     await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 10_000 });
 

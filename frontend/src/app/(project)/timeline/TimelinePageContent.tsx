@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
+import { Id } from "@/types/common";
 import Layout from "@/components/layout/Layout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useTaskData } from "@/hooks/useTaskData";
@@ -10,6 +11,7 @@ import Modal from "@/components/ui/Modal";
 import { TaskAPI } from "@/lib/api/taskApi";
 import { ProjectAPI } from "@/lib/api/projectApi";
 import { useProjectStore } from "@/lib/projectStore";
+import { useStripProjectIdFromUrl } from "@/lib/useStripProjectIdFromUrl";
 import { useTaskFilterParams } from "@/hooks/useTaskFilterParams";
 import { TaskFilterPanel } from "@/components/tasks/TaskFilterPanel";
 import { TimelineTaskCreateFlow } from "@/components/tasks/TimelineTaskCreateFlow";
@@ -17,18 +19,19 @@ import { TimelineTaskCreateFlow } from "@/components/tasks/TimelineTaskCreateFlo
 export function TimelinePageContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const projectIdParam = searchParams.get("project_id");
-  const originMeetingIdParam = searchParams.get("origin_meeting_id");
-  const { activeProject } = useProjectStore();
-  const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+  useStripProjectIdFromUrl();
+  const originMeetingIdParam =
+    searchParams.get("origin_meeting") ?? searchParams.get("origin_meeting_id");
+  const activeProject = useProjectStore((s) => s.activeProject);
+  const setActiveProject = useProjectStore((s) => s.setActiveProject);
+  const projectId = activeProject?.slug || activeProject?.id || null;
 
-  const originMeetingIdNum = useMemo(() => {
-    if (!originMeetingIdParam) return null;
-    const n = Number(originMeetingIdParam);
-    return Number.isFinite(n) && n >= 1 ? n : null;
-  }, [originMeetingIdParam]);
+  // Carry the meeting slug (or legacy pk) through as-is;
+  // the backend resolves slug-or-pk on task create.
+  const originMeetingIdNum = useMemo(
+    () => originMeetingIdParam || null,
+    [originMeetingIdParam],
+  );
 
   const [filters, setFilters, clearFilters] = useTaskFilterParams();
   const [taskTypeOptions, setTaskTypeOptions] = useState<
@@ -47,13 +50,6 @@ export function TimelinePageContent() {
     loadTypes();
   }, []);
 
-  useEffect(() => {
-    if (projectIdParam || !activeProject?.id) return;
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("project_id", String(activeProject.id));
-    router.replace(`/timeline?${params.toString()}`);
-  }, [projectIdParam, activeProject?.id, router, searchParams]);
-
   const {
     tasks,
     loading,
@@ -71,7 +67,7 @@ export function TimelinePageContent() {
   );
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [projectSearchQuery, setProjectSearchQuery] = useState("");
-  const [recentProjectIds, setRecentProjectIds] = useState<number[]>([]);
+  const [recentProjectIds, setRecentProjectIds] = useState<Id[]>([]);
 
   const loadProjectOptions = useCallback(async () => {
     try {
@@ -108,7 +104,7 @@ export function TimelinePageContent() {
     try {
       const parsed = JSON.parse(stored);
       if (Array.isArray(parsed)) {
-        setRecentProjectIds(parsed.filter((id) => Number.isFinite(id)));
+        setRecentProjectIds(parsed.filter((id) => typeof id === "number" || typeof id === "string"));
       }
     } catch (error) {
       console.warn("Failed to parse recent projects:", error);
@@ -135,8 +131,9 @@ export function TimelinePageContent() {
 
   const hasTasks = visibleTasks.length > 0;
 
-  const handlePickProject = (selectedProjectId: number | null) => {
-    if (!selectedProjectId) return;
+  const handlePickProject = (selectedProject: any) => {
+    if (!selectedProject) return;
+    const selectedProjectId = selectedProject.id;
     setRecentProjectIds((prev) => {
       const next = [
         selectedProjectId,
@@ -147,9 +144,8 @@ export function TimelinePageContent() {
       }
       return next;
     });
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("project_id", String(selectedProjectId));
-    router.push(`/timeline?${params.toString()}`);
+    setActiveProject(selectedProject);
+    setProjectPickerOpen(false);
   };
 
   const filteredProjects = useMemo(() => {
@@ -197,7 +193,7 @@ export function TimelinePageContent() {
                   type="button"
                   onClick={() =>
                     router.push(
-                      projectId ? `/tasks?project_id=${projectId}` : "/tasks",
+                      "/tasks",
                     )
                   }
                   className="rounded px-3 py-1.5 text-sm font-medium text-indigo-600 ring-1 ring-indigo-200 transition-colors hover:bg-indigo-50"
@@ -245,7 +241,9 @@ export function TimelinePageContent() {
                       {projectId
                         ? `#${projectId} ${
                             projectOptions.find(
-                              (project) => project.id === projectId,
+                              (project) =>
+                                String(project.id) === String(projectId) ||
+                                project.slug === projectId,
                             )?.name || "Unknown"
                           }`
                         : "Select project"}
@@ -405,11 +403,11 @@ export function TimelinePageContent() {
                           key={`recent-${project.id}`}
                           type="button"
                           onClick={() => {
-                            handlePickProject(project.id);
+                            handlePickProject(project);
                             setProjectPickerOpen(false);
                           }}
                           className={`group mb-3 w-full rounded-2xl border px-4 py-3 text-left transition ${
-                            project.id === projectId
+                            String(project.id) === String(projectId) || project.slug === projectId
                               ? "border-indigo-200 bg-gradient-to-r from-indigo-50 to-white"
                               : "border-slate-200 hover:border-indigo-200 hover:bg-indigo-50/50"
                           }`}
@@ -418,7 +416,7 @@ export function TimelinePageContent() {
                             <div className="text-sm font-semibold text-gray-900">
                               #{project.id} {project.name || "Untitled Project"}
                             </div>
-                            {project.id === projectId && (
+                            {(String(project.id) === String(projectId) || project.slug === projectId) && (
                               <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
                                 Current
                               </span>
@@ -446,11 +444,11 @@ export function TimelinePageContent() {
                           key={project.id}
                           type="button"
                           onClick={() => {
-                            handlePickProject(project.id);
+                            handlePickProject(project);
                             setProjectPickerOpen(false);
                           }}
                           className={`group mb-3 w-full rounded-2xl border px-4 py-3 text-left transition ${
-                            project.id === projectId
+                            String(project.id) === String(projectId) || project.slug === projectId
                               ? "border-indigo-200 bg-gradient-to-r from-indigo-50 to-white"
                               : "border-slate-200 hover:border-indigo-200 hover:bg-indigo-50/50"
                           }`}
@@ -459,7 +457,7 @@ export function TimelinePageContent() {
                             <div className="text-sm font-semibold text-gray-900">
                               #{project.id} {project.name || "Untitled Project"}
                             </div>
-                            {project.id === projectId && (
+                            {(String(project.id) === String(projectId) || project.slug === projectId) && (
                               <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
                                 Current
                               </span>

@@ -7,7 +7,6 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { useTaskData } from '@/hooks/useTaskData';
-import { useProjectStore } from '@/lib/projectStore';
 import TabNav, { type TasksTab } from '@/components/tasks/TabNav';
 import SummaryView from '@/components/tasks/SummaryView';
 import ListView from '@/components/tasks/ListView';
@@ -19,20 +18,18 @@ import PlanningView from '@/components/tasks/PlanningView';
 import StatusReportsView from '@/components/tasks/StatusReportsView';
 import { Skeleton } from '@/components/ui/skeleton';
 import LinearImportModal from '@/components/linear/LinearImportModal';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 
 const VALID_TABS: TasksTab[] = ['summary', 'tasks', 'board', 'gantt', 'insights', 'my-actions', 'planning', 'status-reports'];
 const SLIM_SCROLLBAR_TABS = new Set<TasksTab>(['insights', 'my-actions', 'planning', 'status-reports']);
+const FLAT_TASKS_BASE = '/tasks';
 
 export default function TasksV2Page() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const projectIdParam = searchParams?.get('project_id');
   const tabParam = searchParams?.get('tab') as TasksTab | null;
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
-  const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+  const drawerTaskFromQuery = searchParams?.get('drawerTask')?.trim() || null;
+  const { projectId, activeProject, projectContextLoading } = useActiveProjectForFlatRoute();
 
   const tab: TasksTab = useMemo(
     () => (tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'tasks'),
@@ -43,7 +40,6 @@ export default function TasksV2Page() {
   const [linearImportOpen, setLinearImportOpen] = useState(false);
   const [hasLoadedTaskListOnce, setHasLoadedTaskListOnce] = useState(false);
   const [myActionsRefreshKey, setMyActionsRefreshKey] = useState(0);
-  const projectContextLoading = !projectIdParam && !hasProjectStoreHydrated;
 
   useEffect(() => {
     let cancelled = false;
@@ -82,10 +78,11 @@ export default function TasksV2Page() {
   const setTab = useCallback(
     (next: TasksTab) => {
       const params = new URLSearchParams(searchParams?.toString() || '');
+      params.delete('project_id');
       if (next === 'tasks') params.delete('tab');
       else params.set('tab', next);
       const qs = params.toString();
-      router.replace(qs ? `/tasks?${qs}` : '/tasks');
+      router.replace(qs ? `${FLAT_TASKS_BASE}?${qs}` : FLAT_TASKS_BASE);
     },
     [router, searchParams]
   );
@@ -100,7 +97,7 @@ export default function TasksV2Page() {
   const headerActions = (
     <button
       type="button"
-      onClick={() => router.push('/tasks/new')}
+      onClick={() => router.push(`${FLAT_TASKS_BASE}/new`)}
       className="inline-flex items-center gap-2 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
     >
       <Plus className="h-4 w-4" />
@@ -153,12 +150,16 @@ export default function TasksV2Page() {
               loading={taskListLoading}
               error={error}
               projectId={projectId}
+              listBasePath={FLAT_TASKS_BASE}
+              initialDrawerTaskSlug={drawerTaskFromQuery}
               onOpenLinearImport={() => setLinearImportOpen(true)}
               onLinearBulkSynced={refreshTasks}
               onRefresh={refreshTasks}
             />
           )}
-          {tab === 'board' && <BoardView tasks={tasks} loading={taskListLoading} error={error} />}
+          {tab === 'board' && (
+            <BoardView tasks={tasks} loading={taskListLoading} error={error} projectId={projectId != null ? String(projectId) : undefined} />
+          )}
           {tab === 'gantt' && (
             <GanttView projectId={projectId} projectContextLoading={projectContextLoading} />
           )}

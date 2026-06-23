@@ -44,6 +44,7 @@ export interface TicketFormField {
 
 export interface TicketFormListItem {
   id: number;
+  slug: string;
   project: number;
   name: string;
   description: string;

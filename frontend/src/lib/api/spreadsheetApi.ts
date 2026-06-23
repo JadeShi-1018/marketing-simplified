@@ -17,7 +17,7 @@ const SPREADSHEET_LONG_REQUEST_TIMEOUT_MS = 300000; // 5 minutes (safety net; op
 export const SpreadsheetAPI = {
   // List spreadsheets for a project
   listSpreadsheets: async (
-    projectId: number,
+    projectId: number | string,
     params?: {
       page?: number;
       page_size?: number;
@@ -36,14 +36,14 @@ export const SpreadsheetAPI = {
   },
 
   // Get a specific spreadsheet by ID
-  getSpreadsheet: async (spreadsheetId: number): Promise<SpreadsheetData> => {
+  getSpreadsheet: async (spreadsheetId: number | string): Promise<SpreadsheetData> => {
     const response = await api.get<SpreadsheetData>(`/api/spreadsheet/spreadsheets/${spreadsheetId}/`);
     return response.data;
   },
 
   // Create a new spreadsheet
   createSpreadsheet: async (
-    projectId: number,
+    projectId: number | string,
     data: CreateSpreadsheetRequest
   ): Promise<SpreadsheetData> => {
     const response = await api.post<SpreadsheetData>(
@@ -55,7 +55,7 @@ export const SpreadsheetAPI = {
 
   // Update a spreadsheet
   updateSpreadsheet: async (
-    spreadsheetId: number,
+    spreadsheetId: number | string,
     data: UpdateSpreadsheetRequest
   ): Promise<SpreadsheetData> => {
     const response = await api.put<SpreadsheetData>(
@@ -66,14 +66,14 @@ export const SpreadsheetAPI = {
   },
 
   // Delete a spreadsheet (soft delete)
-  deleteSpreadsheet: async (spreadsheetId: number): Promise<void> => {
+  deleteSpreadsheet: async (spreadsheetId: number | string): Promise<void> => {
     await api.delete(`/api/spreadsheet/spreadsheets/${spreadsheetId}/`);
   },
 
   // Sheet operations
   // List sheets for a spreadsheet
   listSheets: async (
-    spreadsheetId: number,
+    spreadsheetId: number | string,
     params?: {
       page?: number;
       page_size?: number;
@@ -91,7 +91,7 @@ export const SpreadsheetAPI = {
   },
 
   // Get a specific sheet by ID
-  getSheet: async (spreadsheetId: number, sheetId: number): Promise<SheetData> => {
+  getSheet: async (spreadsheetId: number | string, sheetId: number | string): Promise<SheetData> => {
     const response = await api.get<SheetData>(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/`
     );
@@ -100,7 +100,7 @@ export const SpreadsheetAPI = {
 
   // Create a new sheet
   createSheet: async (
-    spreadsheetId: number,
+    spreadsheetId: number | string,
     data: CreateSheetRequest
   ): Promise<SheetData> => {
     const response = await api.post<SheetData>(
@@ -112,8 +112,8 @@ export const SpreadsheetAPI = {
 
   // Update a sheet
   updateSheet: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     data: UpdateSheetRequest
   ): Promise<SheetData> => {
     const response = await api.put<SheetData>(
@@ -125,8 +125,8 @@ export const SpreadsheetAPI = {
 
   // Sort rows by column (updates SheetRow.position only, no cell rewrite)
   sortSheet: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     params: {
       column_position: number;
       direction: 'asc' | 'desc';
@@ -134,12 +134,12 @@ export const SpreadsheetAPI = {
       previous_sort_columns?: Array<number | { column_position: number; direction: 'asc' | 'desc' }>;
     }
   ): Promise<{
-    previous_order: Array<{ row_id: number; position: number }>;
-    new_order: Array<{ row_id: number; position: number }>;
+    previous_order: Array<{ row_id: number | string; position: number }>;
+    new_order: Array<{ row_id: number | string; position: number }>;
   }> => {
     const response = await api.post<{
-      previous_order: Array<{ row_id: number; position: number }>;
-      new_order: Array<{ row_id: number; position: number }>;
+      previous_order: Array<{ row_id: number | string; position: number }>;
+      new_order: Array<{ row_id: number | string; position: number }>;
     }>(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/sort/`,
       {
@@ -154,9 +154,9 @@ export const SpreadsheetAPI = {
 
   // Reorder rows by position (for undo/redo)
   reorderRows: async (
-    spreadsheetId: number,
-    sheetId: number,
-    params: { order: Array<{ row_id: number; position: number }> }
+    spreadsheetId: number | string,
+    sheetId: number | string,
+    params: { order: Array<{ row_id: number | string; position: number }> }
   ): Promise<{ status: string }> => {
     const response = await api.post<{ status: string }>(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/reorder-rows/`,
@@ -166,7 +166,7 @@ export const SpreadsheetAPI = {
   },
 
   // Delete a sheet (soft delete) via project-scoped endpoint
-  deleteSheet: async (projectId: number, spreadsheetId: number, sheetId: number): Promise<void> => {
+  deleteSheet: async (projectId: number | string, spreadsheetId: number | string, sheetId: number | string): Promise<void> => {
     await api.delete(
       `/api/projects/${projectId}/spreadsheets/${spreadsheetId}/sheets/${sheetId}/`
     );
@@ -175,8 +175,8 @@ export const SpreadsheetAPI = {
   // Cell operations
   // Read cells in a range
   readCellRange: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     startRow: number,
     endRow: number,
     startColumn: number,
@@ -184,7 +184,7 @@ export const SpreadsheetAPI = {
     options?: { includeSheetDimensions?: boolean }
   ): Promise<{
     cells: Array<{
-      id: number;
+      id: number | string;
       row_position: number;
       column_position: number;
       value_type: string;
@@ -206,7 +206,7 @@ export const SpreadsheetAPI = {
   }> => {
     const response = await api.post<{
       cells: Array<{
-        id: number;
+        id: number | string;
         row_position: number;
         column_position: number;
         value_type: string;
@@ -242,8 +242,8 @@ export const SpreadsheetAPI = {
 
   // Batch update cells
   batchUpdateCells: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     operations: Array<{
       operation: 'set' | 'clear';
       row: number;
@@ -268,7 +268,7 @@ export const SpreadsheetAPI = {
     rows_expanded: number;
     columns_expanded: number;
     cells?: Array<{
-      id: number;
+      id: number | string;
       row_position: number;
       column_position: number;
       value_type: string;
@@ -306,8 +306,8 @@ export const SpreadsheetAPI = {
 
   /** Finalize import: recompute formulas and update sheet meta. Call after all batch chunks complete. */
   finalizeImport: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     importId: string
   ): Promise<{ status: string }> => {
     const response = await api.post(
@@ -320,11 +320,11 @@ export const SpreadsheetAPI = {
 
   // Highlights
   getHighlights: async (
-    spreadsheetId: number,
-    sheetId: number
+    spreadsheetId: number | string,
+    sheetId: number | string
   ): Promise<{
     highlights: Array<{
-      id: number;
+      id: number | string;
       scope: 'CELL' | 'ROW' | 'COLUMN';
       row_index: number | null;
       col_index: number | null;
@@ -340,11 +340,11 @@ export const SpreadsheetAPI = {
   },
 
   getCellFormats: async (
-    spreadsheetId: number,
-    sheetId: number
+    spreadsheetId: number | string,
+    sheetId: number | string
   ): Promise<{
     formats: Array<{
-      id: number;
+      id: number | string;
       row_index: number;
       column_index: number;
       bold: boolean;
@@ -369,8 +369,8 @@ export const SpreadsheetAPI = {
   },
 
   batchUpdateCellFormats: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     ops: Array<{
       row: number;
       column: number;
@@ -395,8 +395,8 @@ export const SpreadsheetAPI = {
   },
 
   batchUpdateHighlights: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     ops: Array<{
       scope: 'CELL' | 'ROW' | 'COLUMN';
       row?: number;
@@ -414,8 +414,8 @@ export const SpreadsheetAPI = {
 
   // Resize sheet (ensure minimum dimensions)
   resizeSheet: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     rowCount: number,
     columnCount: number
   ): Promise<{
@@ -436,14 +436,14 @@ export const SpreadsheetAPI = {
 
   // Insert rows
   insertRows: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     position: number,
     count: number = 1
   ): Promise<{
     rows_created: number;
     total_rows: number;
-    operation_id: number;
+    operation_id: number | string;
   }> => {
     const response = await api.post(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/rows/insert/`,
@@ -457,14 +457,14 @@ export const SpreadsheetAPI = {
 
   // Insert columns
   insertColumns: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     position: number,
     count: number = 1
   ): Promise<{
     columns_created: number;
     total_columns: number;
-    operation_id: number;
+    operation_id: number | string;
   }> => {
     const response = await api.post(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/columns/insert/`,
@@ -478,14 +478,14 @@ export const SpreadsheetAPI = {
 
   // Delete rows
   deleteRows: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     position: number,
     count: number = 1
   ): Promise<{
     rows_deleted: number;
     total_rows: number;
-    operation_id: number;
+    operation_id: number | string;
   }> => {
     const response = await api.post(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/rows/delete/`,
@@ -499,14 +499,14 @@ export const SpreadsheetAPI = {
 
   // Delete columns
   deleteColumns: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     position: number,
     count: number = 1
   ): Promise<{
     columns_deleted: number;
     total_columns: number;
-    operation_id: number;
+    operation_id: number | string;
   }> => {
     const response = await api.post(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/columns/delete/`,
@@ -520,10 +520,10 @@ export const SpreadsheetAPI = {
 
   // Revert structure operation
   revertStructureOperation: async (
-    spreadsheetId: number,
-    sheetId: number,
-    operationId: number
-  ): Promise<{ operation_id: number; is_reverted: boolean }> => {
+    spreadsheetId: number | string,
+    sheetId: number | string,
+    operationId: number | string
+  ): Promise<{ operation_id: number | string; is_reverted: boolean }> => {
     const response = await api.post(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/operations/${operationId}/revert/`,
       {}
@@ -533,10 +533,10 @@ export const SpreadsheetAPI = {
 
   // Upsert pivot configuration for a sheet and trigger recompute
   upsertPivotConfig: async (
-    spreadsheetId: number,
-    sheetId: number,
+    spreadsheetId: number | string,
+    sheetId: number | string,
     payload: {
-      sourceSheetId: number;
+      sourceSheetId: number | string;
       rows: any[];
       columns: any[];
       values: any[];
@@ -565,8 +565,8 @@ export const SpreadsheetAPI = {
   },
   // Trigger backend pivot recompute based on persisted config (fire-and-forget from UI).
   recomputePivot: async (
-    spreadsheetId: number,
-    sheetId: number
+    spreadsheetId: number | string,
+    sheetId: number | string
   ): Promise<{ status: string; detail?: string }> => {
     const response = await api.post<{ status: string; detail?: string }>(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/pivot-recompute/`,

@@ -10,7 +10,7 @@ export interface UseGoogleAdsDesignReturn {
   error: string | null;
   
   // Actions
-  fetchAd: (adId: number) => Promise<void>;
+  fetchAd: (adId: number | string) => Promise<void>;
   updateAd: (data: any) => Promise<void>;
   saveAd: (getFormData?: () => any) => Promise<void>; // Accept form data getter
   publishAd: () => Promise<void>;
@@ -21,13 +21,13 @@ export interface UseGoogleAdsDesignReturn {
   missingFields: (localAdData?: any) => string[];
 }
 
-export function useGoogleAdsDesign(adId?: number): UseGoogleAdsDesignReturn {
+export function useGoogleAdsDesign(adId?: number | string): UseGoogleAdsDesignReturn {
   const [ad, setAd] = useState<GoogleAd | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchAd = useCallback(async (id: number) => {
+  const fetchAd = useCallback(async (id: number | string) => {
     try {
       setLoading(true);
       setError(null);

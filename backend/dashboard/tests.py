@@ -49,7 +49,7 @@ class ProjectWorkspaceDashboardTest(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-        self.url = f"/api/dashboard/workspace/?project_id={self.project.id}"
+        self.url = f"/api/dashboard/workspace/?project_id={self.project.slug}"
 
     # ── helpers ────────────────────────────────────────────────────────────
 

@@ -180,6 +180,21 @@ class BoardAPITest(TestCase):
         self.assertEqual(str(response.data["id"]), str(board.id))
         self.assertEqual(response.data["title"], "Test Board")
 
+    def test_get_board_detail_by_slug(self):
+        """Board resolves by slug (UUID pk still works; slug is the user-facing key)."""
+        board = Board.objects.create(
+            project=self.project,
+            title="Client Brainstorm Board",
+            share_token="token123456789012345679",
+        )
+        self.assertTrue(board.slug)
+
+        url = f"/api/miro/boards/{board.slug}/"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(response.data["id"]), str(board.id))
+        self.assertEqual(response.data["slug"], board.slug)
+
     def test_get_board_detail_non_member(self):
         """Retrieve board detail for non-member (404)"""
         other_project = Project.objects.create(
@@ -258,7 +273,7 @@ class BoardAPITest(TestCase):
             board=older_board,
         )
 
-        response = self.client.get(f"/api/miro/projects/{self.project.id}/latest-board/")
+        response = self.client.get(f"/api/miro/projects/{self.project.slug}/latest-board/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["board"]["id"], str(older_board.id))
         self.assertNotEqual(response.data["board"]["id"], str(newer_board.id))
@@ -277,7 +292,7 @@ class BoardAPITest(TestCase):
         )
         self.assertNotEqual(older_board.id, newer_board.id)
 
-        response = self.client.get(f"/api/miro/projects/{self.project.id}/latest-board/")
+        response = self.client.get(f"/api/miro/projects/{self.project.slug}/latest-board/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["board"]["id"], str(newer_board.id))
 

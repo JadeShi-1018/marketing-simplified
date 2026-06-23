@@ -26,7 +26,7 @@ export default class CsmAPI {
     return unwrap<Queue>(res.data);
   }
 
-  static async getQueue(queueId: number) {
+  static async getQueue(queueId: number | string) {
     const res = await api.get<Queue>(`${BASE}/queues/${queueId}/`);
     return res.data;
   }
@@ -36,12 +36,12 @@ export default class CsmAPI {
     return res.data;
   }
 
-  static async updateQueue(queueId: number, data: UpdateQueueData) {
+  static async updateQueue(queueId: number | string, data: UpdateQueueData) {
     const res = await api.patch<Queue>(`${BASE}/queues/${queueId}/`, data);
     return res.data;
   }
 
-  static async deleteQueue(queueId: number) {
+  static async deleteQueue(queueId: number | string) {
     await api.delete(`${BASE}/queues/${queueId}/`);
   }
 

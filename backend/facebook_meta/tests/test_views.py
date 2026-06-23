@@ -51,13 +51,10 @@ class GetAdCreativeViewTest(TestCase):
         self.assertEqual(response.data['title'], 'Test Title')
     
     def test_get_ad_creative_invalid_id_format(self):
-        """Test ad creative retrieval with invalid ID format"""
+        """A non-numeric id is treated as a slug; unknown -> 404."""
         response = self.client.get('/api/facebook_meta/abc123/')
-        
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('error', response.data)
-        self.assertIn('ad_creative_id must be a numeric string', response.data['error'])
-        self.assertEqual(response.data['code'], 'INVALID_ID_FORMAT')
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_get_ad_creative_not_found(self):
         """Test ad creative retrieval when not found"""
@@ -300,9 +297,8 @@ class AdCreativeUpdateViewTest(TestCase):
         }
         
         response = self.client.patch('/api/facebook_meta/abc123/', data, format='json')
-        
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('ad_creative_id must be a numeric string', str(response.data))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_update_ad_creative_not_found(self):
         """Test ad creative update when not found"""
@@ -422,11 +418,10 @@ class AdCreativeDeleteViewTest(TestCase):
         self.assertFalse(AdCreative.objects.filter(id='123456789').exists())
     
     def test_delete_ad_creative_invalid_id_format(self):
-        """Test ad creative deletion with invalid ID format"""
+        """A non-numeric id is treated as a slug; unknown -> 404."""
         response = self.client.delete('/api/facebook_meta/abc123/')
-        
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('ad_creative_id must be a numeric string', str(response.data))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
     
     def test_delete_ad_creative_not_found(self):
         """Test ad creative deletion when not found"""
@@ -597,9 +592,10 @@ class ViewIntegrationTest(TestCase):
                     response = self.client.delete(view_url)
                 else:
                     response = self.client.get(view_url)
-                
-                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        
+
+                # Non-numeric ids are slugs now; unknown -> 404.
+                self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
         # 2. Test non-existent resources
         non_existent_views = [
             '/api/facebook_meta/999999999/',

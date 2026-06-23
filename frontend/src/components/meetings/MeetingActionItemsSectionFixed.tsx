@@ -6,6 +6,7 @@ import { CheckSquare, ChevronDown, Loader2, Plus, RefreshCcw, Square, Trash2 } f
 import toast from 'react-hot-toast';
 
 import { MeetingsAPI } from '@/lib/api/meetingsApi';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import { Button } from '@/components/ui/button';
@@ -111,7 +112,7 @@ export function MeetingActionItemsSection({
     return out;
   }, [meetingTasks]);
 
-  const tasksModuleHref = `/tasks?project_id=${projectId}`;
+  const tasksModuleHref = nestedProjectPath(projectId, '/tasks');
 
   const loadAll = async () => {
     setLoading(true);

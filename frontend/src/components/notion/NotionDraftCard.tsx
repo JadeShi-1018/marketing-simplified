@@ -32,10 +32,10 @@ const formatTimestamp = (value: string) => {
 
 interface NotionDraftCardProps {
   draft: DraftSummary;
-  onOpen: (id: number) => void;
-  onDuplicate: (id: number) => void;
-  onExport: (id: number, title: string) => void;
-  onDelete: (id: number) => void;
+  onOpen: (idOrSlug: number | string) => void;
+  onDuplicate: (idOrSlug: number | string) => void;
+  onExport: (idOrSlug: number | string, title: string) => void;
+  onDelete: (idOrSlug: number | string) => void;
 }
 
 export default function NotionDraftCard({
@@ -46,15 +46,17 @@ export default function NotionDraftCard({
   onDelete,
 }: NotionDraftCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  // Resource lookups are slug-only; fall back to id only for legacy rows.
+  const draftKey = draft.slug ?? draft.id;
 
   const handleRowClick = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('[data-prevent-open]')) return;
-    onOpen(draft.id);
+    onOpen(draftKey);
   };
 
   const handleDeleteSelect = () => {
     setIsMenuOpen(false);
-    window.setTimeout(() => onDelete(draft.id), 150);
+    window.setTimeout(() => onDelete(draftKey), 150);
   };
 
   return (
@@ -65,7 +67,7 @@ export default function NotionDraftCard({
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onOpen(draft.id);
+          onOpen(draftKey);
         }
       }}
       className="group w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-gray-100 hover:border-[#3CCED7]/30 hover:bg-gray-50/80 transition cursor-pointer"
@@ -104,10 +106,10 @@ export default function NotionDraftCard({
             data-prevent-open
             onClick={(event) => event.stopPropagation()}
           >
-            <DropdownMenuItem onSelect={() => onDuplicate(draft.id)}>
+            <DropdownMenuItem onSelect={() => onDuplicate(draftKey)}>
               <Copy className="w-4 h-4 mr-2" /> Duplicate
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => onExport(draft.id, draft.title)}>
+            <DropdownMenuItem onSelect={() => onExport(draftKey, draft.title)}>
               <Download className="w-4 h-4 mr-2" /> Download JSON
             </DropdownMenuItem>
             <DropdownMenuSeparator />

@@ -6,7 +6,7 @@ export type DecisionMapMode = 'auto' | 'tree' | TimelineGranularity;
 export type DecisionMapUrlState = {
   mode: DecisionMapMode;
   fullscreen: boolean;
-  decisionId: number | null;
+  decisionId: number | string | null;
 };
 
 const MAP_PARAM = 'map';
@@ -35,7 +35,7 @@ export function readDecisionMapUrlState(
   return {
     mode: parseDecisionMapModeFromUrl(searchParams.get(MAP_PARAM)),
     fullscreen: searchParams.get(FULLSCREEN_PARAM) === '1',
-    decisionId: Number.isFinite(parsedDecisionId) ? parsedDecisionId : null,
+    decisionId: Number.isFinite(parsedDecisionId) ? parsedDecisionId : (decisionRaw || null),
   };
 }
 
@@ -44,6 +44,7 @@ export function buildDecisionMapSearchParams(
   next: DecisionMapUrlState,
 ): URLSearchParams {
   const params = new URLSearchParams(current.toString());
+  params.delete('project_id');
   const mapValue = decisionMapModeToUrl(next.mode);
   if (mapValue) params.set(MAP_PARAM, mapValue);
   else params.delete(MAP_PARAM);

@@ -45,7 +45,7 @@ export const TaskAPI = {
     return api.get("/api/tasks/", { params: queryParams });
   },
 
-  getTasksGantt: async (params?: { project_id?: number }): Promise<GanttChartPayload> => {
+  getTasksGantt: async (params?: { project_id?: number | string }): Promise<GanttChartPayload> => {
     const response = await api.get("/api/tasks/gantt/", { params });
     return response.data as GanttChartPayload;
   },
@@ -55,7 +55,7 @@ export const TaskAPI = {
    * Pass internalRefetch after in-page saves so server-side TASK_OPEN is not counted again.
    */
   getTask: (
-    taskId: number,
+    taskId: number | string,
     options?: { internalRefetch?: boolean },
   ) =>
     api.get(`/api/tasks/${taskId}/`, {
@@ -65,17 +65,17 @@ export const TaskAPI = {
     }),
 
   // Update a task
-  updateTask: (taskId: number, data: Partial<TaskData>) =>
+  updateTask: (taskId: number | string, data: Partial<TaskData>) =>
     api.patch(`/api/tasks/${taskId}/`, data),
 
   // Project-scoped tag catalog (aggregated from all tasks in the project)
-  getTagCatalog: async (projectId: number): Promise<{ name: string; color: string }[]> => {
+  getTagCatalog: async (projectId: number | string): Promise<{ name: string; color: string }[]> => {
     const response = await api.get('/api/tasks/tag-catalog/', { params: { project_id: projectId } });
     const list = response.data?.tags;
     return Array.isArray(list) ? list : [];
   },
 
-  deleteTag: async (projectId: number, name: string): Promise<void> => {
+  deleteTag: async (projectId: number | string, name: string): Promise<void> => {
     try {
       await api.post('/api/tasks/tag-catalog/delete/', { name }, { params: { project_id: projectId } });
     } catch (error) {
@@ -87,9 +87,9 @@ export const TaskAPI = {
     }
   },
 
-  pinTask: (taskId: number) => api.post(`/api/tasks/${taskId}/pin/`),
+  pinTask: (taskId: number | string) => api.post(`/api/tasks/${taskId}/pin/`),
 
-  unpinTask: (taskId: number) => api.delete(`/api/tasks/${taskId}/pin/`),
+  unpinTask: (taskId: number | string) => api.delete(`/api/tasks/${taskId}/pin/`),
 
   bulkAction: async (
     payload: TaskBulkUpdateRequest
@@ -102,46 +102,46 @@ export const TaskAPI = {
   createTask: (data: CreateTaskData) => api.post("/api/tasks/", data),
 
   // Link task to a task type object
-  linkTask: (taskId: number, contentType: string, objectId: string) =>
+  linkTask: (taskId: number | string, contentType: string, objectId: string) =>
     api.post(`/api/tasks/${taskId}/link/`, {
       content_type: contentType,
       object_id: objectId,
     }),
 
   // Submit a task (DRAFT -> SUBMITTED)
-  submitTask: (taskId: number) =>
+  submitTask: (taskId: number | string) =>
     api.post(`/api/tasks/${taskId}/submit/`),
 
   // Start review for a task
-  startReview: (taskId: number) =>
+  startReview: (taskId: number | string) =>
     api.post(`/api/tasks/${taskId}/start-review/`),
 
   // Revise a task
-  revise: (taskId: number) => api.post(`/api/tasks/${taskId}/revise/`),
+  revise: (taskId: number | string) => api.post(`/api/tasks/${taskId}/revise/`),
 
   // Make approval decision (approve or reject)
-  makeApproval: (taskId: number, data: TaskApprovalData) =>
+  makeApproval: (taskId: number | string, data: TaskApprovalData) =>
     api.post(`/api/tasks/${taskId}/make-approval/`, data),
 
   // Lock a task
-  lock: (taskId: number) => api.post(`/api/tasks/${taskId}/lock/`),
+  lock: (taskId: number | string) => api.post(`/api/tasks/${taskId}/lock/`),
 
   // Unlock a task (LOCKED -> APPROVED)
-  unlock: (taskId: number) => api.post(`/api/tasks/${taskId}/unlock/`),
+  unlock: (taskId: number | string) => api.post(`/api/tasks/${taskId}/unlock/`),
 
   // Cancel a task
-  cancelTask: (taskId: number) =>
+  cancelTask: (taskId: number | string) =>
     api.post(`/api/tasks/${taskId}/cancel/`),
 
   // Forward task to next approver
-  forward: (taskId: number, data: TaskForwardData) =>
+  forward: (taskId: number | string, data: TaskForwardData) =>
     api.post(`/api/tasks/${taskId}/forward/`, data),
 
   // Get approval history
-  getApprovalHistory: (taskId: number) =>
+  getApprovalHistory: (taskId: number | string) =>
     api.get(`/api/tasks/${taskId}/approval-history/`),
 
-  getComments: async (taskId: number): Promise<TaskComment[]> => {
+  getComments: async (taskId: number | string): Promise<TaskComment[]> => {
     const response = await api.get(`/api/tasks/${taskId}/comments/`);
     const data: any = response.data;
     if (Array.isArray(data)) {
@@ -151,7 +151,7 @@ export const TaskAPI = {
   },
 
   createComment: async (
-    taskId: number,
+    taskId: number | string,
     data: { body: string }
   ): Promise<TaskComment> => {
     const response = await api.post(`/api/tasks/${taskId}/comments/`, data);
@@ -159,21 +159,21 @@ export const TaskAPI = {
   },
 
   // Delete a task
-  deleteTask: (taskId: number) => api.delete(`/api/tasks/${taskId}/`),
+  deleteTask: (taskId: number | string) => api.delete(`/api/tasks/${taskId}/`),
 
   // Field history
-  getFieldHistory: (taskId: number, page = 1, pageSize = 20) =>
+  getFieldHistory: (taskId: number | string, page = 1, pageSize = 20) =>
     api.get(`/api/tasks/${taskId}/field-history/`, { params: { page, page_size: pageSize } }),
 
   // Get all relations for a task
-  getRelations: async (taskId: number): Promise<TaskRelationsResponse> => {
+  getRelations: async (taskId: number | string): Promise<TaskRelationsResponse> => {
     const response = await api.get(`/api/tasks/${taskId}/relations/`);
     return response.data as TaskRelationsResponse;
   },
 
   // Add a relation to a task
   addRelation: async (
-    taskId: number,
+    taskId: number | string,
     data: TaskRelationAddRequest
   ): Promise<any> => {
     const response = await api.post(`/api/tasks/${taskId}/relations/`, data);
@@ -181,11 +181,11 @@ export const TaskAPI = {
   },
 
   // Delete a relation
-  deleteRelation: (taskId: number, relationId: number) =>
+  deleteRelation: (taskId: number | string, relationId: number | string) =>
     api.delete(`/api/tasks/${taskId}/relations/${relationId}/`),
 
   // Get all subtasks of a task
-  getSubtasks: async (taskId: number): Promise<TaskData[]> => {
+  getSubtasks: async (taskId: number | string): Promise<TaskData[]> => {
     const response = await api.get(`/api/tasks/${taskId}/subtasks/`);
     const data: any = response.data;
     if (Array.isArray(data)) {
@@ -196,8 +196,8 @@ export const TaskAPI = {
 
   // Add a subtask to a parent task
   addSubtask: async (
-    parentTaskId: number,
-    childTaskId: number
+    parentTaskId: number | string,
+    childTaskId: number | string
   ): Promise<TaskData> => {
     const response = await api.post(`/api/tasks/${parentTaskId}/subtasks/`, {
       child_task_id: childTaskId,
@@ -206,11 +206,11 @@ export const TaskAPI = {
   },
 
   // Delete a subtask relationship
-  deleteSubtask: (parentTaskId: number, subtaskId: number) =>
+  deleteSubtask: (parentTaskId: number | string, subtaskId: number | string) =>
     api.delete(`/api/tasks/${parentTaskId}/subtasks/${subtaskId}/`),
 
   // Get all attachments for a task
-  getAttachments: async (taskId: number): Promise<TaskAttachment[]> => {
+  getAttachments: async (taskId: number | string): Promise<TaskAttachment[]> => {
     const response = await api.get(`/api/tasks/${taskId}/attachments/`);
     const data: any = response.data;
     if (Array.isArray(data)) {
@@ -221,7 +221,7 @@ export const TaskAPI = {
 
   // Create a new attachment for a task
   createAttachment: async (
-    taskId: number,
+    taskId: number | string,
     file: File
   ): Promise<TaskAttachment> => {
     const formData = new FormData();
@@ -232,16 +232,16 @@ export const TaskAPI = {
 
   // Delete an attachment
   deleteAttachment: async (
-    taskId: number,
-    attachmentId: number
+    taskId: number | string,
+    attachmentId: number | string
   ): Promise<void> => {
     await api.delete(`/api/tasks/${taskId}/attachments/${attachmentId}/`);
   },
 
   // Download an attachment (get download URL)
   downloadAttachment: async (
-    taskId: number,
-    attachmentId: number
+    taskId: number | string,
+    attachmentId: number | string
   ): Promise<any> => {
     const response = await api.get(
       `/api/tasks/${taskId}/attachments/${attachmentId}/download/`
@@ -250,7 +250,7 @@ export const TaskAPI = {
   },
 
 
-  moveSubtask: (newParentId: number, subtaskId: number, data: { old_parent_id: number }) =>
+  moveSubtask: (newParentId: number | string, subtaskId: number | string, data: { old_parent_id: number | string }) =>
     api.post(`/api/tasks/${newParentId}/subtasks/${subtaskId}/move/`, data),
 
   getAutosave: async (type: string): Promise<Record<string, unknown> | null> => {
@@ -268,7 +268,7 @@ export const TaskAPI = {
   },
 
   getIntelligence: async (params: {
-    project_id?: number;
+    project_id?: number | string;
     stall_days?: number;
     due_soon_days?: number;
     activity_limit?: number;
@@ -279,7 +279,7 @@ export const TaskAPI = {
   },
 
   getWorkCycle: async (params: {
-    project_id?: number;
+    project_id?: number | string;
     from?: string;
     to?: string;
   }): Promise<WorkCycleHistoryPayload> => {
@@ -288,7 +288,7 @@ export const TaskAPI = {
   },
 
   getMyActions: async (params: {
-    project_id?: number;
+    project_id?: number | string;
     due_soon_days?: number;
   }): Promise<MyActionsPayload> => {
     const response = await api.get('/api/tasks/my-actions/', { params });
@@ -296,7 +296,7 @@ export const TaskAPI = {
   },
 
   getStatusReport: (params: {
-    project_id: number;
+    project_id: number | string;
     period: 'week' | 'month' | 'custom';
     date_from?: string;
     date_to?: string;

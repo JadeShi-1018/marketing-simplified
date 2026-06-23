@@ -138,7 +138,7 @@ const TaskListView = ({
     setEditValues({ [field]: currentValue });
   };
 
-  const handleFieldSave = async (taskId: number, field: string) => {
+  const handleFieldSave = async (taskId: number | string, field: string) => {
     const newValue = editValues[field];
     
     try {
@@ -270,7 +270,7 @@ const TaskListView = ({
                                   type="text"
                                   value={editValues.summary || task.summary || ''}
                                   onChange={(e) => setEditValues({ summary: e.target.value })}
-                                  onBlur={() => handleFieldSave(task.id!, 'summary')}
+                                  onBlur={() => handleFieldSave(task.slug ?? task.id!, 'summary')}
                                   onKeyDown={(e) => handleKeyPress(e, task.id!, 'summary')}
                                   className="px-2 py-1 border border-indigo-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                   autoFocus
@@ -296,7 +296,7 @@ const TaskListView = ({
                                   <textarea
                                     value={editValues.description ?? task.description ?? ''}
                                     onChange={(e) => setEditValues({ description: e.target.value })}
-                                    onBlur={() => handleFieldSave(task.id!, 'description')}
+                                    onBlur={() => handleFieldSave(task.slug ?? task.id!, 'description')}
                                     onKeyDown={(e) => handleKeyPress(e, task.id!, 'description')}
                                     className="w-full min-h-[60px] px-2 py-1 border border-indigo-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                     autoFocus
@@ -350,7 +350,7 @@ const TaskListView = ({
                                 type="date"
                                 value={editValues.due_date || task.due_date || ''}
                                 onChange={(e) => setEditValues({ due_date: e.target.value })}
-                                onBlur={() => handleFieldSave(task.id!, 'due_date')}
+                                onBlur={() => handleFieldSave(task.slug ?? task.id!, 'due_date')}
                                 onKeyDown={(e) => handleKeyPress(e, task.id!, 'due_date')}
                                 className="px-2 py-1 border border-indigo-300 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                 autoFocus

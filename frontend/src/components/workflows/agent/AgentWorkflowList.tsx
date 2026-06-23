@@ -169,7 +169,7 @@ export default function AgentWorkflowList() {
     const created = await createWorkflow({ ...data, status: "draft" })
     toast.success("Workflow created")
     await fetchWorkflows()
-    openEditor(created.id)
+    openEditor(created.slug)
   }
 
   const handleDuplicate = async (workflow: AgentWorkflowDefinition) => {
@@ -182,7 +182,7 @@ export default function AgentWorkflowList() {
       const created = await duplicateWorkflow(workflow.id)
       toast.success("Workflow duplicated")
       await fetchWorkflows()
-      openEditor(created.id)
+      openEditor(created.slug)
     } catch (err: unknown) {
       const message =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
@@ -345,7 +345,7 @@ export default function AgentWorkflowList() {
                       duplicateDisabled={needsProject}
                       duplicating={duplicatingId === workflow.id}
                       onDuplicate={() => handleDuplicate(workflow)}
-                      onEdit={() => openEditor(workflow.id)}
+                      onEdit={() => openEditor(workflow.slug)}
                     />
                   ))}
                 </div>
@@ -366,7 +366,7 @@ export default function AgentWorkflowList() {
                     <WorkflowCard
                       key={workflow.id}
                       workflow={workflow}
-                      onEdit={() => openEditor(workflow.id)}
+                      onEdit={() => openEditor(workflow.slug)}
                       onDelete={() => setDeletingWorkflow(workflow)}
                     />
                   ))}

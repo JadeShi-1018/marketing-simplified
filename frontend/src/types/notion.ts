@@ -49,6 +49,7 @@ export interface NotionContentBlock {
 
 export interface DraftSummary {
   id: number;
+  slug?: string;
   title: string;
   user_email: string;
   status: DraftStatus | string;
@@ -59,6 +60,7 @@ export interface DraftSummary {
 
 export interface DraftDetail {
   id: number;
+  slug?: string;
   title: string;
   user: number;
   user_email: string;

@@ -14,7 +14,8 @@ import VideoResponsiveAdForm from '@/components/google_ads/design/VideoResponsiv
 import AdPreviewPanel from '@/components/google_ads/preview/AdPreviewPanel';
 
 function GoogleAdsDesignPageContent() {
-  const { adId } = useParams();
+  const params = useParams<{ adId: string }>();
+  const adId = params?.adId ? String(params.adId) : null;
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = searchParams.get('returnTo');
@@ -281,7 +282,7 @@ function GoogleAdsDesignPageContent() {
 
   useEffect(() => {
     if (adId) {
-      fetchAd(parseInt(adId as string));
+      fetchAd(adId);
     }
   }, [adId, fetchAd]);
 

@@ -696,14 +696,14 @@ class TestTaskListFilters:
         user.save()
 
         url = reverse("task-list")
-        response = authenticated_client.get(url, {"project_id": project.id})
+        response = authenticated_client.get(url, {"project_id": project.slug})
         assert response.status_code == status.HTTP_200_OK
         task_ids = [t["id"] for t in _tasks_from_response(response)]
         assert task_other.id not in task_ids
 
         response_union = authenticated_client.get(
             url,
-            {"project_id": project.id, "include_cross_project_approvals": "true"},
+            {"project_id": project.slug, "include_cross_project_approvals": "true"},
         )
         assert response_union.status_code == status.HTTP_200_OK
         union_ids = [t["id"] for t in _tasks_from_response(response_union)]

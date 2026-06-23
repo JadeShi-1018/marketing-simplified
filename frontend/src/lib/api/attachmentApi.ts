@@ -117,7 +117,7 @@ export async function deleteAttachment(attachmentId: number): Promise<void> {
 }
 
 export async function listAccessibleChatFiles(params: {
-  projectId: number;
+  projectId: number | string;
   page?: number;
   pageSize?: number;
 }): Promise<{

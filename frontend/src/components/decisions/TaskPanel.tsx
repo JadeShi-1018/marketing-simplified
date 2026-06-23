@@ -166,7 +166,7 @@ const TaskPanel = ({
           {tasks.map((task) => (
             <Link
               key={task.id}
-              href={`/tasks/${task.id}`}
+              href={`/tasks/${task.slug}`}
               className="block rounded-md border border-gray-200 bg-white px-3 py-2 text-xs hover:bg-gray-50"
             >
               <div className="flex items-center justify-between gap-2">

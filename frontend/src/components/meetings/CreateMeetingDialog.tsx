@@ -12,7 +12,7 @@ import MeetingTypeCombobox from './MeetingTypeCombobox';
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  projectId: number;
+  projectId: number | string;
   typeSuggestions: string[];
   onCreated?: (meeting: Meeting) => void | Promise<void>;
 }

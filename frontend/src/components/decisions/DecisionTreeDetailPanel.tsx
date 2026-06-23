@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Loader2, Pencil, Save, X } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -40,8 +41,10 @@ interface PanelDraft {
 }
 
 interface Props {
-  decisionId: number;
-  projectId: number | null;
+  decisionId: number | string;
+  /** Slug of the decision; preferred for API lookups and URLs (slug-only backend). */
+  decisionSlug?: string | null;
+  projectId: number | string | null;
   /** Status from the graph card (used until detail API loads). */
   graphNodeStatus?: DecisionStatus | null;
   canEdit: boolean;
@@ -52,7 +55,7 @@ interface Props {
   onProvisionalSaved?: () => void;
   onDiscardProvisional?: () => Promise<void> | void;
   onClose: () => void;
-  onOpenFullPage?: (id: number, projectId?: number | null) => void;
+  onOpenFullPage?: (idOrSlug: number | string, projectId?: number | string | null) => void;
   onUpdated?: (opts?: {
     fullReload?: boolean;
     nodePatch?: { id: number } & Partial<Pick<DecisionGraphNode, 'title' | 'status' | 'riskLevel'>>;
@@ -61,6 +64,7 @@ interface Props {
 
 export default function DecisionTreeDetailPanel({
   decisionId,
+  decisionSlug = null,
   projectId,
   graphNodeStatus = null,
   canEdit: canEditProp,
@@ -73,7 +77,8 @@ export default function DecisionTreeDetailPanel({
   onOpenFullPage,
   onUpdated,
 }: Props) {
-  const detail = useDecisionDetail(decisionId, projectId);
+  const decisionKey = decisionSlug ?? decisionId;
+  const detail = useDecisionDetail(decisionKey, projectId);
   const { canEdit: roleCanEdit, members } = useProjectRole(projectId);
   const committed = detail.committed;
   const base = detail.base;
@@ -159,7 +164,7 @@ export default function DecisionTreeDetailPanel({
       nodePatch: fullReload
         ? undefined
         : {
-            id: decisionId,
+            id: committed?.id ?? detail.draft?.id ?? (typeof decisionId === 'number' ? decisionId : 0),
             title: localTitle.trim() || null,
             status: effectiveStatus ?? undefined,
             riskLevel: displayRisk ?? undefined,
@@ -237,10 +242,10 @@ export default function DecisionTreeDetailPanel({
 
   const handleSignalSubmit = async (payload: SignalFormPayload) => {
     if (signalEdit?.id) {
-      await DecisionAPI.updateSignal(decisionId, signalEdit.id, payload, projectId);
+      await DecisionAPI.updateSignal(decisionKey, signalEdit.id, payload, projectId);
       toast.success('Signal updated');
     } else {
-      await DecisionAPI.createSignal(decisionId, payload, projectId);
+      await DecisionAPI.createSignal(decisionKey, payload, projectId);
       toast.success('Signal added');
     }
     await detail.refreshSignals();
@@ -251,7 +256,7 @@ export default function DecisionTreeDetailPanel({
     if (!pendingSignalDelete?.id) return;
     setSignalDeleting(true);
     try {
-      await DecisionAPI.deleteSignal(decisionId, pendingSignalDelete.id, projectId);
+      await DecisionAPI.deleteSignal(decisionKey, pendingSignalDelete.id, projectId);
       toast.success('Signal deleted');
       await detail.refreshSignals();
       setPendingSignalDelete(null);
@@ -267,8 +272,8 @@ export default function DecisionTreeDetailPanel({
   };
 
   const fullPageHref = projectId
-    ? `/decisions/${decisionId}?project_id=${projectId}`
-    : `/decisions/${decisionId}`;
+    ? nestedProjectPath(projectId, `/decisions/${decisionKey}`)
+    : `/decisions/${decisionKey}`;
 
   return (
     <>
@@ -304,7 +309,7 @@ export default function DecisionTreeDetailPanel({
               {onOpenFullPage && !isProvisional ? (
                 <button
                   type="button"
-                  onClick={() => onOpenFullPage(decisionId, projectId)}
+                  onClick={() => onOpenFullPage(decisionKey, projectId)}
                   className="inline-flex h-8 w-8 items-center justify-center rounded-md text-gray-500 transition hover:bg-gray-50 hover:text-gray-900"
                   title="Open full page"
                   aria-label="Open full page"
@@ -407,7 +412,7 @@ export default function DecisionTreeDetailPanel({
                 onDelete={(s) => setPendingSignalDelete(s)}
               />
               <DecisionConnectionsAside
-                decisionId={decisionId}
+                decisionId={decisionKey}
                 projectId={projectId}
                 mySeq={projectSeq}
               />
@@ -417,9 +422,11 @@ export default function DecisionTreeDetailPanel({
                 editable={status !== 'ARCHIVED' && canEdit && !editing}
                 onCreateTask={() => {
                   const q = new URLSearchParams();
-                  if (projectId) q.set('project_id', String(projectId));
-                  q.set('link_decision_id', String(decisionId));
-                  window.open(`/tasks/new?${q.toString()}`, '_blank');
+                  q.set('link_decision', String(decisionKey));
+                  const href = projectId
+                    ? nestedProjectPath(projectId, `/tasks/new?${q.toString()}`)
+                    : `/tasks/new?${q.toString()}`;
+                  window.open(href, '_blank');
                 }}
               />
             </div>

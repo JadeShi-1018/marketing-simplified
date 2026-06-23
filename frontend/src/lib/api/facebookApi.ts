@@ -28,7 +28,7 @@ export interface FacebookStatus {
 }
 
 export interface FacebookAdAccountListParams {
-  project_id?: number;
+  project_id?: number | string;
   page?: number;
   page_size?: number;
   search?: string;
@@ -85,6 +85,7 @@ export interface MetaSummary {
 
 export interface MetaCampaignPerformanceRow {
   id: number;
+  slug: string;
   meta_campaign_id: string;
   name: string;
   objective: string;
@@ -128,6 +129,7 @@ export interface MetaSyncRun {
 
 export interface MetaCreativePerformanceRow {
   id: number;
+  slug: string;
   meta_creative_id: string;
   name: string;
   title: string;
@@ -198,6 +200,7 @@ export interface MetaAdPerformanceRow {
   creative:
     | {
         id: number;
+        slug: string;
         meta_creative_id: string;
         title: string;
         thumbnail_url: string;
@@ -318,6 +321,7 @@ export interface MetaCreativeDetailAggregates {
 
 export interface MetaCreativeDetail {
   id: number;
+  slug: string;
   meta_creative_id: string;
   ad_account_id: number;
   currency: string;
@@ -361,6 +365,7 @@ export interface MetaCreativePreview {
 
 export interface MetaAdSetPerformanceRow {
   id: number;
+  slug: string;
   meta_adset_id: string;
   name: string;
   effective_status: string;
@@ -419,6 +424,7 @@ export interface MetaCampaignDetailAggregates {
 
 export interface MetaCampaignDetailLinkedAdSet {
   id: number;
+  slug: string;
   meta_adset_id: string;
   name: string;
   effective_status: string;
@@ -436,6 +442,7 @@ export interface MetaCampaignDetailLinkedAdSet {
 
 export interface MetaCampaignDetail {
   id: number;
+  slug: string;
   meta_campaign_id: string;
   ad_account_id: number;
   currency: string;
@@ -488,6 +495,7 @@ export interface MetaAdSetDetailLinkedAd {
   effective_status: string;
   creative: {
     id: number;
+    slug: string;
     meta_creative_id: string;
     title: string;
     thumbnail_url: string;
@@ -503,6 +511,7 @@ export interface MetaAdSetDetailLinkedAd {
 
 export interface MetaAdSetDetail {
   id: number;
+  slug: string;
   meta_adset_id: string;
   ad_account_id: number;
   currency: string;
@@ -516,6 +525,7 @@ export interface MetaAdSetDetail {
   lifetime_budget_cents: number | null;
   campaign: {
     id: number;
+    slug: string;
     meta_campaign_id: string;
     name: string;
   };
@@ -538,7 +548,7 @@ export interface MetaAdSetTimeseries {
 }
 
 export const facebookApi = {
-  getStatus: async (projectId?: number | null): Promise<FacebookStatus> => {
+  getStatus: async (projectId?: number | string | null): Promise<FacebookStatus> => {
     const response = await api.get("/api/facebook_integration/status/", {
       params: projectId ? { project_id: projectId } : undefined,
     });
@@ -555,7 +565,7 @@ export const facebookApi = {
     return response.data;
   },
 
-  connect: async (projectId?: number): Promise<FacebookConnectPayload> => {
+  connect: async (projectId?: number | string): Promise<FacebookConnectPayload> => {
     const response = await api.get("/api/facebook_integration/connect/", {
       params: projectId ? { project_id: projectId } : undefined,
     });
@@ -574,7 +584,7 @@ export const facebookApi = {
 
   linkAdAccountToProject: async (
     adAccountId: number,
-    projectId: number | null
+    projectId: number | string | null
   ): Promise<FacebookAdAccount> => {
     const response = await api.post(
       `/api/facebook_integration/ad_accounts/${adAccountId}/link_project/`,
@@ -778,7 +788,7 @@ export const facebookApi = {
 
   exportAdsToSpreadsheet: async (
     adAccountId: number,
-    projectId: number,
+    projectId: number | string,
     name: string,
     days: number,
     filters?: {
@@ -815,7 +825,7 @@ export const facebookApi = {
 
   exportCreativesToSpreadsheet: async (
     adAccountId: number,
-    projectId: number,
+    projectId: number | string,
     name: string,
     days: number,
     filters?: {
@@ -856,7 +866,7 @@ export const facebookApi = {
 
   exportCampaignsToSpreadsheet: async (
     adAccountId: number,
-    projectId: number,
+    projectId: number | string,
     name: string,
     days: number,
     filters?: { ids?: number[] }
@@ -904,7 +914,7 @@ export const facebookApi = {
   },
 
   getMetaCreativeDetail: async (
-    creativeId: number,
+    creativeId: number | string,
     days: number
   ): Promise<MetaCreativeDetail> => {
     const response = await api.get(`/api/meta_ads/creatives/${creativeId}/`, {
@@ -914,7 +924,7 @@ export const facebookApi = {
   },
 
   getMetaCreativePreview: async (
-    creativeId: number,
+    creativeId: number | string,
     format: MetaAdPreviewFormat = "MOBILE_FEED_STANDARD"
   ): Promise<MetaCreativePreview> => {
     const response = await api.get(
@@ -925,7 +935,7 @@ export const facebookApi = {
   },
 
   getMetaCreativeTimeseries: async (
-    creativeId: number,
+    creativeId: number | string,
     days: number
   ): Promise<MetaCreativeTimeseries> => {
     const response = await api.get(
@@ -936,7 +946,7 @@ export const facebookApi = {
   },
 
   getMetaCampaignDetail: async (
-    campaignId: number,
+    campaignId: number | string,
     days: number
   ): Promise<MetaCampaignDetail> => {
     const response = await api.get(`/api/meta_ads/campaigns/${campaignId}/`, {
@@ -946,7 +956,7 @@ export const facebookApi = {
   },
 
   getMetaCampaignTimeseries: async (
-    campaignId: number,
+    campaignId: number | string,
     days: number
   ): Promise<MetaCampaignTimeseries> => {
     const response = await api.get(
@@ -957,7 +967,7 @@ export const facebookApi = {
   },
 
   getMetaAdSetDetail: async (
-    adsetId: number,
+    adsetId: number | string,
     days: number
   ): Promise<MetaAdSetDetail> => {
     const response = await api.get(`/api/meta_ads/adsets/${adsetId}/`, {
@@ -967,7 +977,7 @@ export const facebookApi = {
   },
 
   getMetaAdSetTimeseries: async (
-    adsetId: number,
+    adsetId: number | string,
     days: number
   ): Promise<MetaAdSetTimeseries> => {
     const response = await api.get(

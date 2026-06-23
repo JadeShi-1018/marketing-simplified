@@ -10,6 +10,7 @@ from datetime import timedelta, date
 from task.models import Task, ApprovalRecord, TaskComment
 from decision.models import Decision
 from spreadsheet.models import Spreadsheet
+from core.slug_mixins import resolve_project_pk
 from .serializers import DashboardSummarySerializer, ProjectWorkspaceDashboardSerializer
 
 
@@ -71,16 +72,11 @@ class DashboardSummaryView(APIView):
             project_id_param = request.query_params.get('project_id')
             project_id = None
             if project_id_param is not None:
-                try:
-                    project_id = int(project_id_param)
-                except (TypeError, ValueError):
+                # Accept slug (current frontend) or numeric pk (legacy); resolve to pk.
+                project_id = resolve_project_pk(project_id_param)
+                if not project_id:
                     return Response(
-                        {"detail": "Invalid project_id. It must be a positive integer."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                if project_id <= 0:
-                    return Response(
-                        {"detail": "Invalid project_id. It must be a positive integer."},
+                        {"detail": "Invalid project_id. No matching project."},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
@@ -400,13 +396,11 @@ class ProjectWorkspaceDashboardView(APIView):
                 {'detail': 'project_id is required.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            project_id = int(project_id_param)
-            if project_id <= 0:
-                raise ValueError
-        except (TypeError, ValueError):
+        # Accept slug (current frontend) or numeric pk (legacy); resolve to pk.
+        project_id = resolve_project_pk(project_id_param)
+        if not project_id:
             return Response(
-                {'detail': 'project_id must be a positive integer.'},
+                {'detail': 'Invalid project_id. No matching project.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

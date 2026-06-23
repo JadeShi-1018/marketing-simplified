@@ -50,7 +50,7 @@ export interface EditorHostState {
 }
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   token: string | null;
   readOnly: boolean;

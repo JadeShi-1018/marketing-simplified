@@ -10,7 +10,8 @@ import { useForwardMessages } from '@/hooks/useForwardMessages';
 import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useChatStore } from '@/lib/chatStore';
 import { editMessage, deleteMessage, addReaction, removeReaction, getMessage, getChat, pinMessage, unpinMessage, saveMessage, unsaveMessage, listPins, listSavedMessages, createScheduledMessage, listScheduledMessages, updateChatDetails, updateNotificationSettings } from '@/lib/api/chatApi';
-import { MAX_CHANNEL_NAME_LENGTH, limitName } from '@/lib/messages/nameLimits';
+import { buildMessagesPath } from '@/lib/messages/messagesRoutes';
+import { limitName, MAX_CHANNEL_NAME_LENGTH } from '@/lib/messages/nameLimits';
 import type { Chat, Message } from '@/types/chat';
 import type { ScheduledMessageRow } from '@/lib/api/chatApi';
 import MessageList from './MessageList';
@@ -405,10 +406,13 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
         }
 
         if (target.parent_message_id) {
-          const params = new URLSearchParams(searchParams.toString());
-          params.set('messageId', String(target.parent_message_id));
-          params.set('threadMessageId', String(targetMessageId));
-          router.replace(`/messages?${params.toString()}`);
+          router.replace(
+            buildMessagesPath(chat.slug, {
+              messageId: target.parent_message_id,
+              threadMessageId: targetMessageId,
+            }),
+            { scroll: false },
+          );
           return;
         }
 
@@ -975,6 +979,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
           <div className="flex-1 overflow-hidden">
             <MessageList
               key={`${chat.id}:${currentUserId ?? 'anonymous'}`}
+              chatSlug={chat.slug}
               messages={messages}
               currentUserId={currentUserId ?? 0}
               onLoadMore={loadMoreMessages}

@@ -19,17 +19,30 @@ export async function waitForTasksPageReady(page: Page) {
   });
 }
 
+export async function getActiveProjectSlug(page: Page): Promise<string> {
+  const slug = await page.evaluate(() => {
+    try {
+      const raw = localStorage.getItem('project-storage');
+      if (!raw) return null;
+      return (JSON.parse(raw) as { state?: { activeProject?: { slug?: string } } })?.state?.activeProject?.slug ?? null;
+    } catch {
+      return null;
+    }
+  });
+  if (!slug) throw new Error('No active project slug found in store');
+  return slug;
+}
+
 /**
  * Navigate to /tasks, select a project by name, and return its ID.
  * Run once before all tests (in beforeAll) to grab the project ID.
  * Uses E2E_PROJECT_NAME env var (default "Q1 E2E Task").
  */
 export async function navigateToTasksAndSelectProject(page: Page): Promise<number> {
-  await page.goto('/tasks');
+  await page.goto('/');
   await expect(page.getByText('Preparing your workspace')).not.toBeVisible({ timeout: 30_000 });
   await waitForTasksPageReady(page);
 
-  // Get the active project from the Zustand persisted store in localStorage.
   const projectId: number | null = await page.evaluate(() => {
     try {
       const raw = localStorage.getItem('project-storage');
@@ -41,6 +54,10 @@ export async function navigateToTasksAndSelectProject(page: Page): Promise<numbe
   });
 
   if (!projectId) throw new Error('No active project found in store — ensure the test user has at least one project');
+
+  const projectSlug = await getActiveProjectSlug(page);
+  await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
+  await waitForTasksPageReady(page);
   return projectId;
 }
 
@@ -48,8 +65,9 @@ export async function navigateToTasksAndSelectProject(page: Page): Promise<numbe
  * Ensure we are on the tasks page for the given project.
  * Run before each test (in beforeEach) to navigate to /tasks?project_id=X&view=timeline.
  */
-export async function ensureOnTasksPage(page: Page, projectId: number): Promise<void> {
-  await page.goto(`/tasks?project_id=${projectId}&view=timeline`);
+export async function ensureOnTasksPage(page: Page, _projectId: number): Promise<void> {
+  const projectSlug = await getActiveProjectSlug(page);
+  await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks?view=timeline`);
   await waitForTasksPageReady(page);
 }
 
@@ -222,12 +240,19 @@ export async function getAuthToken(page: Page): Promise<string | null> {
   });
 }
 
+/** Nested task list URL with quick-view drawer open (path segment, not query). */
+export function buildTasksListDrawerUrl(projectSlug: string, taskSlug: string): string {
+  return `/projects/${encodeURIComponent(projectSlug)}/tasks/${encodeURIComponent(taskSlug)}`;
+}
+
+export type DraftTaskFixture = { id: number; slug: string };
+
 export async function createDraftTaskViaApi(
   page: Page,
   projectId: number,
   summary: string,
   overrides: Record<string, unknown> = {},
-): Promise<number> {
+): Promise<DraftTaskFixture> {
   const token = await getAuthToken(page);
   if (!token) throw new Error('No auth token found for task fixture creation');
 
@@ -249,8 +274,10 @@ export async function createDraftTaskViaApi(
   }
 
   const body = await response.json();
-  if (!body?.id) throw new Error('Task fixture response did not include an id');
-  return body.id;
+  if (!body?.id || !body?.slug) {
+    throw new Error('Task fixture response did not include id and slug');
+  }
+  return { id: body.id as number, slug: body.slug as string };
 }
 
 export async function ensureTaskListReadyWithRows(
@@ -265,12 +292,12 @@ export async function ensureTaskListReadyWithRows(
   if (listVisible && currentRows >= minRows) return createdIds;
 
   for (let i = currentRows; i < minRows; i += 1) {
-    createdIds.push(
-      await createDraftTaskViaApi(page, projectId, `Task list fixture ${Date.now()} ${i}`),
-    );
+    const fixture = await createDraftTaskViaApi(page, projectId, `Task list fixture ${Date.now()} ${i}`);
+    createdIds.push(fixture.id);
   }
 
-  await page.goto(`/tasks?project_id=${projectId}`);
+  const projectSlug = await getActiveProjectSlug(page);
+  await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
   await waitForTasksPageReady(page);
   await page.getByTestId('tab-tasks').click();
   await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });

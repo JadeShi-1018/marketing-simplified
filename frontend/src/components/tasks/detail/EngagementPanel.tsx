@@ -92,7 +92,7 @@ export default function EngagementPanel({
   refreshKey,
   loading: parentLoading = false,
 }: {
-  taskId: number;
+  taskId: number | string;
   refreshKey: number;
   loading?: boolean;
 }) {

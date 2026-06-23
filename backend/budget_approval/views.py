@@ -7,6 +7,7 @@ from django.db import transaction
 from django.contrib.auth import get_user_model
 
 from core.models import AdChannel
+from core.slug_mixins import resolve_project_pk
 from .models import BudgetRequest, BudgetPool, BudgetRequestStatus
 from .serializers import (
     BudgetRequestSerializer,
@@ -138,7 +139,7 @@ class BudgetPoolViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset().order_by('-created_at', '-id')
-        project_id = self.request.query_params.get('project_id')
+        project_id = resolve_project_pk(self.request.query_params.get('project_id'))
         if project_id:
             qs = qs.filter(project_id=project_id)
         return qs
@@ -247,7 +248,7 @@ class AdChannelViewSet(viewsets.ViewSet):
 
     def list(self, request):
         qs = AdChannel.objects.all()
-        project_id = request.query_params.get('project_id')
+        project_id = resolve_project_pk(request.query_params.get('project_id'))
         if project_id:
             qs = qs.filter(project_id=project_id)
         data = [{'id': ch.id, 'name': ch.name, 'project': ch.project_id} for ch in qs]
@@ -255,7 +256,7 @@ class AdChannelViewSet(viewsets.ViewSet):
 
     def create(self, request):
         name = request.data.get('name', '').strip()
-        project_id = request.data.get('project')
+        project_id = resolve_project_pk(request.data.get('project'))
         if not name or not project_id:
             return Response({'error': 'name and project are required'}, status=status.HTTP_400_BAD_REQUEST)
         ch = AdChannel.objects.create(name=name, project_id=project_id)

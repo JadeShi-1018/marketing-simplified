@@ -10,7 +10,8 @@
 export type WorkflowStatus = "draft" | "published" | "archived";
 
 export interface WorkflowSummary {
-  id: number;
+  id: number | string;
+  slug?: string;
   name: string;
   description?: string | null;
   project_id?: number | null;
@@ -47,7 +48,7 @@ export interface NodeData {
 
 export interface WorkflowNode {
   id: number;
-  workflow_id: number;
+  workflow_id: number | string;
   node_type: NodeType;
   label: string;
   color?: string;
@@ -97,7 +98,7 @@ export type HandlePosition = 'top' | 'right' | 'bottom' | 'left';
 
 export interface WorkflowConnection {
   id: number;
-  workflow_id: number;
+  workflow_id: number | string;
   source_node_id: number;
   target_node_id: number;
   connection_type: ConnectionType;

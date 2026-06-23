@@ -58,9 +58,9 @@ function clampPosition(x: number, y: number, expanded: ExpandedSection) {
   return { x: nx, y: ny };
 }
 
-function taskDetailUrl(taskId: number) {
-  if (typeof window === 'undefined') return `/tasks/${taskId}`;
-  return `${window.location.origin}/tasks/${taskId}`;
+function taskDetailUrl(taskKey: number | string) {
+  if (typeof window === 'undefined') return `/tasks/${taskKey}`;
+  return `${window.location.origin}/tasks/${taskKey}`;
 }
 
 function memberLabel(m: ProjectMemberData): string {
@@ -72,7 +72,7 @@ type Props = {
   menuMembers: ProjectMemberData[];
   menuMembersLoading: boolean;
   onRequestClose: () => void;
-  onOpenDetail: (taskId: number) => void;
+  onOpenDetail: (taskKey: number | string) => void;
   onTaskDeleted: (taskId: number) => void;
   onTaskPatched: (taskId: number, data: Partial<TaskData>) => void;
 };
@@ -143,7 +143,7 @@ export default function TaskListRowContextMenu({
       if (id == null || patchBusy) return;
       setPatchBusy(true);
       try {
-        const next = await runWorkflowMvpAction(id, kind);
+        const next = await runWorkflowMvpAction(state?.task.slug ?? id, kind);
         onTaskPatched(id, next as Partial<TaskData>);
         toast.success(successMessage);
         closeMenu();
@@ -163,7 +163,7 @@ export default function TaskListRowContextMenu({
       if (id == null || patchBusy || taskIsReadOnly) return;
       setPatchBusy(true);
       try {
-        const res = await TaskAPI.updateTask(id, payload);
+        const res = await TaskAPI.updateTask(state?.task.slug ?? id, payload);
         const data = res.data as TaskData;
         const merged: Partial<TaskData> = {};
         if ('priority' in payload) merged.priority = data.priority;
@@ -197,9 +197,10 @@ export default function TaskListRowContextMenu({
     const nextPinned = !task.is_pinned;
     setPatchBusy(true);
     try {
+      const apiId = task.slug ?? id;
       const res = nextPinned
-        ? await TaskAPI.pinTask(id)
-        : await TaskAPI.unpinTask(id);
+        ? await TaskAPI.pinTask(apiId)
+        : await TaskAPI.unpinTask(apiId);
       const data = res.data as TaskData;
       onTaskPatched(id, { is_pinned: data.is_pinned ?? nextPinned });
       toast.success(nextPinned ? 'Task pinned' : 'Task unpinned');
@@ -215,16 +216,16 @@ export default function TaskListRowContextMenu({
   }, [state?.task, patchBusy, onTaskPatched, closeMenu]);
 
   const handleOpen = () => {
-    const id = state?.task.id;
-    if (id == null) return;
+    const key = state?.task.slug ?? state?.task.id;
+    if (key == null) return;
     closeMenu();
-    onOpenDetail(id);
+    onOpenDetail(key);
   };
 
   const handleCopyLink = async () => {
-    const id = state?.task.id;
-    if (id == null) return;
-    const url = taskDetailUrl(id);
+    const key = state?.task.slug ?? state?.task.id;
+    if (key == null) return;
+    const url = taskDetailUrl(key);
     try {
       await navigator.clipboard.writeText(url);
       toast.success('Link copied');
@@ -246,7 +247,7 @@ export default function TaskListRowContextMenu({
     if (id == null) return;
     setDeleteBusy(true);
     try {
-      await TaskAPI.deleteTask(id);
+      await TaskAPI.deleteTask(pendingDelete?.slug ?? id);
       toast.success('Task deleted');
       onTaskDeleted(id);
       setPendingDelete(null);

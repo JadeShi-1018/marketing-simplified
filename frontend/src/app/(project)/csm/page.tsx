@@ -27,9 +27,8 @@ const CSMPageContent: React.FC = () => {
   const user = useAuthStore((s) => s.user);
   const isCsmAdmin = user?.is_csm_admin || (Array.isArray(user?.roles) && user.roles.some((r: string) => r.toLowerCase().includes('admin') || r.toLowerCase().includes('owner')));
 
-  const paramProjectId = searchParams.get('project');
-  const projectId = paramProjectId ? Number(paramProjectId) : activeProject?.id ?? 0;
-  const projectValid = Number.isFinite(projectId) && projectId > 0;
+  const projectId = activeProject?.id ?? '';
+  const projectValid = !!projectId;
 
   const initialTab = (searchParams.get('tab') as TabId) || 'organisations';
   const [activeTab, setActiveTab] = useState<TabId>(

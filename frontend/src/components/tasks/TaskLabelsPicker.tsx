@@ -6,6 +6,7 @@ import { Check, ChevronDown, Pencil, Plus, Tag, Trash2, X } from 'lucide-react';
 
 import type { TaskTag } from '@/types/task';
 import { cn } from '@/lib/utils';
+import { Id } from '@/types/common';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { TaskAPI } from '@/lib/api/taskApi';
@@ -111,7 +112,7 @@ function CustomColorSwatch({ value, onChange, sizeClassName, label }: CustomColo
 }
 
 export interface TaskLabelsPickerProps {
-  projectId: number | null;
+  projectId: Id | null;
   value: TaskTag[];
   onChange: (tags: TaskTag[]) => void;
   disabled?: boolean;

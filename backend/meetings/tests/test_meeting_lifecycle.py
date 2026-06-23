@@ -33,10 +33,10 @@ class TestMeetingLifecycleAPI(TestCase):
         self.client.force_authenticate(user=self.member)
 
     def _lifecycle_url(self, meeting):
-        return f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/"
+        return f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/"
 
     def _transition_url(self, meeting):
-        return f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        return f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
 
     # ------------------------------------------------------------------
     # GET /lifecycle/  - current state + available transitions
@@ -278,7 +278,7 @@ class TestMeetingLifecycleAPI(TestCase):
         self.client.post(
             self._transition_url(meeting), {"to_state": "planned"}, format="json"
         )
-        detail_url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
+        detail_url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["status"], Meeting.STATUS_PLANNED)
@@ -319,7 +319,7 @@ class TestMeetingLifecycleAPI(TestCase):
     # ------------------------------------------------------------------
 
     def _action_items_url(self, meeting):
-        return f"/api/projects/{self.project.id}/meetings/{meeting.id}/action-items/"
+        return f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/action-items/"
 
     def test_create_action_item(self):
         meeting = _meeting(self.project)
@@ -356,7 +356,7 @@ class TestMeetingLifecycleAPI(TestCase):
 
     def test_patch_status_directly_is_ignored(self):
         meeting = _meeting(self.project)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
         response = self.client.patch(url, {"status": "completed"}, format="json")
         # Request succeeds but status remains unchanged
         self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])

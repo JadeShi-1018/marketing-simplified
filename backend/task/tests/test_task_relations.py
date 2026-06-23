@@ -83,7 +83,7 @@ class TaskRelationAPITest(APITestCase):
             relationship_type=TaskRelation.BLOCKS
         )
 
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -105,7 +105,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_list_relations_empty(self):
         """Listing relations for task with no relations returns empty arrays."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -119,7 +119,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_causes_success(self):
         """Authenticated project member can add a 'causes' relation."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "causes"
@@ -143,7 +143,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_blocks_success(self):
         """Authenticated project member can add a 'blocks' relation."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "blocks"
@@ -154,7 +154,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_clones_success(self):
         """Authenticated project member can add a 'clones' relation."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "clones"
@@ -165,7 +165,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_relates_to_success(self):
         """Authenticated project member can add a 'relates_to' relation."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "relates_to"
@@ -178,7 +178,7 @@ class TaskRelationAPITest(APITestCase):
         """Unauthenticated requests cannot add relations."""
         self.client.force_authenticate(user=None)
 
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "causes"
@@ -191,7 +191,7 @@ class TaskRelationAPITest(APITestCase):
         """Non-project member cannot add relations."""
         self.client.force_authenticate(user=self.other_user)
 
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "causes"
@@ -202,7 +202,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_invalid_target_task_id(self):
         """Adding relation with invalid target_task_id returns 404."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": 999999,
             "relationship_type": "causes"
@@ -213,7 +213,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_invalid_relationship_type(self):
         """Adding relation with invalid relationship_type returns 400."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "invalid_type"
@@ -224,7 +224,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_missing_fields(self):
         """Adding relation with missing required fields returns 400."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         
         # Missing target_task_id
         data = {"relationship_type": "causes"}
@@ -238,7 +238,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_self_reference(self):
         """Adding relation to self should fail."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task1.id,
             "relationship_type": "causes"
@@ -250,7 +250,7 @@ class TaskRelationAPITest(APITestCase):
 
     def test_add_relation_duplicate(self):
         """Adding duplicate relation should not create duplicate (get_or_create behavior)."""
-        url = self._get_relations_url(self.task1.id)
+        url = self._get_relations_url(self.task1.slug)
         data = {
             "target_task_id": self.task2.id,
             "relationship_type": "causes"
@@ -281,7 +281,7 @@ class TaskRelationAPITest(APITestCase):
             relationship_type=TaskRelation.CAUSES
         )
 
-        url = self._get_relation_detail_url(self.task1.id, relation.id)
+        url = self._get_relation_detail_url(self.task1.slug, relation.id)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -301,7 +301,7 @@ class TaskRelationAPITest(APITestCase):
         )
 
         # Delete from task2's perspective
-        url = self._get_relation_detail_url(self.task2.id, relation.id)
+        url = self._get_relation_detail_url(self.task2.slug, relation.id)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -315,7 +315,7 @@ class TaskRelationAPITest(APITestCase):
         )
 
         self.client.force_authenticate(user=None)
-        url = self._get_relation_detail_url(self.task1.id, relation.id)
+        url = self._get_relation_detail_url(self.task1.slug, relation.id)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -329,7 +329,7 @@ class TaskRelationAPITest(APITestCase):
         )
 
         self.client.force_authenticate(user=self.other_user)
-        url = self._get_relation_detail_url(self.task1.id, relation.id)
+        url = self._get_relation_detail_url(self.task1.slug, relation.id)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -344,14 +344,14 @@ class TaskRelationAPITest(APITestCase):
         )
 
         # Try to delete from task1's perspective (should fail)
-        url = self._get_relation_detail_url(self.task1.id, relation.id)
+        url = self._get_relation_detail_url(self.task1.slug, relation.id)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_delete_relation_nonexistent(self):
         """Deleting non-existent relation returns 404."""
-        url = self._get_relation_detail_url(self.task1.id, 999999)
+        url = self._get_relation_detail_url(self.task1.slug, 999999)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -366,7 +366,7 @@ class TaskRelationAPITest(APITestCase):
         )
 
         # Check task1's relations
-        url1 = self._get_relations_url(self.task1.id)
+        url1 = self._get_relations_url(self.task1.slug)
         response1 = self.client.get(url1)
         self.assertEqual(response1.status_code, status.HTTP_200_OK)
         causes_ids = [t["task"]["id"] for t in response1.data["causes"]]
@@ -374,7 +374,7 @@ class TaskRelationAPITest(APITestCase):
         self.assertEqual(len(response1.data["is_caused_by"]), 0)
 
         # Check task2's relations
-        url2 = self._get_relations_url(self.task2.id)
+        url2 = self._get_relations_url(self.task2.slug)
         response2 = self.client.get(url2)
         self.assertEqual(response2.status_code, status.HTTP_200_OK)
         is_caused_by_ids = [t["task"]["id"] for t in response2.data["is_caused_by"]]

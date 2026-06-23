@@ -43,7 +43,7 @@ function chatActivityTs(chat: Chat): number {
 interface HomeSidebarProps {
   view: MessagesNavView;
   onChangeView: (view: MessagesNavView) => void;
-  selectedProjectId: number | null;
+  selectedProjectId: number | string | null;
   chats: Chat[];
   currentChatId: number | null;
   onSelectChat: (chatId: number) => void;

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Id } from "@/types/common";
 import { ProjectData } from "@/lib/api/projectApi";
 import {
   Dialog,
@@ -14,7 +15,7 @@ import {
 interface CreateBoardModalProps {
   open: boolean;
   // New API: project-scoped (projectId required)
-  projectId?: number;
+  projectId?: Id;
   projectName?: string;
   // Old API: project selection (projects array)
   projects?: ProjectData[];
@@ -23,7 +24,7 @@ interface CreateBoardModalProps {
   // New API: onCreate({ title })
   onCreate?: (data: { title: string }) => void;
   // Old API: onCreate({ projectId, title })
-  onCreateLegacy?: (data: { projectId: number; title: string }) => void;
+  onCreateLegacy?: (data: { projectId: Id; title: string }) => void;
 }
 
 export default function CreateBoardModal({
@@ -37,7 +38,7 @@ export default function CreateBoardModal({
   onCreateLegacy,
 }: CreateBoardModalProps) {
   const [title, setTitle] = useState("");
-  const [selectedProjectId, setSelectedProjectId] = useState<number | "">("");
+  const [selectedProjectId, setSelectedProjectId] = useState<Id | "">("");
 
   // Determine if using new API (projectId provided) or old API (projects array)
   const isProjectScoped = projectId !== undefined;
@@ -65,8 +66,8 @@ export default function CreateBoardModal({
       }
     } else {
       // Old API: projectId + title
-      if (!selectedProjectId || !onCreateLegacy) return;
-      onCreateLegacy({ projectId: selectedProjectId as number, title: title.trim() });
+      if (selectedProjectId === "" || !onCreateLegacy) return;
+      onCreateLegacy({ projectId: selectedProjectId, title: title.trim() });
     }
   };
 
@@ -115,9 +116,14 @@ export default function CreateBoardModal({
               <select
                 id="project-select"
                 value={selectedProjectId}
-                onChange={(e) =>
-                  setSelectedProjectId(e.target.value === "" ? "" : Number(e.target.value))
-                }
+                onChange={(e) => {
+                  if (e.target.value === "") {
+                    setSelectedProjectId("");
+                  } else {
+                    const match = projects?.find((p) => String(p.id) === e.target.value);
+                    setSelectedProjectId(match ? match.id : e.target.value);
+                  }
+                }}
                 disabled={isCreating || !projects || projects.length === 0}
                 className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-[#3CCED7] focus:outline-none focus:ring-1 focus:ring-[#3CCED7] disabled:bg-gray-100 disabled:cursor-not-allowed"
               >

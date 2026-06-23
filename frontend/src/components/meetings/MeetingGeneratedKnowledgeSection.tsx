@@ -5,7 +5,9 @@ import Link from 'next/link';
 import toast from 'react-hot-toast';
 
 import type { KnowledgeNavigationLink } from '@/types/meeting';
+import { Id } from '@/types/common';
 import { taskWorkspaceCreateFromMeetingHref } from '@/lib/tasks/taskWorkspaceDeepLinks';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { decisionCaptureAPI } from '@/lib/api';
 
 function MetaLine({ children }: { children: ReactNode }) {
@@ -14,6 +16,7 @@ function MetaLine({ children }: { children: ReactNode }) {
 
 type CreatedDecisionResponse = {
   id?: number;
+  slug?: string;
   title?: string;
   status?: string;
   detail_url?: string;
@@ -22,11 +25,14 @@ type CreatedDecisionResponse = {
 
 function decisionToKnowledgeLink(
   decision: CreatedDecisionResponse,
-  projectId: number
+  projectId: Id
 ): KnowledgeNavigationLink | null {
   if (!decision.id) return null;
 
-  const url = decision.detail_url ?? decision.url ?? `/decisions/${decision.id}?project_id=${projectId}`;
+  const url =
+    decision.detail_url ??
+    decision.url ??
+    nestedProjectPath(projectId, `/decisions/${decision.slug}`);
 
   return {
     id: decision.id,
@@ -50,8 +56,8 @@ export function MeetingGeneratedKnowledgeSection({
 }: {
   generatedTasks?: KnowledgeNavigationLink[];
   generatedDecisions?: KnowledgeNavigationLink[];
-  projectId: number;
-  meetingId: number;
+  projectId: Id;
+  meetingId: Id;
   meetingTitle?: string;
   meetingSummary?: string;
 }) {

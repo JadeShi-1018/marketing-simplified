@@ -9,13 +9,14 @@ import { getUnreadCount } from './api/chatApi';
 // filter stale search results within the same browsing session.
 export const deletedMessageIds = new Set<number>();
 
-const resolveChatProjectId = (chat: Chat): number | null => {
+const resolveChatProjectId = (chat: Chat): number | string | null => {
   const rawProjectId = chat.project_id ?? chat.project;
+  if (!rawProjectId) return null;
   const parsed = Number(rawProjectId);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : rawProjectId;
 };
 
-const normalizeChatProject = (chat: Chat, fallbackProjectId?: number): Chat => {
+const normalizeChatProject = (chat: Chat, fallbackProjectId?: number | string): Chat => {
   const projectId = resolveChatProjectId(chat) ?? fallbackProjectId;
   if (!projectId) {
     return chat;
@@ -97,7 +98,7 @@ export const useChatStore = create<ChatState>()(
 
       // ==================== Chat Actions ====================
       
-      setChatsForProject: (projectId: number, chats: Chat[]) => {
+      setChatsForProject: (projectId: number | string, chats: Chat[]) => {
         // Use set() with callback to get CURRENT state at the moment of update
         // This prevents race conditions where state changes between read and write
         set(state => {
@@ -167,7 +168,7 @@ export const useChatStore = create<ChatState>()(
         });
       },
 
-      getChatsForProject: (projectId: number | null) => {
+      getChatsForProject: (projectId: number | string | null) => {
         if (!projectId) return [];
         return get().chatsByProject[projectId] || [];
       },
@@ -201,9 +202,9 @@ export const useChatStore = create<ChatState>()(
 
       removeChat: (chatId: number) => {
         set(state => {
-          const newChatsByProject: Record<number, Chat[]> = {};
+          const newChatsByProject: Record<number | string, Chat[]> = {};
           Object.entries(state.chatsByProject).forEach(([projectId, chats]) => {
-            newChatsByProject[Number(projectId)] = chats.filter(chat => chat.id !== chatId);
+            newChatsByProject[projectId] = chats.filter(chat => chat.id !== chatId);
           });
 
           const newMessages = { ...state.messages };
@@ -234,8 +235,7 @@ export const useChatStore = create<ChatState>()(
           const newChatsByProject = { ...state.chatsByProject };
           
           // Find and update the chat in the correct project
-          Object.keys(newChatsByProject).forEach(projectIdStr => {
-            const projectId = parseInt(projectIdStr);
+          Object.keys(newChatsByProject).forEach(projectId => {
             newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
               chat.id === chatId ? { ...chat, ...updates } : chat
             );
@@ -283,8 +283,7 @@ export const useChatStore = create<ChatState>()(
             updates.mentionedChatIds = nextMentionedChatIds;
 
             const nextChatsByProject = { ...state.chatsByProject };
-            Object.keys(nextChatsByProject).forEach(projectIdStr => {
-              const projectId = parseInt(projectIdStr);
+            Object.keys(nextChatsByProject).forEach(projectId => {
               nextChatsByProject[projectId] = nextChatsByProject[projectId].map(chat =>
                 Number(chat.id) === numericChatId ? { ...chat, mention_unread_count: 0 } : chat
               );
@@ -349,8 +348,7 @@ export const useChatStore = create<ChatState>()(
           
           // Update chat with new last message AND unread_count in all projects
           const newChatsByProject = { ...state.chatsByProject };
-          Object.keys(newChatsByProject).forEach(projectIdStr => {
-            const projectId = parseInt(projectIdStr);
+          Object.keys(newChatsByProject).forEach(projectId => {
             newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
               Number(chat.id) === numericChatId 
                 ? {
@@ -584,8 +582,7 @@ export const useChatStore = create<ChatState>()(
         set(state => {
           // Update chat unread_count in all projects
           const newChatsByProject = { ...state.chatsByProject };
-          Object.keys(newChatsByProject).forEach(projectIdStr => {
-            const projectId = parseInt(projectIdStr);
+          Object.keys(newChatsByProject).forEach(projectId => {
             newChatsByProject[projectId] = newChatsByProject[projectId].map(chat =>
               chat.id === chatId
                 ? {
@@ -698,8 +695,7 @@ export const useChatStore = create<ChatState>()(
             updates.mentionedChatIds = nextMentionedChatIds;
 
             const nextChatsByProject = { ...state.chatsByProject };
-            Object.keys(nextChatsByProject).forEach(projectIdStr => {
-              const projectId = parseInt(projectIdStr);
+            Object.keys(nextChatsByProject).forEach(projectId => {
               nextChatsByProject[projectId] = nextChatsByProject[projectId].map(chat =>
                 Number(chat.id) === numericChatId ? { ...chat, mention_unread_count: 0 } : chat
               );
@@ -711,7 +707,7 @@ export const useChatStore = create<ChatState>()(
         });
       },
 
-      setWidgetProjectId: (projectId: number | null) => {
+      setWidgetProjectId: (projectId: number | string | null) => {
         set({ widgetProjectId: projectId });
       },
 
@@ -727,7 +723,7 @@ export const useChatStore = create<ChatState>()(
         });
       },
 
-      setSelectedProjectId: (projectId: number | null) => {
+      setSelectedProjectId: (projectId: number | string | null) => {
         set({ selectedProjectId: projectId });
       },
 

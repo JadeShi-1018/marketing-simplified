@@ -56,8 +56,12 @@ function formatDate(iso?: string | null) {
 
 export default function TemplateV2DetailPage() {
   const router = useRouter();
-  const params = useParams();
+  const params = useParams<{ projectId: string; id: string }>();
   const templateId = params?.id as string;
+
+  // Nested route — project slug comes from the path segment.
+  const projectId = String(params?.projectId || '');
+
   const { data, loading, error, refresh, update, archive, unarchive, destroy } =
     useCampaignTemplate(templateId);
 
@@ -84,13 +88,15 @@ export default function TemplateV2DetailPage() {
     }
   };
 
+  const backToTemplates = () => router.push(`/projects/${projectId}/campaigns/templates`);
+
   const handleArchive = async () => {
     setBusy(true);
     try {
       await archive();
       toast.success('Template archived');
       setArchiveOpen(false);
-      router.push('/campaigns/templates');
+      backToTemplates();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || err?.message || 'Failed to archive');
     } finally {
@@ -117,7 +123,7 @@ export default function TemplateV2DetailPage() {
       await destroy();
       toast.success('Template deleted');
       setDeleteOpen(false);
-      router.push('/campaigns/templates');
+      backToTemplates();
     } catch (err: any) {
       toast.error(err?.response?.data?.error || err?.message || 'Failed to delete');
     } finally {
@@ -143,7 +149,7 @@ export default function TemplateV2DetailPage() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => router.push('/campaigns/templates')}
+            onClick={backToTemplates}
             className="mb-4"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -165,7 +171,7 @@ export default function TemplateV2DetailPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => router.push('/campaigns/templates')}
+          onClick={backToTemplates}
           className="mb-4"
         >
           <ArrowLeft className="h-4 w-4" />

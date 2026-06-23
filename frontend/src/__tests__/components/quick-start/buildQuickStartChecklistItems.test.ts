@@ -19,7 +19,7 @@ const baseGuide: QuickStartPostCreateGuide = {
     decisions: false,
     miro: false,
   },
-  spreadsheetId: 12,
+  spreadsheetId: 'april-budget',
   createdAt: Date.now(),
 };
 
@@ -43,7 +43,7 @@ describe('buildQuickStartChecklistItems', () => {
       'team',
     ]);
     expect(items.find((i) => i.id === 'spreadsheet')?.href).toBe(
-      '/spreadsheets/12?project_id=7'
+      '/spreadsheets/april-budget'
     );
     expect(items.find((i) => i.id === 'miro')?.href).toBe('/miro/board-uuid');
   });

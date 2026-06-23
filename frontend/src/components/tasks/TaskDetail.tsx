@@ -64,6 +64,7 @@ import { OriginMeetingBlock } from "@/components/meetings/OriginMeetingBlock";
 import { useChatData } from "@/hooks/useChatData";
 import { createChat, findPrivateChat, sendMessage } from "@/lib/api/chatApi";
 import ShareTaskDialog from "./ShareTaskDialog";
+import { nestedProjectPath } from "@/lib/projectNestedRoutes";
 
 interface TaskDetailProps {
   task: TaskData;
@@ -307,7 +308,7 @@ export default function TaskDetail({
     if (!task.id) return;
     try {
       setSavingSummary(true);
-      const response = await TaskAPI.updateTask(task.id, {
+      const response = await TaskAPI.updateTask(task.slug ?? task.id, {
         summary: summaryDraft,
       });
       updateTask(task.id, response.data);
@@ -326,7 +327,7 @@ export default function TaskDetail({
     if (!task.id) return;
     try {
       setSavingDescription(true);
-      const response = await TaskAPI.updateTask(task.id, {
+      const response = await TaskAPI.updateTask(task.slug ?? task.id, {
         description: descriptionDraft,
       });
       updateTask(task.id, response.data);
@@ -709,7 +710,7 @@ export default function TaskDetail({
       const payload: Partial<TaskData> = {
         owner_id: value ? Number(value) : null,
       };
-      const response = await TaskAPI.updateTask(task.id!, payload);
+      const response = await TaskAPI.updateTask(task.slug ?? task.id!, payload);
       const updatedTask: TaskData = response.data;
       Object.assign(task, updatedTask);
       updateTask(task.id!, updatedTask);
@@ -748,21 +749,21 @@ export default function TaskDetail({
     try {
       let response: any;
       if (targetStatus === "SUBMITTED") {
-        response = await TaskAPI.submitTask(task.id);
+        response = await TaskAPI.submitTask(task.slug ?? task.id);
       } else if (targetStatus === "UNDER_REVIEW") {
-        response = await TaskAPI.startReview(task.id);
+        response = await TaskAPI.startReview(task.slug ?? task.id);
       } else if (targetStatus === "APPROVED") {
-        response = await TaskAPI.makeApproval(task.id, { action: "approve" });
+        response = await TaskAPI.makeApproval(task.slug ?? task.id, { action: "approve" });
       } else if (targetStatus === "REJECTED") {
-        response = await TaskAPI.makeApproval(task.id, { action: "reject" });
+        response = await TaskAPI.makeApproval(task.slug ?? task.id, { action: "reject" });
       } else if (targetStatus === "LOCKED") {
-        response = await TaskAPI.lock(task.id);
+        response = await TaskAPI.lock(task.slug ?? task.id);
       } else if (targetStatus === "CANCELLED") {
-        response = await TaskAPI.cancelTask(task.id);
+        response = await TaskAPI.cancelTask(task.slug ?? task.id);
       } else if (targetStatus === "DRAFT") {
-        response = await TaskAPI.revise(task.id);
+        response = await TaskAPI.revise(task.slug ?? task.id);
       } else if (targetStatus === "UNLOCK") {
-        response = await TaskAPI.unlock(task.id);
+        response = await TaskAPI.unlock(task.slug ?? task.id);
       } else {
         toast.error("Invalid status transition");
         return;
@@ -799,7 +800,7 @@ export default function TaskDetail({
       typeof window !== "undefined" && window.location?.origin
         ? window.location.origin
         : "";
-    const taskUrl = `${origin}/tasks/${task.id}`;
+    const taskUrl = `${origin}/tasks/${task.slug}`;
     const title = task.summary || `Task #${task.id}`;
     return `Task shared: ${title}\n${taskUrl}`;
   };
@@ -865,7 +866,7 @@ export default function TaskDetail({
       try {
         setTaskCommentsLoading(true);
         setTaskCommentsError(null);
-        const list = await TaskAPI.getComments(task.id);
+        const list = await TaskAPI.getComments(task.slug ?? task.id);
         setTaskComments(list);
       } catch (error: any) {
         console.error("Error loading task comments:", error);
@@ -997,7 +998,7 @@ export default function TaskDetail({
     try {
       setSavingDates(true);
 
-      const response = await TaskAPI.updateTask(task.id!, {
+      const response = await TaskAPI.updateTask(task.slug ?? task.id!, {
         start_date: startDateInput || undefined,
         due_date: dueDateInput || undefined,
       });
@@ -1073,7 +1074,7 @@ export default function TaskDetail({
 
       try {
         setLoadingApprovers(true);
-        const members = await ProjectAPI.getProjectMembers(task.project.id);
+        const members = await ProjectAPI.getProjectMembers(task.project.slug ?? task.project.id);
         const approverList =
           members?.map((member) => ({
             id: member.user.id,
@@ -1100,7 +1101,7 @@ export default function TaskDetail({
         current_approver_id: value ? Number(value) : null,
       };
 
-      const response = await TaskAPI.updateTask(task.id!, payload);
+      const response = await TaskAPI.updateTask(task.slug ?? task.id!, payload);
       const updatedTask: TaskData = response.data;
 
       // Sync task object and global store
@@ -1131,7 +1132,7 @@ export default function TaskDetail({
     const fetchApprovalHistory = async () => {
       try {
         setLoadingHistory(true);
-        const response = await TaskAPI.getApprovalHistory(task.id!);
+        const response = await TaskAPI.getApprovalHistory(task.slug ?? task.id!);
         setApprovalHistory(response.data.history || []);
       } catch (error) {
         console.error("Error fetching approval history:", error);
@@ -1381,7 +1382,7 @@ export default function TaskDetail({
 
     try {
       // Call task start_review API
-      const taskResponse = await TaskAPI.startReview(task.id!);
+      const taskResponse = await TaskAPI.startReview(task.slug ?? task.id!);
       console.log("Review started for task:", task?.id);
 
       // TODO: Probably need to remove this after future task backend implementation
@@ -1424,7 +1425,7 @@ export default function TaskDetail({
 
     try {
       // Call revise API
-      const response = await TaskAPI.revise(task.id!);
+      const response = await TaskAPI.revise(task.slug ?? task.id!);
       setIsRevising(true);
       setShowRevise(false);
       console.log("Revise started for task:", task?.id);
@@ -1447,7 +1448,7 @@ export default function TaskDetail({
 
     try {
       // Call task make_approval API
-      const taskResponse = await TaskAPI.makeApproval(task.id!, {
+      const taskResponse = await TaskAPI.makeApproval(task.slug ?? task.id!, {
         action: "approve",
         comment: reviewComment,
       });
@@ -1504,7 +1505,7 @@ export default function TaskDetail({
         // Task is APPROVED
         if (nextApprover) {
           // Legacy mode: forward to selected next approver
-          const forwardResponse = await TaskAPI.forward(task.id!, {
+          const forwardResponse = await TaskAPI.forward(task.slug ?? task.id!, {
             next_approver_id: parseInt(nextApprover),
             comment: reviewComment,
           });
@@ -1524,7 +1525,7 @@ export default function TaskDetail({
       setNextApprover(null);
 
       // Refresh approval history
-      const historyResponse = await TaskAPI.getApprovalHistory(task.id!);
+      const historyResponse = await TaskAPI.getApprovalHistory(task.slug ?? task.id!);
       setApprovalHistory(historyResponse.data.history || []);
 
       console.log(
@@ -1551,7 +1552,7 @@ export default function TaskDetail({
 
     try {
       // Call task make_approval API
-      const taskResponse = await TaskAPI.makeApproval(task.id!, {
+      const taskResponse = await TaskAPI.makeApproval(task.slug ?? task.id!, {
         action: "reject",
         comment: reviewComment,
       });
@@ -1595,7 +1596,7 @@ export default function TaskDetail({
       setNextApprover(null);
 
       // Refresh approval history
-      const historyResponse = await TaskAPI.getApprovalHistory(task.id!);
+      const historyResponse = await TaskAPI.getApprovalHistory(task.slug ?? task.id!);
       setApprovalHistory(historyResponse.data.history || []);
     } catch (error) {
       console.error("Error rejecting task:", error);
@@ -1632,7 +1633,7 @@ export default function TaskDetail({
 
     try {
       setTaskCommentSubmitting(true);
-      const created = await TaskAPI.createComment(task.id, { body });
+      const created = await TaskAPI.createComment(task.slug ?? task.id, { body });
       setTaskCommentInput("");
       setTaskComments((prev) => [created, ...prev]);
       setTaskCommentsError(null);
@@ -1702,9 +1703,14 @@ export default function TaskDetail({
                   <p className="text-sm text-slate-500 mt-1">
                     From{" "}
                     <Link
-                      href={`/decisions/${task.object_id}${
-                        projectId ? `?project_id=${projectId}` : ""
-                      }`}
+                      href={
+                        projectId
+                          ? nestedProjectPath(
+                              projectId,
+                              `/decisions/${task.linked_object_slug ?? task.object_id}`,
+                            )
+                          : `/decisions/${task.linked_object_slug ?? task.object_id}`
+                      }
                       className="text-indigo-600 hover:text-indigo-800 hover:underline"
                     >
                       Decision #{task.object_id}
@@ -1837,7 +1843,7 @@ export default function TaskDetail({
               {!alertLoading && alertTask && (
                 <AlertDetail
                   alert={alertTask}
-                  projectId={task.project?.id ?? task.project_id}
+                  projectId={task.project?.slug ?? task.project?.id ?? task.project_id}
                   onRefresh={loadAlertTask}
                 />
               )}
@@ -2188,14 +2194,14 @@ export default function TaskDetail({
           {/* Subtasks - Only show if task is not a subtask */}
           {task?.id && !task.is_subtask && (
             <Subtasks
-              taskId={task.id}
+              taskId={task.slug ?? task.id}
               taskProjectId={task.project_id || task.project?.id}
               parentTaskIsSubtask={task.is_subtask}
             />
           )}
 
           {/* Linked Work Items */}
-          {task?.id && <LinkedWorkItems taskId={task.id} />}
+          {task?.id && <LinkedWorkItems taskId={task.slug ?? task.id} />}
 
           {/* Task-level Comments (all task types) */}
           <section data-testid="task-comments-section" className="flex flex-col gap-3">
@@ -2746,7 +2752,7 @@ export default function TaskDetail({
         onConfirm={async () => {
           if (!task?.id) return;
           try {
-            await TaskAPI.deleteTask(task.id);
+            await TaskAPI.deleteTask(task.slug ?? task.id);
             toast.success("Task deleted");
             onTaskDeleted?.();
           } catch (error: any) {

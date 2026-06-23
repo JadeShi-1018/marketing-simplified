@@ -81,7 +81,7 @@ export default function TemplateCard({
 
   const handleCardClick = () => {
     // Navigate to template preview page
-    router.push(`/workflows/templates/${template.id}/preview`)
+    router.push(`/workflows/templates/${template.slug}/preview`)
   }
 
   const handleEdit = () => {

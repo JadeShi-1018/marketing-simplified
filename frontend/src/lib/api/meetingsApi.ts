@@ -32,7 +32,7 @@ import type {
 } from '@/types/meeting';
 import type { TaskData } from '@/types/task';
 
-const basePath = (projectId: number) => `/api/projects/${projectId}/meetings`;
+const basePath = (projectId: number | string) => `/api/projects/${projectId}/meetings`;
 
 type MeetingTemplate = {
   id: string;
@@ -233,6 +233,7 @@ function normalizeMeetingListItem(raw: Record<string, unknown>): MeetingListItem
   const tags = raw.tags;
   return {
     id: Number(raw.id),
+    slug: typeof raw.slug === 'string' ? raw.slug : null,
     title: typeof raw.title === 'string' ? raw.title : '',
     summary: typeof raw.summary === 'string' ? raw.summary : '',
     scheduled_date:
@@ -283,7 +284,7 @@ export const MeetingsAPI = {
    * Paginated knowledge-discovery list (strict filters). Prefer for meetings hub list UI.
    */
   async listMeetingsPaginated(
-    projectId: number,
+    projectId: number | string,
     params?: MeetingListQueryParams,
   ): Promise<PaginatedMeetingsList> {
     const response = await api.get(`${basePath(projectId)}/`, {
@@ -366,19 +367,19 @@ export const MeetingsAPI = {
     };
   },
 
-  async createMeeting(projectId: number, payload: MeetingCreateRequest): Promise<Meeting> {
+  async createMeeting(projectId: number | string, payload: MeetingCreateRequest): Promise<Meeting> {
     const response = await api.post<Meeting>(`${basePath(projectId)}/`, payload);
     return withMeetingKnowledgeFields(response.data);
   },
 
-  async getMeeting(projectId: number, meetingId: number): Promise<Meeting> {
+  async getMeeting(projectId: number | string, meetingId: number | string): Promise<Meeting> {
     const response = await api.get<Meeting>(`${basePath(projectId)}/${meetingId}/`);
     return withMeetingKnowledgeFields(response.data);
   },
 
   async updateMeeting(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: MeetingUpdateRequest,
   ): Promise<Meeting> {
     const response = await api.put<Meeting>(`${basePath(projectId)}/${meetingId}/`, payload);
@@ -386,21 +387,21 @@ export const MeetingsAPI = {
   },
 
   async patchMeeting(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: MeetingPartialUpdateRequest,
   ): Promise<Meeting> {
     const response = await api.patch<Meeting>(`${basePath(projectId)}/${meetingId}/`, payload);
     return withMeetingKnowledgeFields(response.data);
   },
 
-  async deleteMeeting(projectId: number, meetingId: number): Promise<void> {
+  async deleteMeeting(projectId: number | string, meetingId: number | string): Promise<void> {
     await api.delete(`${basePath(projectId)}/${meetingId}/`);
   },
 
   async listAgendaItems(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
   ): Promise<AgendaItem[]> {
     const response = await api.get(
       `${basePath(projectId)}/${meetingId}/agenda-items/`,
@@ -412,8 +413,8 @@ export const MeetingsAPI = {
   },
 
   async createAgendaItem(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: AgendaItemCreateRequest,
   ): Promise<AgendaItem> {
     const response = await api.post<AgendaItem>(
@@ -424,9 +425,9 @@ export const MeetingsAPI = {
   },
 
   async updateAgendaItem(
-    projectId: number,
-    meetingId: number,
-    agendaItemId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    agendaItemId: number | string,
     payload: AgendaItemUpdateRequest,
   ): Promise<AgendaItem> {
     const response = await api.put<AgendaItem>(
@@ -437,9 +438,9 @@ export const MeetingsAPI = {
   },
 
   async patchAgendaItem(
-    projectId: number,
-    meetingId: number,
-    agendaItemId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    agendaItemId: number | string,
     payload: AgendaItemPartialUpdateRequest,
   ): Promise<AgendaItem> {
     const response = await api.patch<AgendaItem>(
@@ -450,9 +451,9 @@ export const MeetingsAPI = {
   },
 
   async deleteAgendaItem(
-    projectId: number,
-    meetingId: number,
-    agendaItemId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    agendaItemId: number | string,
   ): Promise<void> {
     await api.delete(
       `${basePath(projectId)}/${meetingId}/agenda-items/${agendaItemId}/`,
@@ -460,8 +461,8 @@ export const MeetingsAPI = {
   },
 
   async reorderAgendaItems(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: AgendaItemsReorderRequest,
   ): Promise<AgendaItem[]> {
     const response = await api.patch<AgendaItem[]>(
@@ -472,8 +473,8 @@ export const MeetingsAPI = {
   },
 
   async listParticipants(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
   ): Promise<ParticipantLink[]> {
     const response = await api.get(
       `${basePath(projectId)}/${meetingId}/participants/`,
@@ -485,8 +486,8 @@ export const MeetingsAPI = {
   },
 
   async addParticipant(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: ParticipantLinkCreateRequest,
   ): Promise<ParticipantLink> {
     const response = await api.post<ParticipantLink>(
@@ -497,9 +498,9 @@ export const MeetingsAPI = {
   },
 
   async patchParticipant(
-    projectId: number,
-    meetingId: number,
-    participantLinkId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    participantLinkId: number | string,
     payload: ParticipantLinkPartialUpdateRequest,
   ): Promise<ParticipantLink> {
     const response = await api.patch<ParticipantLink>(
@@ -510,9 +511,9 @@ export const MeetingsAPI = {
   },
 
   async removeParticipant(
-    projectId: number,
-    meetingId: number,
-    participantLinkId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    participantLinkId: number | string,
   ): Promise<void> {
     await api.delete(
       `${basePath(projectId)}/${meetingId}/participants/${participantLinkId}/`,
@@ -520,8 +521,8 @@ export const MeetingsAPI = {
   },
 
   async listArtifacts(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
   ): Promise<ArtifactLink[]> {
     const response = await api.get(
       `${basePath(projectId)}/${meetingId}/artifacts/`,
@@ -533,8 +534,8 @@ export const MeetingsAPI = {
   },
 
   async addArtifact(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: ArtifactLinkCreateRequest,
   ): Promise<ArtifactLink> {
     const response = await api.post<ArtifactLink>(
@@ -545,9 +546,9 @@ export const MeetingsAPI = {
   },
 
   async removeArtifact(
-    projectId: number,
-    meetingId: number,
-    artifactLinkId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    artifactLinkId: number | string,
   ): Promise<void> {
     await api.delete(
       `${basePath(projectId)}/${meetingId}/artifacts/${artifactLinkId}/`,
@@ -575,11 +576,11 @@ export const MeetingsAPI = {
     await api.delete(`/api/meetings/templates/${templateId}/`);
   },
 
-  async saveMeetingLayout(projectId: number, meetingId: number, layout_config: unknown): Promise<void> {
+  async saveMeetingLayout(projectId: number | string, meetingId: number | string, layout_config: unknown): Promise<void> {
     await api.patch(`${basePath(projectId)}/${meetingId}/`, { layout_config });
   },
 
-  async getMeetingDocument(projectId: number, meetingId: number): Promise<MeetingDocument> {
+  async getMeetingDocument(projectId: number | string, meetingId: number | string): Promise<MeetingDocument> {
     const response = await api.get<MeetingDocument>(
       `${basePath(projectId)}/${meetingId}/document/`,
     );
@@ -587,8 +588,8 @@ export const MeetingsAPI = {
   },
 
   async saveMeetingDocument(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: { content: string; yjs_state?: string },
   ): Promise<MeetingDocument> {
     const response = await api.patch<MeetingDocument>(
@@ -598,8 +599,8 @@ export const MeetingsAPI = {
     return response.data;
   },
   async getLifecycle(
-  projectId: number,
-  meetingId: number,
+  projectId: number | string,
+  meetingId: number | string,
 ): Promise<{ status: string; available_transitions: string[] }> {
   const response = await api.get(
     `${basePath(projectId)}/${meetingId}/lifecycle/`,
@@ -608,8 +609,8 @@ export const MeetingsAPI = {
 },
 
 async executeTransition(
-  projectId: number,
-  meetingId: number,
+  projectId: number | string,
+  meetingId: number | string,
   toState: string,
 ): Promise<{ status: string; available_transitions: string[] }> {
   const response = await api.post(
@@ -621,8 +622,8 @@ async executeTransition(
 
   /** SMP-489: meeting follow-up action items (before task conversion). */
   async listMeetingActionItems(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
   ): Promise<MeetingActionItem[]> {
     const response = await api.get(
       `${basePath(projectId)}/${meetingId}/action-items/`,
@@ -631,8 +632,8 @@ async executeTransition(
   },
 
   async createMeetingActionItem(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: MeetingActionItemCreateRequest,
   ): Promise<MeetingActionItem> {
     const response = await api.post<MeetingActionItem>(
@@ -643,9 +644,9 @@ async executeTransition(
   },
 
   async patchMeetingActionItem(
-    projectId: number,
-    meetingId: number,
-    actionItemId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    actionItemId: number | string,
     payload: MeetingActionItemPartialUpdateRequest,
   ): Promise<MeetingActionItem> {
     const response = await api.patch<MeetingActionItem>(
@@ -656,9 +657,9 @@ async executeTransition(
   },
 
   async deleteMeetingActionItem(
-    projectId: number,
-    meetingId: number,
-    actionItemId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    actionItemId: number | string,
   ): Promise<void> {
     await api.delete(
       `${basePath(projectId)}/${meetingId}/action-items/${actionItemId}/`,
@@ -666,9 +667,9 @@ async executeTransition(
   },
 
   async convertMeetingActionItemToTask(
-    projectId: number,
-    meetingId: number,
-    actionItemId: number,
+    projectId: number | string,
+    meetingId: number | string,
+    actionItemId: number | string,
     payload: ConvertActionItemToTaskRequest,
   ): Promise<TaskData> {
     const response = await api.post<TaskData>(
@@ -679,8 +680,8 @@ async executeTransition(
   },
 
   async bulkConvertMeetingActionItemsToTasks(
-    projectId: number,
-    meetingId: number,
+    projectId: number | string,
+    meetingId: number | string,
     payload: BulkConvertActionItemsRequest,
   ): Promise<TaskData[]> {
     const response = await api.post<{ tasks: TaskData[] }>(
@@ -691,7 +692,7 @@ async executeTransition(
   },
 
   /** Tasks with ``MeetingTaskOrigin`` for this meeting (paginated on server). */
-  async listMeetingTasks(projectId: number, meetingId: number): Promise<TaskData[]> {
+  async listMeetingTasks(projectId: number | string, meetingId: number | string): Promise<TaskData[]> {
     const response = await api.get(`${basePath(projectId)}/${meetingId}/tasks/`);
     return normalizeMeetingTasksResponse(response.data);
   },

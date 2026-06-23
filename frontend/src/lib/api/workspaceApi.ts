@@ -106,7 +106,7 @@ export const WorkspaceAPI = {
    * Requires project_id — returns 400 if missing or invalid.
    */
   getWorkspaceDashboard: (
-    projectId: number,
+    projectId: number | string,
   ): Promise<WorkspaceDashboardData> => {
     return api
       .get<WorkspaceDashboardData>("/api/dashboard/workspace/", {
@@ -124,7 +124,7 @@ export const WorkspaceAPI = {
    * @param days       Time window for daily_task_activity. 7 or 30. Default: 7.
    */
   getDashboardSummary: (
-    projectId: number,
+    projectId: number | string,
     days: 7 | 30 = 7,
   ): Promise<DashboardSummaryData> => {
     return api

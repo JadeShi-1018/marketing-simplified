@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { AxiosResponse } from 'axios';
-import CreateTaskPage from '@/app/(project)/tasks/new/page';
+import CreateTaskPage from '@/app/(project)/projects/[projectId]/tasks/new/page';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { BudgetAPI } from '@/lib/api/budgetApi';
 import { ProjectAPI } from '@/lib/api/projectApi';
@@ -16,8 +16,9 @@ jest.mock('next/navigation', () => ({
     forward: jest.fn(),
     refresh: jest.fn(),
   }),
-  usePathname: () => '/tasks/new',
-  useSearchParams: jest.fn(),
+  usePathname: () => '/projects/acme/tasks/new',
+  useSearchParams: jest.fn(() => new URLSearchParams()),
+  useParams: () => ({ projectId: 'acme' }),
 }));
 
 jest.mock('@/lib/api/taskApi');

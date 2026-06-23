@@ -2,6 +2,7 @@ export type ExperienceGroupStatus = 'DRAFT' | 'PUBLISHED';
 
 export interface ExperienceGroup {
   id: number;
+  slug: string;
   name: string;
   description: string;
   status: ExperienceGroupStatus;
@@ -15,6 +16,7 @@ export interface ExperienceGroup {
 
 export interface ExperienceGroupListItem {
   id: number;
+  slug: string;
   name: string;
   description: string;
   status: ExperienceGroupStatus;

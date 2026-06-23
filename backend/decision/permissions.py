@@ -30,10 +30,17 @@ class DecisionPermission(permissions.BasePermission):
         raw_project_id = request.headers.get("x-project-id") or request.query_params.get(
             "project_id"
         )
+        if not raw_project_id:
+            return False
         try:
             project_id = int(raw_project_id)
         except (TypeError, ValueError):
-            return False
+            from core.models import Project
+            project_obj = Project.objects.filter(slug=raw_project_id).first()
+            if project_obj:
+                project_id = project_obj.id
+            else:
+                return False
 
         membership = ProjectMember.objects.filter(
             user=user,
@@ -76,9 +83,14 @@ class DecisionPermission(permissions.BasePermission):
         raw_project_id = request.headers.get("x-project-id") or request.query_params.get(
             "project_id"
         )
-        try:
-            project_id = int(raw_project_id)
-        except (TypeError, ValueError):
+        if raw_project_id:
+            try:
+                project_id = int(raw_project_id)
+            except (TypeError, ValueError):
+                from core.models import Project
+                project_obj = Project.objects.filter(slug=raw_project_id).first()
+                project_id = project_obj.id if project_obj else None
+        else:
             project_id = None
 
         if isinstance(obj, Decision):
