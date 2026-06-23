@@ -6,7 +6,6 @@ import { AlertCircle, Link2, Users } from 'lucide-react';
 import { TicketFormAPI } from '@/lib/api/ticketFormApi';
 import type { TicketFormListItem } from '@/types/ticketForm';
 import CsmSettingsPageRoot, { CsmSettingsProjectGuard } from '@/components/csm-settings/CsmSettingsPageRoot';
-import SettingsHubLink from '@/components/csm-settings/SettingsHubLink';
 import { SECONDARY_BUTTON_CLASS } from '@/components/csm-settings/constants';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -43,7 +42,6 @@ export default function AssignmentsSettingsPage() {
         </div>
         {projectValid && (
           <div className="flex flex-wrap items-center gap-3">
-            <SettingsHubLink projectId={projectId} />
             <Link
               href={`/admin/experience-groups?project=${projectId}`}
               className={SECONDARY_BUTTON_CLASS}

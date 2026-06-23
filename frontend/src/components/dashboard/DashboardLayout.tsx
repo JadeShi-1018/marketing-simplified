@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import DashboardSidebar from './DashboardSidebar';
@@ -123,14 +123,21 @@ export default function DashboardLayout({
   );
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const breadcrumb = useMemo(() => getBreadcrumb(pathname), [pathname]);
   const showBack = !!pathname && !ROOT_PATHS.has(pathname);
   const handleBack = () => {
     const segments = (pathname ?? '').split('/').filter(Boolean);
     const parent = segments.length > 1 ? '/' + segments.slice(0, -1).join('/') : '/overview';
     // /admin maps to Django admin — navigate to project selection instead
-    const safePath = parent === '/admin' ? '/select-project' : parent;
-    router.push(safePath);
+    // /admin/csm/* maps back to the CSM page
+    const safePath =
+      parent === '/admin' ? '/select-project' :
+      parent === '/admin/csm' ? '/csm' :
+      parent;
+    // Preserve existing query params (e.g. ?project=1) when navigating within admin settings
+    const qs = searchParams.toString();
+    router.push(qs ? `${safePath}?${qs}` : safePath);
   };
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);

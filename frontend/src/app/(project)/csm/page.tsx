@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { useProjectStore } from '@/lib/projectStore';
+import { useAuthStore } from '@/lib/authStore';
 import { Headset, Building2 } from 'lucide-react';
 import { OrganisationAPI } from '@/lib/api/organisationAPI';
 import QueuesTab from '@/components/csm/QueuesTab';
@@ -23,6 +24,8 @@ type TabId = (typeof TABS)[number]['id'];
 const CSMPageContent: React.FC = () => {
   const searchParams = useSearchParams();
   const activeProject = useProjectStore((s) => s.activeProject);
+  const user = useAuthStore((s) => s.user);
+  const isCsmAdmin = user?.is_csm_admin || (Array.isArray(user?.roles) && user.roles.some((r: string) => r.toLowerCase().includes('admin') || r.toLowerCase().includes('owner')));
 
   const paramProjectId = searchParams.get('project');
   const projectId = paramProjectId ? Number(paramProjectId) : activeProject?.id ?? 0;
@@ -141,6 +144,14 @@ const CSMPageContent: React.FC = () => {
               >
                 Templates
               </a>
+              {isCsmAdmin && projectValid && (
+                <a
+                  href={`/admin/csm/settings?project=${projectId}`}
+                  className="px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 transition-colors"
+                >
+                  Settings
+                </a>
+              )}
             </nav>
 
             {/* Organisation Selector — shown for queues/regions/users tabs */}

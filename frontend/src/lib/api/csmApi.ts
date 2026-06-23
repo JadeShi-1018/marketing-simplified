@@ -4,6 +4,7 @@ import {
   QueueAgent, QueueTeam, QueueTicketCounts,
   CustomerUser, CreateCustomerUserData, UpdateCustomerUserData,
   CsmNotification, InviteUserData,
+  SLAPolicy, UpdateSLAPolicyData,
 } from '@/types/csm';
 
 const BASE = '/api/csm';
@@ -131,6 +132,25 @@ export default class CsmAPI {
 
   static async inviteUser(data: InviteUserData) {
     const res = await api.post(`${BASE}/customer-users/invite/`, data);
+    return res.data;
+  }
+}
+
+// ── SLA Policy ───────────────────────────────────────────────────────────────
+
+export class SLAPolicyAPI {
+  static async get(projectId: number): Promise<SLAPolicy> {
+    const res = await api.get<SLAPolicy>(`${BASE}/sla-policy/`, { params: { project: projectId } });
+    return res.data;
+  }
+
+  static async update(policyId: number, data: UpdateSLAPolicyData): Promise<SLAPolicy> {
+    const res = await api.patch<SLAPolicy>(`${BASE}/sla-policy/${policyId}/`, data);
+    return res.data;
+  }
+
+  static async replace(policyId: number, data: Required<Pick<UpdateSLAPolicyData, 'name' | 'is_active' | 'priority_targets'>>): Promise<SLAPolicy> {
+    const res = await api.put<SLAPolicy>(`${BASE}/sla-policy/${policyId}/`, data);
     return res.data;
   }
 }
