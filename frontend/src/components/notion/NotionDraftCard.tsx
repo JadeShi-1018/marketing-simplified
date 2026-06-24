@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { FileText, MoreHorizontal, Copy, Download, Trash2 } from 'lucide-react';
+import { FileText, MoreHorizontal, Copy, Download, Trash2, Sparkles } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,6 +11,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import NotionStatusPill from './NotionStatusPill';
 import type { DraftSummary } from '@/types/notion';
+import { stageDraftContext } from '@/lib/agentLaunchContext';
+import { openAgentSidePanel } from '@/lib/agentSidePanelStore';
 
 const formatTimestamp = (value: string) => {
   try {
@@ -106,6 +108,15 @@ export default function NotionDraftCard({
             data-prevent-open
             onClick={(event) => event.stopPropagation()}
           >
+            <DropdownMenuItem
+              onSelect={() => {
+                // "Ask Agent": auto-sends "Summarize this draft." on open.
+                stageDraftContext({ draftId: draftKey, title: draft.title, autoSend: true });
+                openAgentSidePanel();
+              }}
+            >
+              <Sparkles className="w-4 h-4 mr-2" /> Ask Agent
+            </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onDuplicate(draftKey)}>
               <Copy className="w-4 h-4 mr-2" /> Duplicate
             </DropdownMenuItem>

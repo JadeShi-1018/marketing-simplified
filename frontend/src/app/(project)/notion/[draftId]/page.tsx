@@ -12,6 +12,7 @@ import {
   ChevronDown,
   MoreHorizontal,
   Trash2,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
@@ -40,6 +41,8 @@ import {
 import { NotionDraftAPI } from '@/lib/api/notionDraftApi';
 import { GoogleDocListItem, googleDocsApi } from '@/lib/api/googleDocsApi';
 import { notionIntegrationApi } from '@/lib/api/notionIntegrationApi';
+import { stageDraftContext } from '@/lib/agentLaunchContext';
+import { openAgentSidePanel } from '@/lib/agentSidePanelStore';
 import type {
   DraftStatus,
   EditorBlock,
@@ -683,6 +686,22 @@ function NotionV2DetailContent() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <button
+              type="button"
+              onClick={() => {
+                if (!draftId) return;
+                // "Open in Agent": attach the draft as context but don't ask
+                // anything yet — the user types their own first question.
+                stageDraftContext({ draftId, title, autoSend: false });
+                openAgentSidePanel();
+              }}
+              disabled={!draftId}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Open this draft in the Agent"
+            >
+              <Sparkles className="w-4 h-4" />
+              Open in Agent
+            </button>
             <button
               type="button"
               onClick={handleSave}
