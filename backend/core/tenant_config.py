@@ -35,10 +35,12 @@ def get_tenant_models():  # noqa: C901 — long but intentionally explicit
     """
 
     # ------------------------------------------------------------------
-    # core — tenant subset only (Organization, CustomUser, Role, Permission
-    # remain in the public schema)
+    # core — tenant subset only (Organization, CustomUser remain in public)
+    # Role and Permission are now tenant-scoped for proper isolation
     # ------------------------------------------------------------------
     from core.models import (
+        Role,
+        Permission,
         Team,
         TeamMember,
         Project,
@@ -210,10 +212,35 @@ def get_tenant_models():  # noqa: C901 — long but intentionally explicit
     )
 
     # ------------------------------------------------------------------
+    # miro — collaborative board for projects
+    # ------------------------------------------------------------------
+    from miro.models import (
+        Board,
+        BoardItem,
+        BoardRevision,
+        BoardAccess,
+    )
+
+    # ------------------------------------------------------------------
+    # notion_editor — notion-style document editor
+    # ------------------------------------------------------------------
+    from notion_editor.models import (
+        Draft,
+        ContentBlock,
+        DraftRevision,
+        BlockAction,
+        MediaFile,
+        NotionConnection,
+    )
+
+    # ------------------------------------------------------------------
     # Return in topological order
     # ------------------------------------------------------------------
     return [
-        # core
+        # core - Role and Permission must come first (no intra-tenant dependencies)
+        Role,
+        Permission,
+        # core - other models
         Team,
         Project,
         ProjectMember,
@@ -324,4 +351,16 @@ def get_tenant_models():  # noqa: C901 — long but intentionally explicit
         Comment,
         CommentMention,
         CommentAttachment,
+        # miro (Board depends on Project)
+        Board,
+        BoardItem,
+        BoardRevision,
+        BoardAccess,
+        # notion_editor (Draft depends on User in public schema)
+        Draft,
+        ContentBlock,
+        DraftRevision,
+        BlockAction,
+        MediaFile,
+        NotionConnection,
     ]
