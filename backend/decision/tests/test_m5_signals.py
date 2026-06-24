@@ -66,7 +66,7 @@ def test_creator_can_create_signal_in_draft():
     )
 
     client = _client_for(creator, project)
-    resp = client.post(f"/api/decisions/{decision.id}/signals/", _signal_payload(), format="json")
+    resp = client.post(f"/api/decisions/{decision.slug}/signals/", _signal_payload(), format="json")
     assert resp.status_code == 201
     assert resp.data["metric"] == "ROAS"
     assert resp.data["displayText"]
@@ -90,7 +90,7 @@ def test_non_creator_cannot_write_signal():
     )
 
     client = _client_for(peer, project)
-    resp = client.post(f"/api/decisions/{decision.id}/signals/", _signal_payload(), format="json")
+    resp = client.post(f"/api/decisions/{decision.slug}/signals/", _signal_payload(), format="json")
     assert resp.status_code == 403
 
 
@@ -110,7 +110,7 @@ def test_cannot_write_signal_when_not_draft():
     )
 
     client = _client_for(creator, project)
-    resp = client.post(f"/api/decisions/{decision.id}/signals/", _signal_payload(), format="json")
+    resp = client.post(f"/api/decisions/{decision.slug}/signals/", _signal_payload(), format="json")
     assert resp.status_code == 409
 
 
@@ -132,14 +132,14 @@ def test_max_15_signals_enforced():
     client = _client_for(creator, project)
     for idx in range(15):
         resp = client.post(
-            f"/api/decisions/{decision.id}/signals/",
+            f"/api/decisions/{decision.slug}/signals/",
             _signal_payload(metric="ROAS"),
             format="json",
         )
         assert resp.status_code == 201
 
     resp = client.post(
-        f"/api/decisions/{decision.id}/signals/",
+        f"/api/decisions/{decision.slug}/signals/",
         _signal_payload(metric="ROAS"),
         format="json",
     )
@@ -163,7 +163,7 @@ def test_channel_scope_requires_scope_value():
 
     client = _client_for(creator, project)
     resp = client.post(
-        f"/api/decisions/{decision.id}/signals/",
+        f"/api/decisions/{decision.slug}/signals/",
         _signal_payload(scopeType="CHANNEL"),
         format="json",
     )
@@ -187,7 +187,7 @@ def test_display_text_override_freeze_behavior():
 
     client = _client_for(creator, project)
     create_resp = client.post(
-        f"/api/decisions/{decision.id}/signals/",
+        f"/api/decisions/{decision.slug}/signals/",
         _signal_payload(displayTextOverride="Manual override"),
         format="json",
     )
@@ -196,7 +196,7 @@ def test_display_text_override_freeze_behavior():
 
     signal_id = create_resp.data["id"]
     update_resp = client.patch(
-        f"/api/decisions/{decision.id}/signals/{signal_id}/",
+        f"/api/decisions/{decision.slug}/signals/{signal_id}/",
         {"metric": "CPA", "movement": "MODERATE_INCREASE"},
         format="json",
     )
@@ -204,7 +204,7 @@ def test_display_text_override_freeze_behavior():
     assert update_resp.data["displayText"] == "Manual override"
 
     clear_resp = client.patch(
-        f"/api/decisions/{decision.id}/signals/{signal_id}/",
+        f"/api/decisions/{decision.slug}/signals/{signal_id}/",
         {"displayTextOverride": ""},
         format="json",
     )

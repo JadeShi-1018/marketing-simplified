@@ -51,7 +51,7 @@ class TestDecisionCaptureIntegration(TestCase):
 
     def test_create_decision_from_meeting_preserves_lineage(self):
         meeting = self._meeting()
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/decisions/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/decisions/"
 
         response = self.client.post(
             url,
@@ -75,7 +75,7 @@ class TestDecisionCaptureIntegration(TestCase):
 
     def test_retrieve_meeting_decisions_supports_multiple_decisions(self):
         meeting = self._meeting()
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/decisions/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/decisions/"
 
         first = self.client.post(url, {"title": "Decision A"}, format="json")
         second = self.client.post(url, {"title": "Decision B"}, format="json")
@@ -107,7 +107,7 @@ class TestDecisionCaptureIntegration(TestCase):
         )
 
         response = self.client.get(
-            f"/api/decisions/{decision.id}/origin/?project_id={self.project.id}"
+            f"/api/decisions/{decision.slug}/origin/?project_id={self.project.slug}"
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -130,7 +130,7 @@ class TestDecisionCaptureIntegration(TestCase):
         )
 
         response = self.client.get(
-            f"/api/decisions/{decision.id}/?project_id={self.project.id}"
+            f"/api/decisions/{decision.slug}/?project_id={self.project.slug}"
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -157,7 +157,7 @@ class TestDecisionCaptureIntegration(TestCase):
 
     def test_meeting_status_does_not_control_decision_lifecycle(self):
         meeting = self._meeting(status=Meeting.STATUS_COMPLETED)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/decisions/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/decisions/"
 
         response = self.client.post(
             url,
@@ -188,7 +188,7 @@ class TestDecisionCaptureIntegration(TestCase):
         )
 
         response = self.client.post(
-            f"/api/projects/{self.project.id}/meetings/{other_meeting.id}/decisions/",
+            f"/api/projects/{self.project.slug}/meetings/{other_meeting.slug}/decisions/",
             {"title": "Should not be created"},
             format="json",
         )
@@ -265,7 +265,7 @@ class TestDecisionCaptureIntegration(TestCase):
         )
 
         response = self.client.get(
-            f"/api/projects/{self.project.id}/meetings/{source_meeting.id}/decisions/"
+            f"/api/projects/{self.project.slug}/meetings/{source_meeting.slug}/decisions/"
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)

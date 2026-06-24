@@ -6,7 +6,6 @@ import { AlertCircle, Archive, Pencil, Plus } from 'lucide-react';
 import { TicketFormAPI } from '@/lib/api/ticketFormApi';
 import type { SupportProjectStub } from '@/types/ticketForm';
 import CsmSettingsPageRoot, { CsmSettingsProjectGuard } from '@/components/csm-settings/CsmSettingsPageRoot';
-import SettingsHubLink from '@/components/csm-settings/SettingsHubLink';
 import SupportProjectFormModal from '@/components/csm-settings/SupportProjectFormModal';
 import StatusBadge from '@/components/csm-settings/StatusBadge';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
@@ -100,7 +99,6 @@ export default function SupportProjectsSettingsPage() {
         </div>
         {projectValid && (
           <div className="flex flex-wrap items-center gap-3">
-            <SettingsHubLink projectId={projectId} />
             <button type="button" onClick={openCreate} className={`gap-2 ${PORTAL_SUBMIT_BUTTON_CLASS}`}>
               <Plus className="h-4 w-4" aria-hidden />
               New support project

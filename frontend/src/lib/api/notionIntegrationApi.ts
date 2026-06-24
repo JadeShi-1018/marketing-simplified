@@ -12,7 +12,7 @@ export interface NotionIntegrationStatus {
 
 export interface NotionImportPayload {
   page: string;
-  draft_id?: number | null;
+  draft_id?: number | string | null;
 }
 
 export interface NotionImportResponse {
@@ -27,7 +27,7 @@ export interface NotionImportResponse {
 }
 
 export interface NotionExportPayload {
-  draft_id: number;
+  draft_id: number | string;
   parent_page_id: string;
   title?: string | null;
 }

@@ -12,6 +12,7 @@ mediaJira/
 *test*.sh
 /node_modules/
 backend/coverate_report.txt
+*.tar.gz
 backend/.scannerwork/
 frontend/.scannerwork/
 devops/*/*report*
@@ -31,3 +32,6 @@ nul
 .cursorrules
 backend/celerybeat-schedule
 backend/celerybeat.pid
+# SMP-539 Q7: write-only benchmark output (regenerated with a fresh
+# run_timestamp every test run; nothing reads it as a baseline).
+backend/benchmarks/retrospective.json

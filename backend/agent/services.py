@@ -212,7 +212,67 @@ def _build_criteria_text(success_criteria) -> tuple[str, list]:
         return '', []
 
 
-def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
+def _resolve_analysis_columns(key_cols, sheet_columns, column_mapping=None):
+    """Map success_criteria key_columns onto normalized spreadsheet column keys.
+
+    After normalize_data, row keys are canonical names (e.g. amount_spent) while
+    Gemini criteria often reference display headers (e.g. Amount Spent (USD)).
+    """
+    if not sheet_columns:
+        return list(key_cols or [])
+
+    actual = set(sheet_columns)
+    if not key_cols:
+        return list(sheet_columns)
+
+    direct = [k for k in key_cols if k in actual]
+    if direct:
+        return direct
+
+    if not column_mapping:
+        logger.warning(
+            "success_criteria key_columns do not match sheet columns; using all columns",
+        )
+        return list(sheet_columns)
+
+    resolved = []
+    seen = set()
+    for kc in key_cols:
+        candidates = []
+        if kc in actual:
+            candidates = [kc]
+        elif kc in column_mapping:
+            canon = column_mapping[kc]
+            if canon in actual:
+                candidates = [canon]
+        else:
+            kc_lower = kc.lower().strip()
+            for orig, canon in column_mapping.items():
+                if orig.lower().strip() == kc_lower and canon in actual:
+                    candidates = [canon]
+                    break
+            if not candidates:
+                kc_norm = kc.lower().replace(' ', '_').replace('(', '').replace(')', '')
+                for col in actual:
+                    if col.lower() == kc_norm:
+                        candidates = [col]
+                        break
+
+        for col in candidates:
+            if col not in seen:
+                resolved.append(col)
+                seen.add(col)
+
+    if resolved:
+        return resolved
+
+    logger.warning(
+        "Could not resolve success_criteria key_columns; falling back to all sheet columns",
+    )
+    return list(sheet_columns)
+
+
+def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None, column_mapping=None):
     """Mirror the Dify code-node preprocessing: return (column_summary, cleaned_data, criteria_text)."""
     criteria_text, key_cols = _build_criteria_text(success_criteria)
 
@@ -221,11 +281,20 @@ def _preprocess_spreadsheet(spreadsheet_data, success_criteria=None):
     for sheet in spreadsheet_data.get('sheets', []):
         columns = sheet.get('columns', [])
         columns_info.extend(columns)
-        key_cols_to_use = key_cols if key_cols else columns
+        key_cols_to_use = _resolve_analysis_columns(key_cols, columns, column_mapping)
         for row in sheet.get('rows', []):
             clean_row = {k: v for k, v in row.items() if k in key_cols_to_use}
             if clean_row:
                 all_rows.append(clean_row)
+
+        if not all_rows and key_cols:
+            logger.warning(
+                "No rows matched key_columns after resolution; retrying with all sheet columns",
+            )
+            for row in sheet.get('rows', []):
+                clean_row = {k: v for k, v in row.items() if k in columns}
+                if clean_row:
+                    all_rows.append(clean_row)
 
     limited = all_rows[:50]
     column_summary = (
@@ -243,11 +312,14 @@ def _call_gemini_analysis(
     spreadsheet_data,
     user_id=None,
     success_criteria=None,
+    column_mapping=None,
     generation_outputs=None,
     user_context=None,
     validation_feedback=None,
+    agent_session=None,
 ):
     """Call Gemini to analyze spreadsheet data."""
+    from .llm_client import call_llm as _call_llm_unified
     from .gemini_client import call_gemini_json
     from .generation_registry import (
         build_analysis_prompt,
@@ -256,7 +328,7 @@ def _call_gemini_analysis(
 
     requested = frozenset(normalize_generation_outputs(generation_outputs))
     column_summary, cleaned_data, criteria_text = _preprocess_spreadsheet(
-        spreadsheet_data, success_criteria
+        spreadsheet_data, success_criteria, column_mapping=column_mapping,
     )
 
     criteria_block = (
@@ -283,12 +355,25 @@ def _call_gemini_analysis(
         sorted(requested),
         'retry' if validation_feedback else 'initial',
     )
-    return call_gemini_json(
+    if agent_session is None:
+        return call_gemini_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            timeout=300,
+        )
+
+    result = _call_llm_unified(
+        agent_session=agent_session,
+        provider='gemini',
+        model='gemini-2.5-flash-lite',
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         temperature=0.3,
-        timeout=300,
+        max_output_tokens=4096,
+        response_mime_type='application/json',
     )
+    return json.loads(result['text'])
 
 
 def _assign_anomaly_ids(analysis):
@@ -323,6 +408,7 @@ def _call_gemini_calendar_from_analysis(
     user_id=None,
     success_criteria=None,
     user_context=None,
+    agent_session=None,
 ):
     """Suggest calendar events from spreadsheet + analysis context."""
     from .gemini_client import call_gemini_json
@@ -335,14 +421,31 @@ def _call_gemini_calendar_from_analysis(
     column_summary, cleaned_data, _criteria_text = _preprocess_spreadsheet(
         spreadsheet_data, success_criteria
     )
-    raw = call_gemini_json(
-        system_prompt=calendar_from_analysis_system_prompt(),
-        user_prompt=build_calendar_from_analysis_user_prompt(
-            column_summary, cleaned_data, analysis_result
-        ),
-        temperature=0.3,
-        timeout=120,
+    system_prompt = calendar_from_analysis_system_prompt()
+    user_prompt = build_calendar_from_analysis_user_prompt(
+        column_summary, cleaned_data, analysis_result
     )
+    if agent_session is None:
+        raw = call_gemini_json(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            timeout=120,
+        )
+    else:
+        from .llm_client import call_llm as _call_llm_unified
+
+        result = _call_llm_unified(
+            agent_session=agent_session,
+            provider='gemini',
+            model='gemini-2.5-flash-lite',
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.3,
+            max_output_tokens=4096,
+            response_mime_type='application/json',
+        )
+        raw = json.loads(result['text'])
     logger.info("Calling Gemini for calendar events user_id=%s", user_id)
     return validate_calendar_events_response(raw)
 
@@ -369,8 +472,10 @@ def _run_analysis(
     spreadsheet_data,
     user_id=None,
     success_criteria=None,
+    column_mapping=None,
     generation_outputs=None,
     user_context=None,
+    agent_session=None,
 ):
     """Run analysis using Gemini, with Claude as fallback.
 
@@ -382,6 +487,7 @@ def _run_analysis(
         normalize_generation_outputs,
         validate_analysis_response,
     )
+    from stripe_meta.exceptions import QuotaError
 
     requested = frozenset(normalize_generation_outputs(generation_outputs))
 
@@ -395,9 +501,11 @@ def _run_analysis(
                     spreadsheet_data,
                     user_id,
                     success_criteria=success_criteria,
+                    column_mapping=column_mapping,
                     user_context=user_context,
                     generation_outputs=list(requested),
                     validation_feedback=validation_feedback,
+                    agent_session=agent_session,
                 )
                 return _assign_anomaly_ids(validate_analysis_response(raw, requested))
             except GenerationValidationError as exc:
@@ -410,6 +518,8 @@ def _run_analysis(
                     _ANALYSIS_VALIDATION_MAX_ATTEMPTS,
                     exc,
                 )
+            except QuotaError:
+                raise
             except Exception as e:
                 logger.error(f"Gemini analysis failed, falling back to Claude: {e}")
                 break
@@ -418,8 +528,10 @@ def _run_analysis(
     client = _get_llm_client()
     if client:
         try:
-            raw = _call_llm(client, spreadsheet_data)
+            raw = _call_llm(client, spreadsheet_data, agent_session=agent_session)
             return _assign_anomaly_ids(_coerce_llm_analysis_for_requested(raw, requested))
+        except QuotaError:
+            raise
         except GenerationValidationError:
             raise
         except Exception as e:
@@ -575,6 +687,7 @@ def _call_gemini_chat(
     analysis_result=None,
     project_members=None,
     current_username='',
+    agent_session=None,
 ):
     """Call Gemini for post-analysis follow-up. Replaces _call_dify_chat."""
     from .gemini_client import call_gemini_json
@@ -588,12 +701,27 @@ def _call_gemini_chat(
     )
 
     try:
-        parsed = call_gemini_json(
-            system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            temperature=0.5,
-            timeout=120,
-        )
+        if agent_session is None:
+            parsed = call_gemini_json(
+                system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.5,
+                timeout=120,
+            )
+        else:
+            from .llm_client import call_llm as _call_llm_unified
+
+            result = _call_llm_unified(
+                agent_session=agent_session,
+                provider='gemini',
+                model='gemini-2.5-flash-lite',
+                system_prompt=_FOLLOWUP_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                temperature=0.5,
+                max_output_tokens=4096,
+                response_mime_type='application/json',
+            )
+            parsed = json.loads(result['text'])
     except Exception as e:
         logger.error("Gemini chat call failed: %s", e)
         raise RuntimeError(f"Gemini chat failed: {e}") from e
@@ -628,6 +756,7 @@ def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
         snapshot = call_gemini_miro_generator(
             context,
             user_id=str(orchestrator.user.id),
+            agent_session=orchestrator.session,
         )
 
     board, persisted_snapshot = create_board_from_snapshot(
@@ -942,6 +1071,25 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
+        # Resume a workflow paused at await_confirmation (user clicked Continue in chat).
+        if action == 'resume_workflow':
+            latest_run = self.session.workflow_runs.filter(
+                status='awaiting_confirmation',
+                is_deleted=False,
+            ).order_by('-created_at').first()
+            if latest_run and latest_run.workflow_definition:
+                yield from self._resume_workflow(latest_run)
+            else:
+                yield {
+                    'type': 'text',
+                    'content': (
+                        'This workflow has already finished or was continued. '
+                        'Start a new message to run it again.'
+                    ),
+                }
+            yield {'type': 'done'}
+            return
+
         # Resume after user confirms / edits the detected column mapping.
         if action == 'confirm_columns':
             latest_run = self.session.workflow_runs.filter(
@@ -986,9 +1134,14 @@ class AgentOrchestrator:
             yield {"type": "done"}
             return
 
-        # --- Start a new workflow ---
-        if file_id or spreadsheet_id or csv_filename or (action == 'analyze'):
-            workflow_def = self._resolve_workflow(workflow_id)
+        # --- Start a new workflow (file upload / analyze action / explicit workflow_id) ---
+        if file_id or spreadsheet_id or csv_filename or (action == 'analyze') or workflow_id:
+            workflow_def = self._resolve_workflow(
+                workflow_id=workflow_id,
+                action=action,
+                file_id=file_id,
+                user_message=message
+            )
             if workflow_def:
                 yield from self._start_workflow(
                     workflow_def,
@@ -1346,7 +1499,11 @@ class AgentOrchestrator:
         )
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(
+                spreadsheet_data,
+                user_id=self.user.id,
+                agent_session=self.session,
+            )
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1392,7 +1549,11 @@ class AgentOrchestrator:
         spreadsheet_data = _extract_spreadsheet_data(spreadsheet)
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(
+                spreadsheet_data,
+                user_id=self.user.id,
+                agent_session=self.session,
+            )
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1457,7 +1618,11 @@ class AgentOrchestrator:
         }
 
         try:
-            analysis = _run_analysis(spreadsheet_data, user_id=self.user.id)
+            analysis = _run_analysis(
+                spreadsheet_data,
+                user_id=self.user.id,
+                agent_session=self.session,
+            )
         except RuntimeError as e:
             workflow_run.status = 'failed'
             workflow_run.error_message = str(e)
@@ -1769,8 +1934,22 @@ class AgentOrchestrator:
     # Workflow engine methods (AGENT-9)
     # ------------------------------------------------------------------
 
-    def _resolve_workflow(self, workflow_id=None):
-        """Find workflow definition: explicit ID > project default > system default."""
+    def _resolve_workflow(
+        self,
+        workflow_id=None,
+        action=None,
+        file_id=None,
+        spreadsheet_id=None,
+        csv_filename=None,
+        user_message='',
+    ):
+        """
+        Resolve which workflow definition to run.
+
+        - Explicit workflow_id: user-selected template/workflow (highest priority).
+        - File upload / analyze / spreadsheet paths: system default workflow (legacy bot).
+        - Plain text without workflow_id: no workflow (handled by legacy chat).
+        """
         if workflow_id:
             try:
                 return AgentWorkflowDefinition.objects.get(
@@ -1779,15 +1958,13 @@ class AgentOrchestrator:
             except AgentWorkflowDefinition.DoesNotExist:
                 return None
 
-        # Project-level default
-        project_default = AgentWorkflowDefinition.objects.filter(
-            project=self.project, is_default=True,
-            status='active', is_deleted=False,
-        ).first()
-        if project_default:
-            return project_default
+        if file_id or action == 'analyze' or spreadsheet_id or csv_filename:
+            return self._get_system_default_workflow()
 
-        # System-level default
+        return None
+
+    def _get_system_default_workflow(self):
+        """Get system default workflow."""
         return AgentWorkflowDefinition.objects.filter(
             project__isnull=True, is_system=True, is_default=True,
             status='active', is_deleted=False,
@@ -1907,6 +2084,7 @@ class AgentOrchestrator:
                 workflow_run.analysis_result or {},
                 user_id=str(self.user.id),
                 success_criteria=workflow_run.success_criteria,
+                agent_session=self.session,
             )
             events = result.get('calendar_events', [])
             yield {
@@ -1944,6 +2122,18 @@ class AgentOrchestrator:
         requested = frozenset(
             normalize_generation_outputs(input_data.get('generation_outputs'))
         )
+
+        if not steps.exists():
+            workflow_run.status = 'completed'
+            workflow_run.save(update_fields=['status', 'updated_at'])
+            yield {
+                'type': 'text',
+                'content': (
+                    f'**{workflow_run.workflow_definition.name}** completed. '
+                    'There are no further steps in this workflow.'
+                ),
+            }
+            return
 
         for step in steps:
             if should_skip_workflow_step(step.step_type, requested):
@@ -2009,11 +2199,16 @@ class AgentOrchestrator:
                         workflow_run, current_data
                     )
 
-                # Pause on await_confirmation
+                # Pause on await_confirmation — persist status BEFORE yielding SSE
+                # so a fast "Continue" click cannot race ahead of the DB write.
                 if step.step_type == 'await_confirmation':
                     workflow_run.status = 'awaiting_confirmation'
                     workflow_run.current_step_order = step.order + 1
-                    workflow_run.save()
+                    workflow_run.save(
+                        update_fields=['status', 'current_step_order', 'updated_at']
+                    )
+                    for event in result.sse_events:
+                        yield event
                     return
 
                 current_data = result.output_data or current_data
@@ -2031,7 +2226,13 @@ class AgentOrchestrator:
                 return
 
         workflow_run.status = 'completed'
-        workflow_run.save()
+        workflow_run.save(update_fields=['status', 'updated_at'])
+        yield {
+            'type': 'text',
+            'content': (
+                f'**{workflow_run.workflow_definition.name}** completed successfully.'
+            ),
+        }
 
     def _legacy_start_miro_background_if_needed(self, workflow_run):
         """Enqueue Celery job and persist started row at most once per workflow run."""
@@ -2188,6 +2389,7 @@ class AgentOrchestrator:
                         analysis_result=latest_run.analysis_result,
                         project_members=project_members,
                         current_username=self.user.username or '',
+                        agent_session=self.session,
                     )
                     follow_up_status = result.get("status", "completed")
                     reply = result.get("text") or result.get("reply", "")

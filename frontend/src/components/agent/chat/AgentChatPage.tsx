@@ -7,6 +7,7 @@ import { WelcomeScreen } from "./WelcomeScreen"
 import { MessageList, type ChatMessage } from "./MessageList"
 import { ChatInput } from "./ChatInput"
 import { ActionBar } from "./ActionBar"
+import OnboardingTokenIntro from "./OnboardingTokenIntro"
 import type { PendingExternalApproval } from "./ExternalApprovalModal"
 import { AgentAPI } from "@/lib/api/agentApi"
 import {
@@ -39,6 +40,7 @@ import {
   type CalendarPreload,
 } from "@/lib/agentLaunchContext"
 import { getPendingMiroWorkflowRunIds } from "@/lib/agentMiroBoardStatus"
+import { agentMiroBoardHref } from "@/lib/agentMiroBoardHref"
 
 function pickRecommendedDecisionTree(
   data: AnalysisResult | null | undefined,
@@ -123,7 +125,7 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     type = "miro_status"
     navigateTo = "miro"
     navigateLabel = "Open Miro"
-    navigateHref = `/miro/${m.data.board_id}`
+    navigateHref = agentMiroBoardHref(m.data)
   } else if (eventType === "miro_generation_failed") {
     type = "error"
   } else if (m.message_type === "analysis" || hasPersistedAnalysisPayload(m.data)) {
@@ -151,6 +153,8 @@ function restoreMessage(m: AgentMessage): ChatMessage {
     const hasDraftTasks = Array.isArray(draftTasks) && draftTasks.length > 0
     type =
       hasPersistedAnalysisPayload(m.data) || hasDraftTasks ? "analysis" : "approval_request"
+  } else if (m.message_type === "confirmation_request") {
+    type = "confirmation_request"
   }
 
   const draftRecommendedTasks = (
@@ -284,7 +288,7 @@ function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMess
         type: "miro_status",
         navigateTo: "miro",
         navigateLabel: "Open Miro",
-        navigateHref: `/miro/${event.data.board_id}`,
+        navigateHref: agentMiroBoardHref(event.data),
         eventType,
         workflowRunId,
       },
@@ -320,6 +324,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const router = useRouter()
   const { setActiveView, floatingChat, toggleMaximize, setFloatingSessionId } = useAgentLayout()
   const [sessionId, setSessionIdState] = useState<string | null>(null)
+  const [projectId, setProjectId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [hasStarted, setHasStarted] = useState(false)
@@ -336,7 +341,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
   const [approvalRequired, setApprovalRequired] = useState(false)
   const [generatedTaskIndexes, setGeneratedTaskIndexes] = useState<number[]>([])
   const [skippedTaskIndexes, setSkippedTaskIndexes] = useState<number[]>([])
-  const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number>>({})
+  const [createdTaskIdByIndex, setCreatedTaskIdByIndex] = useState<Record<number, number | string>>({})
   const [pendingTaskApproval, setPendingTaskApproval] = useState<PendingExternalApproval | null>(null)
   const [pendingDecisionApproval, setPendingDecisionApproval] = useState<PendingExternalApproval | null>(null)
   const [selectedTaskIndexes, setSelectedTaskIndexes] = useState<number[]>([])
@@ -615,6 +620,7 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
 
   const applySessionState = useCallback((session: Awaited<ReturnType<typeof AgentAPI.getSession>>) => {
     setSessionId(String(session.id))
+    setProjectId(session.project_id ? String(session.project_id) : null)
 
     // Restore messages and back-fill recommendedTasks onto analysis messages when needed.
     const restored = session.messages.map(restoreMessage)
@@ -651,8 +657,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       // clear them from the skipped list so the UI stays consistent.
       setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
       const pairs = created
-        .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-        .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+        .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+        .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
       setCreatedTaskIdByIndex(Object.fromEntries(pairs))
     } else {
       setGeneratedTaskIndexes([])
@@ -889,8 +895,8 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
         setGeneratedTaskIndexes(Array.from(new Set(idxs)))
         setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
         const pairs = created
-          .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-          .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+          .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+          .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
         setCreatedTaskIdByIndex(Object.fromEntries(pairs))
       }
       if (lastTaskCreated) {
@@ -1022,6 +1028,7 @@ setStepState({
       invalidateActiveStreams()
       resetTransientChatUiState()
       setSessionId(null)
+      setProjectId(null)
       sessionStorage.removeItem("agent-session-calendar-context")
       setMessages([])
       setSessionCalendarContext(null)
@@ -1242,11 +1249,11 @@ setStepState({
             (event.data.calendar_events as SuggestedCalendarEvent[] | undefined) ?? []
           updateMessage(aiMsgId, { calendarEvents: events })
         } else if (event.type === "confirmation_request") {
-          // If column mapping already shown, don't overwrite the card — just
-          // silently wait for user confirmation via ColumnMappingCard buttons.
           if (!columnMappingReceived) {
-            contentParts.push(event.content || "")
-            updateMessage(aiMsgId, { content: contentParts.join("\n") })
+            updateMessage(aiMsgId, {
+              content: event.content || "Please confirm to continue.",
+              type: "confirmation_request",
+            })
           }
         } else if (event.type === "approval_request" && event.data) {
           const d = event.data as Record<string, unknown>
@@ -1489,8 +1496,8 @@ setStepState({
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -1621,11 +1628,26 @@ setStepState({
     abortRef.current?.abort()
   }, [setSessionId])
 
-  /** Handle text message send */
+  /** Resume a workflow paused at await_confirmation (Continue button). */
+  const handleResumeWorkflow = useCallback((confirmMessageId: string) => {
+    void handleSendMessageRef.current?.(
+      "",
+      undefined,
+      undefined,
+      undefined,
+      "resume_workflow",
+      confirmMessageId,
+    )
+  }, [])
+
+  /** Handle text message send. Pass workflowId when user confirms an AI-matched workflow. */
   const handleSendMessage = useCallback(async (
     text: string,
     calendarContext?: Record<string, unknown>,
     userContext?: string,
+    workflowId?: string,
+    action?: AgentAction,
+    reuseAiMsgId?: string,
   ) => {
     setHasStarted(true)
     // Use provided context or fall back to the session-level calendar context
@@ -1634,8 +1656,11 @@ setStepState({
       setSessionCalendarContext(calendarContext)
     }
 
-    const userMsgId = `user-${Date.now()}`
-    addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    const isResumeOnly = action === "resume_workflow"
+    if (!isResumeOnly && text.trim()) {
+      const userMsgId = `user-${Date.now()}`
+      addMessage({ id: userMsgId, role: "user", content: text, type: "text" })
+    }
 
     // Create session if needed
     let sid = sessionId
@@ -1658,8 +1683,15 @@ setStepState({
       }
     }
 
-    const aiMsgId = `ai-${Date.now()}`
-    addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    const aiMsgId = reuseAiMsgId ?? `ai-${Date.now()}`
+    if (reuseAiMsgId) {
+      updateMessage(reuseAiMsgId, {
+        content: "Continuing workflow…",
+        type: "text",
+      })
+    } else {
+      addMessage({ id: aiMsgId, role: "assistant", content: AGENT_MESSAGES.CHAT_THINKING, type: "text" })
+    }
 
     setIsStreaming(true)
     setStepProgress([])
@@ -1670,7 +1702,9 @@ setStepState({
     abortRef.current = AgentAPI.sendMessage(
       sid!,
       {
-        message: text,
+        message: isResumeOnly ? "Continue" : text,
+        ...(workflowId ? { workflow_id: workflowId } : {}),
+        ...(action ? { action } : {}),
         ...(effectiveCalendarContext ? { calendar_context: effectiveCalendarContext as any } : {}),
         user_context: userContext || undefined,
       },
@@ -1728,6 +1762,14 @@ setStepState({
               approval: pending,
             })
           }
+          return
+        }
+
+        if (event.type === "confirmation_request") {
+          updateMessage(aiMsgId, {
+            content: event.content || "Please confirm to continue.",
+            type: "confirmation_request",
+          })
           return
         }
 
@@ -1824,8 +1866,8 @@ setStepState({
               .filter((n: unknown) => typeof n === "number" && Number.isFinite(n))
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -1884,15 +1926,19 @@ setStepState({
       (error) => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        if (error.message === "quota_error") {
+          // The global UpgradeModal already explains the block; drop the optimistic
+          // thinking placeholder instead of leaving an "Error: quota_error" bubble.
+          setMessages((prev) => prev.filter((m) => m.id !== aiMsgId))
+        } else {
+          updateMessage(aiMsgId, { content: `Error: ${error.message}`, type: "error" })
+        }
         setIsStreaming(false)
       },
       () => {
         if (activeStreamTokenRef.current !== streamToken) return
         if (String(sessionIdRef.current) !== requestSessionId) return
-        void refreshSession(requestSessionId)
-        void refreshFollowUpState(requestSessionId)
-        // Attach final step progress to the message
+        // Attach final step progress before refresh (refresh reloads messages from DB)
         setStepProgress((prev) => {
           if (prev.length > 0) {
             const final = prev.map((s) => ({
@@ -1905,6 +1951,8 @@ setStepState({
           return prev
         })
         setIsStreaming(false)
+        void refreshSession(requestSessionId)
+        void refreshFollowUpState(requestSessionId)
         if (embeddedInFloating) {
           window.dispatchEvent(new CustomEvent("agent:sessions-changed"))
           void AgentAPI.updateSession(requestSessionId, { last_read_at: new Date().toISOString() }).catch(() => {
@@ -2009,8 +2057,8 @@ setStepState({
             setGeneratedTaskIndexes(Array.from(new Set(idxs)))
             setSkippedTaskIndexes((prev) => prev.filter((i) => !idxs.includes(i)))
             const pairs = created
-              .map((c: any) => [Number(c?.index), Number(c?.task_id)] as const)
-              .filter(([idx, tid]) => Number.isFinite(idx) && Number.isFinite(tid))
+              .map((c: any) => [Number(c?.index), c?.task_slug ?? c?.task_id] as const)
+              .filter(([idx, tid]: readonly [number, any]) => Number.isFinite(idx) && tid != null)
             setCreatedTaskIdByIndex(Object.fromEntries(pairs))
           } else {
             const tasksLen = latestRecommendedTasksRef.current?.length ?? 0
@@ -2317,6 +2365,7 @@ setStepState({
 
   return (
     <div className="flex h-full flex-col">
+      <OnboardingTokenIntro />
       {!embeddedInFloating && (
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2 shrink-0 bg-background">
           <h2 className="text-sm font-semibold truncate text-foreground">{sessionTitle}</h2>
@@ -2358,6 +2407,7 @@ setStepState({
         {...({
           messages,
           sessionId,
+          projectId,
           requestedGenerationOutputs,
           isStreaming,
           showRevisitThinkingBubble,
@@ -2391,6 +2441,7 @@ setStepState({
           onConfirmColumns: handleConfirmColumns,
           onConfirmAnomalies: handleConfirmAnomalies,
           onReupload: handleReupload,
+          onResumeWorkflow: handleResumeWorkflow,
           latestAnalysisMessageId,
           showFollowUpToggle: followUpAvailable || followUpStarted,
           followUpActive: followUpStarted,

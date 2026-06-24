@@ -158,6 +158,7 @@ export interface VideoAdInfo {
 
 export interface GoogleAd {
   id?: number;
+  slug?: string;
   google_ads_id?: number | null;
   name?: string;
   display_url?: string;
@@ -317,7 +318,7 @@ export class GoogleAdsAPI {
    * Get ad details
    * GET /api/google_ads/ads/{ad_id}/
    */
-  static async getAd(adId: number): Promise<AdResponse> {
+  static async getAd(adId: number | string): Promise<AdResponse> {
     const response = await api.get(`/api/google_ads/ads/${adId}/`);
     return response.data;
   }
@@ -326,7 +327,7 @@ export class GoogleAdsAPI {
    * Update ad
    * PATCH /api/google_ads/ads/{ad_id}/
    */
-  static async updateAd(adId: number, data: AdPartialUpdateRequest): Promise<AdResponse> {
+  static async updateAd(adId: number | string, data: AdPartialUpdateRequest): Promise<AdResponse> {
     const response = await api.patch(`/api/google_ads/ads/${adId}/`, data);
     return response.data;
   }
@@ -335,7 +336,7 @@ export class GoogleAdsAPI {
    * Delete ad
    * DELETE /api/google_ads/ads/{ad_id}/
    */
-  static async deleteAd(adId: number): Promise<void> {
+  static async deleteAd(adId: number | string): Promise<void> {
     await api.delete(`/api/google_ads/ads/${adId}/`);
   }
 
@@ -403,7 +404,7 @@ export class GoogleAdsAPI {
    * Get ad globally
    * GET /api/google_ads/ads/{ad_id}/
    */
-  static async getAdGlobal(adId: number): Promise<AdResponse> {
+  static async getAdGlobal(adId: number | string): Promise<AdResponse> {
     const response = await api.get(`/api/google_ads/ads/${adId}/`);
     return response.data;
   }
@@ -412,7 +413,7 @@ export class GoogleAdsAPI {
    * Update ad globally
    * PATCH /api/google_ads/ads/{ad_id}/
    */
-  static async updateAdGlobal(adId: number, data: AdUpdateRequest): Promise<AdResponse> {
+  static async updateAdGlobal(adId: number | string, data: AdUpdateRequest): Promise<AdResponse> {
     const response = await api.patch(`/api/google_ads/ads/${adId}/`, data);
     return response.data;
   }
@@ -421,7 +422,7 @@ export class GoogleAdsAPI {
    * Delete ad globally
    * DELETE /api/google_ads/{ad_id}/delete/
    */
-  static async deleteAdGlobal(adId: number): Promise<void> {
+  static async deleteAdGlobal(adId: number | string): Promise<void> {
     await api.delete(`/api/google_ads/${adId}/delete/`);
   }
 
@@ -431,7 +432,7 @@ export class GoogleAdsAPI {
    * Create ad preview
    * POST /api/google_ads/{ad_id}/create_preview/
    */
-  static async createPreview(adId: number, data: AdPreviewRequest): Promise<AdPreviewResponse> {
+  static async createPreview(adId: number | string, data: AdPreviewRequest): Promise<AdPreviewResponse> {
     const response = await api.post(`/api/google_ads/${adId}/create_preview/`, data);
     return response.data;
   }
@@ -503,7 +504,7 @@ export class GoogleAdsAPI {
    * Update ad type fields
    * PATCH /api/google_ads/ads/{ad_id}/
    */
-  static async updateAdTypeFields(adId: number, data: any): Promise<AdResponse> {
+  static async updateAdTypeFields(adId: number | string, data: any): Promise<AdResponse> {
     const response = await api.patch(`/api/google_ads/ads/${adId}/`, data);
     return response.data;
   }

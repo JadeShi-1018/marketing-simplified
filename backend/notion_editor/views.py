@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status, permissions
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -258,7 +259,7 @@ class NotionExportView(APIView):
         return Response(payload, status=status.HTTP_200_OK)
 
 
-class DraftViewSet(viewsets.ModelViewSet):
+class DraftViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing drafts
     """
@@ -449,7 +450,7 @@ class DraftBlocksView(APIView):
         """Get all blocks for a draft"""
         draft = get_object_or_404(
             Draft, 
-            id=draft_id, 
+            **resolve_lookup_kwargs(draft_id, 'id'), 
             user=request.user, 
             is_deleted=False
         )
@@ -474,7 +475,7 @@ class ExportDraftView(APIView):
         """Export draft as downloadable JSON"""
         draft = get_object_or_404(
             Draft, 
-            id=draft_id, 
+            **resolve_lookup_kwargs(draft_id, 'id'), 
             user=request.user, 
             is_deleted=False
         )
@@ -503,7 +504,7 @@ class DuplicateDraftView(APIView):
         """Duplicate a draft"""
         original_draft = get_object_or_404(
             Draft, 
-            id=draft_id, 
+            **resolve_lookup_kwargs(draft_id, 'id'), 
             user=request.user, 
             is_deleted=False
         )
@@ -677,7 +678,7 @@ class MediaUploadView(APIView):
         draft = None
         if draft_id:
             try:
-                draft = Draft.objects.get(id=draft_id, user=request.user, is_deleted=False)
+                draft = Draft.objects.get(**resolve_lookup_kwargs(draft_id, 'id'), user=request.user, is_deleted=False)
             except Draft.DoesNotExist:
                 return Response(
                     {'error': 'Draft not found or access denied'}, 
@@ -854,7 +855,7 @@ class WebBookmarkView(APIView):
         draft = None
         if draft_id:
             try:
-                draft = Draft.objects.get(id=draft_id, user=request.user, is_deleted=False)
+                draft = Draft.objects.get(**resolve_lookup_kwargs(draft_id, 'id'), user=request.user, is_deleted=False)
             except Draft.DoesNotExist:
                 return Response(
                     {'error': 'Draft not found or access denied'}, 

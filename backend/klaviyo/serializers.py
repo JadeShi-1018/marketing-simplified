@@ -33,7 +33,7 @@ class EmailDraftSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmailDraft
-        fields = [
+        fields = ['slug', 
             "id",
             "user",
             "name",
@@ -44,7 +44,7 @@ class EmailDraftSerializer(serializers.ModelSerializer):
             "is_deleted",
             "blocks",
         ]
-        read_only_fields = [
+        read_only_fields = ['slug', 
             "id",
             "created_at",
             "updated_at",

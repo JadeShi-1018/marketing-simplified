@@ -9,15 +9,16 @@ import TierBadge from '@/components/csm/TierBadge';
 import QueueForm from '@/components/csm/QueueForm';
 import { Queue, QueueTicketCounts } from '@/types/csm';
 import CsmAPI from '@/lib/api/csmApi';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { Plus, Pencil, Trash2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const QueuesPageContent: React.FC = () => {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectId = Number(searchParams.get('project'));
-  const projectValid = Number.isFinite(projectId) && projectId > 0;
+  const { activeProject } = useActiveProjectForFlatRoute();
+  const projectId = Number(activeProject?.id ?? 0);
+  const projectValid = projectId > 0;
 
   const [queues, setQueues] = useState<Queue[]>([]);
   const [ticketCounts, setTicketCounts] = useState<Record<number, QueueTicketCounts>>({});
@@ -139,7 +140,7 @@ const QueuesPageContent: React.FC = () => {
                     <TableRow key={queue.id}>
                       <TableCell>
                         <a
-                          href={`/csm/queues/${queue.id}`}
+                          href={`/csm/queues/${queue.slug}`}
                           className="font-medium text-indigo-600 hover:text-indigo-800"
                         >
                           {queue.name}

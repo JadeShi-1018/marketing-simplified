@@ -30,19 +30,21 @@ def _budget_summary(budget_request) -> str:
 
 
 def _action_url(budget_request) -> str:
-    task_id = budget_request.task_id
-    if task_id:
-        return task_action_url(task_id)
+    task = getattr(budget_request, "task", None)
+    if task is not None and task.slug:
+        return task_action_url(task.slug)
     return ""
 
 
 def _base_metadata(budget_request, change_type: str, **extra) -> dict:
     pool = budget_request.budget_pool
     summary = _budget_summary(budget_request)
+    task = getattr(budget_request, "task", None)
     meta = {
         "change_type": change_type,
         "project_id": pool.project_id if pool else None,
         "task_id": budget_request.task_id,
+        "task_slug": task.slug if task is not None and task.slug else None,
         "budget_request_id": budget_request.id,
         "amount": str(budget_request.amount),
         "currency": budget_request.currency,

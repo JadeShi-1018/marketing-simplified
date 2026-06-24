@@ -162,17 +162,20 @@ class AdCreativeDetailView(generics.RetrieveUpdateDestroyAPIView):
         return AdCreative.objects.all()
     
     def get_object(self):
-        """Override to handle ad_creative_id parameter and validation"""
-        ad_creative_id = self.kwargs['ad_creative_id']
-        
-        # Validate ad_creative_id format
-        if not validate_numeric_string(ad_creative_id):
-            raise ValidationError("ad_creative_id must be a numeric string")
-        
-        try:
-            return AdCreative.objects.get(id=ad_creative_id)
-        except AdCreative.DoesNotExist:
+        """Resolve the ad creative by slug, falling back to its (string) pk.
+
+        AdCreative.id is a CharField (the external Meta creative id, a numeric
+        string), so we must NOT coerce to int — look up by slug first, then by
+        the raw pk value for legacy/back-compat links.
+        """
+        raw = self.kwargs['ad_creative_id']
+        obj = (
+            AdCreative.objects.filter(slug=raw).first()
+            or AdCreative.objects.filter(pk=raw).first()
+        )
+        if obj is None:
             raise NotFound("Ad creative not found")
+        return obj
     
     def get_serializer_class(self):
         """Return appropriate serializer based on HTTP method"""

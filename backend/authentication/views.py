@@ -13,6 +13,7 @@ from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import UserProfileSerializer, OrganizationTokenRefreshSerializer
 from .services import refresh_organization_access_token
+from core.admin_utils import assign_org_admin
 from core.models import Team, Organization, Role
 from access_control.models import UserRole
 from stripe_meta.permissions import generate_organization_access_token
@@ -106,6 +107,10 @@ class RegisterView(APIView):
                 defaults={"level": 30}
             )
             UserRole.objects.get_or_create(user=user, role=default_role)
+
+            # Org creator (no organization_id supplied) gets Organization Admin
+            if not organization_id:
+                assign_org_admin(user, organization)
 
             # Create CustomerOrganisation + admin CustomerUser so CSM features work
             from customer.models import CustomerOrganisation
@@ -746,9 +751,12 @@ class GoogleOAuthCallbackView(APIView):
                     )
 
                     user.save()
-                    
+
+                    # Org creator gets Organization Admin so billing endpoints work
+                    assign_org_admin(user, organization)
+
                     print(f"[GOOGLE OAUTH] New user created: {email}, username: {username}")
-                    
+
                     # HTTP redirect to frontend set-password page
                     redirect_url = f"{settings.FRONTEND_URL}/set-password?token={temp_token}"
                     return redirect(redirect_url)

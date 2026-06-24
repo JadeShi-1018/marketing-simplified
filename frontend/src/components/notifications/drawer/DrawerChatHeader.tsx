@@ -1,6 +1,7 @@
 'use client';
 
 import { X, MessageCircle, Users, ExternalLink, Forward } from 'lucide-react';
+import { buildMessagesPath } from '@/lib/messages/messagesRoutes';
 import { useRouter } from 'next/navigation';
 import type { Chat } from '@/types/chat';
 import { useAuthStore } from '@/lib/authStore';
@@ -76,17 +77,7 @@ export default function DrawerChatHeader({
   // Navigate to full messages page
   const handleOpenFullChat = () => {
     if (!chat) return;
-
-    const params = new URLSearchParams();
-    const targetProjectId = projectId || chat.project_id;
-
-    if (targetProjectId) {
-      params.set('projectId', String(targetProjectId));
-    }
-    params.set('chatId', String(chat.id));
-
-    const query = params.toString();
-    router.push(query ? `/messages?${query}` : '/messages');
+    router.push(buildMessagesPath(chat.slug));
     onClose();
   };
 

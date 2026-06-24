@@ -18,6 +18,7 @@ function toRow(draft: EmailDraft): EmailDraftRow {
   const fromName = draft.settings?.from_name || draft.from_name || '';
   return {
     id: draft.id,
+    slug: draft.slug,
     title: subject,
     subject,
     fromName,
@@ -68,7 +69,7 @@ export default function MailchimpV2Page() {
   }, [drafts, searchQuery]);
 
   const handleOpen = (row: EmailDraftRow) => {
-    router.push(`/mailchimp/${row.id}`);
+    router.push(`/mailchimp/${row.slug}`);
   };
   const handleEdit = handleOpen;
 
@@ -76,7 +77,7 @@ export default function MailchimpV2Page() {
     if (!deleteTarget) return;
     setDeleteBusy(true);
     try {
-      await mailchimpApi.deleteEmailDraft(deleteTarget.id);
+      await mailchimpApi.deleteEmailDraft(deleteTarget.slug ?? deleteTarget.id);
       setDrafts((prev) => prev.filter((d) => d.id !== deleteTarget.id));
       toast.success(`Deleted "${deleteTarget.title}"`);
       setDeleteTarget(null);

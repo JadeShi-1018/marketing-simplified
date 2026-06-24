@@ -4,7 +4,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 
@@ -28,11 +30,11 @@ export default function TicketFormEditPage() {
 
   const router = useRouter();
 
-  const searchParams = useSearchParams();
+  const { activeProject } = useActiveProjectForFlatRoute();
 
-  const formId = Number(params.id);
+  const formId = String(params.id);
 
-  const projectId = Number(searchParams.get('project'));
+  const projectId = Number(activeProject?.id ?? 0);
 
 
 
@@ -136,7 +138,7 @@ export default function TicketFormEditPage() {
     try {
       await TicketFormAPI.delete(formId);
       toast.success('Form deleted.');
-      router.push(`/admin/ticket-forms?project=${projectId}`);
+      router.push(`/admin/ticket-forms`);
     } catch {
       toast.error('Could not delete form.');
     }

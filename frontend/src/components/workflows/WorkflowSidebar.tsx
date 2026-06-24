@@ -7,7 +7,7 @@ import WorkflowEmptyState from "./WorkflowEmptyState";
 
 interface WorkflowSidebarProps {
   selection: Selection;
-  workflowId: number;
+  workflowId: number | string;
 }
 
 export default function WorkflowSidebar({ selection, workflowId }: WorkflowSidebarProps) {

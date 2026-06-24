@@ -45,6 +45,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The runner ran out of disk exporting the frontend image ("no space left
+      # on device"); free buildx storage between the two image builds (mirrors
+      # the main pipeline's pre-frontend-build prune).
+      - name: Free disk space before frontend build
+        run: docker buildx prune -af --keep-storage 2GB
+
       - name: Build frontend image
         uses: docker/build-push-action@v7
         with:
@@ -138,10 +144,9 @@ jobs:
             python manage.py migrate --noinput
           "
 
-      - name: Seed default plans (Free/Pro/Ultimate)
-        run: |
-          docker compose exec backend python manage.py shell -c \
-            "from stripe_meta.stripe_utils import initialize_default_plans; initialize_default_plans(); print('Plans seeded OK')"
+      # Plans (Free/Team) are seeded by migration 0004_seed_token_plans during the
+      # migrate step above; initialize_default_plans() was removed in the SMP-560
+      # token-billing redesign, so the old explicit seed step is gone.
 
       - name: Verify backend is ready
         run: |

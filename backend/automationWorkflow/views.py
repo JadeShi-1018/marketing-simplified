@@ -3,6 +3,7 @@ ViewSets for Workflow API endpoints.
 Implements CRUD operations, batch operations, and graph validation.
 """
 from rest_framework import viewsets, status
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -34,7 +35,7 @@ from automationWorkflow.validators import WorkflowValidator
 from core.models import ProjectMember
 
 
-class WorkflowViewSet(viewsets.ModelViewSet):
+class WorkflowViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for Workflow CRUD operations.
     """
@@ -71,9 +72,8 @@ class WorkflowViewSet(viewsets.ModelViewSet):
 
         project_id = self.request.query_params.get("project_id")
         if project_id is not None:
-            try:
-                project_id_int = int(project_id)
-            except (TypeError, ValueError):
+            project_id_int = resolve_project_pk(project_id)
+            if project_id_int is None:
                 return queryset.none()
 
             if project_id_int not in accessible_project_ids:
@@ -305,7 +305,7 @@ class WorkflowNodeViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         workflow_id = self.kwargs.get("workflow_pk")
         if workflow_id:
-            return self.queryset.filter(workflow_id=workflow_id)
+            return self.queryset.filter(**resolve_lookup_kwargs(workflow_id, 'workflow_id', 'workflow__slug'))
         return self.queryset.none()
 
     def get_serializer_class(self):
@@ -315,7 +315,7 @@ class WorkflowNodeViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         workflow_id = self.kwargs.get("workflow_pk")
-        workflow = get_object_or_404(Workflow, id=workflow_id)
+        workflow = get_object_or_404(Workflow, **resolve_lookup_kwargs(workflow_id, 'id'))
 
         self.check_object_permissions(self.request, workflow)
 
@@ -359,7 +359,7 @@ class WorkflowConnectionViewSet(viewsets.ModelViewSet):
         if not workflow_id:
             return self.queryset.none()
 
-        queryset = self.queryset.filter(workflow_id=workflow_id)
+        queryset = self.queryset.filter(**resolve_lookup_kwargs(workflow_id, 'workflow_id', 'workflow__slug'))
 
         connection_type = self.request.query_params.get("connection_type")
         if connection_type:
@@ -388,14 +388,14 @@ class WorkflowConnectionViewSet(viewsets.ModelViewSet):
         workflow_id = self.kwargs.get("workflow_pk")
         if workflow_id:
             try:
-                context["workflow"] = Workflow.objects.get(id=workflow_id)
+                context["workflow"] = Workflow.objects.get(**resolve_lookup_kwargs(workflow_id, 'id'))
             except Workflow.DoesNotExist:
                 pass
         return context
 
     def perform_create(self, serializer):
         workflow_id = self.kwargs.get("workflow_pk")
-        workflow = get_object_or_404(Workflow, id=workflow_id)
+        workflow = get_object_or_404(Workflow, **resolve_lookup_kwargs(workflow_id, 'id'))
 
         self.check_object_permissions(self.request, workflow)
 

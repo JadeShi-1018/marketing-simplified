@@ -32,7 +32,7 @@ export default function KlaviyoNewPage() {
       });
       toast.success('Template created');
       if (created?.id) {
-        router.push(`/klaviyo/${created.id}`);
+        router.push(`/klaviyo/${created.slug}`);
       } else {
         router.push('/klaviyo');
       }

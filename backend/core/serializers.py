@@ -62,7 +62,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = [
+        fields = ['slug', 
             'id',
             'name',
             'description',
@@ -85,7 +85,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             'is_active',
             'member_count',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['slug', 'id', 'created_at', 'updated_at']
 
     def get_is_active(self, obj):
         request = self.context.get('request')
@@ -106,7 +106,7 @@ class ProjectSummarySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ['id', 'name', 'description', 'owner', 'objectives', 'is_active', 'member_count']
+        fields = ['id', 'slug', 'name', 'description', 'owner', 'objectives', 'is_active', 'member_count']
 
     def get_is_active(self, obj):
         request = self.context.get('request')

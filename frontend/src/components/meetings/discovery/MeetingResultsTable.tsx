@@ -88,7 +88,7 @@ export interface MeetingResultsTableProps {
    */
   variant?: 'default' | 'lane';
   /** When set, list cards show contextual knowledge links (Meeting → tasks/decisions). */
-  projectId?: number;
+  projectId?: number | string;
 }
 
 function MeetingResultCard({
@@ -102,7 +102,7 @@ function MeetingResultCard({
   selected: boolean;
   onSelect: () => void;
   memberLabel: (userId: number) => string;
-  projectId?: number;
+  projectId?: number | string;
 }) {
   const participants = Array.isArray(m.participants) ? m.participants : [];
   const tags = Array.isArray(m.tags) ? m.tags : [];
@@ -111,13 +111,11 @@ function MeetingResultCard({
   const genDecisions = Array.isArray(m.generated_decisions) ? m.generated_decisions : [];
   const genTasks = Array.isArray(m.generated_tasks) ? m.generated_tasks : [];
   const hasContextualNav =
-    Number.isFinite(projectId) &&
     projectId != null &&
-    projectId >= 1 &&
     (genDecisions.length > 0 || genTasks.length > 0);
   const meetingPageKnowledgeHref =
     hasContextualNav && projectId != null
-      ? `/projects/${projectId}/meetings/${m.id}#contextual-knowledge`
+      ? `/projects/${projectId}/meetings/${m.slug}#contextual-knowledge`
       : null;
   const visibleTags = tags.slice(0, 3);
   const tagOverflow = tags.length - visibleTags.length;

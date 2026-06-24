@@ -31,7 +31,7 @@ describe('quickStartPostCreate', () => {
         decisions: false,
         miro: false,
       },
-      spreadsheetId: 9,
+      spreadsheetId: 'q1-launch-sheet',
       createdAt: Date.now(),
     });
 

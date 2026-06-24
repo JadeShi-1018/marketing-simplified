@@ -26,6 +26,9 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import { useProjectStore } from '@/lib/projectStore';
+import {
+  isNestedProjectNavActive,
+} from '@/lib/projectNestedRoutes';
 
 const getInitials = (name?: string | null): string => {
   if (!name) return '?';
@@ -159,6 +162,14 @@ export default function DashboardSidebar() {
   const { logout } = useAuth();
   const { toggle: toggleAgentPanel, isOpen: isAgentPanelOpen } = useAgentSidePanelStore();
 
+  const handleAgentNav = (href: string) => {
+    if (href === AGENT_PANEL_NAV_HREF) {
+      toggleAgentPanel();
+      return;
+    }
+    router.push(href);
+  };
+
   const userDisplayName = useMemo(() => {
     if (!user) return null;
     const full = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
@@ -288,8 +299,14 @@ export default function DashboardSidebar() {
               const isOpen = hasChildren && expanded.includes(item.label);
               const isAgentPanelItem = item.href === AGENT_PANEL_NAV_HREF;
               const isActive =
-                !hasChildren && !isAgentPanelItem && pathname === item.href;
-              const childActive = hasChildren && item.children!.some((c) => pathname === c.href);
+                !hasChildren &&
+                !isAgentPanelItem &&
+                isNestedProjectNavActive(pathname ?? '', item.href, item.href);
+              const childActive =
+                hasChildren &&
+                item.children!.some((c) =>
+                  isNestedProjectNavActive(pathname ?? '', c.href, c.href),
+                );
 
               return (
                 <div key={item.label}>
@@ -345,14 +362,18 @@ export default function DashboardSidebar() {
                           </DropdownMenuLabel>
                           <DropdownMenuSeparator className="my-1" />
                           {item.children!.map((child) => {
-                            const childIsActive = pathname === child.href;
+                            const childIsActive = isNestedProjectNavActive(
+                              pathname ?? '',
+                              child.href,
+                              child.href,
+                            );
                             return (
                               <DropdownMenuItem
                                 key={child.href}
                                 className={`gap-2 px-2 py-1.5 text-[13px] [&>svg]:size-3.5 ${
                                   childIsActive ? 'text-[#3CCED7]' : ''
                                 }`}
-                                onSelect={() => router.push(child.href)}
+                                onSelect={() => handleAgentNav(child.href)}
                               >
                                 <child.icon className="text-gray-500" />
                                 <span>{child.label}</span>
@@ -390,11 +411,15 @@ export default function DashboardSidebar() {
                   {hasChildren && isOpen && (
                     <div className="ml-8 mt-1 mb-1 hidden space-y-0.5 sm:block">
                       {item.children!.map((child) => {
-                        const childIsActive = pathname === child.href;
+                        const childIsActive = isNestedProjectNavActive(
+                          pathname ?? '',
+                          child.href,
+                          child.href,
+                        );
                         return (
                           <button
                             key={child.href}
-                            onClick={() => router.push(child.href)}
+                            onClick={() => handleAgentNav(child.href)}
                             className={`w-full flex items-center gap-3 px-3 py-1.5 rounded-md text-[13px] transition-colors ${
                               childIsActive
                                 ? 'bg-[#3CCED7]/8 text-[#3CCED7] font-medium'

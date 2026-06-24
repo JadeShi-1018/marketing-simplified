@@ -563,18 +563,21 @@ Rules:
 """
 
 
-def _try_llm_fallback(headers: list, sample_rows: list = None) -> ColumnDetectionResult:
+def _try_llm_fallback(headers: list, sample_rows: list = None, agent_session=None) -> ColumnDetectionResult:
     """
     Use Gemini to identify unknown columns.
 
     Args:
-        headers:     list of column header strings.
-        sample_rows: optional list of row dicts to help the LLM identify column types
-                     from actual values. At most _LLM_SAMPLE_ROW_LIMIT rows are sent.
+        headers:       list of column header strings.
+        sample_rows:   optional list of row dicts to help the LLM identify column types
+                       from actual values. At most _LLM_SAMPLE_ROW_LIMIT rows are sent.
+        agent_session: forwarded to call_llm for quota billing.
 
-    Falls back to a full-unknown result if the LLM call fails.
+    Falls back to a full-unknown result if the LLM call fails (QuotaError propagates).
     """
-    from .gemini_client import call_gemini_json, strip_json_fences, _get_api_key as _gemini_key
+    from stripe_meta.exceptions import QuotaError
+    from agent.llm_client import call_llm as _call_llm_unified
+    from .gemini_client import _get_api_key as _gemini_key
 
     if not _gemini_key():
         logger.warning("GEMINI_API_KEY not set; skipping LLM column detection")
@@ -582,17 +585,24 @@ def _try_llm_fallback(headers: list, sample_rows: list = None) -> ColumnDetectio
 
     try:
         rows_to_send = (sample_rows or [])[:_LLM_SAMPLE_ROW_LIMIT]
-        parsed = call_gemini_json(
+        result = _call_llm_unified(
+            agent_session=agent_session,
+            provider='gemini',
+            model='gemini-2.5-flash-lite',
             system_prompt=_COLUMN_DETECTION_SYSTEM_PROMPT,
             user_prompt=(
                 f"Column headers: {', '.join(headers)}\n"
                 f"Sample rows:\n{json.dumps(rows_to_send, default=str)}"
             ),
             temperature=0.2,
-            timeout=60,
+            max_output_tokens=2048,
+            response_mime_type='application/json',
         )
+        parsed = json.loads(result['text'])
         return _parse_llm_response(headers, parsed)
 
+    except QuotaError:
+        raise
     except Exception:
         logger.exception("LLM column detection failed; falling back to unknown")
         return _unknown_result(headers)
@@ -658,7 +668,7 @@ def _unknown_result(headers: list) -> ColumnDetectionResult:
 # ---------------------------------------------------------------------------
 
 def detect_columns(headers: list, sample_rows: list = None,
-                   project=None) -> ColumnDetectionResult:
+                   project=None, agent_session=None) -> ColumnDetectionResult:
     """
     Detect what each column header represents.
 
@@ -708,7 +718,7 @@ def detect_columns(headers: list, sample_rows: list = None,
 
     # 3. LLM fallback
     logger.info("Column detection: no rule match; falling back to LLM")
-    result = _try_llm_fallback(headers, sample_rows=sample_rows)
+    result = _try_llm_fallback(headers, sample_rows=sample_rows, agent_session=agent_session)
 
     # Persist as a learned template if the LLM was confident enough
     if result.source == "llm" and result.confidence >= 0.6 and result.schema_name != "Unknown format":

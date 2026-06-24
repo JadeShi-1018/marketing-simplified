@@ -483,8 +483,10 @@ def call_gemini_miro_generator(
     context: dict[str, Any],
     *,
     user_id: str | int | None = None,
+    agent_session=None,
 ) -> dict[str, Any]:
-    from .gemini_client import call_gemini_json
+    import json as _json
+    from .llm_client import call_llm as _call_llm_unified
 
     context_json = json_input(context)
     rules_json = json_input(load_miro_snapshot_rules())
@@ -494,7 +496,10 @@ def call_gemini_miro_generator(
         len(context_json),
         len(rules_json),
     )
-    outputs = call_gemini_json(
+    result = _call_llm_unified(
+        agent_session=agent_session,
+        provider='gemini',
+        model='gemini-2.5-flash-lite',
         system_prompt=_MIRO_SYSTEM_PROMPT,
         user_prompt=(
             f"board_generation_context:\n{context_json}\n\n"
@@ -502,8 +507,10 @@ def call_gemini_miro_generator(
             f"Return the final board snapshot JSON now."
         ),
         temperature=0.5,
-        timeout=300,
+        max_output_tokens=4096,
+        response_mime_type='application/json',
     )
+    outputs = _json.loads(result['text'])
     snapshot = _extract_snapshot_candidate(outputs)
     snapshot = _sanitize_snapshot_numbers(snapshot)
     snapshot = normalize_miro_snapshot_layout(snapshot)

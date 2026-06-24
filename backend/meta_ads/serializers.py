@@ -15,6 +15,7 @@ class MetaCampaignSerializer(serializers.ModelSerializer):
         model = MetaCampaign
         fields = [
             "id",
+            "slug",
             "meta_campaign_id",
             "name",
             "objective",
@@ -33,6 +34,7 @@ class MetaAdSetSerializer(serializers.ModelSerializer):
         model = MetaAdSet
         fields = [
             "id",
+            "slug",
             "meta_adset_id",
             "campaign",
             "name",
@@ -49,6 +51,7 @@ class MetaAdCreativeSerializer(serializers.ModelSerializer):
         model = MetaAdCreative
         fields = [
             "id",
+            "slug",
             "meta_creative_id",
             "name",
             "title",

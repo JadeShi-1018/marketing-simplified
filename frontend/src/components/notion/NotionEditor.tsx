@@ -33,7 +33,7 @@ type Command = 'bold' | 'italic' | 'underline' | 'link';
 interface NotionEditorProps {
   blocks: EditorBlock[];
   setBlocks: React.Dispatch<React.SetStateAction<EditorBlock[]>>;
-  draftId?: number;
+  draftId?: number | string;
 }
 
 const blockLabels: Record<NotionBlockType | string, string> = {

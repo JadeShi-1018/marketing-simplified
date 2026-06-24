@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { X, Bot } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { X, Bot, Settings } from 'lucide-react';
 import { AgentLayoutProvider } from './AgentLayoutContext';
 import { AgentChatPage } from './chat/AgentChatPage';
 import { useAgentSidePanelStore } from '@/lib/agentSidePanelStore';
@@ -9,12 +10,16 @@ import { GenerationOutputsSettings } from './chat/GenerationOutputsSettings';
 import { AgentAPI } from '@/lib/api/agentApi';
 import { AgentMessageBoardRail } from './AgentMessageBoardRail';
 import { AgentPanelToggleIcon } from './AgentPanelToggleIcon';
+import { useProjectStore } from '@/lib/projectStore';
+import TokenBadge from '@/components/plans/TokenBadge';
 
 const MIN_WIDTH = 340;
 const MAX_WIDTH = 560;
 
 export default function AgentSidePanel() {
+  const router = useRouter();
   const { isOpen, close } = useAgentSidePanelStore();
+  const activeProjectId = useProjectStore((s) => s.activeProject?.id ?? null);
   const [width, setWidth] = useState(MAX_WIDTH);
   const [messageBoardsOpen, setMessageBoardsOpen] = useState(true);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -136,6 +141,9 @@ export default function AgentSidePanel() {
             <span className="hidden shrink-0 rounded-full bg-[#3CCED7]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#3CCED7] sm:inline">
               AI
             </span>
+            {activeProjectId !== null && (
+              <TokenBadge projectId={activeProjectId} />
+            )}
             <button
               type="button"
               onClick={() => setMessageBoardsOpen((open) => !open)}
@@ -168,6 +176,18 @@ export default function AgentSidePanel() {
                 }
               }}
             />
+            <button
+              type="button"
+              onClick={() => {
+                close();
+                router.push('/agent');
+              }}
+              className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+              aria-label="Open workspace"
+              title="Workspace"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
             <button
               type="button"
               onClick={close}

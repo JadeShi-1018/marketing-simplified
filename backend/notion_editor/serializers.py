@@ -46,12 +46,12 @@ class DraftSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Draft
-        fields = [
+        fields = ['slug', 
             'id', 'title', 'user', 'user_email', 'status', 
             'content_blocks', 'blocks', 'content_blocks_count',
             'created_at', 'updated_at', 'is_deleted'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['slug', 'id', 'created_at', 'updated_at']
     
     def get_content_blocks_count(self, obj):
         """Get the number of content blocks"""
@@ -85,7 +85,7 @@ class DraftListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Draft
         fields = [
-            'id', 'title', 'user_email', 'status', 
+            'id', 'slug', 'title', 'user_email', 'status',
             'content_blocks_count', 'created_at', 'updated_at'
         ]
     

@@ -41,7 +41,7 @@ class StatusReportAPITest(TestCase):
     def test_status_report_rejects_projects_without_membership(self):
         response = self.client.get(
             reverse('task-status-report'),
-            {'project_id': self.other_project.id},
+            {'project_id': self.other_project.slug},
         )
 
         self.assertEqual(response.status_code, 404)
@@ -78,7 +78,7 @@ class StatusReportAPITest(TestCase):
         with patch('task.status_report.generate_status_report', return_value=payload) as mock_generate:
             response = self.client.get(
                 reverse('task-status-report'),
-                {'project_id': self.project.id},
+                {'project_id': self.project.slug},
             )
 
         self.assertEqual(response.status_code, 200)

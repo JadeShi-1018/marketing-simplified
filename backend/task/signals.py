@@ -216,7 +216,7 @@ def notify_task_owner_on_status_change(sender, instance, created, **kwargs):
         body=f"Status changed from {old} to {instance.status}.",
         related_object_type="task",
         related_object_id=str(instance.id),
-        action_url=task_action_url(instance.id),
+        action_url=task_action_url(instance.slug),
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,
@@ -257,7 +257,7 @@ def notify_on_anomaly_status_change(sender, instance, created, **kwargs):
         body=f"Task anomaly status changed to {instance.anomaly_status}.",
         related_object_type="task",
         related_object_id=str(instance.id),
-        action_url=task_action_url(instance.id),
+        action_url=task_action_url(instance.slug),
         metadata={
             "task_id": instance.id,
             "project_id": instance.project_id,
@@ -448,3 +448,38 @@ def record_relation_removed(sender, instance, **kwargs):
             TaskFieldHistory.objects.bulk_create(records)
     except Exception:
         logger.exception('TaskFieldHistory: failed to record relation_removed for TaskRelation %s', instance.pk)
+
+
+# ── Agent Workflow Triggers ───────────────────────────────────────────────────
+
+@receiver(post_save, sender=Task)
+def trigger_instant_workflows_on_task_change(sender, instance, created, **kwargs):
+    """
+    Trigger instant agent workflows when a task is created or its status changes.
+    """
+    try:
+        from agent.trigger_handlers import InstantHandler
+
+        if created:
+            # Task created event
+            InstantHandler.handle_internal_event('task.created', {
+                'task_id': instance.id,
+                'project_id': instance.project_id,
+                'status': instance.status,
+                'summary': instance.summary,
+            })
+            logger.info(f"Triggered instant workflows for task creation: {instance.id}")
+        else:
+            # Task status changed event
+            old_status = _task_status_cache.get(instance.pk)
+            if old_status and old_status != instance.status:
+                InstantHandler.handle_internal_event('task.status_changed', {
+                    'task_id': instance.id,
+                    'project_id': instance.project_id,
+                    'old_status': old_status,
+                    'new_status': instance.status,
+                    'summary': instance.summary,
+                })
+                logger.info(f"Triggered instant workflows for task status change: {instance.id}")
+    except Exception:
+        logger.exception(f"Error triggering workflows for task {instance.id}")

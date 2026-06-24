@@ -26,10 +26,11 @@ def create_default_subscription(sender, instance, created, **kwargs):
             Subscription.objects.create(
                 organization=instance,
                 plan=free_plan,
-                stripe_subscription_id="sub_free_internal", # Dummy ID for internal free plan
+                stripe_subscription_id=f"sub_free_internal_{instance.id}",
                 start_date=timezone.now(),
-                end_date=timezone.now() + timedelta(days=365*100), # Effectively forever (100 years)
-                is_active=True
+                end_date=timezone.now() + timedelta(days=365*100),
+                is_active=True,
+                is_internal=True,
             )
             
             logger.info(f"Auto-subscribed organization '{instance.name}' (ID: {instance.id}) to Free plan.")

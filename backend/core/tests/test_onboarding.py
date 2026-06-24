@@ -260,3 +260,25 @@ class TestProjectOnboarding:
         assert user_no_org.organization is not None
         project = Project.objects.get(name="Test Project")
         assert project.organization == user_no_org.organization
+
+    def test_onboarding_without_org_grants_organization_admin(self, user_no_org):
+        """_ensure_organization_for_user must assign Organization Admin to the creator."""
+        from rest_framework.test import APIClient
+        from access_control.models import UserRole
+
+        client = APIClient()
+        client.force_authenticate(user=user_no_org)
+
+        url = reverse('project-onboarding')
+        response = client.post(url, self._build_payload(), format='json')
+
+        assert response.status_code == status.HTTP_201_CREATED
+        user_no_org.refresh_from_db()
+
+        is_admin = UserRole.objects.filter(
+            user=user_no_org,
+            role__name='Organization Admin',
+            role__level=2,
+            role__organization=user_no_org.organization,
+        ).exists()
+        assert is_admin, "_ensure_organization_for_user must grant Organization Admin to new org creator"

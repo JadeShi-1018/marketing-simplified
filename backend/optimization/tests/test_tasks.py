@@ -29,13 +29,12 @@ User = get_user_model()
 
 class IngestExperimentMetricsTaskTest(TestCase):
     """Test cases for ingest_experiment_metrics Celery task"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.running_experiment = OptimizationExperiment.objects.create(
@@ -233,13 +232,12 @@ class IngestExperimentMetricsTaskTest(TestCase):
 
 class EvaluateScalingRulesTaskTest(TestCase):
     """Test cases for evaluate_scaling_rules Celery task"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.running_experiment = OptimizationExperiment.objects.create(
@@ -363,13 +361,12 @@ class EvaluateScalingRulesTaskTest(TestCase):
 
 class ScalingAnalysisTest(TestCase):
     """Test cases for scaling analysis functions"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.experiment = OptimizationExperiment.objects.create(
@@ -799,13 +796,12 @@ class ScalingAnalysisTest(TestCase):
 
 class ScalingActionCreationTest(TestCase):
     """Test cases for scaling action creation"""
-    
+
     def setUp(self):
         """Set up test data"""
-        self.user = User.objects.create_user(
+        self.user, _ = User.objects.get_or_create(
             username='testuser',
-            email='test@example.com',
-            password='testpass123'
+            defaults={'email': 'test@example.com', 'password': 'testpass123'}
         )
         
         self.experiment = OptimizationExperiment.objects.create(

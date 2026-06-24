@@ -17,7 +17,7 @@ interface SavedItemsPanelProps {
     messageId: number,
     chatId: number,
     parentMessageId?: number | null,
-    projectId?: number | null,
+    projectId?: number | string | null,
   ) => void;
 }
 
@@ -116,7 +116,7 @@ export default function SavedItemsPanel({ onClose, onJumpToMessage }: SavedItems
                               item.message.id,
                               Number(chatId),
                               item.message.parent_message_id ?? null,
-                              projectId ? Number(projectId) : null,
+                              projectId || null,
                             )
                           }
                           className="mt-0.5 text-[11px] text-teal-600 hover:underline"

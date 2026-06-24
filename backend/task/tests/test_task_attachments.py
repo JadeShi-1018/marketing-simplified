@@ -66,7 +66,7 @@ class TaskAttachmentAPITest(APITestCase):
 
     def test_create_task_attachment_success(self):
         """Authenticated project member can create an attachment on a task."""
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         test_file = self._create_test_file()
         data = {"file": test_file}
 
@@ -111,7 +111,7 @@ class TaskAttachmentAPITest(APITestCase):
             content_type="text/plain"
         )
 
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -139,7 +139,7 @@ class TaskAttachmentAPITest(APITestCase):
             content_type="text/plain"
         )
 
-        url = self._get_attachment_detail_url(self.task.id, attachment.id)
+        url = self._get_attachment_detail_url(self.task.slug, attachment.id)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -159,7 +159,7 @@ class TaskAttachmentAPITest(APITestCase):
             content_type="text/plain"
         )
 
-        url = self._get_attachment_detail_url(self.task.id, attachment.id)
+        url = self._get_attachment_detail_url(self.task.slug, attachment.id)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -177,7 +177,7 @@ class TaskAttachmentAPITest(APITestCase):
             content_type="text/plain"
         )
 
-        url = self._get_attachment_download_url(self.task.id, attachment.id)
+        url = self._get_attachment_download_url(self.task.slug, attachment.id)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -190,7 +190,7 @@ class TaskAttachmentAPITest(APITestCase):
         """Unauthenticated requests cannot create attachments."""
         self.client.force_authenticate(user=None)
 
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         test_file = self._create_test_file()
         data = {"file": test_file}
 
@@ -202,7 +202,7 @@ class TaskAttachmentAPITest(APITestCase):
         """Unauthenticated requests cannot list attachments."""
         self.client.force_authenticate(user=None)
 
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
@@ -211,7 +211,7 @@ class TaskAttachmentAPITest(APITestCase):
         """Non-project member cannot create task attachments."""
         self.client.force_authenticate(user=self.other_user)
 
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         test_file = self._create_test_file()
         data = {"file": test_file}
 
@@ -223,7 +223,7 @@ class TaskAttachmentAPITest(APITestCase):
         """Non-project member cannot list task attachments."""
         self.client.force_authenticate(user=self.other_user)
 
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -242,7 +242,7 @@ class TaskAttachmentAPITest(APITestCase):
             content_type="text/plain"
         )
 
-        url = self._get_attachment_detail_url(self.task.id, attachment.id)
+        url = self._get_attachment_detail_url(self.task.slug, attachment.id)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -261,7 +261,7 @@ class TaskAttachmentAPITest(APITestCase):
             content_type="text/plain"
         )
 
-        url = self._get_attachment_detail_url(self.task.id, attachment.id)
+        url = self._get_attachment_detail_url(self.task.slug, attachment.id)
         response = self.client.delete(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
@@ -281,14 +281,14 @@ class TaskAttachmentAPITest(APITestCase):
             content_type="text/plain"
         )
 
-        url = self._get_attachment_download_url(self.task.id, attachment.id)
+        url = self._get_attachment_download_url(self.task.slug, attachment.id)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_create_attachment_for_nonexistent_task(self):
         """Creating attachment for non-existent task returns 404."""
-        url = self._get_attachments_url(999999)
+        url = self._get_attachments_url("nonexistent-task")
         test_file = self._create_test_file()
         data = {"file": test_file}
 
@@ -297,28 +297,28 @@ class TaskAttachmentAPITest(APITestCase):
 
     def test_list_attachments_for_nonexistent_task(self):
         """Listing attachments for non-existent task returns 404."""
-        url = self._get_attachments_url(999999)
+        url = self._get_attachments_url("nonexistent-task")
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_get_attachment_detail_nonexistent_task(self):
         """Getting attachment detail for non-existent task returns 404."""
-        url = self._get_attachment_detail_url(999999, 1)
+        url = self._get_attachment_detail_url("nonexistent-task", 1)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_get_nonexistent_attachment(self):
         """Getting non-existent attachment returns 404."""
-        url = self._get_attachment_detail_url(self.task.id, 999999)
+        url = self._get_attachment_detail_url(self.task.slug, 999999)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_create_attachment_without_file(self):
         """Creating attachment without file should fail."""
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         data = {}
 
         response = self.client.post(url, data, format="multipart")
@@ -339,7 +339,7 @@ class TaskAttachmentAPITest(APITestCase):
         attachment.file = None
         attachment.save()
 
-        url = self._get_attachment_download_url(self.task.id, attachment.id)
+        url = self._get_attachment_download_url(self.task.slug, attachment.id)
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -347,7 +347,7 @@ class TaskAttachmentAPITest(APITestCase):
 
     def test_attachment_checksum_computed(self):
         """Checksum should be computed when attachment is created."""
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         test_file = self._create_test_file("test.txt", b"test content")
         data = {"file": test_file}
 
@@ -360,7 +360,7 @@ class TaskAttachmentAPITest(APITestCase):
 
     def test_attachment_metadata_set_correctly(self):
         """Attachment metadata (filename, size, content_type) should be set correctly."""
-        url = self._get_attachments_url(self.task.id)
+        url = self._get_attachments_url(self.task.slug)
         test_file = SimpleUploadedFile(
             "document.pdf",
             b"PDF content here",

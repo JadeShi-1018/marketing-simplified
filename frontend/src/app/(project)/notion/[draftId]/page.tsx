@@ -239,13 +239,14 @@ function NotionV2DetailContent() {
   const params = useParams<{ draftId: string }>();
   const router = useRouter();
   const draftIdParam = params?.draftId;
+  // Resource lookups are slug-only; keep the route value as an opaque string.
   const draftId = useMemo(() => {
-    if (!draftIdParam) return null;
-    const n = parseInt(draftIdParam, 10);
-    return Number.isFinite(n) && n > 0 ? n : null;
+    if (!draftIdParam || !draftIdParam.trim()) return null;
+    return draftIdParam;
   }, [draftIdParam]);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [title, setTitle] = useState('Untitled');
   const [status, setStatus] = useState<DraftStatus>('draft');
   const [blocks, setBlocks] = useState<EditorBlock[]>([createEmptyBlock()]);
@@ -285,6 +286,7 @@ function NotionV2DetailContent() {
   const loadDraft = useCallback(async () => {
     if (!draftId) return;
     setIsLoading(true);
+    setLoadError(null);
     try {
       const draft = await NotionDraftAPI.getDraft(draftId);
       const nextBlocks = convertContentBlocksFromApi(draft.content_blocks || []);
@@ -303,6 +305,7 @@ function NotionV2DetailContent() {
         error?.response?.data?.message ||
         error?.message ||
         'Failed to load draft';
+      setLoadError(msg);
       toast.error(msg);
     } finally {
       setIsLoading(false);
@@ -369,7 +372,7 @@ function NotionV2DetailContent() {
       const created = await NotionDraftAPI.duplicateDraft(draftId);
       if (!created?.id) throw new Error('Duplicated draft id missing');
       toast.success('Draft duplicated');
-      router.push(`/notion/${created.id}`);
+      router.push(`/notion/${created.slug}`);
     } catch (error: any) {
       console.error('Failed to duplicate draft', error);
       toast.error(error?.response?.data?.detail || 'Failed to duplicate draft');
@@ -696,7 +699,7 @@ function NotionV2DetailContent() {
             <div className="h-full flex items-center justify-center text-gray-400">
               Loading draft…
             </div>
-          ) : !draftId ? (
+          ) : (!draftId || loadError) ? (
             <div className="h-full flex flex-col items-center justify-center text-center text-gray-400 space-y-3 px-16">
               <h2 className="text-3xl font-semibold text-gray-900">Draft not found</h2>
               <p className="max-w-md text-sm text-gray-600">

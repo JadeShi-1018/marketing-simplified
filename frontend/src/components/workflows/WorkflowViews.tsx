@@ -145,7 +145,7 @@ export function WorkflowViews({
                 key={workflow.id}
                 className="hover:bg-gray-50 cursor-pointer"
                 onClick={() =>
-                  router.push(`/workflows/${workflow.id}/edit`)
+                  router.push(`/workflows/${workflow.slug}/edit`)
                 }
               >
                 <td className="px-4 py-3 text-sm font-medium text-gray-900">

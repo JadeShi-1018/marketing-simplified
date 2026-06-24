@@ -103,6 +103,7 @@ INSTALLED_APPS = [
     'customer',
     'tracking',
     'csm',
+    'portal',
 ]
 
 MIDDLEWARE = [
@@ -388,10 +389,27 @@ broker_connection_retry_on_startup = True
 
 # Celery Beat Configuration for Periodic Tasks
 CELERY_BEAT_SCHEDULE = {
-    'reset-daily-usage': {
-        'task': 'stripe_meta.tasks.reset_daily_usage',
-        'schedule': crontab(hour=0, minute=0),  # Run at midnight (00:00) every day
-        'options': {'timezone': 'UTC'}
+    # 'reset-daily-usage': {   # disabled — UsageDaily replaced by token-based billing
+    #     'task': 'stripe_meta.tasks.reset_daily_usage',
+    #     'schedule': crontab(hour=0, minute=0),
+    #     'options': {'timezone': 'UTC'},
+    # },
+    'aggregate-monthly-llm-cost': {
+        'task': 'stripe_meta.tasks.aggregate_monthly_llm_cost',
+        'schedule': crontab(hour=2, minute=0),   # daily 02:00 UTC
+        'options': {'timezone': 'UTC'},
+    },
+    'check-fair-use-alerts': {
+        'task': 'stripe_meta.tasks.check_fair_use_alerts',
+        'schedule': crontab(hour=3, minute=0),   # daily 03:00 UTC
+        'options': {'timezone': 'UTC'},
+    },
+    'report-overage-to-stripe': {
+        'task': 'stripe_meta.tasks.report_overage_to_stripe',
+        # 1st of month, 01:00 UTC — reports the PREVIOUS (completed) month, so no
+        # late-month overage is missed and an off-schedule run targets the right month.
+        'schedule': crontab(hour=1, minute=0, day_of_month=1),
+        'options': {'timezone': 'UTC'},
     },
     'cleanup-expired-tiktok-previews': {
         'task': 'tiktok.tasks.cleanup_expired_previews',
@@ -447,6 +465,22 @@ CELERY_BEAT_SCHEDULE = {
     'fire-message-reminders': {
         'task': 'notifications.tasks.fire_message_reminders',
         'schedule': timedelta(minutes=1),
+        'options': {'timezone': 'UTC'},
+    },
+    # Agent workflow trigger tasks
+    'agent-check-polling-triggers': {
+        'task': 'agent.tasks.check_polling_triggers',
+        'schedule': timedelta(minutes=5),
+        'options': {'timezone': 'UTC'},
+    },
+    'agent-check-scheduled-triggers': {
+        'task': 'agent.tasks.check_scheduled_triggers',
+        'schedule': timedelta(minutes=1),
+        'options': {'timezone': 'UTC'},
+    },
+    'agent-cleanup-old-trigger-logs': {
+        'task': 'agent.tasks.cleanup_old_trigger_logs',
+        'schedule': crontab(hour=2, minute=0),
         'options': {'timezone': 'UTC'},
     },
 }
@@ -565,6 +599,28 @@ INTERNAL_WEBHOOK_ENABLED = config('INTERNAL_WEBHOOK_ENABLED', default=True, cast
 STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY', default='sk')
 STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='pk')
 STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET', default='wh')
+# Token-billing Stripe price IDs (env-driven, no hardcoded IDs)
+STRIPE_TEAM_BASE_PRICE_ID = os.environ.get('STRIPE_TEAM_BASE_PRICE_ID', '')
+STRIPE_TEAM_EXTRA_SEAT_PRICE_ID = os.environ.get('STRIPE_TEAM_EXTRA_SEAT_PRICE_ID', '')
+STRIPE_TEAM_OVERAGE_PRICE_ID = os.environ.get('STRIPE_TEAM_OVERAGE_PRICE_ID', '')
+# Per-model token multipliers (relative to sonnet baseline = 1.0)
+MODEL_TOKEN_MULTIPLIER = {
+    'claude-sonnet-4-20250514': 1.0,
+    'claude-sonnet-4-5': 1.0,
+    'claude-haiku-4-5': 0.2,
+    'claude-opus-4-6': 5.0,
+    'gemini-2.5-flash-lite': 0.15,
+}
+# Actual API cost table in cents per 1M tokens (for LLMCallLog cost_cents)
+LLM_PRICE_TABLE = {
+    'claude-sonnet-4-20250514': {'input': 300, 'output': 1500},
+    'claude-sonnet-4-5': {'input': 300, 'output': 1500},
+    'claude-haiku-4-5': {'input': 80, 'output': 400},
+    'claude-opus-4-6': {'input': 1500, 'output': 7500},
+    'gemini-2.5-flash-lite': {'input': 10, 'output': 40},
+}
+FAIR_USE_THRESHOLD_RATIO = 0.30   # alert when user > 30% of org quota
+FREE_USER_MAX_COST_CENTS = 200    # safety cap for fair-use alert on Free tier
 
 # Organization Access Token Configuration
 ORGANIZATION_ACCESS_TOKEN_SECRET_KEY = config('ORGANIZATION_ACCESS_TOKEN_SECRET_KEY', default='52r(=liv3ro&zsuau-doa(wekq-(x^&y8(b$5h@k(g(c9&jlmp')

@@ -9,9 +9,10 @@ import {
   persistGraphLinkChanges,
 } from '@/components/decisions/decisionGraphLinks';
 import type { DecisionGraphEdge, DecisionGraphNode } from '@/types/decision';
+import { Id } from '@/types/common';
 
 export function useDecisionGraphLinks(
-  projectId: number | null | undefined,
+  projectId: Id | null | undefined,
   nodes: DecisionGraphNode[],
   serverEdges: DecisionGraphEdge[],
   enabled: boolean,

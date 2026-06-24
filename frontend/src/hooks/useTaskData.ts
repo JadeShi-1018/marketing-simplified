@@ -102,7 +102,7 @@ export const useTaskData = () => {
 
   // Get a specific task by ID
   const fetchTask = useCallback(
-    async (taskId: number): Promise<TaskData> => {
+    async (taskId: number | string): Promise<TaskData> => {
       try {
         setLoading(true);
         setError(null);

@@ -6,12 +6,14 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from core.admin_utils import assign_org_admin
 from core.models import Organization, Project, ProjectInvitation, ProjectMember, Role
 from core.permissions import (
     CanManageProjectMembers,
@@ -236,6 +238,7 @@ class ProjectOnboardingView(APIView):
                 'is_creator': True,
             },
         )
+        assign_org_admin(user, organization)
 
         return organization
 
@@ -266,7 +269,7 @@ class KPISuggestionsView(APIView):
         )
 
 
-class ProjectViewSet(viewsets.ModelViewSet):
+class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for Project model with project membership filtering.
     
@@ -386,6 +389,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 'is_creator': True,
             },
         )
+        assign_org_admin(user, organization)
 
         return organization
 
@@ -553,7 +557,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         from core.utils.bot_user import AGENT_BOT_EMAIL
 
         project_id = self.kwargs.get('project_id')
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Verify user is a member
         if not ProjectMember.objects.filter(
@@ -690,7 +694,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Invite user to project."""
         project_id = self.kwargs.get('project_id')
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Invite is owner-only: verify actor is the authoritative project owner
         user = request.user
@@ -721,6 +725,30 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
             raise ValidationError({
                 'email': 'User is already a member of this project'
             })
+
+        # Seat cap check: enforce org's purchased seat limit before creating the invitation.
+        org = project.organization
+        if org:
+            from stripe_meta.services import get_active_real_subscription  # noqa: PLC0415
+            sub = get_active_real_subscription(org)
+            if sub:
+                current_count = User.objects.filter(organization=org).count()
+                if sub.seat_count <= current_count:
+                    is_free = sub.is_internal
+                    return Response(
+                        {
+                            'error': (
+                                'Free plan is limited to 1 seat. Upgrade to Team to add more members.'
+                                if is_free
+                                else 'Seat limit reached. Purchase more seats to add more members.'
+                            ),
+                            'code': 'SEAT_LIMIT_REACHED',
+                            'seats_available': 0,
+                            'seats_purchased': sub.seat_count,
+                            'upgrade_required': is_free,
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
 
         try:
             invitation = create_project_invitation(
@@ -835,7 +863,7 @@ class ListProjectAvailableRolesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id: int):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Prevent leaking role definitions to non-members.
         if not ProjectMember.objects.filter(
@@ -1023,7 +1051,7 @@ class ListProjectInvitationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Verify user is a project member
         if not ProjectMember.objects.filter(
@@ -1061,7 +1089,8 @@ class ListMyProjectInvitationsView(APIView):
         ).select_related('invited_by', 'project').order_by('-created_at')
 
         if project_id:
-            invitations = invitations.filter(project_id=project_id)
+            resolved_pid = resolve_project_pk(project_id)
+            invitations = invitations.filter(project_id=resolved_pid) if resolved_pid else invitations.none()
 
         serializer = ProjectInvitationSerializer(invitations, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1073,7 +1102,7 @@ class ListPendingInvitationApprovalsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(
@@ -1097,7 +1126,7 @@ class ApproveProjectInvitationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, project_id, invitation_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(
@@ -1114,10 +1143,62 @@ class ApproveProjectInvitationView(APIView):
             )
 
         if not invitation.approved:
-            invitation.approved = True
-            invitation.approved_by = request.user
-            invitation.approved_at = timezone.now()
-            invitation.save(update_fields=['approved', 'approved_by', 'approved_at'])
+            # Seat-cap check + approve must be atomic: select_for_update on the
+            # subscription row serializes concurrent approvals, and approved-but-
+            # unaccepted invitations count toward the cap (each one is a seat that
+            # WILL be consumed at accept). Without both, two approvals at cap-1
+            # both pass — the member count alone doesn't change at approval time.
+            org = project.organization
+            if org:
+                from stripe_meta.models import Subscription  # noqa: PLC0415
+                with transaction.atomic():
+                    sub = (
+                        Subscription.objects.select_for_update()
+                        .filter(organization=org, is_active=True)
+                        .order_by('is_internal')
+                        .select_related('plan')
+                        .first()
+                    )
+                    if sub:
+                        member_count = User.objects.filter(organization=org).count()
+                        # Approved invitations not yet accepted, excluding emails of
+                        # existing org members (accepting those consumes no new seat).
+                        pending_seats = (
+                            ProjectInvitation.objects.filter(
+                                project__organization=org,
+                                approved=True,
+                                accepted=False,
+                            )
+                            .exclude(
+                                email__in=User.objects.filter(organization=org).values_list('email', flat=True)
+                            )
+                            .count()
+                        )
+                        if sub.seat_count <= member_count + pending_seats:
+                            is_free = sub.is_internal
+                            return Response(
+                                {
+                                    'error': (
+                                        'Free plan is limited to 1 seat. Upgrade to Team to add more members.'
+                                        if is_free
+                                        else 'Seat limit reached. Purchase more seats to add more members.'
+                                    ),
+                                    'code': 'SEAT_LIMIT_REACHED',
+                                    'seats_available': 0,
+                                    'seats_purchased': sub.seat_count,
+                                    'upgrade_required': is_free,
+                                },
+                                status=status.HTTP_403_FORBIDDEN,
+                            )
+                    invitation.approved = True
+                    invitation.approved_by = request.user
+                    invitation.approved_at = timezone.now()
+                    invitation.save(update_fields=['approved', 'approved_by', 'approved_at'])
+            else:
+                invitation.approved = True
+                invitation.approved_by = request.user
+                invitation.approved_at = timezone.now()
+                invitation.save(update_fields=['approved', 'approved_by', 'approved_at'])
             send_invitation_email(invitation)
 
         serializer = ProjectInvitationSerializer(invitation, context={'request': request})
@@ -1130,7 +1211,7 @@ class RejectProjectInvitationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, project_id, invitation_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(

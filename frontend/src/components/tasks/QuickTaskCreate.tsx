@@ -10,7 +10,7 @@ import { TASK_PRIORITY_OPTIONS } from '@/lib/tasks/taskPriorities';
 import { TASK_TYPE_DEFINITIONS } from '@/lib/tasks/taskTypes';
 
 interface QuickTaskCreateProps {
-  projectId: number;
+  projectId: number | string;
   open: boolean;
   onClose: () => void;
   onCreated?: (task: TaskData) => void;

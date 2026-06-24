@@ -12,13 +12,9 @@ import Layout from '@/components/layout/Layout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { ProjectAPI, type ProjectData } from '@/lib/api/projectApi';
 import WorkspaceDashboard from '@/components/projects/WorkspaceDashboard';
+import TokenProgressBar from '@/components/plans/TokenProgressBar';
 
-function parsePositiveProjectId(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n <= 0) return null;
-  return Math.trunc(n);
-}
+
 
 function getErrorMessage(err: unknown, fallback: string): string {
   const anyErr = err as {
@@ -35,15 +31,14 @@ function getErrorMessage(err: unknown, fallback: string): string {
 
 export default function ProjectWorkspacePage() {
   const params = useParams();
-  const rawId = params?.projectId as string | undefined;
-  const projectId = parsePositiveProjectId(rawId);
+  const projectId = (params?.projectId as string) || '';
 
   const [project, setProject] = useState<ProjectData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (projectId == null) {
+    if (!projectId) {
       setError('Invalid project ID');
       setLoading(false);
       return;
@@ -106,6 +101,9 @@ export default function ProjectWorkspacePage() {
                 {project.description && (
                   <p className="mt-1 text-sm text-gray-500">{project.description}</p>
                 )}
+                <div className="mt-3 max-w-sm">
+                  <TokenProgressBar projectId={projectId} />
+                </div>
               </div>
 
               {/* Dashboard — three zones */}

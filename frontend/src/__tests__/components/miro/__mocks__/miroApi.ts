@@ -3,6 +3,7 @@ import { MiroBoard, BoardItem, BoardRevision, CreateMiroBoardData, CreateBoardIt
 // Mock data generators
 export const createMockBoard = (overrides?: Partial<MiroBoard>): MiroBoard => ({
   id: 'board-1',
+  slug: 'test-board',
   project_id: 1,
   title: 'Test Board',
   share_token: 'test-token',

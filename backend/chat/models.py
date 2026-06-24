@@ -4,6 +4,7 @@ from django.contrib.postgres.search import SearchVectorField
 from django.contrib.postgres.indexes import GinIndex
 from django.utils import timezone
 from core.models import TimeStampedModel, Project, Team
+from core.slug_mixins import SluggedResourceModelMixin
 
 
 class ChatType:
@@ -30,7 +31,8 @@ class ChannelVisibility:
     ]
 
 
-class Chat(TimeStampedModel):
+class Chat(SluggedResourceModelMixin, TimeStampedModel):
+    slug_source_field = 'name'
     """
     Chat model representing a conversation between users.
     All chats must be associated with a project.
@@ -90,6 +92,11 @@ class Chat(TimeStampedModel):
             models.Index(fields=['type', '-updated_at']),
         ]
     
+    def get_slug_source_value(self):
+        if self.type == ChatType.GROUP:
+            return self.name or ''
+        return ''
+
     def __str__(self):
         if self.type == ChatType.GROUP:
             return f"Group: {self.name or 'Unnamed'} (Project: {self.project.name})"
