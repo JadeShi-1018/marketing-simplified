@@ -1,12 +1,14 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Case, When, IntegerField, Value
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
@@ -19,6 +21,7 @@ from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification,
     Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory,
     TicketForm, TicketFormAssignment, SupportProject, CsmWorkType,
+    SLAPolicy, SLAPriorityTarget,
 )
 from .serializers import (
     QueueSerializer, QueueAgentSerializer,
@@ -36,6 +39,7 @@ from .serializers import (
     SupportProjectSerializer,
     CsmWorkTypeSerializer,
     WorkTypeReorderSerializer,
+    SLAPolicySerializer,
 )
 from .services import (
     ensure_system_fields,
@@ -383,6 +387,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
             customer_email=conversation.customer.email if conversation.customer else '',
             conversation=conversation,
         )
+        from csm.services.sla import recalculate_ticket_sla
+        recalculate_ticket_sla(ticket)
+        if ticket.first_response_due is not None or ticket.resolution_due is not None:
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
 
         Conversation.objects.filter(id=conversation.id).update(status='active')
         conversation.refresh_from_db()
@@ -477,6 +485,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
             customer_email=customer.email if customer else '',
             conversation=conversation,
         )
+        from csm.services.sla import recalculate_ticket_sla
+        recalculate_ticket_sla(ticket)
+        if ticket.first_response_due is not None or ticket.resolution_due is not None:
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
 
         # Post a system message in the conversation thread
         system_msg = ConversationMessage.objects.create(
@@ -689,14 +701,19 @@ class TicketViewSet(viewsets.ModelViewSet):
     - PATCH  /tickets/{id}/             update status/priority/assigned_to
     - POST   /tickets/{id}/claim/       assign to current user, set in_progress
     - POST   /tickets/{id}/close/       set status to closed
+
+    Ordering: ?ordering=priority (Critical first) or ?ordering=-priority (Low first).
+    Handled in get_queryset() via CASE expression; OrderingFilter is excluded to
+    prevent it from interpreting ?ordering=priority as a plain string sort.
     """
     serializer_class = TicketSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    filter_backends = [DjangoFilterBackend, SearchFilter]
 
     def get_queryset(self):
         user = self.request.user
-        qs = Ticket.objects.select_related('queue', 'assigned_to', 'conversation').order_by('-created_at')
+        qs = Ticket.objects.select_related('queue', 'assigned_to', 'conversation')
 
         # Staff/superusers see all
         if not (user.is_staff or user.is_superuser):
@@ -727,7 +744,34 @@ class TicketViewSet(viewsets.ModelViewSet):
         elif assigned_to:
             qs = qs.filter(assigned_to_id=assigned_to)
 
+        # Ordering: ?ordering=priority sorts Critical→Low; default newest first
+        ordering = self.request.query_params.get('ordering', '')
+        if ordering in ('priority', '-priority'):
+            qs = qs.annotate(
+                _priority_rank=Case(
+                    When(priority='critical', then=Value(0)),
+                    When(priority='high',     then=Value(1)),
+                    When(priority='medium',   then=Value(2)),
+                    When(priority='low',      then=Value(3)),
+                    default=Value(4),
+                    output_field=IntegerField(),
+                )
+            )
+            if ordering == '-priority':
+                qs = qs.order_by('-_priority_rank', '-created_at')
+            else:
+                qs = qs.order_by('_priority_rank', '-created_at')
+        else:
+            qs = qs.order_by('-created_at')
+
         return qs
+
+    def perform_create(self, serializer):
+        from csm.services.sla import recalculate_ticket_sla
+        ticket = serializer.save()
+        recalculate_ticket_sla(ticket)
+        if ticket.first_response_due is not None or ticket.resolution_due is not None:
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
 
     @action(detail=True, methods=['post'])
     def claim(self, request, pk=None):
@@ -740,13 +784,17 @@ class TicketViewSet(viewsets.ModelViewSet):
         return Response(TicketSerializer(ticket).data)
 
     def partial_update(self, request, *args, **kwargs):
-        """Override PATCH to broadcast system message and sync conversation status on resolved."""
+        """Override PATCH to sync SLA on priority change and broadcast status changes."""
+        from csm.services.sla import recalculate_ticket_sla
         ticket = self.get_object()
         old_status = ticket.status
+        old_priority = ticket.priority
         new_status = request.data.get('status')
+        new_priority = request.data.get('priority')
 
         response = super().partial_update(request, *args, **kwargs)
 
+        # Conversation sync on status change
         if new_status and old_status != new_status and ticket.conversation_id:
             if new_status == 'resolved':
                 msg = ConversationMessage.objects.create(
@@ -760,6 +808,15 @@ class TicketViewSet(viewsets.ModelViewSet):
                     {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
                 )
                 Conversation.objects.filter(id=ticket.conversation_id).update(status='resolved')
+
+        # Recalculate SLA when priority changes, using now() so the countdown
+        # restarts from the moment of the change rather than ticket creation.
+        if new_priority and old_priority != new_priority:
+            from django.utils import timezone as tz
+            ticket.refresh_from_db()
+            recalculate_ticket_sla(ticket, base_time=tz.now())
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
+            return Response(TicketSerializer(ticket).data)
 
         return response
 
@@ -1028,3 +1085,89 @@ class CsmWorkTypeViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         except DjangoValidationError as exc:
             _raise_drf_validation(exc)
         return Response(CsmWorkTypeSerializer(rows, many=True).data)
+
+
+# ---------------------------------------------------------------------------
+# SLA Policy (MED-218)
+# ---------------------------------------------------------------------------
+
+_SLA_DEFAULT_TARGETS = [
+    ('critical', 60,   240),   # 1h first response, 4h resolution
+    ('high',     240,  480),   # 4h / 8h
+    ('medium',   480,  1440),  # 8h / 24h
+    ('low',      1440, 2880),  # 24h / 48h
+]
+
+
+class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """
+    SLA Policy admin API (MED-218).
+
+    - GET   /sla-policy/?project={id}  retrieve the project's SLA policy
+    - PUT   /sla-policy/{id}/          full update (replaces all priority targets)
+    - PATCH /sla-policy/{id}/          partial update
+    """
+    serializer_class = SLAPolicySerializer
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
+    http_method_names = ['get', 'put', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        qs = SLAPolicy.objects.prefetch_related('priority_targets').select_related('project')
+        return self.filter_by_accessible_projects(qs)
+
+    def list(self, request, *args, **kwargs):
+        """Return (or lazily create) the project's SLA policy."""
+        project_id = self.get_required_project_id()
+        policy, created = SLAPolicy.objects.get_or_create(
+            project_id=project_id,
+            defaults={'name': 'Default SLA Policy'},
+        )
+        if created or not policy.priority_targets.exists():
+            existing_priorities = set(
+                policy.priority_targets.values_list('priority', flat=True)
+            )
+            for priority, fr, res in _SLA_DEFAULT_TARGETS:
+                if priority not in existing_priorities:
+                    SLAPriorityTarget.objects.create(
+                        policy=policy,
+                        priority=priority,
+                        first_response_minutes=fr,
+                        resolution_minutes=res,
+                    )
+            policy.refresh_from_db()
+        return Response(SLAPolicySerializer(policy).data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        was_active = instance.is_active
+        old_targets_by_priority = {
+            t.priority: (t.first_response_minutes, t.resolution_minutes)
+            for t in instance.priority_targets.all()
+        }
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        instance.refresh_from_db()
+        policy_reactivated = not was_active and instance.is_active
+
+        # After any policy change (time targets or is_active toggle), recalculate
+        # SLA deadlines for all open tickets in this project.
+        # Preserve each ticket's SLA anchor (creation time or last priority change).
+        from csm.services.sla import recalculate_ticket_sla_after_policy_change
+        project_id = instance.project_id
+        open_tickets = list(
+            Ticket.objects
+            .filter(queue__project_id=project_id, status__in=('todo', 'in_progress'))
+            .select_related('queue__project')
+        )
+        for ticket in open_tickets:
+            recalculate_ticket_sla_after_policy_change(
+                ticket,
+                old_targets_by_priority,
+                policy_reactivated=policy_reactivated,
+            )
+        if open_tickets:
+            Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
+
+        return Response(serializer.data)

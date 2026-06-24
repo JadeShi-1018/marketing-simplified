@@ -74,17 +74,22 @@ export default class CsmConversationAPI {
 const TMPL_BASE = '/api/csm/templates';
 
 export class TicketAPI {
-  static async list(params?: { queue?: number; status?: string; assigned_to?: string }): Promise<Ticket[]> {
+  static async list(params?: {
+    queue?: number;
+    status?: string;
+    assigned_to?: string;
+    ordering?: 'priority' | '-priority' | string;
+  }): Promise<Ticket[]> {
     const res = await api.get('/api/csm/tickets/', { params });
     return Array.isArray(res.data) ? res.data : (res.data?.results ?? []);
   }
 
-  static async listByQueue(queueId: number, status?: string): Promise<Ticket[]> {
-    return TicketAPI.list({ queue: queueId, ...(status ? { status } : {}) });
+  static async listByQueue(queueId: number, status?: string, ordering?: string): Promise<Ticket[]> {
+    return TicketAPI.list({ queue: queueId, ...(status ? { status } : {}), ...(ordering ? { ordering } : {}) });
   }
 
-  static async myTickets(): Promise<Ticket[]> {
-    return TicketAPI.list({ assigned_to: 'me' });
+  static async myTickets(ordering?: string): Promise<Ticket[]> {
+    return TicketAPI.list({ assigned_to: 'me', ...(ordering ? { ordering } : {}) });
   }
 
   static async claim(id: number): Promise<Ticket> {

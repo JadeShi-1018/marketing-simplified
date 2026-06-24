@@ -1094,7 +1094,7 @@ class CalendarAgentTests(TestCase):
 
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
     @patch('agent.gemini_client.call_gemini')
-    def test_answer_calendar_question_gemini_error_yields_error_chunk(self, mock_call_gemini):
+    def test_answer_calendar_question_dify_error_yields_error_chunk(self, mock_call_gemini):
         """A Gemini error yields an error chunk without raising."""
         mock_call_gemini.side_effect = Exception('Network timeout')
         context = {'type': 'calendar', 'calendarIds': []}
@@ -2237,7 +2237,7 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
 
         class FakeOrch:
             user = self.user
-            session = self.session
+            session = None
 
         executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
         executor.execute({'spreadsheet_data': {'name': 'test', 'sheets': [{'columns': [], 'rows': []}]}})
@@ -2265,7 +2265,7 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
 
         class FakeOrch:
             user = self.user
-            session = self.session
+            session = None
 
         executor = AnalyzeDataExecutor(step=step, workflow_run=run, orchestrator=FakeOrch())
         executor.execute({'spreadsheet_data': {'name': 'test', 'sheets': []}})
