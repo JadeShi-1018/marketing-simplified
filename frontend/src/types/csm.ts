@@ -120,7 +120,7 @@ export interface UpdateCustomerUserData {
 // ── Ticket ──────────────────────────────────────────────────────────────────
 
 export type TicketStatus = 'todo' | 'in_progress' | 'resolved' | 'closed';
-export type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type TicketPriority = 'critical' | 'high' | 'medium' | 'low';
 
 export const STATUS_LABELS: Record<TicketStatus, string> = {
   todo: 'To Do',
@@ -137,18 +137,56 @@ export const STATUS_COLORS: Record<TicketStatus, string> = {
 };
 
 export const PRIORITY_LABELS: Record<TicketPriority, string> = {
-  low: 'Low',
-  medium: 'Medium',
+  critical: 'Critical',
   high: 'High',
-  urgent: 'Urgent',
+  medium: 'Medium',
+  low: 'Low',
 };
 
 export const PRIORITY_COLORS: Record<TicketPriority, string> = {
-  low: 'bg-gray-100 text-gray-600',
-  medium: 'bg-blue-50 text-blue-700',
+  critical: 'bg-red-50 text-red-700',
   high: 'bg-orange-50 text-orange-700',
-  urgent: 'bg-red-50 text-red-700',
+  medium: 'bg-blue-50 text-blue-700',
+  low: 'bg-gray-100 text-gray-600',
 };
+
+// ── SLA ─────────────────────────────────────────────────────────────────────
+
+export interface SlaStatus {
+  first_response_due: string | null;
+  resolution_due: string | null;
+  first_response_breached: boolean;
+  resolution_breached: boolean;
+  first_response_remaining_seconds: number | null;
+  resolution_remaining_seconds: number | null;
+}
+
+export interface SLAPriorityTarget {
+  id: number;
+  priority: TicketPriority;
+  first_response_minutes: number;
+  resolution_minutes: number;
+}
+
+export interface SLAPolicy {
+  id: number;
+  project: number;
+  name: string;
+  is_active: boolean;
+  priority_targets: SLAPriorityTarget[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UpdateSLAPolicyData {
+  name?: string;
+  is_active?: boolean;
+  priority_targets?: Array<{
+    priority: TicketPriority;
+    first_response_minutes: number;
+    resolution_minutes: number;
+  }>;
+}
 
 export interface Ticket {
   id: number;
@@ -164,7 +202,9 @@ export interface Ticket {
   assigned_to_name: string | null;
   customer_email: string;
   created_at: string;
-  updated_at: string;
+  first_response_due: string | null;
+  resolution_due: string | null;
+  sla: SlaStatus;
 }
 
 export interface CreateTicketData {

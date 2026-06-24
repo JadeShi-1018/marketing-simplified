@@ -25,7 +25,7 @@ export function CreateTicketModal({
 }: CreateTicketModalProps) {
   const [title, setTitle] = useState(`Support request from ${customerName}`);
   const [description, setDescription] = useState('');
-  const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
+  const [priority, setPriority] = useState<'critical' | 'high' | 'medium' | 'low'>('medium');
   const [selectedQueueId, setSelectedQueueId] = useState<number | null>(defaultQueueId);
   const [queues, setQueues] = useState<Queue[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -127,10 +127,10 @@ export function CreateTicketModal({
               onChange={(e) => setPriority(e.target.value as typeof priority)}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400"
             >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
+              <option value="critical">Critical</option>
               <option value="high">High</option>
-              <option value="urgent">Urgent</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
             </select>
           </div>
 
