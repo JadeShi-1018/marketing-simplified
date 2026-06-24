@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, FolderKanban, ListOrdered, Settings } from 'lucide-react';
+import { ClipboardList, FolderKanban, ListOrdered, Settings, Shield } from 'lucide-react';
 
 interface Props {
   projectId: number;
@@ -50,6 +50,7 @@ export default function CsmSettingsSidebar({ projectId }: Props) {
   const supportProjects = `/admin/csm/settings/support-projects${q}`;
   const workTypes = `/admin/csm/settings/work-types${q}`;
   const assignments = `/admin/csm/settings/assignments${q}`;
+  const slaPolicy = `/admin/csm/settings/sla${q}`;
 
   return (
     <aside className="hidden w-[240px] shrink-0 flex-col border-r border-gray-200 bg-white sm:flex">
@@ -80,6 +81,12 @@ export default function CsmSettingsSidebar({ projectId }: Props) {
           label="Assignments"
           icon={<ClipboardList className="h-4 w-4" aria-hidden />}
           isActive={pathname === '/admin/csm/settings/assignments'}
+        />
+        <NavLink
+          href={slaPolicy}
+          label="SLA Policy"
+          icon={<Shield className="h-4 w-4" aria-hidden />}
+          isActive={pathname === '/admin/csm/settings/sla'}
         />
       </nav>
     </aside>

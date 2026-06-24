@@ -136,7 +136,23 @@ function ConversationsPageContent() {
           </div>
         ) : (
           <>
-            <ConversationActions conversation={activeConversation} />
+            <ConversationActions
+              conversation={activeConversation}
+              onPriorityChanged={(newPriority) => {
+                setTicketRefreshKey((k) => k + 1);
+                setDetail((prev) => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    linked_tickets: prev.linked_tickets.map((t) =>
+                      t.id === activeConversation.ticket?.id
+                        ? { ...t, priority: newPriority }
+                        : t
+                    ),
+                  };
+                });
+              }}
+            />
             <ConversationThread messages={messages} typingUserIds={typingUsers} />
             {activeConversation.ticket ? (
               <ConversationComposer
