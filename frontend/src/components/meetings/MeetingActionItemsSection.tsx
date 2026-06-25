@@ -17,8 +17,8 @@ import type { MeetingActionItem } from '@/types/meeting';
 const PRIORITIES = ['HIGHEST', 'LOWEST'] as const;
 
 export interface MeetingActionItemsSectionProps {
-  projectId: number;
-  meetingId: number;
+  projectId: number | string;
+  meetingId: number | string;
   projectMembers: ProjectMemberData[];
   onChanged?: () => void;
 }
@@ -357,10 +357,10 @@ export function MeetingActionItemsSection({
                       ) : null}
                       {row.converted_task_id != null ? (
                         <Link
-                          href={`/tasks/${row.converted_task_id}`}
+                          href={`/tasks/${row.converted_task_slug ?? row.converted_task_id}`}
                           className="mt-1 inline-block text-xs font-medium text-[#1a9ba3] hover:underline"
                         >
-                          Open task #{row.converted_task_id}
+                          Open task {row.converted_task_slug ? row.converted_task_slug : `#${row.converted_task_id}`}
                         </Link>
                       ) : openConvertId === row.id ? (
                         <div className="mt-2 flex flex-wrap gap-2">

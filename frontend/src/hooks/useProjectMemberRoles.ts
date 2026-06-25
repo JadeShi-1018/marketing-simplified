@@ -12,8 +12,8 @@ interface RoleCacheEntry {
   expiresAt: number;
 }
 
-const roleCacheByProject = new Map<number, RoleCacheEntry>();
-const inFlightRoleRequests = new Map<number, Promise<RoleByUserId>>();
+const roleCacheByProject = new Map<number | string, RoleCacheEntry>();
+const inFlightRoleRequests = new Map<number | string, Promise<RoleByUserId>>();
 
 const buildRoleByUserId = (members: Array<{ user?: { id?: number }; role?: string }>): RoleByUserId => {
   return members.reduce<RoleByUserId>((acc, member) => {
@@ -28,7 +28,7 @@ const buildRoleByUserId = (members: Array<{ user?: { id?: number }; role?: strin
   }, {});
 };
 
-const getProjectMemberRoles = async (projectId: number, forceRefresh = false): Promise<RoleByUserId> => {
+const getProjectMemberRoles = async (projectId: number | string, forceRefresh = false): Promise<RoleByUserId> => {
   if (!forceRefresh) {
     const cached = roleCacheByProject.get(projectId);
     if (cached && cached.expiresAt > Date.now()) {
@@ -60,18 +60,18 @@ const getProjectMemberRoles = async (projectId: number, forceRefresh = false): P
   return request;
 };
 
-export function useProjectMemberRoles(projectId: number | null | undefined) {
+export function useProjectMemberRoles(projectId: number | string | null | undefined) {
   const [roleByUserId, setRoleByUserId] = useState<RoleByUserId>({});
   const [isLoadingRoles, setIsLoadingRoles] = useState(false);
-  const latestProjectIdRef = useRef<number | null>(null);
+  const latestProjectIdRef = useRef<number | string | null>(null);
 
   useEffect(() => {
-    latestProjectIdRef.current = typeof projectId === 'number' ? projectId : null;
+    latestProjectIdRef.current = projectId ?? null;
   }, [projectId]);
 
   const loadRoles = useCallback(
     async (forceRefresh = false) => {
-      if (typeof projectId !== 'number' || projectId <= 0) {
+      if (projectId == null || projectId === '') {
         setRoleByUserId({});
         setIsLoadingRoles(false);
         return;

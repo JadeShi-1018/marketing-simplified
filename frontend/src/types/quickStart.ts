@@ -185,6 +185,7 @@ export interface QuickStartConfirmRequest {
 
 export interface QuickStartConfirmProject {
   id: number;
+  slug?: string;
   name: string;
   is_active: boolean;
 }
@@ -192,9 +193,12 @@ export interface QuickStartConfirmProject {
 export interface QuickStartConfirmCreated {
   task_ids: number[];
   spreadsheet_ids: number[];
+  // Slug-only resource URLs: backend maps created ids to slugs (order-preserving).
+  spreadsheet_slugs: (string | null)[];
   calendar_event_ids: string[];
   decision_ids: number[];
   miro_board_ids: string[];
+  miro_board_slugs: (string | null)[];
 }
 
 export interface QuickStartConfirmSummary {

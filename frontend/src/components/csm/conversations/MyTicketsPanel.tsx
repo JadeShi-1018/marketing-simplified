@@ -2,25 +2,94 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import toast from 'react-hot-toast';
+import { Clock, RefreshCw, CheckCircle2, XCircle, RotateCcw } from 'lucide-react';
 import { TicketAPI } from '@/lib/api/csmConversationApi';
 import { useCsmConversationStore } from '@/lib/csmConversationStore';
 import type { Ticket } from '@/types/csmConversation';
+import { PRIORITY_LABELS } from '@/types/csm';
 import ConfirmModal from '@/components/ui/ConfirmModal';
-import { RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 
 const STATUS_COLORS: Record<string, string> = {
-  todo: 'bg-gray-100 text-gray-600',
+  todo:        'bg-gray-100 text-gray-600',
   in_progress: 'bg-yellow-100 text-yellow-700',
-  resolved: 'bg-green-100 text-green-700',
-  closed: 'bg-gray-100 text-gray-400',
+  resolved:    'bg-green-100 text-green-700',
+  closed:      'bg-gray-100 text-gray-400',
 };
 
-const PRIORITY_COLORS: Record<string, string> = {
-  low: 'text-gray-400',
-  medium: 'text-blue-500',
-  high: 'text-orange-500',
-  urgent: 'text-red-500',
+const PRIORITY_BORDER_COLOR: Record<string, string> = {
+  critical: '#ef4444',
+  high:     '#fb923c',
+  medium:   '#60a5fa',
+  low:      '#d1d5db',
 };
+
+const PRIORITY_TEXT_COLOR: Record<string, string> = {
+  critical: 'text-red-500',
+  high:     'text-orange-400',
+  medium:   'text-blue-400',
+  low:      'text-gray-400',
+};
+
+function formatRemaining(seconds: number): string {
+  if (seconds <= 0) return 'Overdue';
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function slaColor(seconds: number, breached: boolean): string {
+  if (breached || seconds <= 0) return 'text-red-600';
+  if (seconds < 3600) return 'text-orange-500';
+  return 'text-gray-400';
+}
+
+interface SlaCountdownProps {
+  ticket: Ticket;
+  now: number;
+}
+
+function SlaCountdown({ ticket, now }: SlaCountdownProps) {
+  const { sla, first_response_due, resolution_due } = ticket;
+  if (!first_response_due && !resolution_due) {
+    return (
+      <span className="flex items-center gap-1 text-[11px] text-gray-300">
+        <Clock size={10} className="shrink-0" />
+        No SLA
+      </span>
+    );
+  }
+
+  const frSec = first_response_due
+    ? Math.floor((new Date(first_response_due).getTime() - now) / 1000)
+    : null;
+  const resSec = resolution_due
+    ? Math.floor((new Date(resolution_due).getTime() - now) / 1000)
+    : null;
+
+  const frBreached = sla?.first_response_breached || (frSec !== null && frSec <= 0);
+  const resBreached = sla?.resolution_breached || (resSec !== null && resSec <= 0);
+
+  return (
+    <span className="flex items-center gap-1 text-[11px]">
+      <Clock size={10} className="shrink-0 text-gray-400" />
+      {frSec !== null && (
+        <span className={slaColor(frSec, frBreached)}>
+          {frBreached ? 'Overdue' : formatRemaining(frSec)}
+        </span>
+      )}
+      {frSec !== null && resSec !== null && (
+        <span className="text-gray-300">·</span>
+      )}
+      {resSec !== null && (
+        <span className={slaColor(resSec, resBreached)}>
+          Res {resBreached ? 'overdue' : formatRemaining(resSec)}
+        </span>
+      )}
+    </span>
+  );
+}
 
 interface MyTicketsPanelProps {
   refreshKey?: number;
@@ -35,15 +104,23 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
     ticket: null,
   });
   const [closing, setClosing] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const setActive = useCsmConversationStore((s) => s.setActiveConversation);
   const activeId = useCsmConversationStore((s) => s.activeConversationId);
   const conversations = useCsmConversationStore((s) => s.conversations);
 
+  // Tick every minute so SLA countdowns stay fresh
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await TicketAPI.myTickets();
+      // Sort by priority (Critical first) so the most urgent tickets appear at top
+      const data = await TicketAPI.myTickets('priority');
       setTickets(data.filter((t) => t.status !== 'closed'));
     } catch {
       setTickets([]);
@@ -53,6 +130,13 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
   }, []);
 
   useEffect(() => { load(); }, [load, refreshKey]);
+
+  // Re-fetch when user switches back to this tab/page (e.g. after changing SLA policy)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [load]);
 
   const handleStatusChange = async (ticket: Ticket, newStatus: string) => {
     if (newStatus === 'closed') {
@@ -96,7 +180,9 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
   if (loading) {
     return (
       <div className="flex flex-col gap-2 p-4">
-        {[1, 2, 3].map((i) => <div key={i} className="h-20 bg-gray-100 rounded-lg animate-pulse" />)}
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-24 bg-gray-100 rounded-lg animate-pulse" />
+        ))}
       </div>
     );
   }
@@ -108,7 +194,11 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">
             My Active Tickets ({tickets.length})
           </p>
-          <button onClick={load} className="p-1 text-gray-400 hover:text-gray-600 transition-colors">
+          <button
+            onClick={load}
+            className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+            title="Refresh"
+          >
             <RefreshCw size={13} />
           </button>
         </div>
@@ -123,66 +213,73 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
             {tickets.map((ticket) => {
               const isUpdating = updatingId === ticket.id;
               const isActive = ticket.conversation != null && activeId === ticket.conversation;
+              const borderColor = PRIORITY_BORDER_COLOR[ticket.priority] ?? '#d1d5db';
+
               return (
                 <div
                   key={ticket.id}
                   onClick={() => handleSwitchToConversation(ticket)}
-                  className={`rounded-lg border p-3 flex flex-col gap-2 shadow-sm transition-colors ${
+                  style={{ borderLeftColor: borderColor }}
+                  className={`rounded-lg border border-gray-200 border-l-[3px] p-2.5 flex flex-col gap-1.5 transition-colors ${
                     ticket.conversation
-                      ? 'cursor-pointer hover:border-blue-300 hover:bg-blue-50/50'
+                      ? 'cursor-pointer hover:border-gray-300 hover:bg-gray-50/60'
                       : 'cursor-default'
-                  } ${
-                    isActive
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 bg-white'
-                  }`}
+                  } ${isActive ? 'bg-blue-50/60 border-gray-200' : 'bg-white'}`}
                 >
-                  {/* Title + priority */}
+                  {/* Row 1: title + status badge */}
                   <div className="flex items-start justify-between gap-2">
-                    <p className={`text-xs font-semibold leading-snug flex-1 ${isActive ? 'text-blue-800' : 'text-gray-800'}`}>
-                      #{ticket.id} {ticket.title}
-                    </p>
-                    <span className={`text-xs font-medium shrink-0 ${PRIORITY_COLORS[ticket.priority] ?? 'text-gray-400'}`}>
-                      {ticket.priority_display}
-                    </span>
-                  </div>
-
-                  {/* Queue + status badge */}
-                  <div className="flex items-center gap-1.5">
-                    {ticket.queue_name && (
-                      <span className="text-xs text-gray-400 truncate flex-1">{ticket.queue_name}</span>
-                    )}
-                    <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium shrink-0 ${STATUS_COLORS[ticket.status] ?? 'bg-gray-100 text-gray-500'}`}>
+                    <div className="flex flex-col min-w-0">
+                      <p className={`text-xs font-semibold truncate leading-snug ${isActive ? 'text-blue-800' : 'text-gray-800'}`}>
+                        #{ticket.id} {ticket.title}
+                      </p>
+                      {ticket.queue_name && (
+                        <span className="text-[10px] text-gray-400 truncate">{ticket.queue_name}</span>
+                      )}
+                    </div>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 mt-0.5 ${STATUS_COLORS[ticket.status] ?? 'bg-gray-100 text-gray-500'}`}>
                       {ticket.status_display}
                     </span>
                   </div>
 
-                  {/* Status action buttons */}
-                  <div className="flex gap-1.5 pt-1 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                  {/* Row 2: priority · SLA */}
+                  <div className="flex items-center gap-1 min-w-0">
+                    <span className={`text-[11px] font-medium shrink-0 ${PRIORITY_TEXT_COLOR[ticket.priority] ?? 'text-gray-400'}`}>
+                      {PRIORITY_LABELS[ticket.priority as keyof typeof PRIORITY_LABELS] ?? ticket.priority}
+                    </span>
+                    <span className="text-gray-200 shrink-0">·</span>
+                    <SlaCountdown ticket={ticket} now={now} />
+                  </div>
+
+                  {/* Row 3: action buttons */}
+                  <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                     {ticket.status !== 'resolved' ? (
                       <button
                         onClick={() => handleStatusChange(ticket, 'resolved')}
                         disabled={isUpdating}
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-green-50 text-green-700 hover:bg-green-100 text-xs font-medium disabled:opacity-50 transition-colors"
+                        title="Mark Resolved"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-green-50 text-green-600 hover:bg-green-100 text-[10px] font-medium disabled:opacity-40 transition-colors"
                       >
-                        <CheckCircle2 size={12} />
-                        {isUpdating ? 'Updating…' : 'Mark Resolved'}
+                        <CheckCircle2 size={11} />
+                        Resolve
                       </button>
                     ) : (
                       <button
                         onClick={() => handleStatusChange(ticket, 'in_progress')}
                         disabled={isUpdating}
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md bg-yellow-50 text-yellow-700 hover:bg-yellow-100 text-xs font-medium disabled:opacity-50 transition-colors"
+                        title="Reopen"
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-yellow-50 text-yellow-600 hover:bg-yellow-100 text-[10px] font-medium disabled:opacity-40 transition-colors"
                       >
-                        {isUpdating ? 'Updating…' : 'Reopen'}
+                        <RotateCcw size={11} />
+                        Reopen
                       </button>
                     )}
                     <button
                       onClick={() => handleStatusChange(ticket, 'closed')}
                       disabled={isUpdating}
-                      className="flex items-center justify-center gap-1 px-3 py-1.5 rounded-md bg-red-50 text-red-600 hover:bg-red-100 text-xs font-medium disabled:opacity-50 transition-colors"
+                      title="Close Ticket"
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 text-red-500 hover:bg-red-100 text-[10px] font-medium disabled:opacity-40 transition-colors"
                     >
-                      <XCircle size={12} />
+                      <XCircle size={11} />
                       Close
                     </button>
                   </div>

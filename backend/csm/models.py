@@ -5,6 +5,7 @@ from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from core.models import TimeStampedModel, Project, Team
+from core.slug_mixins import SluggedResourceModelMixin
 
 
 def default_operating_hours():
@@ -164,11 +165,12 @@ class Ticket(TimeStampedModel):
         ('closed', 'Closed'),
     ]
     PRIORITY_CHOICES = [
-        ('low', 'Low'),
-        ('medium', 'Medium'),
+        ('critical', 'Critical'),
         ('high', 'High'),
-        ('urgent', 'Urgent'),
+        ('medium', 'Medium'),
+        ('low', 'Low'),
     ]
+    PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 
     queue = models.ForeignKey(Queue, on_delete=models.CASCADE, related_name='tickets')
     title = models.CharField(max_length=300)
@@ -186,6 +188,8 @@ class Ticket(TimeStampedModel):
         null=True, blank=True,
         related_name='tickets',
     )
+    first_response_due = models.DateTimeField(null=True, blank=True)
+    resolution_due = models.DateTimeField(null=True, blank=True)
 
     # --- CSM-S01-07: form submission context ---
     form = models.ForeignKey(
@@ -412,7 +416,10 @@ class CsmWorkType(TimeStampedModel):
         return self.name
 
 
-class TicketForm(TimeStampedModel):
+class TicketForm(SluggedResourceModelMixin, TimeStampedModel):
+    # Slug-only URLs. Slug is derived from name.
+    slug_source_field = 'name'
+
     project = models.ForeignKey(
         Project, on_delete=models.CASCADE, related_name='ticket_forms',
     )

@@ -10,7 +10,8 @@ import subprocess
 import tempfile
 from .models import Chat, ChatParticipant, ChatStar, Message, MessageMention, MessageStatus, ChatType, ChannelVisibility, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
 from .services import ChatService
-from core.models import ProjectMember
+from core.models import ProjectMember, Project
+from core.slug_mixins import resolve_project_pk
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -642,7 +643,7 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name', 'topic', 'description', 'visibility',
+            'id', 'slug', 'project', 'type', 'name', 'topic', 'description', 'visibility',
             'created_by_id', 'created_by',
             'participants', 'last_message', 'unread_count', 'mention_unread_count',
             'created_at', 'updated_at'
@@ -683,7 +684,7 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name', 'topic', 'description', 'visibility',
+            'id', 'slug', 'project', 'type', 'name', 'topic', 'description', 'visibility',
             'created_by_id', 'created_by',
             'participants', 'participant_count', 'last_message',
             'last_message_time', 'unread_count', 'mention_unread_count',
@@ -811,13 +812,39 @@ class ChatStarReorderSerializer(serializers.Serializer):
     )
 
 
+class ProjectPkOrSlugField(serializers.Field):
+    """Accept project pk (int/str digits) or project slug on write."""
+
+    default_error_messages = {
+        'invalid': 'Invalid project.',
+    }
+
+    def to_internal_value(self, data):
+        pk = resolve_project_pk(data)
+        if pk is None:
+            self.fail('invalid')
+        try:
+            return Project.objects.get(pk=pk)
+        except Project.DoesNotExist:
+            self.fail('invalid')
+
+    def to_representation(self, value):
+        # to_internal_value stores a Project instance, but this can also run on a
+        # raw pk (e.g. serializing a model field), so handle both forms.
+        if isinstance(value, Project):
+            return value.pk
+        return value
+
+
 class ChatCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating chats"""
+    project = ProjectPkOrSlugField()
     participant_ids = serializers.ListField(
         child=serializers.IntegerField(),
         write_only=True,
-        required=True,
-        help_text="List of user IDs to add as participants"
+        required=False,
+        default=list,
+        help_text="List of user IDs to add as participants (creator is added automatically)"
     )
     
     class Meta:
@@ -825,10 +852,10 @@ class ChatCreateSerializer(serializers.ModelSerializer):
         fields = ['project', 'type', 'name', 'participant_ids']
     
     def validate_participant_ids(self, value):
-        """Validate participant IDs"""
+        """Validate participant IDs."""
         if not value:
-            raise serializers.ValidationError("At least one participant is required")
-        
+            return []
+
         # Remove duplicates
         value = list(set(value))
         
@@ -883,11 +910,6 @@ class ChatCreateSerializer(serializers.ModelSerializer):
                 )
         
         elif chat_type == ChatType.GROUP:
-            if len(participant_ids) < 1:
-                raise serializers.ValidationError(
-                    "Group chat must have at least 1 participant (excluding yourself)"
-                )
-            
             if not data.get('name'):
                 raise serializers.ValidationError(
                     "Group chat must have a name"
@@ -897,19 +919,20 @@ class ChatCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Channel name cannot be longer than {MAX_CHANNEL_NAME_LENGTH} characters"
                 )
-            
-            # Validate all participants are project members
-            all_user_ids = participant_ids + [request.user.id]
-            project_member_count = ProjectMember.objects.filter(
-                project=project,
-                user_id__in=all_user_ids,
-                is_active=True
-            ).count()
-            
-            if project_member_count != len(all_user_ids):
-                raise serializers.ValidationError(
-                    "All participants must be members of the project"
-                )
+
+            if participant_ids:
+                # Validate all participants are project members
+                all_user_ids = participant_ids + [request.user.id]
+                project_member_count = ProjectMember.objects.filter(
+                    project=project,
+                    user_id__in=all_user_ids,
+                    is_active=True
+                ).count()
+
+                if project_member_count != len(all_user_ids):
+                    raise serializers.ValidationError(
+                        "All participants must be members of the project"
+                    )
         
         return data
     
@@ -1155,7 +1178,7 @@ class ChatContextSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Chat
-        fields = ['id', 'type', 'name']
+        fields = ['id', 'slug', 'type', 'name']
         read_only_fields = fields
 
 

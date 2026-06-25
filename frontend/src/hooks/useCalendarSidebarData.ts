@@ -24,7 +24,7 @@ interface UseCalendarSidebarResult {
 }
 
 const sidebarCache: {
-  projectId?: number | null;
+  projectId?: number | string | null;
   calendars?: CalendarDTO[];
   subscriptions?: CalendarSubscriptionDTO[];
 } = {};
@@ -50,7 +50,7 @@ function normalizeListResponse<T>(payload: unknown): T[] {
 }
 
 export function useCalendarSidebarData(
-  projectId?: number | null,
+  projectId?: number | string | null,
 ): UseCalendarSidebarResult {
   const [calendars, setCalendars] = useState<CalendarDTO[]>([]);
   const [subscriptions, setSubscriptions] = useState<CalendarSubscriptionDTO[]>([]);

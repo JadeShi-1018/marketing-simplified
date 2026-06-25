@@ -8,8 +8,7 @@ import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromU
 import { SECONDARY_BUTTON_CLASS } from '@/components/csm-settings/constants';
 
 export default function CsmSettingsHubPage() {
-  const { projectId, projectValid } = useProjectIdFromUrl();
-  const q = projectValid ? `?project=${projectId}` : '';
+  const { projectValid } = useProjectIdFromUrl();
 
   return (
     <CsmSettingsPageRoot>
@@ -22,7 +21,7 @@ export default function CsmSettingsHubPage() {
         </div>
         {projectValid && (
           <Link
-            href={`/admin/ticket-forms?project=${projectId}`}
+            href={`/admin/ticket-forms`}
             className={SECONDARY_BUTTON_CLASS}
           >
             <FileText className="h-4 w-4" aria-hidden />
@@ -36,7 +35,7 @@ export default function CsmSettingsHubPage() {
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <CsmSettingsNavCard
-            href={`/admin/csm/settings/support-projects${q}`}
+            href={`/admin/csm/settings/support-projects`}
             icon={FolderKanban}
             title="Support Projects"
             description="Classify tickets by support area. Optional default queue per project."

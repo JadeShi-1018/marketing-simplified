@@ -79,7 +79,7 @@ def test_draft_retrieve_wrong_project_returns_404_without_origin_meeting():
     )
     create_meeting_decision_origin(meeting=m, decision=d)
 
-    url = f"/api/decisions/drafts/{d.id}/"
+    url = f"/api/decisions/drafts/{d.slug}/"
     response = client_wrong.get(url, {"project_id": project_b.id})
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "origin_meeting" not in response.data
@@ -93,7 +93,9 @@ def test_committed_retrieve_wrong_project_returns_404_without_origin_meeting():
 
     create_resp = client_a.post("/api/decisions/drafts/", {"title": "Committed scope"}, format="json")
     assert create_resp.status_code == status.HTTP_201_CREATED
-    decision_id = Decision.objects.get(title="Committed scope").id
+    created = Decision.objects.get(title="Committed scope")
+    decision_id = created.id
+    decision_slug = created.slug
 
     patch_payload = {
         "contextSummary": "Context summary for commit",
@@ -114,12 +116,12 @@ def test_committed_retrieve_wrong_project_returns_404_without_origin_meeting():
         ],
     }
     patch_resp = client_a.patch(
-        f"/api/decisions/drafts/{decision_id}/",
+        f"/api/decisions/drafts/{decision_slug}/",
         patch_payload,
         format="json",
     )
     assert patch_resp.status_code == status.HTTP_200_OK
-    commit_resp = client_a.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client_a.post(f"/api/decisions/{decision_slug}/commit/", {}, format="json")
     assert commit_resp.status_code == status.HTTP_200_OK
 
     mtd = MeetingTypeDefinition.objects.create(
@@ -136,7 +138,7 @@ def test_committed_retrieve_wrong_project_returns_404_without_origin_meeting():
     d = Decision.objects.get(pk=decision_id)
     create_meeting_decision_origin(meeting=m, decision=d)
 
-    url = f"/api/decisions/{decision_id}/"
+    url = f"/api/decisions/{decision_slug}/"
     response = client_wrong.get(url, {"project_id": project_b.id})
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "origin_meeting" not in response.data
@@ -167,7 +169,7 @@ def test_draft_retrieve_matching_project_returns_origin_meeting():
     )
     create_meeting_decision_origin(meeting=m, decision=d)
 
-    r = client.get(f"/api/decisions/drafts/{d.id}/", {"project_id": project_a.id})
+    r = client.get(f"/api/decisions/drafts/{d.slug}/", {"project_id": project_a.id})
     assert r.status_code == status.HTTP_200_OK
     assert "origin_meeting" in r.data
     assert r.data["origin_meeting"]["id"] == m.id

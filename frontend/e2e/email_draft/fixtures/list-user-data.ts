@@ -1,4 +1,4 @@
-export const KLAVIYO_LIST_FIXTURE = {
+﻿export const KLAVIYO_LIST_FIXTURE = {
   name: "Upgrade Your Workspace This Winter",
   subject: "Discover ergonomic desks and lighting",
   status: "draft" as const,
@@ -15,5 +15,5 @@ export function shortRunId(): string {
 }
 
 export function withRunSuffix(label: string, runId: string): string {
-  return `${label} · ${runId}`;
+  return `${label} ${runId}`;
 }

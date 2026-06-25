@@ -107,6 +107,7 @@ describe('chatStore reaction updates', () => {
         9: [
           {
             id: 2,
+            slug: 'general',
             project_id: 9,
             project: 9,
             type: 'group',
@@ -146,6 +147,7 @@ describe('chatStore reaction updates', () => {
         9: [
           {
             id: 2,
+            slug: 'general',
             project_id: 9,
             project: 9,
             type: 'group',

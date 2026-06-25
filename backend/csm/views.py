@@ -1,18 +1,21 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.filters import SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Case, When, IntegerField, Value
 from django.utils import timezone
+from django_filters.rest_framework import DjangoFilterBackend
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
 from core.admin_permissions import IsCsmAccessAllowed
 from core.permissions import IsProjectMember
 from core.viewset_mixins import ProjectScopedViewSetMixin
+from core.slug_mixins import SlugLookupViewSetMixin
 
 from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification,
@@ -76,7 +79,8 @@ def _raise_drf_validation(exc):
     raise ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages)
 
 
-class QueueViewSet(viewsets.ModelViewSet):
+class QueueViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
+    # Slug-only lookups; numeric path segments return 404.
     """
     Queue CRUD.
 
@@ -395,6 +399,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
             customer_email=conversation.customer.email if conversation.customer else '',
             conversation=conversation,
         )
+        from csm.services.sla import recalculate_ticket_sla
+        recalculate_ticket_sla(ticket)
+        if ticket.first_response_due is not None or ticket.resolution_due is not None:
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
 
         Conversation.objects.filter(id=conversation.id).update(status='active')
         conversation.refresh_from_db()
@@ -489,6 +497,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
             customer_email=customer.email if customer else '',
             conversation=conversation,
         )
+        from csm.services.sla import recalculate_ticket_sla
+        recalculate_ticket_sla(ticket)
+        if ticket.first_response_due is not None or ticket.resolution_due is not None:
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
 
         # Post a system message in the conversation thread
         system_msg = ConversationMessage.objects.create(
@@ -701,14 +713,19 @@ class TicketViewSet(viewsets.ModelViewSet):
     - PATCH  /tickets/{id}/             update status/priority/assigned_to
     - POST   /tickets/{id}/claim/       assign to current user, set in_progress
     - POST   /tickets/{id}/close/       set status to closed
+
+    Ordering: ?ordering=priority (Critical first) or ?ordering=-priority (Low first).
+    Handled in get_queryset() via CASE expression; OrderingFilter is excluded to
+    prevent it from interpreting ?ordering=priority as a plain string sort.
     """
     serializer_class = TicketSerializer
     permission_classes = [IsAuthenticated]
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    filter_backends = [DjangoFilterBackend, SearchFilter]
 
     def get_queryset(self):
         user = self.request.user
-        qs = Ticket.objects.select_related('queue', 'assigned_to', 'conversation').order_by('-created_at')
+        qs = Ticket.objects.select_related('queue', 'assigned_to', 'conversation')
 
         # Staff/superusers see all
         if not (user.is_staff or user.is_superuser):
@@ -739,7 +756,34 @@ class TicketViewSet(viewsets.ModelViewSet):
         elif assigned_to:
             qs = qs.filter(assigned_to_id=assigned_to)
 
+        # Ordering: ?ordering=priority sorts Critical→Low; default newest first
+        ordering = self.request.query_params.get('ordering', '')
+        if ordering in ('priority', '-priority'):
+            qs = qs.annotate(
+                _priority_rank=Case(
+                    When(priority='critical', then=Value(0)),
+                    When(priority='high',     then=Value(1)),
+                    When(priority='medium',   then=Value(2)),
+                    When(priority='low',      then=Value(3)),
+                    default=Value(4),
+                    output_field=IntegerField(),
+                )
+            )
+            if ordering == '-priority':
+                qs = qs.order_by('-_priority_rank', '-created_at')
+            else:
+                qs = qs.order_by('_priority_rank', '-created_at')
+        else:
+            qs = qs.order_by('-created_at')
+
         return qs
+
+    def perform_create(self, serializer):
+        from csm.services.sla import recalculate_ticket_sla
+        ticket = serializer.save()
+        recalculate_ticket_sla(ticket)
+        if ticket.first_response_due is not None or ticket.resolution_due is not None:
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
 
     @action(detail=True, methods=['post'])
     def claim(self, request, pk=None):
@@ -752,13 +796,17 @@ class TicketViewSet(viewsets.ModelViewSet):
         return Response(TicketSerializer(ticket).data)
 
     def partial_update(self, request, *args, **kwargs):
-        """Override PATCH to broadcast system message and sync conversation status on resolved."""
+        """Override PATCH to sync SLA on priority change and broadcast status changes."""
+        from csm.services.sla import recalculate_ticket_sla
         ticket = self.get_object()
         old_status = ticket.status
+        old_priority = ticket.priority
         new_status = request.data.get('status')
+        new_priority = request.data.get('priority')
 
         response = super().partial_update(request, *args, **kwargs)
 
+        # Conversation sync on status change
         if new_status and old_status != new_status and ticket.conversation_id:
             if new_status == 'resolved':
                 msg = ConversationMessage.objects.create(
@@ -772,6 +820,15 @@ class TicketViewSet(viewsets.ModelViewSet):
                     {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
                 )
                 Conversation.objects.filter(id=ticket.conversation_id).update(status='resolved')
+
+        # Recalculate SLA when priority changes, using now() so the countdown
+        # restarts from the moment of the change rather than ticket creation.
+        if new_priority and old_priority != new_priority:
+            from django.utils import timezone as tz
+            ticket.refresh_from_db()
+            recalculate_ticket_sla(ticket, base_time=tz.now())
+            ticket.save(update_fields=['first_response_due', 'resolution_due'])
+            return Response(TicketSerializer(ticket).data)
 
         return response
 
@@ -799,7 +856,8 @@ class TicketViewSet(viewsets.ModelViewSet):
         return Response(TicketSerializer(ticket).data)
 
 
-class TicketFormViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+class TicketFormViewSet(SlugLookupViewSetMixin, ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    # Slug-only lookups; numeric path segments return 404.
     """
     Admin ticket form builder API.
 

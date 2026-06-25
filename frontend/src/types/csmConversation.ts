@@ -48,6 +48,16 @@ export interface Ticket {
   customer_email: string;
   conversation: number | null;
   created_at: string;
+  first_response_due: string | null;
+  resolution_due: string | null;
+  sla: {
+    first_response_due: string | null;
+    resolution_due: string | null;
+    first_response_breached: boolean;
+    resolution_breached: boolean;
+    first_response_remaining_seconds: number | null;
+    resolution_remaining_seconds: number | null;
+  };
 }
 
 export interface TicketSummary {
@@ -55,6 +65,8 @@ export interface TicketSummary {
   title: string;
   status: string;
   status_display: string;
+  priority: string;
+  priority_display: string;
   assigned_to_name: string | null;
 }
 
@@ -94,7 +106,7 @@ export interface SendMessagePayload {
 export interface CreateTicketPayload {
   title: string;
   description: string;
-  priority: 'low' | 'medium' | 'high' | 'urgent';
+  priority: 'critical' | 'high' | 'medium' | 'low';
   queue: number;
 }
 

@@ -22,6 +22,7 @@ import { GripVertical } from 'lucide-react';
 
 import type { NestedAgendaTemplateSection } from '@/lib/meetings/meetingTemplates';
 import { cn } from '@/lib/utils';
+import { Id } from '@/types/common';
 
 // Pill styling constants (local definitions; no cross-app UI imports)
 const PILL_BG = 'rgba(55,53,47,0.18)';
@@ -342,7 +343,7 @@ function SortableSectionGroup({
 
 export type AgendaOutlineRailProps = {
   sections: NestedAgendaTemplateSection[];
-  meetingId: number;
+  meetingId: Id;
   onSectionReorder: (activeSortableId: string, overSortableId: string) => void;
   refreshContainerRect: () => void;
   /** Mouse Y position relative to the Agenda block */
@@ -643,7 +644,7 @@ function AgendaOutlineRail({
 export type AgendaBlockWithOutlineRailProps = {
   children: ReactNode;
   sections: NestedAgendaTemplateSection[];
-  meetingId: number;
+  meetingId: Id;
   onSectionReorder: (activeSortableId: string, overSortableId: string) => void;
 };
 

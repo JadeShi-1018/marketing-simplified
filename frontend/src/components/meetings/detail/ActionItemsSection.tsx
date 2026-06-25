@@ -16,7 +16,7 @@ interface Member {
 }
 
 interface Props {
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   items: MeetingActionItem[];
   members: Member[];
@@ -250,7 +250,9 @@ export default function ActionItemsSection({
         onConverted={(task) => {
           if (convertTarget) {
             const next = items.map((i) =>
-              i.id === convertTarget.id ? { ...i, converted_task_id: task.id ?? null } : i,
+              i.id === convertTarget.id
+                ? { ...i, converted_task_id: task.id ?? null, converted_task_slug: task.slug ?? null }
+                : i,
             );
             onItemsChange(next);
             selectedIds.delete(convertTarget.id);
@@ -268,14 +270,22 @@ export default function ActionItemsSection({
         members={members}
         onConverted={(tasks) => {
           const taskByOrigin = new Map<number, number>();
+          const slugByOrigin = new Map<number, string>();
           for (let i = 0; i < tasks.length && i < selectedItems.length; i++) {
             const t = tasks[i];
             const origin = selectedItems[i];
-            if (t.id != null) taskByOrigin.set(origin.id, t.id);
+            if (t.id != null) {
+              taskByOrigin.set(origin.id, t.id);
+              if (t.slug) slugByOrigin.set(origin.id, t.slug);
+            }
           }
           const next = items.map((i) =>
             taskByOrigin.has(i.id)
-              ? { ...i, converted_task_id: taskByOrigin.get(i.id) ?? null }
+              ? {
+                  ...i,
+                  converted_task_id: taskByOrigin.get(i.id) ?? null,
+                  converted_task_slug: slugByOrigin.get(i.id) ?? null,
+                }
               : i,
           );
           onItemsChange(next);

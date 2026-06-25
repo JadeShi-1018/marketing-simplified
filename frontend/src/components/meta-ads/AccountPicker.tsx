@@ -11,6 +11,7 @@ import {
   Wallet,
 } from 'lucide-react';
 
+import { Id } from '@/types/common';
 import { facebookApi, type FacebookAdAccount } from '@/lib/api/facebookApi';
 
 const DEFAULT_PAGE_SIZE = 5;
@@ -23,7 +24,7 @@ export default function AccountPicker({
   onAccountsLoaded,
   pageSize = DEFAULT_PAGE_SIZE,
 }: {
-  projectId: number | null;
+  projectId: Id | null;
   knownAccounts?: FacebookAdAccount[];
   selectedId: number | null;
   onSelect: (id: number, account?: FacebookAdAccount) => void;

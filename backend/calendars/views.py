@@ -17,6 +17,7 @@ from rest_framework.exceptions import PermissionDenied
 from .services import get_calendar_events
 
 from core.models import ProjectMember
+from core.slug_mixins import resolve_project_pk
 from .models import (
     Calendar,
     CalendarShare,
@@ -128,10 +129,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             qs = qs.filter(visibility=visibility)
 
         if project_id_param:
-            try:
-                qs = qs.filter(project_id=int(project_id_param))
-            except (TypeError, ValueError):
+            project_id = resolve_project_pk(project_id_param)
+            if project_id is None:
                 return Calendar.objects.none()
+            qs = qs.filter(project_id=project_id)
 
         return qs.distinct().order_by("-is_primary", "name")
 
@@ -374,9 +375,8 @@ class EventViewSet(viewsets.ModelViewSet):
         project_id_param = self.request.query_params.get("project_id")
         project_id = None
         if project_id_param:
-            try:
-                project_id = int(project_id_param)
-            except (TypeError, ValueError):
+            project_id = resolve_project_pk(project_id_param)
+            if project_id is None:
                 return Event.objects.none()
 
         calendars = _get_accessible_calendars(user, project_id=project_id)
@@ -507,9 +507,8 @@ class EventSearchView(generics.ListAPIView):
         project_id_param = self.request.query_params.get("project_id")
         project_id = None
         if project_id_param:
-            try:
-                project_id = int(project_id_param)
-            except (TypeError, ValueError):
+            project_id = resolve_project_pk(project_id_param)
+            if project_id is None:
                 return Event.objects.none()
 
         calendars = _get_accessible_calendars(user, project_id=project_id)
@@ -846,7 +845,7 @@ class DayView(generics.GenericAPIView):
         calendar_ids_param = request.query_params.get("calendar_ids")
         calendar_ids = calendar_ids_param.split(",") if calendar_ids_param else None
         project_id_param = request.query_params.get("project_id")
-        project_id = int(project_id_param) if project_id_param and project_id_param.isdigit() else None
+        project_id = resolve_project_pk(project_id_param)
 
         payload = _build_calendar_view_payload(
             request.user,
@@ -891,7 +890,7 @@ class WeekView(generics.GenericAPIView):
         calendar_ids_param = request.query_params.get("calendar_ids")
         calendar_ids = calendar_ids_param.split(",") if calendar_ids_param else None
         project_id_param = request.query_params.get("project_id")
-        project_id = int(project_id_param) if project_id_param and project_id_param.isdigit() else None
+        project_id = resolve_project_pk(project_id_param)
 
         payload = _build_calendar_view_payload(
             request.user,
@@ -944,7 +943,7 @@ class MonthView(generics.GenericAPIView):
         calendar_ids_param = request.query_params.get("calendar_ids")
         calendar_ids = calendar_ids_param.split(",") if calendar_ids_param else None
         project_id_param = request.query_params.get("project_id")
-        project_id = int(project_id_param) if project_id_param and project_id_param.isdigit() else None
+        project_id = resolve_project_pk(project_id_param)
 
         payload = _build_calendar_view_payload(
             request.user,
@@ -991,7 +990,7 @@ class AgendaView(generics.GenericAPIView):
         calendar_ids_param = request.query_params.get("calendar_ids")
         calendar_ids = calendar_ids_param.split(",") if calendar_ids_param else None
         project_id_param = request.query_params.get("project_id")
-        project_id = int(project_id_param) if project_id_param and project_id_param.isdigit() else None
+        project_id = resolve_project_pk(project_id_param)
 
         payload = _build_calendar_view_payload(
             request.user,
@@ -1417,7 +1416,7 @@ class FreeBusyView(generics.GenericAPIView):
         if isinstance(calendar_ids, str):
             calendar_ids = [calendar_ids]
         project_id_raw = body.get("project_id")
-        project_id = int(project_id_raw) if str(project_id_raw).isdigit() else None
+        project_id = resolve_project_pk(project_id_raw)
 
         calendars = _get_accessible_calendars(request.user, calendar_ids or None, project_id=project_id)
 
@@ -1561,5 +1560,5 @@ class CalendarEventListView(generics.ListAPIView):
             start=self.request.query_params.get('start'),
             end=self.request.query_params.get('end'),
             event_type=self.request.query_params.get('event_type'),
-            project_id=self.request.query_params.get('project_id'),
+            project_id=resolve_project_pk(self.request.query_params.get('project_id')),
         )

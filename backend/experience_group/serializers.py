@@ -10,6 +10,7 @@ class ExperienceGroupSerializer(serializers.ModelSerializer):
         model = ExperienceGroup
         fields = [
             'id',
+            'slug',
             'name',
             'description',
             'status',
@@ -22,6 +23,7 @@ class ExperienceGroupSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id',
+            'slug',
             'status',
             'created_by',
             'created_at',
@@ -57,6 +59,7 @@ class ExperienceGroupListSerializer(serializers.ModelSerializer):
         model = ExperienceGroup
         fields = [
             'id',
+            'slug',
             'name',
             'description',
             'status',

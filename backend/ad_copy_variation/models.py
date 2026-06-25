@@ -1,10 +1,13 @@
 from django.conf import settings
+from core.slug_mixins import SluggedResourceModelMixin
 from django.db import models
 
 from core.models import TimeStampedModel
 
 
-class AdCopyVariation(TimeStampedModel):
+class AdCopyVariation(SluggedResourceModelMixin, TimeStampedModel):
+    slug_source_field = 'headline'
+
     STATUS_DRAFT = 'draft'
     STATUS_REVIEWED = 'reviewed'
     STATUS_CHOICES = [

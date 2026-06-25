@@ -6,7 +6,6 @@ import { AlertCircle, Link2, Users } from 'lucide-react';
 import { TicketFormAPI } from '@/lib/api/ticketFormApi';
 import type { TicketFormListItem } from '@/types/ticketForm';
 import CsmSettingsPageRoot, { CsmSettingsProjectGuard } from '@/components/csm-settings/CsmSettingsPageRoot';
-import SettingsHubLink from '@/components/csm-settings/SettingsHubLink';
 import { SECONDARY_BUTTON_CLASS } from '@/components/csm-settings/constants';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
@@ -43,9 +42,8 @@ export default function AssignmentsSettingsPage() {
         </div>
         {projectValid && (
           <div className="flex flex-wrap items-center gap-3">
-            <SettingsHubLink projectId={projectId} />
             <Link
-              href={`/admin/experience-groups?project=${projectId}`}
+              href={`/admin/experience-groups`}
               className={SECONDARY_BUTTON_CLASS}
             >
               <Users className="h-4 w-4" aria-hidden />
@@ -86,7 +84,7 @@ export default function AssignmentsSettingsPage() {
                   <td className="px-4 py-3">{form.assignment_count}</td>
                   <td className="px-4 py-3 text-right">
                     <Link
-                      href={`/admin/ticket-forms/${form.id}/assignments?project=${projectId}`}
+                      href={`/admin/ticket-forms/${form.slug}/assignments`}
                       title="Manage assignments"
                       aria-label={`Manage assignments for ${form.name}`}
                       className="inline-flex rounded-md p-1.5 text-gray-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600"

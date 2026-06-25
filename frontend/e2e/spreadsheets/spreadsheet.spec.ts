@@ -56,7 +56,7 @@ test.describe('Spreadsheet e2e flows', () => {
       .first();
     await card.click();
 
-    await page.waitForURL(/\/projects\/\d+\/spreadsheets/, {
+    await page.waitForURL(/\/projects\/[\w-]+\/spreadsheets/, {
       timeout: 10_000,
     });
 

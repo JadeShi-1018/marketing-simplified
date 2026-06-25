@@ -3,7 +3,8 @@ import api from "../api";
 export type WorkflowStatus = "draft" | "published" | "archived";
 
 export interface WorkflowSummary {
-  id: number;
+  id: number | string;
+  slug?: string;
   name: string;
   description?: string | null;
   project_id?: number | null;
@@ -69,7 +70,7 @@ export const WorkflowAPI = {
     return normalizeWorkflowList(response.data);
   },
 
-  retrieve: async (id: number): Promise<WorkflowSummary> => {
+  retrieve: async (id: number | string): Promise<WorkflowSummary> => {
     const response = await api.get(`/api/workflows/${id}/`);
     return response.data as WorkflowSummary;
   },
@@ -85,12 +86,12 @@ export const WorkflowAPI = {
     return response.data as WorkflowSummary;
   },
 
-  update: async (id: number, payload: Partial<WorkflowSummary>): Promise<WorkflowSummary> => {
+  update: async (id: number | string, payload: Partial<WorkflowSummary>): Promise<WorkflowSummary> => {
     const response = await api.patch(`/api/workflows/${id}/`, payload);
     return response.data as WorkflowSummary;
   },
 
-  duplicate: async (id: number): Promise<WorkflowSummary> => {
+  duplicate: async (id: number | string): Promise<WorkflowSummary> => {
     const original = await WorkflowAPI.retrieve(id);
     const response = await api.post("/api/workflows/", {
       name: `${original.name} (copy)`,
@@ -101,60 +102,60 @@ export const WorkflowAPI = {
     return response.data as WorkflowSummary;
   },
 
-  delete: async (id: number): Promise<void> => {
+  delete: async (id: number | string): Promise<void> => {
     await api.delete(`/api/workflows/${id}/`);
   },
 
-  validate: async (id: number): Promise<ValidationResult> => {
+  validate: async (id: number | string): Promise<ValidationResult> => {
     const response = await api.post(`/api/workflows/${id}/validate/`);
     return response.data as ValidationResult;
   },
 
-  getGraph: async (workflowId: number): Promise<WorkflowGraph> => {
+  getGraph: async (workflowId: number | string): Promise<WorkflowGraph> => {
     const response = await api.get(`/api/workflows/${workflowId}/graph/`);
     return response.data as WorkflowGraph;
   },
 
-  getNodes: async (workflowId: number): Promise<WorkflowNode[]> => {
+  getNodes: async (workflowId: number | string): Promise<WorkflowNode[]> => {
     const response = await api.get(`/api/workflows/${workflowId}/nodes/`);
     return Array.isArray(response.data) ? response.data : response.data.results || [];
   },
 
-  getNode: async (workflowId: number, nodeId: number): Promise<WorkflowNode> => {
+  getNode: async (workflowId: number | string, nodeId: number | string): Promise<WorkflowNode> => {
     const response = await api.get(`/api/workflows/${workflowId}/nodes/${nodeId}/`);
     return response.data as WorkflowNode;
   },
 
-  createNode: async (workflowId: number, payload: WorkflowNodeCreate): Promise<WorkflowNode> => {
+  createNode: async (workflowId: number | string, payload: WorkflowNodeCreate): Promise<WorkflowNode> => {
     const response = await api.post(`/api/workflows/${workflowId}/nodes/`, payload);
     return response.data as WorkflowNode;
   },
 
   updateNode: async (
-    workflowId: number,
-    nodeId: number,
+    workflowId: number | string,
+    nodeId: number | string,
     payload: Partial<WorkflowNodeCreate>
   ): Promise<WorkflowNode> => {
     const response = await api.patch(`/api/workflows/${workflowId}/nodes/${nodeId}/`, payload);
     return response.data as WorkflowNode;
   },
 
-  deleteNode: async (workflowId: number, nodeId: number): Promise<void> => {
+  deleteNode: async (workflowId: number | string, nodeId: number | string): Promise<void> => {
     await api.delete(`/api/workflows/${workflowId}/nodes/${nodeId}/`);
   },
 
-  getConnections: async (workflowId: number): Promise<WorkflowConnection[]> => {
+  getConnections: async (workflowId: number | string): Promise<WorkflowConnection[]> => {
     const response = await api.get(`/api/workflows/${workflowId}/connections/`);
     return Array.isArray(response.data) ? response.data : response.data.results || [];
   },
 
-  getConnection: async (workflowId: number, connectionId: number): Promise<WorkflowConnection> => {
+  getConnection: async (workflowId: number | string, connectionId: number | string): Promise<WorkflowConnection> => {
     const response = await api.get(`/api/workflows/${workflowId}/connections/${connectionId}/`);
     return response.data as WorkflowConnection;
   },
 
   createConnection: async (
-    workflowId: number,
+    workflowId: number | string,
     payload: WorkflowConnectionCreate
   ): Promise<WorkflowConnection> => {
     const response = await api.post(`/api/workflows/${workflowId}/connections/`, payload);
@@ -162,8 +163,8 @@ export const WorkflowAPI = {
   },
 
   updateConnection: async (
-    workflowId: number,
-    connectionId: number,
+    workflowId: number | string,
+    connectionId: number | string,
     payload: Partial<WorkflowConnectionCreate>
   ): Promise<WorkflowConnection> => {
     const response = await api.patch(
@@ -173,17 +174,17 @@ export const WorkflowAPI = {
     return response.data as WorkflowConnection;
   },
 
-  deleteConnection: async (workflowId: number, connectionId: number): Promise<void> => {
+  deleteConnection: async (workflowId: number | string, connectionId: number | string): Promise<void> => {
     await api.delete(`/api/workflows/${workflowId}/connections/${connectionId}/`);
   },
 
-  batchNodes: async (workflowId: number, operations: BatchNodeOperation): Promise<BatchNodeResult> => {
+  batchNodes: async (workflowId: number | string, operations: BatchNodeOperation): Promise<BatchNodeResult> => {
     const response = await api.post(`/api/workflows/${workflowId}/nodes/batch/`, operations);
     return response.data as BatchNodeResult;
   },
 
   batchConnections: async (
-    workflowId: number,
+    workflowId: number | string,
     operations: BatchConnectionOperation
   ): Promise<BatchConnectionResult> => {
     const response = await api.post(`/api/workflows/${workflowId}/connections/batch/`, operations);
@@ -194,7 +195,7 @@ export const WorkflowAPI = {
   // Workflow Rule API Methods
   // ========================================
 
-  getRules: async (workflowId: number, connectionId: number): Promise<WorkflowRule[]> => {
+  getRules: async (workflowId: number | string, connectionId: number | string): Promise<WorkflowRule[]> => {
     const response = await api.get(
       `/api/workflows/${workflowId}/connections/${connectionId}/rules/`
     );
@@ -202,9 +203,9 @@ export const WorkflowAPI = {
   },
 
   getRule: async (
-    workflowId: number,
-    connectionId: number,
-    ruleId: number
+    workflowId: number | string,
+    connectionId: number | string,
+    ruleId: number | string
   ): Promise<WorkflowRule> => {
     const response = await api.get(
       `/api/workflows/${workflowId}/connections/${connectionId}/rules/${ruleId}/`
@@ -212,7 +213,7 @@ export const WorkflowAPI = {
     return response.data as WorkflowRule;
   },
 
-  getRuleTypes: async (workflowId: number, connectionId: number): Promise<RuleTypesResponse> => {
+  getRuleTypes: async (workflowId: number | string, connectionId: number | string): Promise<RuleTypesResponse> => {
     const response = await api.get(
       `/api/workflows/${workflowId}/connections/${connectionId}/rules/types/`
     );
@@ -220,8 +221,8 @@ export const WorkflowAPI = {
   },
 
   createRule: async (
-    workflowId: number,
-    connectionId: number,
+    workflowId: number | string,
+    connectionId: number | string,
     payload: WorkflowRuleCreate
   ): Promise<WorkflowRule> => {
     const response = await api.post(
@@ -232,9 +233,9 @@ export const WorkflowAPI = {
   },
 
   updateRule: async (
-    workflowId: number,
-    connectionId: number,
-    ruleId: number,
+    workflowId: number | string,
+    connectionId: number | string,
+    ruleId: number | string,
     payload: Partial<WorkflowRuleCreate>
   ): Promise<WorkflowRule> => {
     const response = await api.patch(
@@ -244,7 +245,7 @@ export const WorkflowAPI = {
     return response.data as WorkflowRule;
   },
 
-  deleteRule: async (workflowId: number, connectionId: number, ruleId: number): Promise<void> => {
+  deleteRule: async (workflowId: number | string, connectionId: number | string, ruleId: number | string): Promise<void> => {
     await api.delete(`/api/workflows/${workflowId}/connections/${connectionId}/rules/${ruleId}/`);
   },
 
@@ -252,7 +253,7 @@ export const WorkflowAPI = {
   // Enhanced Workflow Detail Method
   // ========================================
 
-  getWorkflowDetail: async (workflowId: number): Promise<WorkflowDetail> => {
+  getWorkflowDetail: async (workflowId: number | string): Promise<WorkflowDetail> => {
     const [workflow, nodes, connections] = await Promise.all([
       WorkflowAPI.retrieve(workflowId),
       WorkflowAPI.getNodes(workflowId),

@@ -19,7 +19,7 @@ interface Member {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  projectId: number;
+  projectId: number | string;
   meetingId: number;
   item: MeetingActionItem | null;
   members: Member[];

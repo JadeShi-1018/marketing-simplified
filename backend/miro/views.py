@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -35,7 +36,7 @@ from miro.services import (
 )
 
 
-class BoardViewSet(viewsets.ModelViewSet):
+class BoardViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """ViewSet for Board model"""
     queryset = Board.objects.select_related('project')
     permission_classes = [IsAuthenticated, IsBoardProjectMember]
@@ -70,7 +71,7 @@ class BoardViewSet(viewsets.ModelViewSet):
         # Support both pk (from router) and board_id (from manual URL pattern)
         if board_id:
             from miro.models import Board
-            board = get_object_or_404(Board, id=board_id)
+            board = get_object_or_404(Board, **resolve_lookup_kwargs(board_id, 'id'))
         else:
             board = self.get_object()
         
@@ -103,7 +104,7 @@ class BoardViewSet(viewsets.ModelViewSet):
         # Support both pk (from router) and board_id (from manual URL pattern)
         if board_id:
             from miro.models import Board
-            board = get_object_or_404(Board, id=board_id)
+            board = get_object_or_404(Board, **resolve_lookup_kwargs(board_id, 'id'))
         else:
             board = self.get_object()
         
@@ -145,7 +146,7 @@ class BoardViewSet(viewsets.ModelViewSet):
         # Support both pk (from router) and board_id (from manual URL pattern)
         if board_id:
             from miro.models import Board
-            board = get_object_or_404(Board, id=board_id)
+            board = get_object_or_404(Board, **resolve_lookup_kwargs(board_id, 'id'))
         else:
             board = self.get_object()
         
@@ -178,7 +179,7 @@ class BoardViewSet(viewsets.ModelViewSet):
         # Support both pk (from router) and board_id (from manual URL pattern)
         if board_id:
             from miro.models import Board
-            board = get_object_or_404(Board, id=board_id)
+            board = get_object_or_404(Board, **resolve_lookup_kwargs(board_id, 'id'))
         else:
             board = self.get_object()
         
@@ -196,7 +197,7 @@ class BoardViewSet(viewsets.ModelViewSet):
         # Support both pk (from router) and board_id (from manual URL pattern)
         if board_id:
             from miro.models import Board
-            board = get_object_or_404(Board, id=board_id)
+            board = get_object_or_404(Board, **resolve_lookup_kwargs(board_id, 'id'))
         else:
             board = self.get_object()
         

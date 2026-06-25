@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Search } from 'lucide-react';
-import api from '@/lib/api';
+import { ProjectAPI } from '@/lib/api/projectApi';
 import type { ParticipantSelectorProps, ProjectMember } from '@/types/chat';
 
 export default function ParticipantSelector({
@@ -11,75 +11,77 @@ export default function ParticipantSelector({
   onSelect,
   maxSelection,
   currentUserId,
+  allowSolo = false,
 }: ParticipantSelectorProps) {
-  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [members, setMembers] = useState<Pick<ProjectMember, 'id' | 'role' | 'user'>[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Fetch project members
+  useEffect(() => {
+    setSearchQuery('');
+  }, [projectId]);
+
   useEffect(() => {
     const fetchMembers = async () => {
+      if (!projectId) {
+        setMembers([]);
+        setIsLoading(false);
+        return;
+      }
+
       try {
         setIsLoading(true);
-        const response = await api.get(`/api/core/projects/${projectId}/members/`);
-        
-        // API returns paginated results (object with 'results') or direct array
-        let membersList: ProjectMember[] = [];
-        if (Array.isArray(response.data)) {
-          membersList = response.data;
-        } else if (response.data && Array.isArray(response.data.results)) {
-          membersList = response.data.results;
-        } else {
-          console.warn('Unexpected API response format for project members:', response.data);
-          membersList = [];
-        }
-        
-        // Filter out current user from the list (ensure numeric comparison)
-        const filteredMembers = membersList.filter(
-          (member: ProjectMember) => member.user.id !== currentUserId
+        setLoadError(null);
+        const rows = await ProjectAPI.getAllProjectMembers(projectId);
+        const mapped: Pick<ProjectMember, 'id' | 'role' | 'user'>[] = rows.map((row) => ({
+          id: row.id,
+          role: row.role,
+          user: {
+            id: Number(row.user.id),
+            username: row.user.username ?? row.user.email ?? 'Unknown',
+            email: row.user.email ?? '',
+          },
+        }));
+
+        const filteredMembers = mapped.filter(
+          (member) => Number(member.user.id) !== Number(currentUserId),
         );
-        
+
         setMembers(filteredMembers);
       } catch (error) {
         console.error('Error fetching project members:', error);
+        setLoadError('Could not load project members');
+        setMembers([]);
       } finally {
         setIsLoading(false);
       }
     };
 
-    if (projectId) {
-      fetchMembers();
-    }
+    void fetchMembers();
   }, [projectId, currentUserId]);
 
-  // Filter members by search query
   const filteredMembers = members.filter((member) => {
-    const query = searchQuery.toLowerCase();
+    const query = searchQuery.toLowerCase().trim();
+    if (!query) return true;
     return (
       member.user.username?.toLowerCase().includes(query) ||
       member.user.email?.toLowerCase().includes(query)
     );
   });
 
-  // Handle toggle selection
   const handleToggle = (userId: number) => {
     if (selectedIds.includes(userId)) {
-      // Unselect
       onSelect(selectedIds.filter((id) => id !== userId));
+    } else if (maxSelection && selectedIds.length >= maxSelection) {
+      onSelect([userId]);
     } else {
-      // Select
-      if (maxSelection && selectedIds.length >= maxSelection) {
-        // Replace selection if max reached (for private chat)
-        onSelect([userId]);
-      } else {
-        onSelect([...selectedIds, userId]);
-      }
+      onSelect([...selectedIds, userId]);
     }
   };
 
   return (
     <div className="space-y-3">
-      {/* Search Input */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
         <input
@@ -91,15 +93,20 @@ export default function ParticipantSelector({
         />
       </div>
 
-      {/* Member List */}
       <div className="task-tab-scrollbar border border-gray-300 rounded-lg max-h-60 overflow-y-auto">
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#3CCED7]"></div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#3CCED7]" />
           </div>
+        ) : loadError ? (
+          <div className="text-center py-8 text-red-600 text-sm px-4">{loadError}</div>
         ) : filteredMembers.length === 0 ? (
-          <div className="text-center py-8 text-gray-500 text-sm">
-            {searchQuery ? 'No members found' : 'No team members available'}
+          <div className="text-center py-8 text-gray-500 text-sm px-4">
+            {searchQuery.trim()
+              ? 'No members match your search'
+              : allowSolo
+                ? 'No other members in this project yet. You can still create the channel solo, or invite teammates from Project Settings.'
+                : 'No other team members in this project. Invite someone from Project Settings to start a chat.'}
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
@@ -115,22 +122,17 @@ export default function ParticipantSelector({
                   className="w-4 h-4 text-[#3CCED7] border-gray-300 rounded focus:ring-[#3CCED7]"
                 />
 
-                {/* Avatar */}
                 <div className="w-8 h-8 rounded-full bg-[#3CCED7] text-white flex items-center justify-center font-medium text-sm flex-shrink-0">
                   {member.user.username?.charAt(0)?.toUpperCase() || '?'}
                 </div>
 
-                {/* Member Info */}
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-900 text-sm truncate">
                     {member.user.username || 'Unknown'}
                   </p>
-                  <p className="text-xs text-gray-500 truncate">
-                    {member.user.email}
-                  </p>
+                  <p className="text-xs text-gray-500 truncate">{member.user.email}</p>
                 </div>
 
-                {/* Role Badge */}
                 {member.role && (
                   <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded flex-shrink-0">
                     {member.role}
@@ -144,4 +146,3 @@ export default function ParticipantSelector({
     </div>
   );
 }
-

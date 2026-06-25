@@ -1,5 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.postgres.fields import ArrayField
 
 User = get_user_model()
@@ -129,7 +131,8 @@ class AdLabel(models.Model):
         return f"{self.id}"
 
 # 7. AdCreative
-class AdCreative(models.Model):
+class AdCreative(SluggedResourceModelMixin, models.Model):
+    slug_source_field = "name"
     # Call to action type choices
     CALL_TO_ACTION_CHOICES = [
         ("OPEN_LINK", "Open Link"), ("LIKE_PAGE", "Like Page"), ("SHOP_NOW", "Shop Now"),

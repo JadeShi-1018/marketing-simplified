@@ -24,8 +24,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 interface MeetingLifecyclePanelProps {
-  projectId: number;
-  meetingId: number;
+  projectId: number | string;
+  meetingId: number | string;
   /** Called after a successful transition so parent can refresh meeting data. */
   onStatusChanged?: (newStatus: string) => void;
 }

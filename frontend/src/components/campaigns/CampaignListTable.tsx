@@ -3,6 +3,8 @@
 import { Loader2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import type { CampaignData, CampaignStatus } from '@/types/campaign';
+import { useProjectStore } from '@/lib/projectStore';
+import { nestedProjectPathFromProject } from '@/lib/projectNestedRoutes';
 import CampaignStatusPill from './pills/CampaignStatusPill';
 
 interface Props {
@@ -63,6 +65,7 @@ export default function CampaignListTable({
   onRowClick,
 }: Props) {
   const router = useRouter();
+  const activeProject = useProjectStore((s) => s.activeProject);
 
   return (
     <div className="overflow-hidden rounded-xl bg-white shadow-sm ring-1 ring-gray-100">
@@ -103,7 +106,7 @@ export default function CampaignListTable({
                   <tr
                     key={c.id}
                     className="cursor-pointer transition hover:bg-gray-50/80"
-                    onClick={() => (onRowClick ? onRowClick(c) : router.push(`/campaigns/${c.id}`))}
+                    onClick={() => (onRowClick ? onRowClick(c) : router.push(nestedProjectPathFromProject(activeProject, `/campaigns/${c.slug}`)))}
                   >
                     <td className="px-4 py-3">
                       <span className={`inline-block h-2 w-2 rounded-full ${dot}`} title={c.status} />

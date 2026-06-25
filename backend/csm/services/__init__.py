@@ -29,6 +29,11 @@ from csm.services.work_types import (
     deactivate_work_type,
     reorder_work_types,
 )
+from csm.services.sla import (
+    recalculate_ticket_sla,
+    recalculate_ticket_sla_after_policy_change,
+    get_sla_status,
+)
 
 __all__ = [
     'ensure_system_fields',
@@ -54,4 +59,7 @@ __all__ = [
     'update_work_type',
     'deactivate_work_type',
     'reorder_work_types',
+    'recalculate_ticket_sla',
+    'recalculate_ticket_sla_after_policy_change',
+    'get_sla_status',
 ]

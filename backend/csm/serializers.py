@@ -16,12 +16,12 @@ class QueueSerializer(serializers.ModelSerializer):
     class Meta:
         model = Queue
         fields = [
-            'id', 'project', 'organisation', 'organisation_name',
+            'id', 'slug', 'project', 'organisation', 'organisation_name',
             'name', 'description',
             'tier', 'tier_display',
             'display_order', 'is_active', 'created_at',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'slug', 'created_at']
 
 
 class QueueAgentSerializer(serializers.ModelSerializer):
@@ -188,6 +188,8 @@ class ConversationSerializer(serializers.ModelSerializer):
             'title': t.title,
             'status': t.status,
             'status_display': t.get_status_display(),
+            'priority': t.priority,
+            'priority_display': t.get_priority_display(),
             'assigned_to_name': (
                 t.assigned_to.get_full_name() or t.assigned_to.email
                 if t.assigned_to else None
@@ -234,6 +236,7 @@ class TicketSerializer(serializers.ModelSerializer):
     queue_name = serializers.CharField(source='queue.name', read_only=True, default=None)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     priority_display = serializers.CharField(source='get_priority_display', read_only=True)
+    sla = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
@@ -242,14 +245,19 @@ class TicketSerializer(serializers.ModelSerializer):
             'status', 'status_display', 'priority', 'priority_display',
             'assigned_to', 'assigned_to_name', 'customer_email',
             'conversation', 'created_at',
+            'first_response_due', 'resolution_due', 'sla',
         ]
-        read_only_fields = ['id', 'created_at']
+        read_only_fields = ['id', 'created_at', 'first_response_due', 'resolution_due']
 
     def get_assigned_to_name(self, obj):
         if not obj.assigned_to:
             return None
         full = obj.assigned_to.get_full_name()
         return full if full.strip() else obj.assigned_to.email
+
+    def get_sla(self, obj):
+        from csm.services.sla import get_sla_status
+        return get_sla_status(obj)
 
 
 class QuickReplyTemplateSerializer(serializers.ModelSerializer):
@@ -302,11 +310,11 @@ class TicketFormListSerializer(serializers.ModelSerializer):
     class Meta:
         model = TicketForm
         fields = [
-            'id', 'project', 'name', 'description',
+            'id', 'slug', 'project', 'name', 'description',
             'is_default', 'is_active', 'assignment_count',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'assignment_count']
+        read_only_fields = ['id', 'slug', 'created_at', 'updated_at', 'assignment_count']
 
 
 class TicketFormDetailSerializer(serializers.ModelSerializer):
@@ -315,11 +323,11 @@ class TicketFormDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = TicketForm
         fields = [
-            'id', 'project', 'name', 'description',
+            'id', 'slug', 'project', 'name', 'description',
             'is_default', 'is_active', 'fields',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'project', 'is_default', 'created_at', 'updated_at', 'fields']
+        read_only_fields = ['id', 'slug', 'project', 'is_default', 'created_at', 'updated_at', 'fields']
 
 
 class TicketFormCreateSerializer(serializers.ModelSerializer):

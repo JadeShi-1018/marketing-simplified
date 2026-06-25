@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
 
+import { Id } from '@/types/common';
 import { ProjectAPI, type ProjectMemberData } from '@/lib/api/projectApi';
 import {
   formatProjectMemberLabel,
@@ -10,7 +11,7 @@ import {
 } from '@/components/meetings/projectMemberLabel';
 
 export type ProjectMemberPickerProps = {
-  projectId: number;
+  projectId: Id;
   /** User ids that cannot be chosen (e.g. already a participant). */
   excludeUserIds: number[];
   disabled?: boolean;

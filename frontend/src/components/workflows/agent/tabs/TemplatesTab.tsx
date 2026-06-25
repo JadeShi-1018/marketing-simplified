@@ -64,7 +64,7 @@ export default function TemplatesTab({ refreshKey }: TemplatesTabProps) {
       // Pass current project ID to filter templates by visibility
       const params = {
         ...(categoryFilter !== "all" && { category: categoryFilter }),
-        ...(projectParams && { project_id: projectParams.project_id }),
+        ...(projectParams && { project_id: Number(projectParams.project_id) }),
       }
       const data = await AgentAPI.listTemplates(params)
       setTemplates(data)

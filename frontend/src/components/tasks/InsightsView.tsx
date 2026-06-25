@@ -17,6 +17,7 @@ import type {
   WorkCycleFieldEntry,
 } from '@/types/task';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Id } from '@/types/common';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -117,7 +118,7 @@ function TaskRow({ task }: { task: IntelligenceTaskStub }) {
         </span>
       )}
       <Link
-        href={`/tasks/${task.id}`}
+        href={`/tasks/${task.slug}`}
         className="min-w-0 flex-1 truncate text-sm text-gray-800 hover:text-[#3CCED7] hover:underline"
       >
         {task.summary}
@@ -246,7 +247,7 @@ function CycleTaskRow({ task }: { task: WorkCycleTaskStub }) {
   return (
     <li className="flex min-w-0 items-center gap-2 py-1">
       <Link
-        href={`/tasks/${task.id}`}
+        href={`/tasks/${task.slug}`}
         className="min-w-0 flex-1 truncate text-[12px] text-gray-700 hover:text-[#3CCED7] hover:underline"
       >
         {task.summary}
@@ -263,7 +264,7 @@ function CycleFieldRow({ entry }: { entry: WorkCycleFieldEntry }) {
     <li className="flex min-w-0 items-start gap-2 py-1">
       <div className="min-w-0 flex-1">
         <p className="truncate text-[12px] text-gray-700">
-          <Link href={`/tasks/${entry.task_id}`} className="font-medium hover:text-[#3CCED7] hover:underline">
+          <Link href={`/tasks/${entry.task_slug ?? entry.task_id}`} className="font-medium hover:text-[#3CCED7] hover:underline">
             {entry.task_summary}
           </Link>
           {entry.old_value && entry.new_value
@@ -316,7 +317,7 @@ function CycleSection({ label, icon: Icon, iconCls, count, children }: CycleSect
   );
 }
 
-function WorkCycleHistory({ projectId }: { projectId: number | null }) {
+function WorkCycleHistory({ projectId }: { projectId: Id | null }) {
   const [dateFrom, setDateFrom] = useState(monthStartISO);
   const [dateTo, setDateTo] = useState(todayISO);
   const [data, setData] = useState<WorkCycleHistoryPayload | null>(null);
@@ -411,7 +412,7 @@ function WorkCycleHistory({ projectId }: { projectId: number | null }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function InsightsView({ projectId }: { projectId: number | null }) {
+export default function InsightsView({ projectId }: { projectId: Id | null }) {
   const [data, setData] = useState<TaskIntelligencePayload | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

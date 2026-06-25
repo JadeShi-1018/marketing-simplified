@@ -96,7 +96,7 @@ function QueueTicketList({ queueId }: { queueId: number }) {
 }
 
 interface QueuesTabProps {
-  projectId: number;
+  projectId: number | string;
   organisationId: number;
 }
 

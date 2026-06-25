@@ -1,4 +1,5 @@
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth import get_user_model
 from django.core.validators import MinLengthValidator
 from django.utils import timezone
@@ -7,7 +8,7 @@ import json
 User = get_user_model()
 
 
-class Draft(models.Model):
+class Draft(SluggedResourceModelMixin, models.Model):
     """
     Notion-style draft document model
     """

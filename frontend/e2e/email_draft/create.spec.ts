@@ -19,6 +19,16 @@ async function submitMailchimpCreateDraft(page: Page) {
   return createResponse;
 }
 
+async function trackCreatedDraft(
+  response: Awaited<ReturnType<typeof submitMailchimpCreateDraft>>,
+  bucket: number[],
+) {
+  const created = (await response.json()) as { id?: number };
+  if (typeof created.id === "number") {
+    bucket.push(created.id);
+  }
+}
+
 test.describe("Email draft create flows (Klaviyo)", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -38,6 +48,7 @@ test.describe("Email draft create flows (Klaviyo)", () => {
           contentType: "application/json",
           body: JSON.stringify({
             id: 990001,
+            slug: "y2-busy-template",
             subject: "Untitled template",
             status: "draft",
             created_at: new Date().toISOString(),
@@ -52,13 +63,8 @@ test.describe("Email draft create flows (Klaviyo)", () => {
       await button.click();
       await button.click();
 
-      await expect(page).toHaveURL(/\/klaviyo\/\d+(?:\?|$)/, { timeout: 30_000 });
+      await expect(page).toHaveURL(/\/klaviyo\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
       expect(postCount).toBe(1);
-
-      const match = /\/klaviyo\/(\d+)(?:\?|$)/.exec(page.url());
-      if (match) {
-        cleanup.klaviyo.push(Number(match[1]));
-      }
     } finally {
       await cleanupDraftRefs(page, cleanup);
       await page.unroute("**/api/klaviyo/klaviyo-drafts/");
@@ -80,11 +86,9 @@ test.describe("Email draft create flows (Klaviyo)", () => {
       await page.getByRole("button", { name: "New template" }).click();
       const createResponse = await createResponsePromise;
       expect(createResponse.ok()).toBeTruthy();
+      await trackCreatedDraft(createResponse, cleanup.klaviyo);
 
-      await expect(page).toHaveURL(/\/klaviyo\/\d+(?:\?|$)/, { timeout: 30_000 });
-      const match = /\/klaviyo\/(\d+)(?:\?|$)/.exec(page.url());
-      expect(match).toBeTruthy();
-      cleanup.klaviyo.push(Number(match?.[1]));
+      await expect(page).toHaveURL(/\/klaviyo\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -173,11 +177,9 @@ test.describe("Email draft create flows (Klaviyo)", () => {
       await page.getByRole("button", { name: "Create template" }).click();
       const createResponse = await createResponsePromise;
       expect(createResponse.ok()).toBeTruthy();
+      await trackCreatedDraft(createResponse, cleanup.klaviyo);
 
-      await expect(page).toHaveURL(/\/klaviyo\/\d+(?:\?|$)/, { timeout: 30_000 });
-      const match = /\/klaviyo\/(\d+)(?:\?|$)/.exec(page.url());
-      expect(match).toBeTruthy();
-      cleanup.klaviyo.push(Number(match?.[1]));
+      await expect(page).toHaveURL(/\/klaviyo\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -202,14 +204,19 @@ test.describe("Email draft create flows (Klaviyo)", () => {
     try {
       await page.goto("/klaviyo/new");
       await page.getByPlaceholder("e.g. Spring promotion launch").fill("Y-submit-ok Subject");
+      const createResponsePromise = page.waitForResponse(
+        (response) =>
+          response.url().includes("/api/klaviyo/klaviyo-drafts/") &&
+          response.request().method() === "POST",
+        { timeout: 30_000 },
+      );
       await page.getByRole("button", { name: "Create template" }).click();
 
       await expect(page.getByText("Template created")).toBeVisible({ timeout: 30_000 });
-      await expect(page).toHaveURL(/\/klaviyo\/\d+(?:\?|$)/, { timeout: 30_000 });
-
-      const match = /\/klaviyo\/(\d+)(?:\?|$)/.exec(page.url());
-      expect(match).toBeTruthy();
-      cleanup.klaviyo.push(Number(match?.[1]));
+      const createResponse = await createResponsePromise;
+      expect(createResponse.ok()).toBeTruthy();
+      await trackCreatedDraft(createResponse, cleanup.klaviyo);
+      await expect(page).toHaveURL(/\/klaviyo\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -506,6 +513,7 @@ test.describe("Email draft create flows (Mailchimp)", () => {
         contentType: "application/json",
         body: JSON.stringify({
           id: 980001,
+          slug: "mc-y4-preview-subject",
           status: "draft",
           settings: { subject_line: "MC-Y4-preview Subject", from_name: "MC-Y4-preview From" },
         }),
@@ -521,11 +529,9 @@ test.describe("Email draft create flows (Mailchimp)", () => {
       await page.getByPlaceholder("e.g. Marketing team").fill("MC-Y4-preview From");
       await page.getByPlaceholder("e.g. team@example.com").fill("preview@example.com");
       await expect(page.getByRole("button", { name: "Create draft" })).toBeEnabled();
-      await submitMailchimpCreateDraft(page);
-      await expect(page).toHaveURL(/\/mailchimp\/\d+(?:\?|$)/, { timeout: 30_000 });
-
-      const match = /\/mailchimp\/(\d+)(?:\?|$)/.exec(page.url());
-      if (match) cleanup.mailchimp.push(Number(match[1]));
+      const createResponse = await submitMailchimpCreateDraft(page);
+      await trackCreatedDraft(createResponse, cleanup.mailchimp);
+      await expect(page).toHaveURL(/\/mailchimp\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
       expect(createPayload?.settings?.subject_line).toBe("MC-Y4-preview Subject");
       expect(createPayload?.settings?.preview_text).toBeUndefined();
     } finally {
@@ -544,11 +550,9 @@ test.describe("Email draft create flows (Mailchimp)", () => {
       await page.getByPlaceholder("e.g. Marketing team").fill("MC-Y5-id From");
       await page.getByPlaceholder("e.g. team@example.com").fill("y5id@example.com");
 
-      await submitMailchimpCreateDraft(page);
-      await expect(page).toHaveURL(/\/mailchimp\/\d+(?:\?|$)/, { timeout: 30_000 });
-      const match = /\/mailchimp\/(\d+)(?:\?|$)/.exec(page.url());
-      expect(match).toBeTruthy();
-      cleanup.mailchimp.push(Number(match?.[1]));
+      const createResponse = await submitMailchimpCreateDraft(page);
+      await trackCreatedDraft(createResponse, cleanup.mailchimp);
+      await expect(page).toHaveURL(/\/mailchimp\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -611,10 +615,8 @@ test.describe("Email draft create flows (Mailchimp)", () => {
       await expect(page.getByText("Draft created")).toBeVisible({ timeout: 30_000 });
       const createResponse = await createResponsePromise;
       expect(createResponse.ok()).toBeTruthy();
-      await expect(page).toHaveURL(/\/mailchimp\/\d+(?:\?|$)/, { timeout: 30_000 });
-
-      const match = /\/mailchimp\/(\d+)(?:\?|$)/.exec(page.url());
-      if (match) cleanup.mailchimp.push(Number(match[1]));
+      await trackCreatedDraft(createResponse, cleanup.mailchimp);
+      await expect(page).toHaveURL(/\/mailchimp\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -657,4 +659,3 @@ test.describe("Email draft create flows (Mailchimp)", () => {
     }
   });
 });
-

@@ -6,6 +6,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -268,7 +269,7 @@ class KPISuggestionsView(APIView):
         )
 
 
-class ProjectViewSet(viewsets.ModelViewSet):
+class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for Project model with project membership filtering.
     
@@ -556,7 +557,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
         from core.utils.bot_user import AGENT_BOT_EMAIL
 
         project_id = self.kwargs.get('project_id')
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Verify user is a member
         if not ProjectMember.objects.filter(
@@ -693,7 +694,7 @@ class ProjectMemberViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Invite user to project."""
         project_id = self.kwargs.get('project_id')
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Invite is owner-only: verify actor is the authoritative project owner
         user = request.user
@@ -862,7 +863,7 @@ class ListProjectAvailableRolesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id: int):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Prevent leaking role definitions to non-members.
         if not ProjectMember.objects.filter(
@@ -1050,7 +1051,7 @@ class ListProjectInvitationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         # Verify user is a project member
         if not ProjectMember.objects.filter(
@@ -1088,7 +1089,8 @@ class ListMyProjectInvitationsView(APIView):
         ).select_related('invited_by', 'project').order_by('-created_at')
 
         if project_id:
-            invitations = invitations.filter(project_id=project_id)
+            resolved_pid = resolve_project_pk(project_id)
+            invitations = invitations.filter(project_id=resolved_pid) if resolved_pid else invitations.none()
 
         serializer = ProjectInvitationSerializer(invitations, many=True, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1100,7 +1102,7 @@ class ListPendingInvitationApprovalsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, project_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(
@@ -1124,7 +1126,7 @@ class ApproveProjectInvitationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, project_id, invitation_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(
@@ -1209,7 +1211,7 @@ class RejectProjectInvitationView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, project_id, invitation_id):
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
 
         if not can_manage_project_members(request.user, project):
             return Response(

@@ -52,7 +52,7 @@ class TaskDueDateNotificationTests(APITestCase):
         self.client.force_authenticate(user=self.editor)
 
     def test_due_date_change_emits_task_owner_changed_with_metadata(self):
-        url = reverse("task-detail", kwargs={"pk": self.task.id})
+        url = reverse("task-detail", kwargs={"pk": self.task.slug})
         response = self.client.patch(
             url,
             {"due_date": "2026-05-25"},
@@ -115,7 +115,7 @@ class TaskStatusChangeNotificationTests(APITestCase):
         self.client.force_authenticate(user=self.approver)
 
     def test_status_change_sets_actor_on_owner_notification(self):
-        url = reverse("task-make-approval", kwargs={"pk": self.task.id})
+        url = reverse("task-make-approval", kwargs={"pk": self.task.slug})
         response = self.client.post(url, {"action": "approve"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 

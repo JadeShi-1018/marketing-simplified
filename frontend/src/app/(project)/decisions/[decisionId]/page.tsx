@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { DecisionAPI } from '@/lib/api/decisionApi';
 
 import DecisionDetailHeader from '@/components/decisions/detail/DecisionDetailHeader';
@@ -43,16 +43,13 @@ const EDITABLE_STATUSES = new Set(['PREDRAFT', 'DRAFT']);
 function DecisionDetailContent() {
   const router = useRouter();
   const params = useParams<{ decisionId: string }>();
-  const searchParams = useSearchParams();
-  const activeProject = useProjectStore((s) => s.activeProject);
+  const { projectId, activeProject } = useActiveProjectForFlatRoute();
 
-  const decisionId = Number(params?.decisionId);
-  const projectIdParam = searchParams?.get('project_id');
-  const projectId = projectIdParam ? Number(projectIdParam) : activeProject?.id ?? null;
+  const decisionId = String(params.decisionId);
 
   const { canEdit, canApproveOrReview, members } = useProjectRole(projectId);
 
-  const detail = useDecisionDetail(Number.isFinite(decisionId) ? decisionId : null, projectId);
+  const detail = useDecisionDetail(decisionId || null, projectId);
   const status = detail.status;
   const base = detail.base;
 
@@ -159,8 +156,7 @@ function DecisionDetailContent() {
         riskLevel === 'HIGH' ? 'Decision submitted for approval' : 'Decision committed',
       );
       setFieldErrors({});
-      const qs = projectId ? `?project_id=${projectId}` : '';
-      router.replace(`/decisions${qs}`);
+      router.replace('/decisions');
       return null;
     } catch (err: any) {
       const body = err?.response?.data;
@@ -239,8 +235,7 @@ function DecisionDetailContent() {
     try {
       await DecisionAPI.deleteDecision(decisionId, projectId);
       toast.success('Decision deleted');
-      const qs = projectId ? `?project_id=${projectId}` : '';
-      router.push(`/decisions${qs}`);
+      router.push('/decisions');
     } catch (err) {
       toast.error(extractError(err, 'Delete failed'));
     } finally {
@@ -305,7 +300,7 @@ function DecisionDetailContent() {
   };
 
   // ---- Loading / error states ----
-  if (!decisionId || !Number.isFinite(decisionId)) {
+  if (!decisionId) {
     return (
       <DashboardLayout alerts={[]} upcomingMeetings={[]}>
         <div className="mx-auto w-full max-w-[1440px] px-3 py-3 text-sm text-gray-500 sm:px-6 sm:py-4">
@@ -411,8 +406,7 @@ function DecisionDetailContent() {
                 editable={status !== 'ARCHIVED' && canEdit}
                 onCreateTask={() => {
                   const q = new URLSearchParams();
-                  if (projectId) q.set('project_id', String(projectId));
-                  q.set('link_decision_id', String(decisionId));
+                  q.set('link_decision', String(detail.committed?.slug ?? decisionId));
                   router.push(`/tasks/new?${q.toString()}`);
                 }}
               />

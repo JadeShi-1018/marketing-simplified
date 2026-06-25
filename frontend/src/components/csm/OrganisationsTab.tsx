@@ -100,7 +100,7 @@ const InlineNameEditor: React.FC<InlineNameEditorProps> = ({ orgId, currentName,
 // ── Organisations Tab ────────────────────────────────────────────────────────
 
 interface OrganisationsTabProps {
-  projectId: number;
+  projectId: number | string;
 }
 
 const OrganisationsTab: React.FC<OrganisationsTabProps> = ({ projectId }) => {

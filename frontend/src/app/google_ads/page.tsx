@@ -72,7 +72,7 @@ function GoogleAdsPageContent() {
     const createdAd = await createAd(formData);
     setShowModal(false);
     // Redirect to design page after creation
-    router.push(`/google_ads/${createdAd.id}/design`);
+    router.push(`/google_ads/${createdAd.slug ?? createdAd.id}/design`);
     return createdAd;
   };
 
