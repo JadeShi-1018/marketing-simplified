@@ -1,7 +1,11 @@
 from django.conf import settings
 from django.db import models
 
-from .crypto import decrypt_token, encrypt_token
+import logging
+
+from .crypto import DecryptionError, decrypt_token, encrypt_token
+
+logger = logging.getLogger(__name__)
 
 
 class FacebookConnection(models.Model):
@@ -49,7 +53,14 @@ class FacebookConnection(models.Model):
         self.encrypted_access_token = encrypt_token(token) or ""
 
     def get_access_token(self) -> str | None:
-        return decrypt_token(self.encrypted_access_token or None)
+        try:
+            return decrypt_token(self.encrypted_access_token or None)
+        except DecryptionError:
+            logger.error(
+                "FacebookConnection(user=%s): access token decryption failed — reconnect required.",
+                self.user_id,
+            )
+            return None
 
 
 class MetaAdAccount(models.Model):
