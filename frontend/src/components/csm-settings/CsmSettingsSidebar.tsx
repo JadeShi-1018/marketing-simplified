@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, FolderKanban, ListOrdered, Radio, Settings } from 'lucide-react';
+import { ClipboardList, FolderKanban, ListOrdered, Radio, Settings, Shield } from 'lucide-react';
 
 interface Props {
   projectId: number;
