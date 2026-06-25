@@ -21,7 +21,7 @@ from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification,
     Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory,
     TicketForm, TicketFormAssignment, SupportProject, CsmWorkType,
-    SupportChannel,
+    SupportChannel, SLAPolicy, SLAPriorityTarget,
 )
 from .serializers import (
     QueueSerializer, QueueAgentSerializer,
@@ -39,6 +39,7 @@ from .serializers import (
     SupportProjectSerializer,
     CsmWorkTypeSerializer,
     WorkTypeReorderSerializer,
+    SLAPolicySerializer,
     SupportChannelListSerializer,
     SupportChannelDetailSerializer,
     SupportChannelCreateUpdateSerializer,
@@ -1213,3 +1214,86 @@ class SupportChannelViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
             'snippet': snippet,
             'embed_key': str(channel.embed_key),
         })
+
+
+# ---------------------------------------------------------------------------
+# SLA Policy (MED-218)
+# ---------------------------------------------------------------------------
+
+_SLA_DEFAULT_TARGETS = [
+    ('critical', 60,   240),   # 1h first response, 4h resolution
+    ('high',     240,  480),   # 4h / 8h
+    ('medium',   480,  1440),  # 8h / 24h
+    ('low',      1440, 2880),  # 24h / 48h
+]
+
+
+class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """
+    SLA Policy admin API (MED-218).
+
+    - GET   /sla-policy/?project={id}  retrieve the project's SLA policy
+    - PUT   /sla-policy/{id}/          full update (replaces all priority targets)
+    - PATCH /sla-policy/{id}/          partial update
+    """
+    serializer_class = SLAPolicySerializer
+    permission_classes = [IsAuthenticated, IsCsmAccessAllowed]
+    http_method_names = ['get', 'put', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        qs = SLAPolicy.objects.prefetch_related('priority_targets').select_related('project')
+        return self.filter_by_accessible_projects(qs)
+
+    def list(self, request, *args, **kwargs):
+        """Return (or lazily create) the project's SLA policy."""
+        project_id = self.get_required_project_id()
+        policy, created = SLAPolicy.objects.get_or_create(
+            project_id=project_id,
+            defaults={'name': 'Default SLA Policy'},
+        )
+        if created or not policy.priority_targets.exists():
+            existing_priorities = set(
+                policy.priority_targets.values_list('priority', flat=True)
+            )
+            for priority, fr, res in _SLA_DEFAULT_TARGETS:
+                if priority not in existing_priorities:
+                    SLAPriorityTarget.objects.create(
+                        policy=policy,
+                        priority=priority,
+                        first_response_minutes=fr,
+                        resolution_minutes=res,
+                    )
+            policy.refresh_from_db()
+        return Response(SLAPolicySerializer(policy).data)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        was_active = instance.is_active
+        old_targets_by_priority = {
+            t.priority: (t.first_response_minutes, t.resolution_minutes)
+            for t in instance.priority_targets.all()
+        }
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        instance.refresh_from_db()
+        policy_reactivated = not was_active and instance.is_active
+
+        from csm.services.sla import recalculate_ticket_sla_after_policy_change
+        project_id = instance.project_id
+        open_tickets = list(
+            Ticket.objects
+            .filter(queue__project_id=project_id, status__in=('todo', 'in_progress'))
+            .select_related('queue__project')
+        )
+        for ticket in open_tickets:
+            recalculate_ticket_sla_after_policy_change(
+                ticket,
+                old_targets_by_priority,
+                policy_reactivated=policy_reactivated,
+            )
+        if open_tickets:
+            Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
+
+        return Response(serializer.data)

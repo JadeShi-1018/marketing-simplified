@@ -22,7 +22,10 @@ def default_operating_hours():
     }
 
 
-class Queue(TimeStampedModel):
+class Queue(SluggedResourceModelMixin, TimeStampedModel):
+    # Slug-only URLs. Slug is derived from name.
+    slug_source_field = 'name'
+
     TIER_CHOICES = [
         ('T1', 'T1 Frontline'),
         ('T2', 'T2 Technical Support'),
@@ -602,6 +605,54 @@ class TicketAttachment(models.Model):
 
     def __str__(self):
         return self.original_name or str(self.file)
+
+
+class SLAPolicy(TimeStampedModel):
+    """One SLA policy per project. Defines per-priority time targets."""
+
+    project = models.OneToOneField(
+        'core.Project', on_delete=models.CASCADE,
+        related_name='sla_policy',
+    )
+    name = models.CharField(max_length=200, default='Default SLA Policy')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'SLA Policy'
+        verbose_name_plural = 'SLA Policies'
+
+    def __str__(self):
+        return f"SLA Policy — {self.project_id}"
+
+
+class SLAPriorityTarget(models.Model):
+    """Per-priority SLA time targets within an SLAPolicy."""
+
+    PRIORITY_CHOICES = Ticket.PRIORITY_CHOICES
+
+    policy = models.ForeignKey(
+        SLAPolicy, on_delete=models.CASCADE,
+        related_name='priority_targets',
+    )
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES)
+    first_response_minutes = models.PositiveIntegerField(
+        default=480,
+        help_text='Minutes until first response is due (e.g. 60 = 1 hour)',
+    )
+    resolution_minutes = models.PositiveIntegerField(
+        default=1440,
+        help_text='Minutes until resolution is due (e.g. 480 = 8 hours)',
+    )
+
+    class Meta:
+        unique_together = ('policy', 'priority')
+        ordering = ['policy', 'priority']
+
+    def __str__(self):
+        return (
+            f"{self.policy_id} | {self.priority}: "
+            f"{self.first_response_minutes}m / {self.resolution_minutes}m"
+        )
 
 
 class SupportChannel(TimeStampedModel):

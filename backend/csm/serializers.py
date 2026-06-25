@@ -4,6 +4,7 @@ from .models import (
     Conversation, ConversationMessage, Ticket, QuickReplyTemplate, QuickReplyTemplateHistory,
     TicketForm, TicketFormField, TicketFormAssignment,
     SupportProject, CsmWorkType, SupportChannel,
+    SLAPolicy, SLAPriorityTarget,
 )
 
 
@@ -392,6 +393,43 @@ class WorkTypeReorderSerializer(serializers.Serializer):
         child=serializers.IntegerField(min_value=1),
         allow_empty=False,
     )
+
+
+# ---------------------------------------------------------------------------
+# SLA Policy (MED-218)
+# ---------------------------------------------------------------------------
+
+class SLAPriorityTargetSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SLAPriorityTarget
+        fields = ['id', 'priority', 'first_response_minutes', 'resolution_minutes']
+        read_only_fields = ['id']
+
+
+class SLAPolicySerializer(serializers.ModelSerializer):
+    priority_targets = SLAPriorityTargetSerializer(many=True, required=False)
+
+    class Meta:
+        model = SLAPolicy
+        fields = [
+            'id', 'project', 'name', 'is_active',
+            'priority_targets', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'project', 'created_at', 'updated_at']
+
+    def update(self, instance, validated_data):
+        targets_data = validated_data.pop('priority_targets', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if targets_data is not None:
+            instance.priority_targets.all().delete()
+            for td in targets_data:
+                SLAPriorityTarget.objects.create(policy=instance, **td)
+
+        instance.refresh_from_db()
+        return instance
 
 
 class SupportChannelExperienceGroupSerializer(serializers.Serializer):
