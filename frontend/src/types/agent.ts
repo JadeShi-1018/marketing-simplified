@@ -165,6 +165,8 @@ export interface AgentChatRequest {
   csv_filename?: string;
   action?: AgentAction;
   calendar_context?: CalendarContextPayload;
+  /** Draft → Agent context (read-only): { draftId, title, ... }. */
+  draft_context?: Record<string, unknown>;
   workflow_id?: string;
   column_mapping?: Record<string, string>;
   approval_id?: string;

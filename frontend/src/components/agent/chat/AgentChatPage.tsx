@@ -37,7 +37,10 @@ import type { DecisionGenerationStatus } from "./DecisionTreeListCard"
 import {
   AGENT_PANEL_OPENED_EVENT,
   consumeCalendarPreload,
+  consumeDraftPreload,
+  shouldAutoSendDraftPreload,
   type CalendarPreload,
+  type DraftPreload,
 } from "@/lib/agentLaunchContext"
 import { getPendingMiroWorkflowRunIds } from "@/lib/agentMiroBoardStatus"
 import { agentMiroBoardHref } from "@/lib/agentMiroBoardHref"
@@ -314,6 +317,8 @@ function appendMiroResultMessage(prev: ChatMessage[], event: SSEEvent): ChatMess
 
 // Reset when new calendar context is consumed so auto-send fires once per launch.
 let _calendarAutoSendFired = false
+// Same one-shot guard for a staged draft context (Draft → Agent).
+let _draftAutoSendFired = false
 
 type AgentChatPageProps = {
   /** Hide title + approval row; used when the floating window title bar shows them. */
@@ -437,6 +442,24 @@ export function AgentChatPage({ embeddedInFloating = false }: AgentChatPageProps
       sessionStorage.setItem("agent-session-calendar-context", JSON.stringify(sessionCalendarContext))
     }
   }, [sessionCalendarContext])
+
+  // Draft → Agent: staged draft context (read-only). Mirrors the calendar flow.
+  const [pendingDraftPreload, setPendingDraftPreload] = useState<DraftPreload | null>(() => {
+    const preload = consumeDraftPreload()
+    if (preload) {
+      _draftAutoSendFired = false
+    }
+    return preload
+  })
+  // Persist for the session lifetime so follow-up questions stay in draft context.
+  const [sessionDraftContext, setSessionDraftContext] = useState<Record<string, unknown> | null>(
+    pendingDraftPreload ? pendingDraftPreload.context : null
+  )
+  useEffect(() => {
+    if (sessionDraftContext) {
+      sessionStorage.setItem("agent-session-draft-context", JSON.stringify(sessionDraftContext))
+    }
+  }, [sessionDraftContext])
 
   const handleSendMessageRef = useRef<typeof handleSendMessage | null>(null)
   const isAwaitingFollowUp = followUpStarted && !isStreaming
@@ -1012,8 +1035,35 @@ setStepState({
       _calendarAutoSendFired = false
     }
 
-    window.addEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpened)
-    return () => window.removeEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpened)
+    // Draft → Agent (Open in Agent / Ask Agent from a draft).
+    const onPanelOpenedDraft = () => {
+      const preload = consumeDraftPreload()
+      if (!preload) {
+        return
+      }
+      sessionLoadRequestRef.current += 1
+      invalidateActiveStreams()
+      resetTransientChatUiState()
+      setSessionId(null)
+      sessionStorage.removeItem("agent-session-draft-context")
+      setMessages([])
+      setHasStarted(false)
+      setFollowUpAvailable(false)
+      setFollowUpStarted(false)
+      setSessionTitle("Chat")
+      setApprovalRequired(getApprovalPref())
+      setSessionDraftContext(preload.context)
+      setPendingDraftPreload(preload)
+      _draftAutoSendFired = false
+    }
+
+    const onPanelOpenedHandler = () => {
+      onPanelOpened()
+      onPanelOpenedDraft()
+    }
+
+    window.addEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpenedHandler)
+    return () => window.removeEventListener(AGENT_PANEL_OPENED_EVENT, onPanelOpenedHandler)
   }, [
     getApprovalPref,
     invalidateActiveStreams,
@@ -1030,8 +1080,11 @@ setStepState({
       setSessionId(null)
       setProjectId(null)
       sessionStorage.removeItem("agent-session-calendar-context")
+      sessionStorage.removeItem("agent-session-draft-context")
       setMessages([])
       setSessionCalendarContext(null)
+      setSessionDraftContext(null)
+      setPendingDraftPreload(null)
       setHasStarted(false)
       setFollowUpAvailable(false)
       setFollowUpStarted(false)
@@ -1706,6 +1759,7 @@ setStepState({
         ...(workflowId ? { workflow_id: workflowId } : {}),
         ...(action ? { action } : {}),
         ...(effectiveCalendarContext ? { calendar_context: effectiveCalendarContext as any } : {}),
+        ...(sessionDraftContext ? { draft_context: sessionDraftContext as any } : {}),
         user_context: userContext || undefined,
       },
       (event: SSEEvent) => {
@@ -1961,7 +2015,7 @@ setStepState({
         }
       }
     )
-  }, [sessionId, sessionCalendarContext, addMessage, updateMessage, setMessages, setSessionId, refreshFollowUpState, refreshSession, getApprovalPref, embeddedInFloating, queueAutoExternalActionsAfterAnalysis])
+  }, [sessionId, sessionCalendarContext, sessionDraftContext, addMessage, updateMessage, setMessages, setSessionId, refreshFollowUpState, refreshSession, getApprovalPref, embeddedInFloating, queueAutoExternalActionsAfterAnalysis])
 
   // Keep ref always pointing to the latest handleSendMessage
   handleSendMessageRef.current = handleSendMessage
@@ -2362,6 +2416,19 @@ setStepState({
     _calendarAutoSendFired = true
     handleSendMessageRef.current?.(pendingCalendarPreload.message, pendingCalendarPreload.context)
   }, [pendingCalendarPreload, hasStarted])
+
+  // Auto-send the initial draft question once — ONLY for "Ask Agent"
+  // (autoSend). "Open in Agent" (autoSend=false) just attaches the draft as
+  // context and waits for the user to type; sessionDraftContext is already set,
+  // so whichever message the user sends first still carries draft_context.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!pendingDraftPreload || hasStarted) return
+    if (_draftAutoSendFired) return
+    if (!shouldAutoSendDraftPreload(pendingDraftPreload)) return
+    _draftAutoSendFired = true
+    handleSendMessageRef.current?.(pendingDraftPreload.message)
+  }, [pendingDraftPreload, hasStarted])
 
   return (
     <div className="flex h-full flex-col">

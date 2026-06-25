@@ -149,6 +149,9 @@ class ChatInputSerializer(serializers.Serializer):
     )
     approval_draft = serializers.JSONField(required=False, allow_null=True)
     calendar_context = serializers.JSONField(required=False, allow_null=True)
+    # Draft → Agent context (read-only). Format: {"draftId": <pk|slug>, ...}.
+    # The Agent reads the draft via notion_editor's existing API/permissions.
+    draft_context = serializers.JSONField(required=False, allow_null=True)
     workflow_id = serializers.UUIDField(required=False, allow_null=True)
     # User-approved column mapping for confirm_columns action.
     # Format: {original_header: canonical_name or "unknown"}
