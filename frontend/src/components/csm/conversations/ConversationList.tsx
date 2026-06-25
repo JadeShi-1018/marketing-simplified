@@ -45,8 +45,11 @@ export function ConversationList({ conversations, loading, onClaimed }: Conversa
       const ticket = await CsmConversationAPI.claim(conv.id);
       const ticketSummary: TicketSummary = {
         id: ticket.id,
+        title: ticket.title,
         status: ticket.status,
         status_display: ticket.status_display,
+        priority: ticket.priority,
+        priority_display: ticket.priority_display,
         assigned_to_name: ticket.assigned_to_name,
       };
       // Fetch updated conversation so queue_organisation_id is refreshed in store

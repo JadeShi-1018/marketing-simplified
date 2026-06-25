@@ -54,5 +54,9 @@ node_modules/
 e2e/.auth/
 e2e/auth/.auth/
 
+# Cypress
+/cypress/screenshots/
+/cypress/videos/
+
 # Lighthouse CI
 /.lighthouseci/

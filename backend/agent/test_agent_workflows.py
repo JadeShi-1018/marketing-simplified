@@ -1,6 +1,5 @@
 import json
 import uuid
-from unittest import skip
 from unittest.mock import patch, MagicMock
 
 from django.test import TestCase, override_settings
@@ -978,7 +977,6 @@ class CalendarAgentTests(TestCase):
     # handle_message routing                                              #
     # ------------------------------------------------------------------ #
 
-    @skip("Broken on prod-preview (AGENT-10 / call_llm refactor 1165a9b3d) — mock target is stale, the calendar workflow calls Gemini via agent.services so the mock is bypassed (HTTP 401). Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
     @patch('agent.gemini_client.call_gemini')
     def test_handle_message_routes_to_calendar_when_context_provided(self, mock_call_gemini):
@@ -1058,7 +1056,6 @@ class CalendarAgentTests(TestCase):
     # answer_calendar_question — Dify response handling                  #
     # ------------------------------------------------------------------ #
 
-    @skip("Broken on prod-preview (AGENT-10 / call_llm refactor 1165a9b3d) — mock target is stale, the calendar workflow calls Gemini via agent.services so the mock is bypassed (HTTP 401). Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
     @patch('agent.gemini_client.call_gemini')
     def test_answer_calendar_question_yields_text_chunk(self, mock_call_gemini):
@@ -1071,7 +1068,6 @@ class CalendarAgentTests(TestCase):
         text_chunks = [c for c in chunks if c['type'] == 'text' and 'events this week' in c.get('content', '')]
         self.assertTrue(len(text_chunks) > 0)
 
-    @skip("Broken on prod-preview (AGENT-10 / call_llm refactor 1165a9b3d) — mock target is stale, the calendar workflow calls Gemini via agent.services so the mock is bypassed (HTTP 401). Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch.dict('os.environ', {'GEMINI_API_KEY': 'test-key'})
     @patch('agent.gemini_client.call_gemini')
     def test_answer_calendar_question_creates_event_from_dify(self, mock_call_gemini):
@@ -2222,7 +2218,6 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
             user=self.user, project=self.project,
         )
 
-    @skip("Broken on prod-preview (AGENT-10 agent-workflow changes) — AnalyzeDataExecutor path no longer matches this mock setup. Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch('agent.executors.cache')
     @patch('agent.services._run_analysis')
     def test_executor_passes_user_context_to_run_analysis(self, mock_analysis, mock_cache):
@@ -2251,7 +2246,6 @@ class AnalyzeDataExecutorUserContextTests(TestCase):
         _, kwargs = mock_analysis.call_args
         self.assertEqual(kwargs.get('user_context'), 'Prioritize high-spend campaigns')
 
-    @skip("Broken on prod-preview (AGENT-10 agent-workflow changes) — AnalyzeDataExecutor path no longer matches this mock setup. Surfaced by restoring full pytest collection (SMP-555); re-enable after the agent team fixes it — follow-up ticket.")
     @patch('agent.executors.cache')
     @patch('agent.services._run_analysis')
     def test_executor_passes_none_when_context_empty(self, mock_analysis, mock_cache):

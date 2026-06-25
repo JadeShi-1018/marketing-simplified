@@ -83,7 +83,7 @@ export default function KlaviyoDetailV2Page() {
     const pathname = (returnTo.split('?')[0] ?? '').replace(/\/+$/, '') || '/';
     // Never treat a draft detail URL as "return" — it breaks "Back to templates"
     // (router.push to the current page is a no-op) and is never the templates list.
-    if (/^\/klaviyo\/\d+$/.test(pathname)) {
+    if (/^\/klaviyo\/[^/]+$/.test(pathname)) {
       return '/klaviyo';
     }
     return returnTo;
