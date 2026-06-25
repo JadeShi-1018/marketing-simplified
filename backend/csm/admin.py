@@ -3,6 +3,7 @@ from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CSMInvitation,
     SupportProject, CsmWorkType, TicketForm, TicketFormField,
     TicketFormAssignment, TicketFormSubmission, TicketAttachment,
+    SupportChannel, SupportChannelExperienceGroup,
 )
 
 
@@ -103,3 +104,27 @@ class TicketFormSubmissionAdmin(admin.ModelAdmin):
 class TicketAttachmentAdmin(admin.ModelAdmin):
     list_display = ['original_name', 'ticket', 'submission', 'size_bytes', 'created_at']
     raw_id_fields = ['ticket', 'submission']
+
+
+class SupportChannelExperienceGroupInline(admin.TabularInline):
+    model = SupportChannelExperienceGroup
+    extra = 0
+    raw_id_fields = ['experience_group']
+
+
+@admin.register(SupportChannel)
+class SupportChannelAdmin(admin.ModelAdmin):
+    list_display = [
+        'display_name', 'channel_type', 'project', 'is_active', 'sort_order', 'updated_at',
+    ]
+    list_filter = ['channel_type', 'is_active']
+    search_fields = ['display_name', 'email_address']
+    raw_id_fields = ['project', 'default_queue', 'ticket_form']
+    readonly_fields = ['embed_key']
+    inlines = [SupportChannelExperienceGroupInline]
+
+
+@admin.register(SupportChannelExperienceGroup)
+class SupportChannelExperienceGroupAdmin(admin.ModelAdmin):
+    list_display = ['channel', 'experience_group', 'created_at']
+    raw_id_fields = ['channel', 'experience_group']

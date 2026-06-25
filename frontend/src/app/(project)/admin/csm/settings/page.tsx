@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FileText, FolderKanban, ListOrdered } from 'lucide-react';
+import { FileText, FolderKanban, ListOrdered, Radio } from 'lucide-react';
 import CsmSettingsPageRoot, { CsmSettingsProjectGuard } from '@/components/csm-settings/CsmSettingsPageRoot';
 import CsmSettingsNavCard from '@/components/csm-settings/CsmSettingsNavCard';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
@@ -17,7 +17,7 @@ export default function CsmSettingsHubPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Customer Service Settings</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Configure support projects and work types for request forms.
+            Configure support projects, work types, and support channels for request forms.
           </p>
         </div>
         {projectValid && (
@@ -40,6 +40,12 @@ export default function CsmSettingsHubPage() {
             icon={FolderKanban}
             title="Support Projects"
             description="Classify tickets by support area. Optional default queue per project."
+          />
+          <CsmSettingsNavCard
+            href={`/admin/csm/settings/channels${q}`}
+            icon={Radio}
+            title="Support Channels"
+            description="Live chat, contact forms, and email. Operating hours and EG assignments."
           />
           <CsmSettingsNavCard
             href={`/admin/csm/settings/work-types${q}`}

@@ -8,6 +8,7 @@ from .views import (
     TicketFormViewSet,
     SupportProjectViewSet,
     CsmWorkTypeViewSet,
+    SupportChannelViewSet,
 )
 
 router = DefaultRouter()
@@ -20,6 +21,7 @@ router.register(r'tickets', TicketViewSet, basename='ticket')
 router.register(r'ticket-forms', TicketFormViewSet, basename='ticket-form')
 router.register(r'support-projects', SupportProjectViewSet, basename='support-project')
 router.register(r'work-types', CsmWorkTypeViewSet, basename='csm-work-type')
+router.register(r'support-channels', SupportChannelViewSet, basename='support-channel')
 
 urlpatterns = [
     # Standard routes

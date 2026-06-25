@@ -1,8 +1,24 @@
+import uuid
+
 from django.db import models
 from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from core.models import TimeStampedModel, Project, Team
+
+
+def default_operating_hours():
+    disabled = {'enabled': False}
+    weekday = {'enabled': True, 'start': '09:00', 'end': '17:00'}
+    return {
+        'monday': weekday.copy(),
+        'tuesday': weekday.copy(),
+        'wednesday': weekday.copy(),
+        'thursday': weekday.copy(),
+        'friday': weekday.copy(),
+        'saturday': disabled.copy(),
+        'sunday': disabled.copy(),
+    }
 
 
 class Queue(TimeStampedModel):
@@ -232,6 +248,13 @@ class Conversation(TimeStampedModel):
     )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default='web')
+    support_channel = models.ForeignKey(
+        'SupportChannel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='conversations',
+    )
     tags = models.JSONField(default=list, blank=True)
     started_at = models.DateTimeField(default=timezone.now)
     ended_at = models.DateTimeField(null=True, blank=True)
@@ -572,6 +595,80 @@ class TicketAttachment(models.Model):
 
     def __str__(self):
         return self.original_name or str(self.file)
+
+
+class SupportChannel(TimeStampedModel):
+    class ChannelType(models.TextChoices):
+        LIVE_CHAT = 'live_chat', 'Live chat'
+        CONTACT_FORM = 'contact_form', 'Contact form'
+        EMAIL = 'email', 'Email'
+
+    class OfflineAlternative(models.TextChoices):
+        MESSAGE_ONLY = 'message_only', 'Message only'
+        CONTACT_FORM = 'contact_form', 'Contact form'
+        KNOWLEDGE_BASE = 'knowledge_base', 'Knowledge base'
+
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='support_channels',
+    )
+    channel_type = models.CharField(max_length=20, choices=ChannelType.choices)
+    display_name = models.CharField(max_length=200)
+    welcome_message = models.TextField(blank=True)
+    operating_hours = models.JSONField(default=default_operating_hours)
+    timezone = models.CharField(max_length=64, default='UTC')
+    offline_fallback_message = models.TextField(blank=True)
+    offline_alternative = models.CharField(
+        max_length=20,
+        choices=OfflineAlternative.choices,
+        default=OfflineAlternative.MESSAGE_ONLY,
+    )
+    offline_alternative_target_id = models.PositiveIntegerField(null=True, blank=True)
+    default_queue = models.ForeignKey(
+        Queue, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='support_channels',
+    )
+    ticket_form = models.ForeignKey(
+        TicketForm, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='support_channels',
+    )
+    email_address = models.EmailField(blank=True)
+    embed_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order', 'display_name']
+        indexes = [
+            models.Index(fields=['project', 'is_active'], name='csm_sc_proj_active_idx'),
+            models.Index(fields=['embed_key'], name='csm_sc_embed_key_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.display_name} ({self.get_channel_type_display()})"
+
+
+class SupportChannelExperienceGroup(models.Model):
+    channel = models.ForeignKey(
+        SupportChannel, on_delete=models.CASCADE, related_name='experience_group_links',
+    )
+    experience_group = models.ForeignKey(
+        'experience_group.ExperienceGroup', on_delete=models.CASCADE,
+        related_name='support_channel_links',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['channel', 'experience_group'],
+                name='csm_sceg_unique_channel_eg',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Channel {self.channel_id} → EG {self.experience_group_id}"
 
 
 class CSMInvitation(TimeStampedModel):

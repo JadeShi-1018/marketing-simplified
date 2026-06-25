@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, FolderKanban, ListOrdered, Settings } from 'lucide-react';
+import { ClipboardList, FolderKanban, ListOrdered, Radio, Settings } from 'lucide-react';
 
 interface Props {
   projectId: number;
@@ -48,6 +48,7 @@ export default function CsmSettingsSidebar({ projectId }: Props) {
   const q = `?project=${projectId}`;
   const hub = `/admin/csm/settings${q}`;
   const supportProjects = `/admin/csm/settings/support-projects${q}`;
+  const channels = `/admin/csm/settings/channels${q}`;
   const workTypes = `/admin/csm/settings/work-types${q}`;
   const assignments = `/admin/csm/settings/assignments${q}`;
 
@@ -68,6 +69,12 @@ export default function CsmSettingsSidebar({ projectId }: Props) {
           label="Support Projects"
           icon={<FolderKanban className="h-4 w-4" aria-hidden />}
           isActive={pathname === '/admin/csm/settings/support-projects'}
+        />
+        <NavLink
+          href={channels}
+          label="Channels"
+          icon={<Radio className="h-4 w-4" aria-hidden />}
+          isActive={pathname === '/admin/csm/settings/channels'}
         />
         <NavLink
           href={workTypes}
