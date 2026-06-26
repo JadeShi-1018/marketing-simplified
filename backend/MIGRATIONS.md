@@ -1,6 +1,6 @@
 # Django Migrations — read before touching migration files
 
-> Context: SMP-561. A migration consolidation (commit `3553cae57`) deleted historical
+> Context: a past migration consolidation (commit `3553cae57`) deleted historical
 > migration files that production had already applied, breaking startup with
 > `NodeNotFoundError`. The recovery restored those files **as no-ops**. The rules below
 > exist so that incident does not recur.
@@ -46,5 +46,3 @@ already-applied ones never re-run.
 
 **Rule of thumb:** never delete/rename a migration production has applied; editing content is safe;
 to clean up, stack on top or squash-with-`replaces`, and remove old files only once all DBs are past them.
-
-See the full incident write-up: [SMP-561 Confluence](https://mediajirav.atlassian.net/wiki/spaces/MJCP/pages/336592897/SMP-561+Main+server+is+down+2)
