@@ -191,6 +191,7 @@ jobs:
             echo
             echo "Historical migration files must be kept for existing databases."
             echo "Add merge/squash migrations instead of deleting old migration files."
+            echo "See backend/MIGRATIONS.md for the migration policy (why, and how to change migrations)."
             exit 1
           fi
 
