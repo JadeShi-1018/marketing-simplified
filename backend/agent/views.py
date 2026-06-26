@@ -162,6 +162,7 @@ class ChatView(EnglishResponseMixin, APIView):
         file_id = serializer.validated_data.get('file_id')
         action = serializer.validated_data.get('action')
         calendar_context = serializer.validated_data.get('calendar_context')
+        draft_context = serializer.validated_data.get('draft_context')
         workflow_id = serializer.validated_data.get('workflow_id')
         column_mapping = serializer.validated_data.get('column_mapping')
         user_context = serializer.validated_data.get('user_context') or None
@@ -249,6 +250,7 @@ class ChatView(EnglishResponseMixin, APIView):
                     action=action,
                     file_id=file_id,
                     calendar_context=calendar_context,
+                    draft_context=draft_context,
                     workflow_id=workflow_id,
                     column_mapping=column_mapping,
                     approval_id=approval_id,
