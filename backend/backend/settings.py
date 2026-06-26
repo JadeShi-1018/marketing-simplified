@@ -285,8 +285,6 @@ DIFY_CRITERIA_API_KEY = config('DIFY_CRITERIA_API_KEY', default='')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
-from corsheaders.defaults import default_headers
-
 CORS_ALLOWED_ORIGINS = [
     "http://localhost",
     "http://localhost:3000",
@@ -300,17 +298,6 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
-
-# Frontend axios sends custom headers on API calls (see frontend/src/lib/api*.ts).
-CORS_ALLOW_HEADERS = (
-    *default_headers,
-    'x-organization-token',
-    'x-user-role',
-    'x-team-id',
-    'x-project-id',
-    'x-active-project',
-    'x-internal-refetch',
-)
 
 # CSRF Trusted Origins - Required for ngrok and external domains
 CSRF_TRUSTED_ORIGINS = [
