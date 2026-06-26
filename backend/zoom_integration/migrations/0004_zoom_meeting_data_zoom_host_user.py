@@ -12,17 +12,4 @@ class Migration(migrations.Migration):
         ("zoom_integration", "0003_zoom_meeting_data"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="zoommeetingdata",
-            name="zoom_host_user",
-            field=models.ForeignKey(
-                blank=True,
-                help_text="User whose Zoom OAuth credential owns this meeting (set when linking).",
-                null=True,
-                on_delete=django.db.models.deletion.SET_NULL,
-                related_name="zoom_meeting_data_hosted",
-                to=settings.AUTH_USER_MODEL,
-            ),
-        ),
-    ]
+    operations = []

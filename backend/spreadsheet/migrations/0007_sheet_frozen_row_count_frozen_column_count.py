@@ -9,15 +9,4 @@ class Migration(migrations.Migration):
         ('spreadsheet', '0006_spreadsheetcellformat_number_format'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='sheet',
-            name='frozen_row_count',
-            field=models.PositiveSmallIntegerField(default=0, help_text='Number of rows to freeze (0 = none, 1 = freeze first row, etc.)'),
-        ),
-        migrations.AddField(
-            model_name='sheet',
-            name='frozen_column_count',
-            field=models.PositiveSmallIntegerField(default=0, help_text='Number of columns to freeze (0 = none)'),
-        ),
-    ]
+    operations = []

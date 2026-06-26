@@ -9,30 +9,4 @@ class Migration(migrations.Migration):
         ('report', '0002_initial'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='reporttask',
-            name='audience_details',
-            field=models.TextField(blank=True, default='', help_text='Optional audience details (required if audience type is other)', null=True),
-        ),
-        migrations.AlterField(
-            model_name='reporttask',
-            name='audience_type',
-            field=models.CharField(choices=[('client', 'Client'), ('manager', 'Manager'), ('internal_team', 'Internal Team'), ('self', 'Self'), ('other', 'Other')], default='self', help_text='Who the report is intended for', max_length=30),
-        ),
-        migrations.AlterField(
-            model_name='reporttask',
-            name='context',
-            field=models.JSONField(blank=True, default=dict, help_text='Structured context for the report: {reporting_period: {type, text, start_date?, end_date?}, situation, what_changed}', null=True),
-        ),
-        migrations.AlterField(
-            model_name='reporttask',
-            name='narrative_explanation',
-            field=models.TextField(blank=True, default='', help_text='Optional narrative explanation', null=True),
-        ),
-        migrations.AlterField(
-            model_name='reporttask',
-            name='outcome_summary',
-            field=models.TextField(blank=True, default='', help_text='High-level, qualitative outcome summary', null=True),
-        ),
-    ]
+    operations = []

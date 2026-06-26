@@ -9,19 +9,4 @@ class Migration(migrations.Migration):
         ('chat', '0009_rename_chat_messag_is_sent_idx_chat_messag_is_sent_872aa0_idx_and_more'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='message',
-            name='is_revoked',
-            field=models.BooleanField(default=False, help_text='Whether the message has been revoked by sender'),
-        ),
-        migrations.AddField(
-            model_name='message',
-            name='revoked_at',
-            field=models.DateTimeField(blank=True, help_text='When the message was revoked', null=True),
-        ),
-        migrations.AddIndex(
-            model_name='message',
-            index=models.Index(fields=['chat', 'is_revoked'], name='chat_messag_chat_id_5c9069_idx'),
-        ),
-    ]
+    operations = []

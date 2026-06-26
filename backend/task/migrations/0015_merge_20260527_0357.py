@@ -10,5 +10,4 @@ class Migration(migrations.Migration):
         ('task', '0014_merge_task_labels_and_pins'),
     ]
 
-    operations = [
-    ]
+    operations = []

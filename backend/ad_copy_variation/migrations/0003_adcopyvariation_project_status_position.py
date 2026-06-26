@@ -30,33 +30,4 @@ class Migration(migrations.Migration):
         ('ad_copy_variation', '0002_adcopyvariation_batch_id'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='adcopyvariation',
-            name='batch_position',
-            field=models.PositiveIntegerField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name='adcopyvariation',
-            name='project',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='ai_copy_variations', to='core.project'),
-        ),
-        migrations.AddField(
-            model_name='adcopyvariation',
-            name='status',
-            field=models.CharField(choices=[('draft', 'Draft'), ('reviewed', 'Reviewed')], db_index=True, default='draft', max_length=20),
-        ),
-        migrations.RunPython(backfill_project_and_status, migrations.RunPython.noop),
-        migrations.AddIndex(
-            model_name='adcopyvariation',
-            index=models.Index(fields=['project', 'status', '-created_at'], name='ad_copy_var_project_5f6c42_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='adcopyvariation',
-            index=models.Index(fields=['project', 'batch_id', 'status'], name='ad_copy_var_project_ef5425_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='adcopyvariation',
-            index=models.Index(fields=['creative', 'status', '-created_at'], name='ad_copy_var_creativ_ae4311_idx'),
-        ),
-    ]
+    operations = []

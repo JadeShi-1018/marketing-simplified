@@ -13,26 +13,4 @@ class Migration(migrations.Migration):
         ('policy', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='platformpolicyupdate',
-            name='task',
-            field=models.OneToOneField(blank=True, help_text='Associated workflow task (type = platform_policy_update)', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='platform_policy_update', to='task.task'),
-        ),
-        migrations.AddIndex(
-            model_name='platformpolicyupdate',
-            index=models.Index(fields=['platform', 'mitigation_status'], name='platform_po_platfor_2296bf_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='platformpolicyupdate',
-            index=models.Index(fields=['assigned_to', 'mitigation_status'], name='platform_po_assigne_57aa26_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='platformpolicyupdate',
-            index=models.Index(fields=['effective_date'], name='platform_po_effecti_b23c60_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='platformpolicyupdate',
-            index=models.Index(fields=['created_at'], name='platform_po_created_ff6ba1_idx'),
-        ),
-    ]
+    operations = []

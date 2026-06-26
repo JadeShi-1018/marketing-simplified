@@ -9,15 +9,4 @@ class Migration(migrations.Migration):
         ('decision', '0005_decision_planned_decision_date'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='decisionstatetransition',
-            name='from_status',
-            field=models.CharField(choices=[('PREDRAFT', 'Pre-Draft'), ('DRAFT', 'Draft'), ('AWAITING_APPROVAL', 'Awaiting Approval'), ('COMMITTED', 'Committed'), ('REVIEWED', 'Reviewed'), ('ARCHIVED', 'Archived')], max_length=20),
-        ),
-        migrations.AlterField(
-            model_name='decisionstatetransition',
-            name='to_status',
-            field=models.CharField(choices=[('PREDRAFT', 'Pre-Draft'), ('DRAFT', 'Draft'), ('AWAITING_APPROVAL', 'Awaiting Approval'), ('COMMITTED', 'Committed'), ('REVIEWED', 'Reviewed'), ('ARCHIVED', 'Archived')], max_length=20),
-        ),
-    ]
+    operations = []

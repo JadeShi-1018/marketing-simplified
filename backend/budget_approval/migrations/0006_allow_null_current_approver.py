@@ -12,10 +12,4 @@ class Migration(migrations.Migration):
         ('budget_approval', '0005_add_cancelled_status_to_budget_request'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='budgetrequest',
-            name='current_approver',
-            field=models.ForeignKey(blank=True, help_text='Current approver assigned to this request', null=True, on_delete=django.db.models.deletion.PROTECT, related_name='pending_budget_requests', to=settings.AUTH_USER_MODEL),
-        ),
-    ]
+    operations = []

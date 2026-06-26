@@ -14,23 +14,4 @@ class Migration(migrations.Migration):
         ('core', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='asset',
-            name='task',
-            field=models.ForeignKey(blank=True, help_text='Reference to Task', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='assets', to='task.task'),
-        ),
-        migrations.AddField(
-            model_name='asset',
-            name='team',
-            field=models.ForeignKey(blank=True, help_text='Reference to Team', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='assets', to='core.team'),
-        ),
-        migrations.AlterUniqueTogether(
-            name='reviewassignment',
-            unique_together={('asset_id', 'user_id', 'role')},
-        ),
-        migrations.AlterUniqueTogether(
-            name='assetversion',
-            unique_together={('asset', 'version_number')},
-        ),
-    ]
+    operations = []

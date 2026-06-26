@@ -8,5 +8,4 @@ class Migration(migrations.Migration):
         ('task', '0010_task_tags_drop_tasklabel'),
     ]
 
-    operations = [
-    ]
+    operations = []

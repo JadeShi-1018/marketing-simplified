@@ -10,10 +10,4 @@ class Migration(migrations.Migration):
         ('chat', '0005_rename_chat_chatst_user_id_pos_idx_chat_chatst_user_id_7d6523_idx_and_more'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='message',
-            name='reply_to',
-            field=models.ForeignKey(blank=True, help_text='Message being replied to (quote reply)', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='replies', to='chat.message'),
-        ),
-    ]
+    operations = []

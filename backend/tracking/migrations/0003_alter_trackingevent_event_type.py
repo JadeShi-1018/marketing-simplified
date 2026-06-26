@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('tracking', '0002_nullable_legacy_heartbeat_fields'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='trackingevent',
-            name='event_type',
-            field=models.CharField(choices=[('TASK_OPEN', 'Task Open'), ('FIRST_INTERACTION', 'First Interaction'), ('TASK_WRITE', 'Task Write'), ('IDLE_START', 'Idle Start'), ('IDLE_END', 'Idle End')], max_length=30),
-        ),
-    ]
+    operations = []

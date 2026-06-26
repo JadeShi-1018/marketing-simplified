@@ -39,17 +39,4 @@ class Migration(migrations.Migration):
         ("task", "0009_tasklabel_task_labels"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="task",
-            name="tags",
-            field=models.JSONField(
-                blank=True,
-                default=list,
-                help_text="Frontend-owned task tags [{name, color}, ...]",
-            ),
-        ),
-        migrations.RunPython(copy_m2m_labels_to_tags, noop_reverse),
-        migrations.RemoveField(model_name="task", name="labels"),
-        migrations.DeleteModel(name="TaskLabel"),
-    ]
+    operations = []

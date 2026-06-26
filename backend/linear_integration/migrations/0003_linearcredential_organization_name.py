@@ -52,21 +52,4 @@ class Migration(migrations.Migration):
         ("linear_integration", "0002_linearcredential_organization"),
     ]
 
-    operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(_sync_organization_name_column, _noop_reverse),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name="linearcredential",
-                    name="organization_name",
-                    field=models.CharField(
-                        blank=True,
-                        default="",
-                        max_length=255,
-                    ),
-                ),
-            ],
-        ),
-    ]
+    operations = []

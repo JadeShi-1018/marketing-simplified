@@ -9,13 +9,4 @@ class Migration(migrations.Migration):
         ('meetings', '0009_merge_meeting_heads'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='meetingactionitem',
-            name='is_resolved',
-            field=models.BooleanField(default=False),
-        ),
-        migrations.DeleteModel(
-            name='ActionItem',
-        ),
-    ]
+    operations = []

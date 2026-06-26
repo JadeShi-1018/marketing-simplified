@@ -36,6 +36,4 @@ class Migration(migrations.Migration):
         ("meetings", "0002_meeting_layout_and_template"),
     ]
 
-    operations = [
-        migrations.RunPython(drop_block_config_column, noop_reverse),
-    ]
+    operations = []

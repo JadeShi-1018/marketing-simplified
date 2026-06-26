@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('ad_copy_variation', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='adcopyvariation',
-            name='batch_id',
-            field=models.UUIDField(blank=True, db_index=True, help_text='Groups variations generated from the same batch call.', null=True),
-        ),
-    ]
+    operations = []

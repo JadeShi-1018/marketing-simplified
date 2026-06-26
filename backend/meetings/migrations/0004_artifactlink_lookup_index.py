@@ -9,11 +9,4 @@ class Migration(migrations.Migration):
         ("meetings", "0003_meeting_origin_timestamps_and_constraints"),
     ]
 
-    operations = [
-        migrations.AddIndex(
-            model_name="artifactlink",
-            index=models.Index(
-                fields=["artifact_type", "artifact_id"], name="mtgs_artlink_type_artid"
-            ),
-        ),
-    ]
+    operations = []

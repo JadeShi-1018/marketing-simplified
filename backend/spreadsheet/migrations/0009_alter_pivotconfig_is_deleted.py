@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('spreadsheet', '0008_add_pivot_persistence'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='pivotconfig',
-            name='is_deleted',
-            field=models.BooleanField(default=False),
-        ),
-    ]
+    operations = []

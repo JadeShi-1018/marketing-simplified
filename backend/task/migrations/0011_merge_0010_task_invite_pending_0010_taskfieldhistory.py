@@ -10,5 +10,4 @@ class Migration(migrations.Migration):
         ('task', '0010_taskfieldhistory'),
     ]
 
-    operations = [
-    ]
+    operations = []

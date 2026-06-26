@@ -9,16 +9,4 @@ class Migration(migrations.Migration):
         ('tiktok', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='addraft',
-            name='media_campaign',
-            field=models.ForeignKey(
-                blank=True,
-                null=True,
-                on_delete=django.db.models.deletion.SET_NULL,
-                related_name='tiktok_ad_drafts',
-                to='campaign.campaign',
-            ),
-        ),
-    ]
+    operations = []

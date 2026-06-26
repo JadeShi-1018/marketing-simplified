@@ -10,5 +10,4 @@ class Migration(migrations.Migration):
         ('meetings', '0013_participantlink_is_accepted'),
     ]
 
-    operations = [
-    ]
+    operations = []

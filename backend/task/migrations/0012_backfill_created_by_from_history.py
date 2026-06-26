@@ -25,9 +25,4 @@ class Migration(migrations.Migration):
         ("task", "0011_task_created_by"),
     ]
 
-    operations = [
-        migrations.RunPython(
-            backfill_created_by_from_history,
-            reverse_code=migrations.RunPython.noop,
-        ),
-    ]
+    operations = []

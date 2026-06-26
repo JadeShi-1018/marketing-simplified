@@ -8,5 +8,4 @@ class Migration(migrations.Migration):
         ('meetings', '0007_merge_20260407_0521'),
     ]
 
-    operations = [
-    ]
+    operations = []

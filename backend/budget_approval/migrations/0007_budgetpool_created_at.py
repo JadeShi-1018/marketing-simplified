@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('budget_approval', '0006_allow_null_current_approver'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='budgetpool',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, null=True),
-        ),
-    ]
+    operations = []

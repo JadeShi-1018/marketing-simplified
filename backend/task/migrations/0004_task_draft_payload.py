@@ -9,15 +9,5 @@ class Migration(migrations.Migration):
         ("task", "0003_approvalchain_required_approvals"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="task",
-            name="draft_payload",
-            field=models.JSONField(
-                blank=True,
-                help_text="Draft form state captured from task create panel",
-                null=True,
-            ),
-        ),
-    ]
+    operations = []
 

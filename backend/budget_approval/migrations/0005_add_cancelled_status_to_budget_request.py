@@ -10,10 +10,4 @@ class Migration(migrations.Migration):
         ('budget_approval', '0004_add_budget_pool_name'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='budgetrequest',
-            name='status',
-            field=django_fsm.FSMField(choices=[('DRAFT', 'Draft'), ('SUBMITTED', 'Submitted'), ('UNDER_REVIEW', 'Under Review'), ('APPROVED', 'Approved'), ('REJECTED', 'Rejected'), ('LOCKED', 'Locked'), ('CANCELLED', 'Cancelled')], default='DRAFT', help_text='Current status of the budget request', max_length=50, protected=True),
-        ),
-    ]
+    operations = []

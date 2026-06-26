@@ -44,7 +44,7 @@ def backfill_chat(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('chat', '0001_initial'),
+        ('chat', '0011_message_hidden_by_users'),
     ]
 
     operations = [

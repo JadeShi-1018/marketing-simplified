@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('meetings', '0005_merge_meetingdocument_yjs_and_template_user'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='meeting',
-            name='status',
-            field=models.CharField(choices=[('draft', 'Draft'), ('planned', 'Planned'), ('in_progress', 'In Progress'), ('completed', 'Completed'), ('archived', 'Archived')], default='draft', max_length=32),
-        ),
-    ]
+    operations = []

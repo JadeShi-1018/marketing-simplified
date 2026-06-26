@@ -13,10 +13,4 @@ class Migration(migrations.Migration):
         ('task', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='alerttask',
-            name='task',
-            field=models.OneToOneField(help_text='Parent task that owns this alert task', on_delete=django.db.models.deletion.CASCADE, related_name='alert_task', to='task.task'),
-        ),
-    ]
+    operations = []

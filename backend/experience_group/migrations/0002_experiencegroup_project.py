@@ -11,10 +11,4 @@ class Migration(migrations.Migration):
         ('experience_group', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='experiencegroup',
-            name='project',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='experience_groups', to='core.project'),
-        ),
-    ]
+    operations = []

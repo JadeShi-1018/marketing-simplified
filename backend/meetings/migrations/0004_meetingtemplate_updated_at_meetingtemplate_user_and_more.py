@@ -13,20 +13,4 @@ class Migration(migrations.Migration):
         ('meetings', '0003_drop_meetingtemplate_block_config'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='meetingtemplate',
-            name='updated_at',
-            field=models.DateTimeField(auto_now=True),
-        ),
-        migrations.AddField(
-            model_name='meetingtemplate',
-            name='user',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='meeting_templates', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AlterField(
-            model_name='meetingtemplate',
-            name='id',
-            field=models.CharField(default=meetings.models._meeting_template_id, editable=False, max_length=64, primary_key=True, serialize=False),
-        ),
-    ]
+    operations = []

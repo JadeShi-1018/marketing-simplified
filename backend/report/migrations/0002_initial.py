@@ -13,18 +13,4 @@ class Migration(migrations.Migration):
         ('task', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='reporttask',
-            name='task',
-            field=models.OneToOneField(help_text='The task that owns this report task (1:1 relationship)', on_delete=django.db.models.deletion.CASCADE, related_name='report_task', to='task.task'),
-        ),
-        migrations.AddConstraint(
-            model_name='reporttaskkeyaction',
-            constraint=models.UniqueConstraint(fields=('report_task', 'order_index'), name='uniq_report_task_key_action_order'),
-        ),
-        migrations.AddConstraint(
-            model_name='reporttaskkeyaction',
-            constraint=models.CheckConstraint(check=models.Q(('order_index__gte', 1), ('order_index__lte', 6)), name='check_report_task_key_action_order_range'),
-        ),
-    ]
+    operations = []

@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ("meetings", "0002_meetingdocument"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="meetingdocument",
-            name="yjs_state",
-            field=models.TextField(blank=True, default=""),
-        ),
-    ]
+    operations = []

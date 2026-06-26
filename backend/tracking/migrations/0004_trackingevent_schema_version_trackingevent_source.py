@@ -15,19 +15,4 @@ class Migration(migrations.Migration):
         ('tracking', '0003_alter_trackingevent_event_type'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='trackingevent',
-            name='schema_version',
-            field=models.PositiveSmallIntegerField(default=1),
-        ),
-        migrations.AddField(
-            model_name='trackingevent',
-            name='source',
-            field=models.CharField(choices=[('middleware', 'Middleware'), ('explicit', 'Explicit'), ('client', 'Client')], db_index=True, default='middleware', max_length=20),
-        ),
-        migrations.RunPython(
-            backfill_source_and_schema_version,
-            reverse_code=migrations.RunPython.noop,
-        ),
-    ]
+    operations = []

@@ -13,18 +13,4 @@ class Migration(migrations.Migration):
         ('experiment', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='experiment',
-            name='task',
-            field=models.OneToOneField(blank=True, help_text='The task that owns this experiment (1:1 relationship)', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='experiment', to='task.task'),
-        ),
-        migrations.AddIndex(
-            model_name='experimentprogressupdate',
-            index=models.Index(fields=['experiment', 'created_at'], name='exp_progress_time_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='experiment',
-            index=models.Index(fields=['status'], name='experiment_status_idx'),
-        ),
-    ]
+    operations = []

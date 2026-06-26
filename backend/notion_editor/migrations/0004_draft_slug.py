@@ -12,7 +12,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('notion_editor', '0001_initial'),
+        ('notion_editor', '0003_rename_notionconnection_indexes'),
     ]
 
     operations = [

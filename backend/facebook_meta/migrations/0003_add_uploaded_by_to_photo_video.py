@@ -12,15 +12,4 @@ class Migration(migrations.Migration):
         ('facebook_meta', '0002_adcreative_media_campaign'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='adcreativephotodata',
-            name='uploaded_by',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='uploaded_photos', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='adcreativevideodata',
-            name='uploaded_by',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='uploaded_videos', to=settings.AUTH_USER_MODEL),
-        ),
-    ]
+    operations = []

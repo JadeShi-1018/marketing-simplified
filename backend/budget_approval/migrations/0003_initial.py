@@ -14,34 +14,4 @@ class Migration(migrations.Migration):
         ('budget_approval', '0002_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='budgetrequest',
-            name='task',
-            field=models.ForeignKey(blank=True, help_text='Associated task ID', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='budget_requests', to='task.task'),
-        ),
-        migrations.AddField(
-            model_name='budgetpool',
-            name='ad_channel',
-            field=models.ForeignKey(help_text='Advertising channel', on_delete=django.db.models.deletion.CASCADE, related_name='budget_pools', to='core.adchannel'),
-        ),
-        migrations.AddField(
-            model_name='budgetpool',
-            name='project',
-            field=models.ForeignKey(help_text='Associated project ID', on_delete=django.db.models.deletion.CASCADE, related_name='budget_pools', to='core.project'),
-        ),
-        migrations.AddField(
-            model_name='budgetescalationrule',
-            name='budget_pool',
-            field=models.ForeignKey(help_text='Associated budget pool', on_delete=django.db.models.deletion.CASCADE, related_name='budget_escalation_rules', to='budget_approval.budgetpool'),
-        ),
-        migrations.AddField(
-            model_name='budgetescalationrule',
-            name='escalate_to_role',
-            field=models.ForeignKey(help_text='Target user role ID for escalation', on_delete=django.db.models.deletion.PROTECT, related_name='budget_escalation_rules', to='core.role'),
-        ),
-        migrations.AlterUniqueTogether(
-            name='budgetescalationrule',
-            unique_together={('budget_pool', 'threshold_currency')},
-        ),
-    ]
+    operations = []

@@ -8,5 +8,4 @@ class Migration(migrations.Migration):
         ('decision', '0003_decision_is_pre_draft'),
     ]
 
-    operations = [
-    ]
+    operations = []

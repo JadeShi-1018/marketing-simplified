@@ -58,23 +58,4 @@ class Migration(migrations.Migration):
         ("linear_integration", "0001_initial"),
     ]
 
-    operations = [
-        migrations.SeparateDatabaseAndState(
-            database_operations=[
-                migrations.RunPython(_sync_organization_column, _noop_reverse),
-            ],
-            state_operations=[
-                migrations.AddField(
-                    model_name="linearcredential",
-                    name="organization",
-                    field=models.ForeignKey(
-                        blank=True,
-                        null=True,
-                        on_delete=django.db.models.deletion.CASCADE,
-                        related_name="linear_credentials",
-                        to="core.organization",
-                    ),
-                ),
-            ],
-        ),
-    ]
+    operations = []

@@ -9,15 +9,4 @@ class Migration(migrations.Migration):
         ('miro', '0003_boardaccess'),
     ]
 
-    operations = [
-        migrations.RenameIndex(
-            model_name='boardaccess',
-            new_name='miro_boarda_user_id_e19366_idx',
-            old_name='miro_boarda_user_id_7fb95b_idx',
-        ),
-        migrations.RenameIndex(
-            model_name='boardaccess',
-            new_name='miro_boarda_project_8f57a4_idx',
-            old_name='miro_boarda_project_4e7e98_idx',
-        ),
-    ]
+    operations = []

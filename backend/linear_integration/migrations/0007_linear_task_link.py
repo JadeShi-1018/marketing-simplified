@@ -66,41 +66,4 @@ class Migration(migrations.Migration):
         ("task", "0009_task_linear_issue_id"),
     ]
 
-    operations = [
-        migrations.SeparateDatabaseAndState(
-            state_operations=[
-                migrations.CreateModel(
-                    name="LinearTaskLink",
-                    fields=[
-                        (
-                            "id",
-                            models.BigAutoField(
-                                auto_created=True,
-                                primary_key=True,
-                                serialize=False,
-                                verbose_name="ID",
-                            ),
-                        ),
-                        (
-                            "task",
-                            models.ForeignKey(
-                                on_delete=django.db.models.deletion.CASCADE,
-                                related_name="linear_links",
-                                to="task.task",
-                            ),
-                        ),
-                        (
-                            "linear_issue_id",
-                            models.CharField(blank=True, default="", max_length=64),
-                        ),
-                    ],
-                    options={
-                        "db_table": "linear_integration_lineartasklink",
-                    },
-                ),
-            ],
-            database_operations=[
-                migrations.RunPython(forwards, migrations.RunPython.noop),
-            ],
-        ),
-    ]
+    operations = []

@@ -9,20 +9,4 @@ class Migration(migrations.Migration):
         ('meta_ads', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='metainsightdaily',
-            name='comment_count',
-            field=models.IntegerField(default=0),
-        ),
-        migrations.AddField(
-            model_name='metainsightdaily',
-            name='lpv_count',
-            field=models.IntegerField(default=0),
-        ),
-        migrations.AddField(
-            model_name='metainsightdaily',
-            name='video_3sec_count',
-            field=models.IntegerField(default=0),
-        ),
-    ]
+    operations = []

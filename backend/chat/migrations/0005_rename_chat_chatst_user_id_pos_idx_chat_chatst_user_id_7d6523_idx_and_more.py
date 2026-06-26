@@ -9,25 +9,4 @@ class Migration(migrations.Migration):
         ('chat', '0004_chatstar'),
     ]
 
-    operations = [
-        migrations.RenameIndex(
-            model_name='chatstar',
-            new_name='chat_chatst_user_id_7d6523_idx',
-            old_name='chat_chatst_user_id_pos_idx',
-        ),
-        migrations.RenameIndex(
-            model_name='chatstar',
-            new_name='chat_chatst_user_id_3839d3_idx',
-            old_name='chat_chatst_user_id_chat_id_idx',
-        ),
-        migrations.RenameIndex(
-            model_name='message',
-            new_name='chat_messag_chat_id_a3aeee_idx',
-            old_name='chat_messag_chat_id_is_del_idx',
-        ),
-        migrations.AlterField(
-            model_name='message',
-            name='is_deleted',
-            field=models.BooleanField(default=False, help_text='Soft delete flag'),
-        ),
-    ]
+    operations = []

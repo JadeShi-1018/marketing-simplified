@@ -11,10 +11,4 @@ class Migration(migrations.Migration):
         ('chat', '0010_message_is_revoked_message_revoked_at_and_more'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='message',
-            name='hidden_by_users',
-            field=models.ManyToManyField(blank=True, help_text='Users who have hidden this message (personal hide, not affecting others)', related_name='hidden_messages', to=settings.AUTH_USER_MODEL),
-        ),
-    ]
+    operations = []

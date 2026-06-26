@@ -9,9 +9,4 @@ class Migration(migrations.Migration):
         ('calendars', '0003_calendarevent'),
     ]
 
-    operations = [
-        migrations.AddConstraint(
-            model_name='calendarevent',
-            constraint=models.UniqueConstraint(condition=models.Q(('task__isnull', False)), fields=('event_type', 'task'), name='unique_cal_event_per_task_type'),
-        ),
-    ]
+    operations = []

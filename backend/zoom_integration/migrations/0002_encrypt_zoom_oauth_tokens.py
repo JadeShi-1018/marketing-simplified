@@ -25,34 +25,4 @@ class Migration(migrations.Migration):
         ("zoom_integration", "0001_initial"),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="zoomcredential",
-            name="encrypted_access_token",
-            field=models.TextField(null=True),
-        ),
-        migrations.AddField(
-            model_name="zoomcredential",
-            name="encrypted_refresh_token",
-            field=models.TextField(null=True),
-        ),
-        migrations.RunPython(encrypt_existing_tokens, noop_reverse),
-        migrations.RemoveField(
-            model_name="zoomcredential",
-            name="access_token",
-        ),
-        migrations.RemoveField(
-            model_name="zoomcredential",
-            name="refresh_token",
-        ),
-        migrations.AlterField(
-            model_name="zoomcredential",
-            name="encrypted_access_token",
-            field=models.TextField(help_text="Encrypted short-lived OAuth access token."),
-        ),
-        migrations.AlterField(
-            model_name="zoomcredential",
-            name="encrypted_refresh_token",
-            field=models.TextField(help_text="Encrypted OAuth refresh token."),
-        ),
-    ]
+    operations = []

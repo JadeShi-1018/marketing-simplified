@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('decision', '0004_merge_predraft_migrations'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='decision',
-            name='planned_decision_date',
-            field=models.DateTimeField(blank=True, help_text='The planned date for making this decision', null=True),
-        ),
-    ]
+    operations = []

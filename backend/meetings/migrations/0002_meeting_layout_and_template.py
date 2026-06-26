@@ -21,36 +21,4 @@ class Migration(migrations.Migration):
         ("meetings", "0001_initial"),
     ]
 
-    operations = [
-        # Meeting.layout_config — matches models.Meeting.layout_config
-        migrations.AddField(
-            model_name="meeting",
-            name="layout_config",
-            field=models.JSONField(default=list, null=True, blank=True),
-        ),
-        # MeetingTemplate — matches models.MeetingTemplate
-        migrations.CreateModel(
-            name="MeetingTemplate",
-            fields=[
-                (
-                    "id",
-                    models.CharField(
-                        primary_key=True,
-                        max_length=64,
-                        default=_meeting_template_id,
-                        editable=False,
-                        serialize=False,
-                    ),
-                ),
-                ("name", models.CharField(max_length=255)),
-                (
-                    "layout_config",
-                    models.JSONField(default=dict, null=True, blank=True),
-                ),
-                ("created_at", models.DateTimeField(auto_now_add=True)),
-            ],
-            options={
-                "ordering": ["-created_at"],
-            },
-        ),
-    ]
+    operations = []

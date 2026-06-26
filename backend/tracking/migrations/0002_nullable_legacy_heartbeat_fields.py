@@ -9,15 +9,4 @@ class Migration(migrations.Migration):
         ('tracking', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='trackingsession',
-            name='active_seconds',
-            field=models.PositiveIntegerField(blank=True, default=0, null=True),
-        ),
-        migrations.AlterField(
-            model_name='trackingsession',
-            name='last_heartbeat_at',
-            field=models.DateTimeField(blank=True, null=True),
-        ),
-    ]
+    operations = []

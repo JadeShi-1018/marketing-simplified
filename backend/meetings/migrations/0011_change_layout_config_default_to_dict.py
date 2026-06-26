@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('meetings', '0010_add_is_resolved_to_meetingactionitem'),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name='meeting',
-            name='layout_config',
-            field=models.JSONField(blank=True, default=dict, null=True),
-        ),
-    ]
+    operations = []

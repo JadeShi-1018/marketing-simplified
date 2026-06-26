@@ -94,6 +94,4 @@ class Migration(migrations.Migration):
         ("linear_integration", "0004_linearcredential_legacy_columns"),
     ]
 
-    operations = [
-        migrations.RunPython(_relax_team_sync_columns, _noop),
-    ]
+    operations = []

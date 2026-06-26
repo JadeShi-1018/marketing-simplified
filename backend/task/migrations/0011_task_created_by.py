@@ -19,21 +19,4 @@ class Migration(migrations.Migration):
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name="task",
-            name="created_by",
-            field=models.ForeignKey(
-                blank=True,
-                help_text="The user who originally created the task",
-                null=True,
-                on_delete=django.db.models.deletion.SET_NULL,
-                related_name="created_tasks",
-                to=settings.AUTH_USER_MODEL,
-            ),
-        ),
-        migrations.RunPython(
-            backfill_created_by_from_owner,
-            reverse_code=migrations.RunPython.noop,
-        ),
-    ]
+    operations = []

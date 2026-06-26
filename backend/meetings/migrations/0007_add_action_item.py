@@ -12,15 +12,4 @@ class Migration(migrations.Migration):
         ('meetings', '0006_meeting_lifecycle_states'),
     ]
 
-    operations = [
-        migrations.CreateModel(
-            name='ActionItem',
-            fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('description', models.TextField()),
-                ('is_resolved', models.BooleanField(default=False)),
-                ('assigned_to', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assigned_action_items', to=settings.AUTH_USER_MODEL)),
-                ('meeting', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='action_items', to='meetings.meeting')),
-            ],
-        ),
-    ]
+    operations = []

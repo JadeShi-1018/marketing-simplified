@@ -15,47 +15,4 @@ class Migration(migrations.Migration):
         ('core', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='userrole',
-            name='role',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='user_roles', to='core.role'),
-        ),
-        migrations.AddField(
-            model_name='userrole',
-            name='team',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, to='core.team'),
-        ),
-        migrations.AddField(
-            model_name='userrole',
-            name='user',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='user_roles', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='rolepermission',
-            name='permission',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='permission_roles', to='core.permission'),
-        ),
-        migrations.AddField(
-            model_name='rolepermission',
-            name='role',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='role_permissions', to='core.role'),
-        ),
-        migrations.AddField(
-            model_name='moduleapprover',
-            name='user',
-            field=models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AlterUniqueTogether(
-            name='userrole',
-            unique_together={('user', 'role', 'team')},
-        ),
-        migrations.AlterUniqueTogether(
-            name='rolepermission',
-            unique_together={('role', 'permission')},
-        ),
-        migrations.AlterUniqueTogether(
-            name='moduleapprover',
-            unique_together={('module', 'user')},
-        ),
-    ]
+    operations = []

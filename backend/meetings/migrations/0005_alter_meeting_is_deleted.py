@@ -9,12 +9,4 @@ class Migration(migrations.Migration):
         ("meetings", "0004_artifactlink_lookup_index"),
     ]
 
-    operations = [
-        migrations.AlterField(
-            model_name="meeting",
-            name="is_deleted",
-            field=models.BooleanField(
-                default=False, help_text="Soft-delete flag (added in migration 0002)."
-            ),
-        ),
-    ]
+    operations = []

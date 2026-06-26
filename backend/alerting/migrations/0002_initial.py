@@ -14,15 +14,4 @@ class Migration(migrations.Migration):
         ('alerting', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='alerttask',
-            name='acknowledged_by',
-            field=models.ForeignKey(blank=True, help_text='User who acknowledged the alert', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='acknowledged_alert_tasks', to=settings.AUTH_USER_MODEL),
-        ),
-        migrations.AddField(
-            model_name='alerttask',
-            name='assigned_to',
-            field=models.ForeignKey(blank=True, help_text='User responsible for handling the alert', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assigned_alert_tasks', to=settings.AUTH_USER_MODEL),
-        ),
-    ]
+    operations = []

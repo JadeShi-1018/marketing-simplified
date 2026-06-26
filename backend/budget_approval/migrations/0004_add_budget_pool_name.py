@@ -9,10 +9,4 @@ class Migration(migrations.Migration):
         ('budget_approval', '0003_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='budgetpool',
-            name='name',
-            field=models.CharField(blank=True, default='', help_text='Optional label to distinguish pools with the same channel/currency', max_length=200),
-        ),
-    ]
+    operations = []

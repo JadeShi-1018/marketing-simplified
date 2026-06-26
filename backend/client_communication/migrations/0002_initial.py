@@ -13,10 +13,4 @@ class Migration(migrations.Migration):
         ('task', '0001_initial'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='clientcommunication',
-            name='task',
-            field=models.ForeignKey(help_text='Associated workflow task capturing this communication', on_delete=django.db.models.deletion.CASCADE, related_name='client_communications', to='task.task'),
-        ),
-    ]
+    operations = []

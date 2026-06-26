@@ -9,15 +9,4 @@ class Migration(migrations.Migration):
         ('meta_ads', '0002_metainsightdaily_comment_count_and_more'),
     ]
 
-    operations = [
-        migrations.AddField(
-            model_name='metasyncrun',
-            name='current_phase',
-            field=models.CharField(blank=True, default='', max_length=32),
-        ),
-        migrations.AddField(
-            model_name='metasyncrun',
-            name='current_progress',
-            field=models.CharField(blank=True, default='', max_length=120),
-        ),
-    ]
+    operations = []
