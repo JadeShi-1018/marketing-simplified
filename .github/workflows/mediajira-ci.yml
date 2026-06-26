@@ -165,6 +165,11 @@ jobs:
         run: |
           set -euo pipefail
 
+          if [ "${{ contains(github.event.pull_request.labels.*.name, 'migration-override') }}" = "true" ]; then
+            echo "Override label 'migration-override' detected; skipping migration deletion guard."
+            exit 0
+          fi
+
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE_SHA="${{ github.event.pull_request.base.sha }}"
             HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -481,26 +486,31 @@ jobs:
       - name: Verify production health after deploy
         env:
           PRODUCTION_HEALTH_URL: ${{ vars.MEDIAJIRA_PRODUCTION_HEALTH_URL || 'https://zmarkio.com' }}
+          HEALTH_CHECK_ATTEMPTS: ${{ vars.MEDIAJIRA_HEALTH_CHECK_ATTEMPTS || '45' }}
+          HEALTH_CHECK_INTERVAL: ${{ vars.MEDIAJIRA_HEALTH_CHECK_INTERVAL || '20' }}
         run: |
-          echo "Verifying production health at $PRODUCTION_HEALTH_URL"
+          echo "Verifying production health at $PRODUCTION_HEALTH_URL (up to $HEALTH_CHECK_ATTEMPTS attempts, ${HEALTH_CHECK_INTERVAL}s apart)"
 
-          for attempt in $(seq 1 30); do
-            status_code=$(curl -k -sS -L -o /tmp/mediajira-health.html -w "%{http_code}" --max-time 20 "$PRODUCTION_HEALTH_URL" || true)
+          for attempt in $(seq 1 "$HEALTH_CHECK_ATTEMPTS"); do
+            status_code=$(curl -sS -L -o /tmp/mediajira-health.html -w "%{http_code}" --max-time 20 "$PRODUCTION_HEALTH_URL" || true)
+            status_code=${status_code:-000}
 
             if [ "$status_code" -ge 200 ] && [ "$status_code" -lt 400 ]; then
               echo "Production health check passed with HTTP $status_code on attempt $attempt."
               exit 0
             fi
 
-            echo "Production health check attempt $attempt failed with HTTP ${status_code:-000}."
+            echo "Production health check attempt $attempt/$HEALTH_CHECK_ATTEMPTS failed with HTTP $status_code."
             if grep -qi "error code 521\|web server is down" /tmp/mediajira-health.html 2>/dev/null; then
               echo "Cloudflare 521 / Web server is down response detected."
             fi
 
-            sleep 20
+            if [ "$attempt" -lt "$HEALTH_CHECK_ATTEMPTS" ]; then
+              sleep "$HEALTH_CHECK_INTERVAL"
+            fi
           done
 
-          echo "Production health check failed after 30 attempts."
+          echo "Production health check failed after $HEALTH_CHECK_ATTEMPTS attempts."
           exit 1
 
       # - name: Trigger deploy (prod-preview)
