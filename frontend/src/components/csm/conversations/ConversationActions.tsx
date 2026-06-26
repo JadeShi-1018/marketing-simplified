@@ -1,23 +1,47 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import { Conversation, ConversationStatus, UpdateConversationPayload } from '@/types/csmConversation';
+import { TicketPriority, PRIORITY_LABELS } from '@/types/csm';
 import CsmConversationAPI from '@/lib/api/csmConversationApi';
+import { TicketAPI } from '@/lib/api/csmConversationApi';
 import { useCsmConversationStore } from '@/lib/csmConversationStore';
 import api from '@/lib/api';
 
 const STATUS_OPTIONS: { value: ConversationStatus; label: string }[] = [
-  { value: 'active', label: 'Active' },
-  { value: 'pending', label: 'Pending' },
+  { value: 'active',   label: 'Active' },
+  { value: 'pending',  label: 'Pending' },
   { value: 'resolved', label: 'Resolved' },
-  { value: 'closed', label: 'Closed' },
+  { value: 'closed',   label: 'Closed' },
 ];
 
 const STATUS_COLORS: Record<ConversationStatus, string> = {
-  active: 'bg-green-100 text-green-700',
-  pending: 'bg-yellow-100 text-yellow-700',
+  active:   'bg-green-100 text-green-700',
+  pending:  'bg-yellow-100 text-yellow-700',
   resolved: 'bg-blue-100 text-blue-700',
-  closed: 'bg-gray-100 text-gray-500',
+  closed:   'bg-gray-100 text-gray-500',
+};
+
+const PRIORITY_OPTIONS: { value: TicketPriority; label: string }[] = [
+  { value: 'critical', label: 'Critical' },
+  { value: 'high',     label: 'High' },
+  { value: 'medium',   label: 'Medium' },
+  { value: 'low',      label: 'Low' },
+];
+
+const PRIORITY_SELECT_COLORS: Record<string, string> = {
+  critical: 'bg-red-50 text-red-700',
+  high:     'bg-orange-50 text-orange-700',
+  medium:   'bg-blue-50 text-blue-700',
+  low:      'bg-gray-100 text-gray-500',
+};
+
+const PRIORITY_DOT: Record<string, string> = {
+  critical: 'bg-red-500',
+  high:     'bg-orange-400',
+  medium:   'bg-blue-400',
+  low:      'bg-gray-400',
 };
 
 interface Queue {
@@ -27,14 +51,27 @@ interface Queue {
 
 interface ConversationActionsProps {
   conversation: Conversation;
+  onPriorityChanged?: (newPriority: string) => void;
 }
 
-export function ConversationActions({ conversation }: ConversationActionsProps) {
+export function ConversationActions({ conversation, onPriorityChanged }: ConversationActionsProps) {
   const [tagInput, setTagInput] = useState('');
   const [queues, setQueues] = useState<Queue[]>([]);
+  const [ticketPriority, setTicketPriority] = useState<string>(
+    conversation.ticket?.priority ?? 'medium'
+  );
+  const [updatingPriority, setUpdatingPriority] = useState(false);
+
   const updateConversation = useCsmConversationStore((s) => s.updateConversation);
 
-  // Fetch available queues once
+  // Sync priority if the active conversation changes
+  useEffect(() => {
+    if (conversation.ticket?.priority) {
+      setTicketPriority(conversation.ticket.priority);
+    }
+  }, [conversation.ticket?.priority, conversation.id]);
+
+  // Fetch available queues once per organisation
   useEffect(() => {
     const params: Record<string, string> = {};
     if (conversation.queue_organisation_id) {
@@ -52,8 +89,8 @@ export function ConversationActions({ conversation }: ConversationActionsProps) 
     try {
       const updated = await CsmConversationAPI.update(conversation.id, data);
       updateConversation(updated);
-    } catch (err) {
-      console.error('Failed to update conversation', err);
+    } catch {
+      toast.error('Failed to update conversation.');
     }
   };
 
@@ -64,6 +101,30 @@ export function ConversationActions({ conversation }: ConversationActionsProps) 
   const handleQueueChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value;
     patch({ queue: val ? Number(val) : null });
+  };
+
+  const handlePriorityChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newPriority = e.target.value as TicketPriority;
+    if (!conversation.ticket || newPriority === ticketPriority) return;
+
+    setUpdatingPriority(true);
+    const prev = ticketPriority;
+    setTicketPriority(newPriority);
+    try {
+      await TicketAPI.update(conversation.ticket.id, { priority: newPriority });
+      // Reflect new priority in the store so the conversation list & right panel update
+      updateConversation({
+        ...conversation,
+        ticket: { ...conversation.ticket, priority: newPriority },
+      });
+      toast.success(`Priority set to ${PRIORITY_LABELS[newPriority]}`);
+      onPriorityChanged?.(newPriority);
+    } catch {
+      setTicketPriority(prev);
+      toast.error('Failed to update priority.');
+    } finally {
+      setUpdatingPriority(false);
+    }
   };
 
   const handleAddTag = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -78,7 +139,7 @@ export function ConversationActions({ conversation }: ConversationActionsProps) 
   };
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 border-b border-gray-100 bg-white flex-wrap">
+    <div className="flex items-center gap-2 px-4 py-2 border-b border-gray-100 bg-white flex-wrap">
       {/* Customer name */}
       <span className="font-semibold text-sm text-gray-900 truncate max-w-[160px]">
         {conversation.customer_name ?? conversation.customer_email ?? 'Unknown'}
@@ -86,44 +147,59 @@ export function ConversationActions({ conversation }: ConversationActionsProps) 
 
       {/* Ticket title */}
       {conversation.ticket && (
-        <>
-          <span className="text-gray-200">|</span>
-          <span className="text-xs text-gray-500 truncate max-w-[200px]">
-            #{conversation.ticket.id} {conversation.ticket.title}
-          </span>
-        </>
+        <span className="text-xs text-gray-400 truncate max-w-[180px]">
+          #{conversation.ticket.id} {conversation.ticket.title}
+        </span>
       )}
 
-      <span className="text-gray-200">|</span>
+      {/* Divider */}
+      <span className="h-4 w-px bg-gray-200 shrink-0" />
 
-      {/* Status selector */}
+      {/* Conversation status selector */}
       <select
         value={conversation.status}
         onChange={handleStatusChange}
-        className={`text-xs px-2 py-1 rounded-full border-0 font-medium cursor-pointer outline-none ${STATUS_COLORS[conversation.status]}`}
+        className={`text-xs px-2.5 py-1 rounded-full border-0 font-medium cursor-pointer outline-none ${STATUS_COLORS[conversation.status]}`}
       >
         {STATUS_OPTIONS.map((opt) => (
-          <option key={opt.value} value={opt.value}>
-            {opt.label}
-          </option>
+          <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
       </select>
 
-      <span className="text-gray-200">|</span>
+      {/* Ticket priority selector */}
+      {conversation.ticket && (
+        <div className="relative flex items-center">
+          <span
+            className={`absolute left-2 w-1.5 h-1.5 rounded-full pointer-events-none z-10 ${
+              PRIORITY_DOT[ticketPriority] ?? 'bg-gray-400'
+            }`}
+          />
+          <select
+            value={ticketPriority}
+            onChange={handlePriorityChange}
+            disabled={updatingPriority}
+            className={`text-xs pl-5 pr-2.5 py-1 rounded-full border-0 font-medium cursor-pointer outline-none appearance-none disabled:opacity-60 disabled:cursor-wait ${
+              PRIORITY_SELECT_COLORS[ticketPriority] ?? 'bg-gray-100 text-gray-500'
+            }`}
+          >
+            {PRIORITY_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Queue selector */}
       <select
         value={conversation.queue ?? ''}
         onChange={handleQueueChange}
-        className="text-xs text-gray-600 border border-gray-200 rounded px-2 py-1 outline-none focus:border-blue-400 bg-white cursor-pointer"
+        className="text-xs text-gray-600 bg-gray-100 rounded-full px-2.5 py-1 border-0 outline-none cursor-pointer hover:bg-gray-200 transition-colors"
       >
         <option value="">No queue</option>
         {queues.map((q) => (
           <option key={q.id} value={q.id}>{q.name}</option>
         ))}
       </select>
-
-      <span className="text-gray-200">|</span>
 
       {/* Tags */}
       <div className="flex items-center gap-1 flex-wrap">

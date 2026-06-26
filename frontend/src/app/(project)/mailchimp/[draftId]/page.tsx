@@ -137,10 +137,16 @@ export default function MailchimpDetailV2Page() {
   const draftId = draftIdParam && draftIdParam.trim() ? draftIdParam : null;
   const hasInvalidDraftId = Boolean(draftIdParam) && draftId == null;
   const returnTo = searchParams.get('returnTo');
-  const safeReturnTo =
-    returnTo && returnTo.startsWith('/') && !returnTo.startsWith('//')
-      ? returnTo
-      : '/mailchimp';
+  const safeReturnTo = (() => {
+    if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+      return '/mailchimp';
+    }
+    const pathname = returnTo.split(/[?#]/, 1)[0];
+    if (/^\/mailchimp\/[^/]+$/.test(pathname)) {
+      return '/mailchimp';
+    }
+    return returnTo;
+  })();
 
   // Save state management
   const [isSaving, setIsSaving] = useState(false);
@@ -387,6 +393,12 @@ export default function MailchimpDetailV2Page() {
       markUnsavedGuardSaved();
     }
   }, [isLoading, draftId, loadError, markUnsavedGuardSaved]);
+
+  const goBackToList = useCallback(() => {
+    confirmNavigation(() => {
+      router.push(safeReturnTo);
+    });
+  }, [confirmNavigation, router, safeReturnTo]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -2490,7 +2502,7 @@ export default function MailchimpDetailV2Page() {
             </p>
             <button
               type="button"
-              onClick={() => router.push(safeReturnTo)}
+              onClick={goBackToList}
               className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
             >
               Back to drafts
@@ -2513,7 +2525,7 @@ export default function MailchimpDetailV2Page() {
             <p className="mt-1 text-xs text-gray-500">{loadError}</p>
             <button
               type="button"
-              onClick={() => router.push(safeReturnTo)}
+              onClick={goBackToList}
               className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-lg bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-95"
             >
               Back to drafts

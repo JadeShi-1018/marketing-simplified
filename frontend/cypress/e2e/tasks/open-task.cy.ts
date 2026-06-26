@@ -21,7 +21,7 @@ describe("Open task", () => {
   it("clicking a task in list navigates to the detail page", () => {
     openFirstTaskFromList();
 
-    cy.url().should("match", /\/tasks\/\d+/, { timeout: 10_000 });
+    cy.url().should("match", /\/tasks\/[\w-]+/, { timeout: 10_000 });
     cy.get('[data-testid="task-id-label"]', { timeout: 10_000 }).should(
       "be.visible",
     );
@@ -35,7 +35,7 @@ describe("Open task", () => {
 
     openFirstTaskFromBoard();
 
-    cy.url().should("match", /\/tasks\/\d+/, { timeout: 10_000 });
+    cy.url().should("match", /\/tasks\/[\w-]+/, { timeout: 10_000 });
     cy.get('[data-testid="task-id-label"]', { timeout: 10_000 }).should(
       "be.visible",
     );

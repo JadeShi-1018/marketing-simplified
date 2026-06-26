@@ -69,7 +69,7 @@ export function ConversationThread({ messages, typingUserIds = [] }: Conversatio
       groups.push({ senderType: 'system', messages: [msg] });
     } else {
       const last = groups[groups.length - 1];
-      if (last && last.senderType === msg.sender_type && last.senderType !== 'system') {
+      if (last && last.senderType === msg.sender_type && (last.senderType as string) !== 'system') {
         last.messages.push(msg);
       } else {
         groups.push({ senderType: msg.sender_type, messages: [msg] });

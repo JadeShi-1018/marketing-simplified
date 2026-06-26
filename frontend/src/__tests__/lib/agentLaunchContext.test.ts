@@ -2,7 +2,10 @@ import {
   AGENT_CALENDAR_CONTEXT_KEY,
   AGENT_SESSION_ID_KEY,
   consumeCalendarPreload,
+  consumeDraftPreload,
   readStoredAgentSessionId,
+  shouldAutoSendDraftPreload,
+  stageDraftContext,
 } from '@/lib/agentLaunchContext';
 
 describe('agentLaunchContext', () => {
@@ -51,5 +54,48 @@ describe('agentLaunchContext', () => {
   it('reads stored agent session id', () => {
     sessionStorage.setItem(AGENT_SESSION_ID_KEY, '  session-42  ');
     expect(readStoredAgentSessionId()).toBe('session-42');
+  });
+});
+
+describe('agentLaunchContext — draft entry points', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('"Ask Agent" (list) stages an auto-send "Summarize this draft." message', () => {
+    stageDraftContext({ draftId: 'q3-plan', title: 'Q3 Plan', autoSend: true });
+    const preload = consumeDraftPreload();
+    expect(preload).not.toBeNull();
+    expect(preload?.autoSend).toBe(true);
+    expect(preload?.message).toBe('Summarize this draft.');
+    expect(preload?.context.draftId).toBe('q3-plan');
+    expect(shouldAutoSendDraftPreload(preload)).toBe(true);
+  });
+
+  it('"Open in Agent" (editor) attaches context but does NOT auto-send', () => {
+    stageDraftContext({ draftId: 'q3-plan', title: 'Q3 Plan', autoSend: false });
+    const preload = consumeDraftPreload();
+    expect(preload).not.toBeNull();
+    expect(preload?.autoSend).toBe(false);
+    expect(preload?.message).toBe('');
+    // The agent must stay silent (no LLM call) until the user sends a message.
+    expect(shouldAutoSendDraftPreload(preload)).toBe(false);
+    // ...but the draft is still attached for whatever the user sends next.
+    expect(preload?.context.draftId).toBe('q3-plan');
+  });
+
+  it('defaults to auto-send when the flag is omitted', () => {
+    stageDraftContext({ draftId: 'x' });
+    expect(consumeDraftPreload()?.autoSend).toBe(true);
+  });
+
+  it('consuming clears the staged draft context', () => {
+    stageDraftContext({ draftId: 'x', autoSend: false });
+    expect(consumeDraftPreload()).not.toBeNull();
+    expect(consumeDraftPreload()).toBeNull();
+  });
+
+  it('shouldAutoSendDraftPreload is false for null', () => {
+    expect(shouldAutoSendDraftPreload(null)).toBe(false);
   });
 });

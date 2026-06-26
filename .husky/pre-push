@@ -11,6 +11,10 @@ snyk test
 
 echo "====start backend unit and integration test===="
 cd ${curDir}/backend
+# NOTE: CI runs the backend suite with `pytest` (see .github/workflows/mediajira-ci.yml
+# and backend/pytest.ini), NOT `manage.py test`. Since SMP-555 pytest is the source of
+# truth for the full suite. This hook still uses manage.py test only for the local
+# coverage gate below; for results that match CI, run `pytest` instead.
 coverage run manage.py test
 
 echo "====start counting test coverage"

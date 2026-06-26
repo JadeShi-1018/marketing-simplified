@@ -104,7 +104,7 @@ export function CreateTemplateModal({
 
     setLoadingProjects(true)
     ProjectAPI.getProjects()
-      .then((data) => setProjects(data.map((p) => ({ id: p.id, name: p.name }))))
+      .then((data) => setProjects(data.map((p) => ({ id: Number(p.id), name: p.name }))))
       .catch(() => {})
       .finally(() => setLoadingProjects(false))
 
