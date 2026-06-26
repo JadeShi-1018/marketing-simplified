@@ -66,6 +66,9 @@ class EmailDraftCreateSerializer(serializers.ModelSerializer):
             "status",
             "blocks",
         ]
+        # Owner is assigned server-side from request.user; never trust a
+        # client-supplied user (prevents creating drafts under another account).
+        read_only_fields = ["user"]
 
     def create(self, validated_data):
         blocks_data = validated_data.pop("blocks", [])
