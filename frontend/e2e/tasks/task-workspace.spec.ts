@@ -83,7 +83,7 @@ test.describe('Tasks workspace flows', () => {
       await openFirstTaskFromBoardAndNavigate(page);
     }
 
-    await page.waitForURL(/\/tasks\/\d+/, { timeout: 10_000 });
+    await page.waitForURL(/\/tasks\/[\w-]+/, { timeout: 10_000 });
     await expect(page.getByTestId('task-id-label')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('back-to-tasks')).toBeVisible();
   });
@@ -95,7 +95,7 @@ test.describe('Tasks workspace flows', () => {
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 10_000 });
 
     await openFirstTaskFromListAndNavigate(page);
-    await page.waitForURL(/\/tasks\/\d+/, { timeout: 10_000 });
+    await page.waitForURL(/\/tasks\/[\w-]+/, { timeout: 10_000 });
 
     await expect(page.getByTestId('task-description-heading')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('task-comments-heading')).toBeVisible({ timeout: 10_000 });

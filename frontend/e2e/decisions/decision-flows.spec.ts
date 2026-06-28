@@ -54,13 +54,19 @@ test.describe('Decisions flows', () => {
     const projectId = await getActiveProjectId(page);
     test.skip(!projectId, 'No active project available for decisions tests.');
 
+    const createResponsePromise = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/decisions/drafts/') &&
+        response.request().method() === 'POST',
+      { timeout: 20_000 },
+    );
+
     await page.getByRole('button', { name: 'Create Decision', exact: true }).first().click();
 
-    await expect(page).toHaveURL(/\/decisions\/\d+(\?.*)?$/, { timeout: 20_000 });
-    const match = page.url().match(/\/decisions\/(\d+)/);
-    expect(match?.[1], 'Expected a decision id in URL after create.').toBeTruthy();
+    const createResponse = await createResponsePromise;
+    const createdId = Number((await createResponse.json())?.id);
 
-    const createdId = Number(match![1]);
+    await expect(page).toHaveURL(/\/decisions\/[\w-]+(\?.*)?$/, { timeout: 20_000 });
     await expect(page.getByRole('heading', { name: 'Context Summary' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Options' })).toBeVisible();
 

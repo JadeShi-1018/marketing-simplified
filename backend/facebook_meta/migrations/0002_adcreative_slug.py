@@ -17,7 +17,7 @@ def backfill_creative(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("facebook_meta", "0001_initial"),
+        ("facebook_meta", "0003_add_uploaded_by_to_photo_video"),
     ]
 
     operations = [

@@ -5,6 +5,7 @@ import { CustomerProfile, LinkedTicket } from '@/types/csmConversation';
 import CustomerStatusLabelControl from './CustomerStatusLabelControl';
 import CustomerInternalNotes from './CustomerInternalNotes';
 import StatusLabelBadge from '@/components/csm-settings/status-labels/StatusLabelBadge';
+import { CsmPriorityBadge } from '@/components/csm/CsmPriorityBadge';
 
 interface CustomerProfilePanelProps {
   profile: CustomerProfile | null;
@@ -119,9 +120,7 @@ export function CustomerProfilePanel({
                 <span className={`text-xs px-1.5 py-0.5 rounded-full ${TICKET_STATUS_COLORS[ticket.status] ?? 'bg-gray-100 text-gray-500'}`}>
                   {ticket.status.replace('_', ' ')}
                 </span>
-                <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500">
-                  {ticket.priority}
-                </span>
+                <CsmPriorityBadge priority={ticket.priority} />
               </div>
             </div>
           ))

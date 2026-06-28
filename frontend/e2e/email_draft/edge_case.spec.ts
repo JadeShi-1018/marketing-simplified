@@ -35,16 +35,16 @@ test.describe("Email draft edge cases", () => {
   // ---------------------------------------------------------------------------
 
   test.describe("§5.1 Invalid or missing draftId / load errors", () => {
-    test("KV-edge-invalid klaviyo /klaviyo/abc shows invalid template link", async ({ page }) => {
+    test("KV-edge-invalid klaviyo /klaviyo/abc shows load error", async ({ page }) => {
       await page.goto("/klaviyo/abc");
-      await expect(page.getByText("Invalid template link")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText("Failed to load template")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByRole("button", { name: "Back to templates" })).toBeVisible();
       await expect(page.getByTestId("klaviyo-draft-save")).not.toBeVisible();
     });
 
-    test("MC-edge-invalid mailchimp /mailchimp/abc shows invalid draft link", async ({ page }) => {
+    test("MC-edge-invalid mailchimp /mailchimp/abc shows not found", async ({ page }) => {
       await page.goto("/mailchimp/abc");
-      await expect(page.getByText("Invalid draft link")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByText("Email draft not found")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByRole("button", { name: "Back to drafts" })).toBeVisible();
     });
 
@@ -61,7 +61,7 @@ test.describe("Email draft edge cases", () => {
         await route.continue();
       });
       try {
-        await page.goto("/klaviyo/1");
+        await page.goto("/klaviyo/load-fail-draft");
         await expect(page.getByText("Failed to load template")).toBeVisible({ timeout: 30_000 });
         await expect(page.getByText("Edge case load failure")).toBeVisible();
         await page.getByRole("button", { name: "Back to templates" }).click();
@@ -81,7 +81,7 @@ test.describe("Email draft edge cases", () => {
       const cleanup = createCleanupRef();
       const reloadTarget = "Edge reload persisted heading";
       try {
-        const { id } = await createKlaviyoDraftWithBlocksViaApi(
+        const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
           page,
           cleanup,
           buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -91,7 +91,7 @@ test.describe("Email draft edge cases", () => {
 
         const patchPromise = page.waitForResponse(
           (r) =>
-            r.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+            r.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
             r.request().method() === "PATCH" &&
             r.ok(),
         );
@@ -117,7 +117,7 @@ test.describe("Email draft edge cases", () => {
       const cleanup = createCleanupRef();
       const offlineCopy = "Edge offline in-memory edit";
       try {
-        const { id } = await createKlaviyoDraftWithBlocksViaApi(
+        const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
           page,
           cleanup,
           buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -142,7 +142,7 @@ test.describe("Email draft edge cases", () => {
       const cleanup = createCleanupRef();
       const offlineSaveCopy = "Edge offline save attempt";
       try {
-        const { id } = await createKlaviyoDraftWithBlocksViaApi(
+        const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
           page,
           cleanup,
           buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -173,7 +173,7 @@ test.describe("Email draft edge cases", () => {
       const cleanup = createCleanupRef();
       const concurrentCopy = "Edge concurrent save copy";
       try {
-        const { id } = await createKlaviyoDraftWithBlocksViaApi(
+        const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
           page,
           cleanup,
           buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -187,7 +187,7 @@ test.describe("Email draft edge cases", () => {
           releasePatch = resolve;
         });
 
-        await page.route(`**/api/klaviyo/klaviyo-drafts/${id}/**`, async (route) => {
+        await page.route(`**/api/klaviyo/klaviyo-drafts/${slug}/**`, async (route) => {
           if (route.request().method() === "PATCH") {
             patchCount += 1;
             await patchGate;
@@ -203,7 +203,7 @@ test.describe("Email draft edge cases", () => {
         releasePatch();
         await expect(saveButton).toBeEnabled({ timeout: 30_000 });
         expect(patchCount).toBeLessThanOrEqual(1);
-        await page.unroute(`**/api/klaviyo/klaviyo-drafts/${id}/**`);
+        await page.unroute(`**/api/klaviyo/klaviyo-drafts/${slug}/**`);
       } finally {
         await cleanupDraftRefs(page, cleanup);
       }
@@ -218,7 +218,7 @@ test.describe("Email draft edge cases", () => {
     test("KV-edge-large klaviyo large paragraph paste does not crash editor", async ({ page }) => {
       const cleanup = createCleanupRef();
       try {
-        const { id } = await createKlaviyoDraftWithBlocksViaApi(
+        const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
           page,
           cleanup,
           buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -261,7 +261,7 @@ test.describe("Email draft edge cases", () => {
     }) => {
       const cleanup = createCleanupRef();
       try {
-        const { id } = await createKlaviyoDraftWithBlocksViaApi(
+        const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
           page,
           cleanup,
           buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -271,7 +271,7 @@ test.describe("Email draft edge cases", () => {
 
         const patchPromise = page.waitForResponse(
           (r) =>
-            r.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+            r.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
             r.request().method() === "PATCH" &&
             r.ok(),
         );
@@ -307,7 +307,7 @@ test.describe("Email draft edge cases", () => {
       const cleanup = createCleanupRef();
       const saveFailCopy = "Edge save 500 retained copy";
       try {
-        const { id } = await createKlaviyoDraftWithBlocksViaApi(
+        const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
           page,
           cleanup,
           buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -315,7 +315,7 @@ test.describe("Email draft edge cases", () => {
         await openKlaviyoEditor(page, id, { anchorText: EDIT_SEED_HEADING });
         await editCanvasTextBlock(page, EDIT_SEED_HEADING, saveFailCopy);
 
-        await page.route(`**/api/klaviyo/klaviyo-drafts/${id}/**`, async (route) => {
+        await page.route(`**/api/klaviyo/klaviyo-drafts/${slug}/**`, async (route) => {
           if (route.request().method() === "PATCH") {
             await route.fulfill({
               status: 500,
@@ -330,8 +330,8 @@ test.describe("Email draft edge cases", () => {
         await page.getByTestId("klaviyo-draft-save").click();
         await expect(page.getByText("Edge case save failure")).toBeVisible({ timeout: 30_000 });
         await expect(canvasLocator(page).getByRole("heading", { name: saveFailCopy })).toBeVisible();
-        await expect(page).toHaveURL(new RegExp(String.raw`/klaviyo/${id}(?:\?|$)`));
-        await page.unroute(`**/api/klaviyo/klaviyo-drafts/${id}/**`);
+        await expect(page).toHaveURL(new RegExp(String.raw`/klaviyo/${slug}(?:\?|$)`));
+        await page.unroute(`**/api/klaviyo/klaviyo-drafts/${slug}/**`);
       } finally {
         await cleanupDraftRefs(page, cleanup);
       }
