@@ -2,7 +2,15 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q
 from rest_framework import serializers
 
-from core.models import Organization, Project, ProjectInvitation, ProjectMember, Role
+from core.models import (
+    Organization,
+    OrganizationInvitation,
+    OrganizationMembership,
+    Project,
+    ProjectInvitation,
+    ProjectMember,
+    Role,
+)
 
 User = get_user_model()
 
@@ -398,3 +406,158 @@ class AcceptInvitationSerializer(serializers.Serializer):
         required=False,
         help_text="Username for new user account (optional, defaults to email)"
     )
+
+
+# ============================================================================
+# Multi-Organization Support Serializers
+# ============================================================================
+
+
+class OrganizationSerializer(serializers.ModelSerializer):
+    """Full organization serializer with membership details."""
+
+    is_current = serializers.SerializerMethodField()
+    user_role = serializers.SerializerMethodField()
+    member_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Organization
+        fields = [
+            'id',
+            'name',
+            'slug',
+            'desc',
+            'is_active',
+            'created_at',
+            'updated_at',
+            'is_current',
+            'user_role',
+            'member_count',
+        ]
+        read_only_fields = ['id', 'slug', 'created_at', 'updated_at']
+
+    def get_is_current(self, obj):
+        """Check if this is the user's current organization."""
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            return request.user.current_organization_id == obj.id
+        return False
+
+    def get_user_role(self, obj):
+        """Get the user's role in this organization."""
+        request = self.context.get('request')
+        if request and hasattr(request, 'user') and request.user.is_authenticated:
+            membership = OrganizationMembership.objects.filter(
+                user=request.user,
+                organization=obj,
+                is_active=True
+            ).first()
+            return membership.role if membership else None
+        return None
+
+    def get_member_count(self, obj):
+        """Count active members in this organization."""
+        return OrganizationMembership.objects.filter(
+            organization=obj,
+            is_active=True
+        ).count()
+
+
+class OrganizationMembershipSerializer(serializers.ModelSerializer):
+    """Serializer for organization memberships."""
+
+    user = UserSummarySerializer(read_only=True)
+    organization = OrganizationSummarySerializer(read_only=True)
+    invited_by = UserSummarySerializer(read_only=True)
+
+    class Meta:
+        model = OrganizationMembership
+        fields = [
+            'id',
+            'user',
+            'organization',
+            'role',
+            'joined_at',
+            'is_active',
+            'invited_by',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'joined_at', 'created_at', 'updated_at']
+
+
+class OrganizationInvitationSerializer(serializers.ModelSerializer):
+    """Serializer for organization invitations."""
+
+    organization = OrganizationSummarySerializer(read_only=True)
+    invited_by = UserSummarySerializer(read_only=True)
+    is_expired = serializers.SerializerMethodField()
+    is_valid = serializers.SerializerMethodField()
+    invitation_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrganizationInvitation
+        fields = [
+            'id',
+            'email',
+            'organization',
+            'role',
+            'invited_by',
+            'token',
+            'max_uses',
+            'use_count',
+            'expires_at',
+            'is_active',
+            'is_expired',
+            'is_valid',
+            'invitation_url',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'token',
+            'use_count',
+            'created_at',
+            'updated_at',
+        ]
+
+    def get_is_expired(self, obj):
+        """Check if invitation has expired."""
+        return obj.is_expired()
+
+    def get_is_valid(self, obj):
+        """Check if invitation is valid for use."""
+        return obj.is_valid()
+
+    def get_invitation_url(self, obj):
+        """Generate the invitation URL."""
+        request = self.context.get('request')
+        if request:
+            # Build absolute URL for the invitation
+            # Frontend will handle the /invite/organization/{token} route
+            base_url = request.build_absolute_uri('/').rstrip('/')
+            return f"{base_url}/invite/organization/{obj.token}"
+        return None
+
+
+class AcceptOrganizationInvitationSerializer(serializers.Serializer):
+    """Serializer for accepting an organization invitation."""
+
+    token = serializers.CharField(required=True, help_text="Organization invitation token")
+    password = serializers.CharField(
+        required=False,
+        write_only=True,
+        min_length=8,
+        help_text="Password for new user account (required if user doesn't exist)"
+    )
+    username = serializers.CharField(
+        required=False,
+        help_text="Username for new user account (optional, defaults to email)"
+    )
+
+
+class SwitchOrganizationSerializer(serializers.Serializer):
+    """Serializer for switching current organization."""
+
+    organization_id = serializers.IntegerField(required=True, help_text="Target organization ID")

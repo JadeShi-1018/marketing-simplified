@@ -247,7 +247,16 @@ class CustomUser(AbstractUser):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='users'
+        related_name='users',
+        help_text="DEPRECATED: Use current_organization instead. Kept for backward compatibility."
+    )
+    current_organization = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='current_users',
+        help_text="The organization context the user is currently viewing"
     )
     active_project = models.ForeignKey(
         'core.Project',
@@ -506,4 +515,174 @@ class ProjectInvitation(TimeStampedModel):
     def is_valid(self):
         """Check if the invitation is valid (not accepted and not expired)"""
         return self.approved and not self.accepted and not self.is_expired()
+
+
+class OrganizationMembership(TimeStampedModel):
+    """
+    Many-to-many relationship between users and organizations.
+    Stores organization-level role and membership metadata.
+    Lives in PUBLIC schema (not tenant schema).
+    """
+    user = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='organization_memberships',
+        help_text="User who is a member of the organization"
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='memberships',
+        help_text="Organization the user belongs to"
+    )
+    role = models.CharField(
+        max_length=50,
+        default='member',
+        help_text="Organization-level role: 'admin', 'member', 'viewer'"
+    )
+    joined_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the user joined the organization"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this membership is currently active"
+    )
+    invited_by = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='invited_memberships',
+        help_text="User who invited this member"
+    )
+
+    class Meta:
+        unique_together = ['user', 'organization']
+        ordering = ['-joined_at']
+        indexes = [
+            models.Index(fields=['user', 'is_active']),
+            models.Index(fields=['organization', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} @ {self.organization.name} ({self.role})"
+
+
+class OrganizationInvitation(TimeStampedModel):
+    """
+    Invitation to join an organization.
+    Supports reusable invitation links with max_uses limit.
+    Lives in PUBLIC schema.
+    """
+    email = models.EmailField(
+        blank=True,
+        null=True,
+        help_text="Specific email address (optional - if null, anyone can use the link)"
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='invitations',
+        help_text="Organization being invited to"
+    )
+    role = models.CharField(
+        max_length=50,
+        default='member',
+        help_text="Role the invitee will receive: 'admin', 'member', 'viewer'"
+    )
+    invited_by = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sent_org_invitations',
+        help_text="User who created this invitation"
+    )
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        help_text="Unique token for the invitation link"
+    )
+    max_uses = models.PositiveIntegerField(
+        default=1,
+        help_text="Maximum number of times this invitation can be used (0 = unlimited)"
+    )
+    use_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of times this invitation has been used"
+    )
+    expires_at = models.DateTimeField(
+        help_text="When the invitation expires"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this invitation is active (can be manually revoked)"
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['organization', 'is_active']),
+        ]
+
+    def __str__(self):
+        target = self.email or "anyone"
+        return f"Invitation to {target} for {self.organization.name}"
+
+    def is_expired(self):
+        """Check if the invitation has expired"""
+        from django.utils import timezone
+        return timezone.now() > self.expires_at
+
+    def is_valid(self):
+        """Check if invitation can still be used"""
+        if not self.is_active or self.is_expired():
+            return False
+        # max_uses = 0 means unlimited
+        if self.max_uses > 0 and self.use_count >= self.max_uses:
+            return False
+        return True
+
+    def can_be_used_by(self, email):
+        """Check if a specific email can use this invitation"""
+        if not self.is_valid():
+            return False
+        # If invitation has a specific email, it must match
+        if self.email and self.email.lower() != email.lower():
+            return False
+        return True
+
+
+class OrganizationInvitationUse(TimeStampedModel):
+    """
+    Audit log of invitation usage.
+    Tracks who used which invitation and when.
+    """
+    invitation = models.ForeignKey(
+        OrganizationInvitation,
+        on_delete=models.CASCADE,
+        related_name='uses',
+        help_text="The invitation that was used"
+    )
+    user = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='invitation_uses',
+        help_text="User who used the invitation"
+    )
+    used_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the invitation was used"
+    )
+
+    class Meta:
+        ordering = ['-used_at']
+        indexes = [
+            models.Index(fields=['invitation', 'used_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} used invitation at {self.used_at}"
 

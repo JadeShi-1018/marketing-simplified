@@ -17,6 +17,7 @@ import {
   ProjectAPI,
   ProjectData,
 } from '@/lib/api/projectApi';
+import { OrganizationAPI } from '@/lib/api/organizationApi';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRouter } from 'next/navigation';
 
@@ -44,6 +45,11 @@ const defaultKpis = {
 
 const steps: WizardStep[] = [
   {
+    id: 'organization',
+    title: 'Create Your Organization',
+    description: 'Create your own organization or join an existing one to start your first project.',
+  },
+  {
     id: 'projectName',
     title: 'Name Your Project',
     description: 'Create your first project to unlock the dashboard.',
@@ -61,6 +67,18 @@ const steps: WizardStep[] = [
 ];
 
 type WizardState = {
+  // Organization related state
+  organizationMode: 'create' | 'join';
+  organizationName: string;
+  organizationSlug: string;
+  selectedOrganization: {
+    id: number;
+    name: string;
+    slug: string;
+    member_count?: number;
+  } | null;
+
+  // Original state
   projectName: string;
   mediaWorkTypes: string[];
   inviteEmails: string[];
@@ -68,6 +86,13 @@ type WizardState = {
 };
 
 const initialState: WizardState = {
+  // Organization defaults
+  organizationMode: 'create',
+  organizationName: '',
+  organizationSlug: '',
+  selectedOrganization: null,
+
+  // Original defaults
   projectName: '',
   mediaWorkTypes: [],
   inviteEmails: [],
@@ -87,6 +112,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
   const [stepError, setStepError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [validatingSlug, setValidatingSlug] = useState(false);
 
   const progress = useMemo(
     () => Math.round(((currentStep + 1) / steps.length) * 100),
@@ -139,8 +165,96 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
     });
   };
 
+  // Organization API handlers
+  const handleCreateOrganization = async (name: string) => {
+    try {
+      const response = await OrganizationAPI.createOrganization({ name });
+      updateState({
+        selectedOrganization: {
+          id: response.organization.id,
+          name: response.organization.name,
+          slug: response.organization.slug,
+          member_count: response.organization.member_count,
+        },
+      });
+      toast.success(`Organization "${response.organization.name}" created successfully!`);
+      return true;
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || 'Failed to create organization';
+      setStepError(message);
+      toast.error(message);
+      return false;
+    }
+  };
+
+  const handleValidateSlug = async (slug: string) => {
+    if (!slug.trim()) {
+      setStepError('Please enter an organization slug.');
+      return;
+    }
+
+    setValidatingSlug(true);
+    setStepError(null);
+
+    try {
+      const response = await OrganizationAPI.validateSlug(slug.trim());
+      if (response.exists && response.organization) {
+        updateState({ selectedOrganization: response.organization });
+        toast.success(`Found organization: ${response.organization.name}`);
+      } else {
+        setStepError('Organization not found. Please check the slug and try again.');
+        updateState({ selectedOrganization: null });
+      }
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || 'Failed to validate slug';
+      setStepError(message);
+      updateState({ selectedOrganization: null });
+    } finally {
+      setValidatingSlug(false);
+    }
+  };
+
+  const handleJoinOrganization = async (slug: string) => {
+    try {
+      const response = await OrganizationAPI.joinOrganization({ slug });
+      updateState({
+        selectedOrganization: {
+          id: response.organization.id,
+          name: response.organization.name,
+          slug: response.organization.slug,
+          member_count: response.organization.member_count,
+        },
+      });
+      toast.success(`Successfully joined "${response.organization.name}"!`);
+      return true;
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || 'Failed to join organization';
+      setStepError(message);
+      toast.error(message);
+      return false;
+    }
+  };
+
   const validateStep = (stepIndex: number) => {
     switch (steps[stepIndex].id) {
+      case 'organization':
+        if (state.organizationMode === 'create') {
+          if (!state.organizationName.trim()) {
+            setStepError('Organization name is required.');
+            return false;
+          }
+        } else {
+          // Join mode
+          if (!state.organizationSlug.trim()) {
+            setStepError('Organization slug is required.');
+            return false;
+          }
+          if (!state.selectedOrganization) {
+            setStepError('Please validate the slug first.');
+            return false;
+          }
+        }
+        return true;
       case 'projectName':
         if (!state.projectName.trim()) {
           setStepError('Project name is required.');
@@ -158,8 +272,25 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (!validateStep(currentStep)) return;
+
+    // Handle organization step with async API call
+    if (steps[currentStep].id === 'organization') {
+      setSubmitting(true);
+      let success = false;
+
+      if (state.organizationMode === 'create') {
+        success = await handleCreateOrganization(state.organizationName.trim());
+      } else {
+        success = await handleJoinOrganization(state.organizationSlug.trim());
+      }
+
+      setSubmitting(false);
+
+      if (!success) return; // Don't proceed if API call failed
+    }
+
     setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1));
   };
 
@@ -194,11 +325,11 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
       }
 
       markCompleted(project);
-      // Refresh projects in store and navigate to the main workspace
-      refreshProjects().finally(() => {
-        router.push('/overview');
-      });
       toast.success('Onboarding complete. Project created!');
+
+      // Navigate immediately since markCompleted already set the active project
+      // We'll let the main app refresh projects on mount
+      router.push('/overview');
     } catch (error: any) {
       const message = error?.response?.data?.error || error?.message || 'Failed to finish onboarding';
       setSubmitError(message);
@@ -235,6 +366,78 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
 
   const renderStepContent = () => {
     switch (steps[currentStep].id) {
+      case 'organization':
+        return (
+          <div className="space-y-4">
+            {state.organizationMode === 'create' ? (
+              <>
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-gray-700">Organization name</label>
+                  <input
+                    type="text"
+                    value={state.organizationName}
+                    onChange={(e) => updateState({ organizationName: e.target.value })}
+                    placeholder="e.g. Acme Corporation"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 focus:outline-none transition"
+                    disabled={submitting}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateState({ organizationMode: 'join', organizationName: '' })}
+                  className="text-sm text-[#3CCED7] hover:text-[#0F172A] hover:underline transition"
+                  disabled={submitting}
+                >
+                  Want to join an existing organization?
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-gray-700">Organization slug</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={state.organizationSlug}
+                      onChange={(e) => {
+                        updateState({ organizationSlug: e.target.value, selectedOrganization: null });
+                        setStepError(null);
+                      }}
+                      placeholder="e.g. acme-corp"
+                      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 focus:outline-none transition"
+                      disabled={validatingSlug || submitting}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleValidateSlug(state.organizationSlug)}
+                      className="px-4 py-2 rounded-lg bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-white font-medium hover:opacity-90 transition disabled:opacity-60"
+                      disabled={!state.organizationSlug.trim() || validatingSlug || submitting}
+                    >
+                      {validatingSlug ? 'Validating...' : 'Validate'}
+                    </button>
+                  </div>
+                  {state.selectedOrganization && (
+                    <div className="rounded-lg border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-4 py-3 text-sm">
+                      <div className="font-semibold text-gray-900">{state.selectedOrganization.name}</div>
+                      <div className="text-gray-600">Slug: {state.selectedOrganization.slug}</div>
+                      {state.selectedOrganization.member_count !== undefined && (
+                        <div className="text-gray-600">{state.selectedOrganization.member_count} members</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateState({ organizationMode: 'create', organizationSlug: '', selectedOrganization: null })}
+                  className="text-sm text-[#3CCED7] hover:text-[#0F172A] hover:underline transition"
+                  disabled={submitting}
+                >
+                  Don&apos;t have a slug? Create your own organization
+                </button>
+              </>
+            )}
+          </div>
+        );
       case 'projectName':
         return (
           <div className="space-y-3">

@@ -37,10 +37,27 @@ def _get_connection(project):
     """Returns the active Slack connection for a project's organisation, or None."""
     if not project or not project.organization:
         return None
-    return SlackWorkspaceConnection.objects.filter(
-        organization=project.organization,
-        is_active=True
-    ).first()
+
+    # SlackWorkspaceConnection is in public schema, need to temporarily switch
+    from django.db import connection as db_connection
+    from core.services.tenant import slug_to_schema_name
+
+    cursor = db_connection.cursor()
+    cursor.execute('SET search_path TO public')
+    cursor.close()
+
+    try:
+        return SlackWorkspaceConnection.objects.filter(
+            organization=project.organization,
+            is_active=True
+        ).first()
+    finally:
+        # Reset to tenant schema
+        cursor = db_connection.cursor()
+        if project.organization:
+            schema_name = slug_to_schema_name(project.organization.slug)
+            cursor.execute(f'SET search_path TO {schema_name}, public')
+        cursor.close()
 
 
 def _check_preference(connection, project, event_type, task_status=None):
@@ -78,12 +95,28 @@ def notify_on_project_creation(sender, instance, created, **kwargs):
     """Ensure default notification preferences exist for each new project."""
     if not created or not instance.organization:
         return
-    connection = SlackWorkspaceConnection.objects.filter(
-        organization=instance.organization,
-        is_active=True
-    ).first()
-    if connection:
-        create_default_preferences(instance.organization, connection)
+
+    # SlackWorkspaceConnection is in public schema
+    # Use raw SQL to query it to avoid schema context issues
+    try:
+        from django.db import connection as db_connection
+
+        with db_connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id FROM slack_integration_slackworkspaceconnection
+                WHERE organization_id = %s AND is_active = TRUE
+                LIMIT 1
+            """, [instance.organization.id])
+            row = cursor.fetchone()
+
+            if row:
+                # Connection exists, get the object and create preferences
+                connection = SlackWorkspaceConnection.objects.using('default').get(id=row[0])
+                create_default_preferences(instance.organization, connection)
+    except Exception:
+        # Silently skip if slack integration table doesn't exist or any other error
+        # This is expected for new organizations or when slack integration is not set up
+        pass
 
 
 # ─── Task: created ────────────────────────────────────────────────────────────
@@ -270,10 +303,27 @@ def notify_on_decision_commit(sender, instance, created, **kwargs):
     else:
         author = instance.author
         if author and getattr(author, 'organization', None):
-            connection = SlackWorkspaceConnection.objects.filter(
-                organization=author.organization,
-                is_active=True,
-            ).first()
+            # SlackWorkspaceConnection is in public schema, need to temporarily switch
+            from django.db import connection as db_connection
+            from core.services.tenant import slug_to_schema_name
+
+            cursor = db_connection.cursor()
+            cursor.execute('SET search_path TO public')
+            cursor.close()
+
+            try:
+                connection = SlackWorkspaceConnection.objects.filter(
+                    organization=author.organization,
+                    is_active=True,
+                ).first()
+            finally:
+                # Reset to tenant schema
+                cursor = db_connection.cursor()
+                if author.organization:
+                    schema_name = slug_to_schema_name(author.organization.slug)
+                    cursor.execute(f'SET search_path TO {schema_name}, public')
+                cursor.close()
+
             if connection:
                 preference = NotificationPreference.objects.filter(
                     connection=connection,

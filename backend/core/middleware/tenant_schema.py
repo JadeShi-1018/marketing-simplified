@@ -103,7 +103,13 @@ class TenantSchemaMiddleware:
     def _resolve_schema(self, request) -> str:
         # Priority 1: authenticated user (comes from signed JWT — cannot be forged)
         if request.user.is_authenticated:
-            org_id = getattr(request.user, 'organization_id', None)
+            # Try current_organization first (multi-org support)
+            org_id = getattr(request.user, 'current_organization_id', None)
+
+            # Fallback to organization for backward compatibility
+            if not org_id:
+                org_id = getattr(request.user, 'organization_id', None)
+
             if org_id:
                 slug = self._get_slug_by_org_id(org_id)
                 if slug:
