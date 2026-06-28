@@ -32,13 +32,13 @@ class StatusLabelAPITest(APITestCase):
             username='outsider', email='outsider@test.com', password='pass'
         )
 
-    # ── Create ────────────────────────────────────────────────────────────────
+    # ── Create ──────────────────────────────────────────────────────────────────
 
     def test_member_can_create_label(self):
         self.client.force_authenticate(self.member)
         res = self.client.post(
             f'{LIST_URL}?project={self.project.id}',
-            {'name': 'Gold', 'color': '#E0A800'},
+            {'name': 'Gold', 'color': '#A16207'},
         )
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         self.assertEqual(res.data['name'], 'Gold')
@@ -52,7 +52,7 @@ class StatusLabelAPITest(APITestCase):
     # ── List scoping ────────────────────────────────────────────────────────────
 
     def test_list_only_returns_this_projects_labels(self):
-        CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#E0A800')
+        CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#A16207')
         CustomerStatusLabel.objects.create(project=self.other_project, name='Hidden', color='#000000')
         self.client.force_authenticate(self.member)
         res = self.client.get(f'{LIST_URL}?project={self.project.id}')
@@ -64,7 +64,7 @@ class StatusLabelAPITest(APITestCase):
     # ── Rename ──────────────────────────────────────────────────────────────────
 
     def test_member_can_rename_label(self):
-        label = CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#E0A800')
+        label = CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#A16207')
         self.client.force_authenticate(self.member)
         res = self.client.patch(detail_url(label.id), {'name': 'Premium'})
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -96,30 +96,28 @@ class StatusLabelAPITest(APITestCase):
         )
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
 
-    # ── Delete + confirmation flow (AC) ─────────────────────────────────────────
+    # ── Delete + confirmation flow (AC2) ────────────────────────────────────────
 
     def test_delete_unused_label_succeeds(self):
-        label = CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#E0A800')
+        label = CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#A16207')
         self.client.force_authenticate(self.member)
         res = self.client.delete(detail_url(label.id))
         self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(CustomerStatusLabel.objects.filter(id=label.id).exists())
 
     def test_delete_label_in_use_warns_then_force_deletes(self):
-        label = CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#E0A800')
+        label = CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#A16207')
         customer = Customer.objects.create(
             email='c@test.com', full_name='C', project=self.project, status_label=label,
         )
         self.client.force_authenticate(self.member)
 
-        # First attempt — blocked with confirmation warning.
         res = self.client.delete(detail_url(label.id))
         self.assertEqual(res.status_code, status.HTTP_409_CONFLICT)
         self.assertTrue(res.data['requires_confirmation'])
         self.assertEqual(res.data['customer_count'], 1)
         self.assertTrue(CustomerStatusLabel.objects.filter(id=label.id).exists())
 
-        # Confirmed — force delete proceeds and clears the customer's label.
         res = self.client.delete(detail_url(label.id) + '?force=true')
         self.assertEqual(res.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(CustomerStatusLabel.objects.filter(id=label.id).exists())

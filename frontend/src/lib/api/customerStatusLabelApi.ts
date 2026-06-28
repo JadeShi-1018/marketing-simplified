@@ -11,8 +11,8 @@ function unwrap<T>(data: unknown): T[] {
   return Array.isArray(data) ? data : ((data as { results?: T[] })?.results ?? []);
 }
 
+// Project-scoped: list/create/reorder require ?project={id}.
 export const CustomerStatusLabelAPI = {
-  // Project-scoped: list/create/reorder require ?project={id}.
   list: (projectId: number) =>
     api
       .get<CustomerStatusLabel[] | { results: CustomerStatusLabel[] }>(`${BASE}/`, {

@@ -37,19 +37,3 @@ export const CustomerInternalNoteAPI = {
       )
       .then((res) => unwrap<CustomerInternalNoteAuditLog>(res.data)),
 };
-
-// ── Tiptap helpers ────────────────────────────────────────────────────────────
-// The backend stores note bodies as Tiptap JSON. The profile panel uses a simple
-// textarea, so convert to/from a minimal Tiptap document (one paragraph per line).
-
-export function textToTiptap(text: string): TiptapJSONContent {
-  const lines = text.replace(/\r\n/g, '\n').split('\n');
-  return {
-    type: 'doc',
-    content: lines.map((line) =>
-      line.length
-        ? { type: 'paragraph', content: [{ type: 'text', text: line }] }
-        : { type: 'paragraph' },
-    ),
-  };
-}

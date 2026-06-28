@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, Pencil, Trash2, Lock } from 'lucide-react';
-import { CustomerInternalNoteAPI, textToTiptap } from '@/lib/api/customerInternalNoteApi';
+import { CustomerInternalNoteAPI } from '@/lib/api/customerInternalNoteApi';
 import type { CustomerInternalNote } from '@/types/customer';
+import type { TiptapJSONContent } from '@/types/comment';
 import { useAuthStore } from '@/lib/authStore';
+import { InternalNoteEditor, InternalNoteContent } from './InternalNoteEditor';
 
 interface Props {
   customerId: number;
@@ -28,9 +30,7 @@ export default function CustomerInternalNotes({ customerId }: Props) {
   const [notes, setNotes] = useState<CustomerInternalNote[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [editDraft, setEditDraft] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -46,17 +46,11 @@ export default function CustomerInternalNotes({ customerId }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
-  const addNote = async () => {
-    const text = draft.trim();
-    if (!text) return;
+  const addNote = async (body: TiptapJSONContent) => {
     setBusy(true);
     try {
-      const res = await CustomerInternalNoteAPI.create({
-        customer: customerId,
-        body: textToTiptap(text),
-      });
+      const res = await CustomerInternalNoteAPI.create({ customer: customerId, body });
       setNotes((prev) => [res.data, ...prev]);
-      setDraft('');
       setAdding(false);
     } catch {
       toast.error('Could not add note.');
@@ -65,12 +59,10 @@ export default function CustomerInternalNotes({ customerId }: Props) {
     }
   };
 
-  const saveEdit = async (id: number) => {
-    const text = editDraft.trim();
-    if (!text) return;
+  const saveEdit = async (id: number, body: TiptapJSONContent) => {
     setBusy(true);
     try {
-      const res = await CustomerInternalNoteAPI.update(id, { body: textToTiptap(text) });
+      const res = await CustomerInternalNoteAPI.update(id, { body });
       setNotes((prev) => prev.map((n) => (n.id === id ? res.data : n)));
       setEditingId(null);
     } catch {
@@ -114,32 +106,7 @@ export default function CustomerInternalNotes({ customerId }: Props) {
 
       {adding && (
         <div className="mb-3">
-          <textarea
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Add an internal note…"
-            rows={3}
-            className="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-[#86E9A8] focus:outline-none focus:ring-2 focus:ring-[#86E9A8]/40"
-          />
-          <div className="mt-1 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => { setAdding(false); setDraft(''); }}
-              disabled={busy}
-              className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={addNote}
-              disabled={busy || !draft.trim()}
-              className="rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
-            >
-              Save
-            </button>
-          </div>
+          <InternalNoteEditor saving={busy} onSave={addNote} onCancel={() => setAdding(false)} />
         </div>
       )}
 
@@ -152,54 +119,54 @@ export default function CustomerInternalNotes({ customerId }: Props) {
           {notes.map((note) => (
             <div key={note.id} className="rounded-lg border border-gray-100 p-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-gray-700 truncate">
-                  {note.author_name}
+                <span className="flex items-center gap-1.5 min-w-0">
+                  {note.author_avatar ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={note.author_avatar}
+                      alt={note.author_name}
+                      className="h-5 w-5 rounded-full object-cover shrink-0"
+                    />
+                  ) : (
+                    <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gray-200 text-[10px] font-semibold text-gray-600">
+                      {note.author_name.charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  <span className="text-xs font-medium text-gray-700 truncate">
+                    {note.author_name}
+                  </span>
                 </span>
                 <span
-                  className="text-[11px] text-gray-400 shrink-0"
+                  className="group relative shrink-0 cursor-help text-[11px] text-gray-400"
                   title={new Date(note.created_at).toLocaleString()}
                 >
                   {timeAgo(note.created_at)}{note.is_edited ? ' · edited' : ''}
+                  <span className="pointer-events-none absolute right-0 top-full z-20 mt-1 hidden whitespace-nowrap rounded bg-gray-900 px-2 py-1 text-[10px] text-white shadow-lg group-hover:block">
+                    {new Date(note.created_at).toLocaleString()}
+                  </span>
                 </span>
               </div>
 
               {editingId === note.id ? (
                 <div className="mt-1">
-                  <textarea
-                    autoFocus
-                    value={editDraft}
-                    onChange={(e) => setEditDraft(e.target.value)}
-                    rows={3}
-                    className="w-full rounded-md border border-gray-300 p-2 text-sm focus:border-[#86E9A8] focus:outline-none focus:ring-2 focus:ring-[#86E9A8]/40"
+                  <InternalNoteEditor
+                    initialContent={note.body}
+                    saving={busy}
+                    onSave={(body) => saveEdit(note.id, body)}
+                    onCancel={() => setEditingId(null)}
                   />
-                  <div className="mt-1 flex justify-end gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setEditingId(null)}
-                      disabled={busy}
-                      className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => saveEdit(note.id)}
-                      disabled={busy || !editDraft.trim()}
-                      className="rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
-                    >
-                      Save
-                    </button>
-                  </div>
                 </div>
               ) : (
                 <>
-                  <p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">{note.body_text}</p>
+                  <div className="mt-1">
+                    <InternalNoteContent body={note.body} />
+                  </div>
                   {(note.is_author || isAdmin) && (
                     <div className="mt-1 flex items-center gap-2">
                       {note.is_author && (
                         <button
                           type="button"
-                          onClick={() => { setEditingId(note.id); setEditDraft(note.body_text); }}
+                          onClick={() => setEditingId(note.id)}
                           className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-indigo-600"
                         >
                           <Pencil className="h-3 w-3" aria-hidden /> Edit

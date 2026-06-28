@@ -67,6 +67,7 @@ export interface CustomerInternalNote {
   author: number;
   author_email: string;
   author_name: string;
+  author_avatar: string | null;
   body: import('@/types/comment').TiptapJSONContent;
   body_text: string;
   body_format: 'rich_text_json';

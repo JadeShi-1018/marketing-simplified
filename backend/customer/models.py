@@ -121,9 +121,9 @@ class CustomerOrganisation(models.Model):
 class CustomerStatusLabel(models.Model):
     """Customer status label (e.g., Gold, Silver, Partner, Internal).
 
-    Project-scoped: one shared set of labels per project, consistent with the
-    other CSM workspace settings (work types, support projects) and with how
-    customers themselves are project-scoped.
+    Project-scoped (confirmed with product owner): one shared set of labels per
+    project, consistent with the other CSM workspace settings in the same admin
+    area (work types, support projects, SLA policy — all per-project).
     """
 
     project = models.ForeignKey(

@@ -38,7 +38,7 @@ describe('StatusLabelModal', () => {
     expect(mockedAPI.create).not.toHaveBeenCalled();
   });
 
-  test('creates a label with org id, name and color', async () => {
+  test('creates a label with name and color', async () => {
     mockedAPI.create.mockResolvedValue({
       data: { id: 1, name: 'Gold', color: '#E0A800' },
     } as never);

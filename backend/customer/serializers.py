@@ -127,13 +127,14 @@ class CustomerStatusLabelSerializer(serializers.ModelSerializer):
 class CustomerInternalNoteSerializer(serializers.ModelSerializer):
     author_email = serializers.CharField(source='author.email', read_only=True)
     author_name = serializers.SerializerMethodField(read_only=True)
+    author_avatar = serializers.SerializerMethodField(read_only=True)
     is_author = serializers.SerializerMethodField()
     body_text = serializers.CharField(read_only=True)
 
     class Meta:
         model = CustomerInternalNote
         fields = [
-            'id', 'customer', 'author', 'author_email', 'author_name',
+            'id', 'customer', 'author', 'author_email', 'author_name', 'author_avatar',
             'body', 'body_text', 'body_format',
             'is_edited', 'created_at', 'updated_at', 'is_author',
         ]
@@ -142,6 +143,14 @@ class CustomerInternalNoteSerializer(serializers.ModelSerializer):
     def get_author_name(self, obj):
         full = obj.author.get_full_name()
         return full if full.strip() else obj.author.email
+
+    def get_author_avatar(self, obj):
+        avatar = getattr(obj.author, 'avatar', None)
+        if not avatar:
+            return None
+        request = self.context.get('request')
+        url = avatar.url
+        return request.build_absolute_uri(url) if request else url
 
     def get_is_author(self, obj):
         request = self.context.get('request')
