@@ -147,7 +147,7 @@ function OrgDetailContent() {
     return (
       <DashboardLayout>
         <div className="p-6 space-y-6 max-w-[1200px] mx-auto">
-          <div className="bg-white rounded-xl border border-gray-200 p-8">
+          <div className="px-8 py-6">
             <div className="flex items-start gap-5">
               <Skeleton className="w-20 h-20 rounded-full shrink-0" />
               <div className="flex-1 space-y-3 pt-1">
@@ -208,10 +208,10 @@ function OrgDetailContent() {
       <div className="p-6 space-y-6 max-w-[1200px] mx-auto">
 
         {/* ── Page Header ─────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-gray-200 px-8 py-7">
+        <div className="px-8 py-6">
           <div className="flex items-start justify-between gap-6 flex-wrap">
             <div className="flex items-start gap-5 min-w-0">
-              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-400 to-indigo-500 flex items-center justify-center shrink-0 shadow-md">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0 shadow-md">
                 <span className="text-white text-2xl font-bold">{getInitials(org.name)}</span>
               </div>
               <div className="min-w-0">
@@ -505,27 +505,25 @@ function OrgDetailContent() {
               {/* Inline invite form — admin only */}
               {showInviteForm && (
                 <div className="mb-4 p-3 rounded-lg border border-[#3CCED7]/25 bg-gradient-to-r from-[#3CCED7]/5 to-[#A6E661]/5 space-y-2">
-                  <div className="flex gap-2">
-                    <input
-                      type="email"
-                      placeholder="Email address"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleInvite()}
-                      disabled={inviting}
-                      className="flex-1 text-sm px-3 py-1.5 rounded-md border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#3CCED7] disabled:opacity-50"
-                    />
-                    <select
-                      value={inviteRole}
-                      onChange={(e) => setInviteRole(e.target.value as 'member' | 'admin' | 'viewer')}
-                      disabled={inviting}
-                      className="text-xs px-2 py-1.5 rounded-md border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#3CCED7] bg-white disabled:opacity-50"
-                    >
-                      <option value="member">Member</option>
-                      <option value="admin">Admin</option>
-                      <option value="viewer">Viewer</option>
-                    </select>
-                  </div>
+                  <input
+                    type="email"
+                    placeholder="Email address"
+                    value={inviteEmail}
+                    onChange={(e) => setInviteEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleInvite()}
+                    disabled={inviting}
+                    className="w-full text-sm px-3 py-1.5 rounded-md border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#3CCED7] disabled:opacity-50"
+                  />
+                  <select
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as 'member' | 'admin' | 'viewer')}
+                    disabled={inviting}
+                    className="w-full text-xs px-2 py-1.5 rounded-md border border-gray-200 focus:outline-none focus:ring-1 focus:ring-[#3CCED7] bg-white disabled:opacity-50"
+                  >
+                    <option value="member">Member</option>
+                    <option value="admin">Admin</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
                   <div className="flex items-center gap-2">
                     <button
                       type="button"

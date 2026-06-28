@@ -61,6 +61,7 @@ const BREADCRUMB_ROOT: Record<string, string> = {
   settings: 'Tools',
   agent: 'Overview',
   profile: 'Account',
+  organizations: 'Profile',
   csm: 'Service',
 };
 
@@ -70,6 +71,7 @@ const BREADCRUMB_LEAF: Record<string, string> = {
   spreadsheet: 'Spreadsheets',
   'mailchimp-v2': 'Mailchimp',
   'klaviyo-v2': 'Klaviyo',
+  organizations: 'Organizations',
   csm: 'Customer Service',
 };
 
@@ -136,6 +138,7 @@ export default function DashboardLayout({
     const safePath =
       parent === '/admin' ? '/select-project' :
       parent === '/admin/csm' ? '/csm' :
+      parent === '/organizations' ? '/profile' :
       parent;
     // Preserve existing query params (e.g. ?project=1) when navigating within admin settings
     const qs = searchParams.toString();
