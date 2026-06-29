@@ -12,7 +12,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('klaviyo', '0001_initial'),
+        ('klaviyo', '0002_emaildraft_media_campaign'),
     ]
 
     operations = [

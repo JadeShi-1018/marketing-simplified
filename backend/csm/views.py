@@ -21,7 +21,7 @@ from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification,
     Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory,
     TicketForm, TicketFormAssignment, SupportProject, CsmWorkType,
-    SLAPolicy, SLAPriorityTarget,
+    SupportChannel, SLAPolicy, SLAPriorityTarget,
 )
 from .serializers import (
     QueueSerializer, QueueAgentSerializer,
@@ -40,6 +40,10 @@ from .serializers import (
     CsmWorkTypeSerializer,
     WorkTypeReorderSerializer,
     SLAPolicySerializer,
+    SupportChannelListSerializer,
+    SupportChannelDetailSerializer,
+    SupportChannelCreateUpdateSerializer,
+    ReplaceChannelAssignmentsSerializer,
 )
 from .services import (
     ensure_system_fields,
@@ -60,6 +64,15 @@ from .services.work_types import (
     update_work_type,
     deactivate_work_type,
     reorder_work_types,
+)
+from .services.support_channels import (
+    list_channels_for_project,
+    channel_detail_queryset,
+    create_support_channel,
+    update_support_channel,
+    deactivate_support_channel,
+    replace_experience_group_assignments,
+    build_embed_snippet,
 )
 
 
@@ -1087,6 +1100,122 @@ class CsmWorkTypeViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         return Response(CsmWorkTypeSerializer(rows, many=True).data)
 
 
+class SupportChannelViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """
+    Support channel CRUD (CSM-S01-02).
+
+    List/create require ?project={id}. DELETE soft-deactivates the row.
+    """
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    http_method_names = ['get', 'post', 'patch', 'delete', 'put', 'head', 'options']
+
+    def get_queryset(self):
+        if self.action == 'list':
+            project_id = self.get_required_project_id()
+            include_inactive = self.request.query_params.get('include_inactive') in (
+                '1', 'true', 'True',
+            )
+            return list_channels_for_project(
+                project_id,
+                include_inactive=include_inactive,
+            )
+        return self.filter_by_accessible_projects(channel_detail_queryset())
+
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return SupportChannelListSerializer
+        if self.action in ('create', 'partial_update', 'update'):
+            return SupportChannelCreateUpdateSerializer
+        return SupportChannelDetailSerializer
+
+    def _service_kwargs(self, data):
+        kwargs = {}
+        for key in (
+            'channel_type', 'display_name', 'welcome_message', 'operating_hours',
+            'timezone', 'offline_fallback_message', 'offline_alternative',
+            'offline_alternative_target_id', 'email_address', 'sort_order', 'is_active',
+        ):
+            if key in data:
+                kwargs[key] = data[key]
+        if 'default_queue' in data:
+            kwargs['default_queue'] = data['default_queue']
+        if 'ticket_form' in data:
+            kwargs['ticket_form'] = data['ticket_form']
+        return kwargs
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            extra_kwargs = {
+                k: v for k, v in self._service_kwargs(data).items()
+                if k not in ('channel_type', 'display_name')
+            }
+            instance = create_support_channel(
+                project_id=self.get_required_project_id(),
+                channel_type=data['channel_type'],
+                display_name=data['display_name'],
+                **extra_kwargs,
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation(exc)
+        instance = channel_detail_queryset().get(pk=instance.pk)
+        return Response(
+            SupportChannelDetailSerializer(instance).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        try:
+            instance = update_support_channel(
+                instance,
+                **self._service_kwargs(serializer.validated_data),
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation(exc)
+        instance = channel_detail_queryset().get(pk=instance.pk)
+        return Response(SupportChannelDetailSerializer(instance).data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        deactivate_support_channel(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['put'], url_path='experience-groups')
+    def experience_groups(self, request, pk=None):
+        channel = self.get_object()
+        serializer = ReplaceChannelAssignmentsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            groups = replace_experience_group_assignments(
+                channel,
+                serializer.validated_data.get('experience_group_ids', []),
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation(exc)
+        return Response(groups)
+
+    @action(detail=True, methods=['get'], url_path='embed-snippet')
+    def embed_snippet(self, request, pk=None):
+        channel = self.get_object()
+        if channel.channel_type != SupportChannel.ChannelType.LIVE_CHAT:
+            raise ValidationError({
+                'detail': 'Embed snippet is only available for live chat channels.',
+            })
+        snippet = build_embed_snippet(
+            channel,
+            base_url=request.build_absolute_uri('/'),
+        )
+        return Response({
+            'snippet': snippet,
+            'embed_key': str(channel.embed_key),
+        })
+
+
 # ---------------------------------------------------------------------------
 # SLA Policy (MED-218)
 # ---------------------------------------------------------------------------
@@ -1151,9 +1280,6 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         instance.refresh_from_db()
         policy_reactivated = not was_active and instance.is_active
 
-        # After any policy change (time targets or is_active toggle), recalculate
-        # SLA deadlines for all open tickets in this project.
-        # Preserve each ticket's SLA anchor (creation time or last priority change).
         from csm.services.sla import recalculate_ticket_sla_after_policy_change
         project_id = instance.project_id
         open_tickets = list(

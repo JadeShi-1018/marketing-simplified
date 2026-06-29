@@ -17,7 +17,7 @@ def backfill_ad(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("google_ads", "0001_initial"),
+        ("google_ads", "0002_ad_media_campaign"),
     ]
 
     operations = [
