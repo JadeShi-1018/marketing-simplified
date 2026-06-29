@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { AlertTriangle, Calendar, Check, Clock, Copy, Loader2, RefreshCw, Send, Trash2, UserPlus, Users, Zap } from 'lucide-react';
+import { AlertTriangle, Calendar, Check, ChevronRight, Clock, Copy, CreditCard, Loader2, RefreshCw, Send, Trash2, UserPlus, Users, Zap } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { OrganizationAPI, OrgDetail, OrgMember } from '@/lib/api/organizationApi';
 import OrgRecentActivityCard from '@/components/organizations/OrgRecentActivityCard';
+import OrgUsageBreakdownCard from '@/components/organizations/OrgUsageBreakdownCard';
 import { useProjectStore } from '@/lib/projectStore';
 import { useAuthStore } from '@/lib/authStore';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -48,12 +49,17 @@ function formatDateRange(start: string | null, end: string | null): string {
 }
 
 function formatPrice(cents: number, currency: string): string {
-  return new Intl.NumberFormat('en-US', {
+  const curr = currency || 'AUD';
+  // Use narrowSymbol to get just "$", then prepend the ISO currency code
+  // so the output reads "AUD $0" instead of the ambiguous "A$0".
+  const symbol = new Intl.NumberFormat('en-AU', {
     style: 'currency',
-    currency: currency || 'USD',
+    currency: curr,
+    currencyDisplay: 'narrowSymbol',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(cents / 100);
+  return `${curr} ${symbol}`;
 }
 
 function formatQuota(quota: number | null): string {
@@ -440,6 +446,12 @@ function OrgDetailContent() {
               )}
             </div>
 
+            {/* Usage Breakdown Card */}
+            <OrgUsageBreakdownCard
+              breakdown={org.usage_breakdown ?? []}
+              totalTokens={org.usage?.tokens_used ?? 0}
+            />
+
             {/* Recent Activity Card */}
             <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
               <div className="flex items-center gap-2 mb-5">
@@ -571,6 +583,20 @@ function OrgDetailContent() {
                       </span>
                     )}
                   </div>
+
+                  <div className="border-t border-gray-100 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => router.push('/subscription')}
+                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition"
+                    >
+                      <span className="flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-gray-400" />
+                        Manage Billing
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -596,6 +622,20 @@ function OrgDetailContent() {
                       <span>Auto-renew</span>
                     </div>
                     <span className="text-sm text-gray-400">—</span>
+                  </div>
+
+                  <div className="border-t border-gray-100 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => router.push('/subscription')}
+                      className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition"
+                    >
+                      <span className="flex items-center gap-2">
+                        <CreditCard className="w-4 h-4 text-gray-400" />
+                        Manage Billing
+                      </span>
+                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                    </button>
                   </div>
                 </div>
               )}

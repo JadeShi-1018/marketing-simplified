@@ -72,6 +72,13 @@ export interface OrgActivityEvent {
   created_at: string;
 }
 
+export interface OrgUsageBreakdownItem {
+  purpose: string;
+  label: string;
+  normalized_tokens: number;
+  total_cost_cents: number;
+}
+
 export interface OrgDetail {
   id: number;
   name: string;
@@ -85,6 +92,7 @@ export interface OrgDetail {
   member_count: number;
   subscription: OrgSubscription | null;
   usage: OrgUsage | null;
+  usage_breakdown: OrgUsageBreakdownItem[];
   recent_activity: OrgActivityEvent[];
 }
 

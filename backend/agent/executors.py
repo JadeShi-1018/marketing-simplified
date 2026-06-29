@@ -884,6 +884,7 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
                 temperature=0.2,
                 max_output_tokens=2048,
                 response_mime_type='application/json',
+                call_purpose='criteria_generation',
             )
             criteria = json.loads(_criteria_result['text'])
 

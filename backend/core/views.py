@@ -1447,9 +1447,13 @@ class OrganizationDetailView(APIView):
         from stripe_meta.models import Subscription, UsageMonthly  # noqa: PLC0415
 
         subscription_data = None
+        # Prefer a real paid subscription (is_internal=False); fall back to the
+        # Free sentinel (is_internal=True) so every org shows its plan & quota.
+        # order_by('is_internal') puts False(0) before True(1).
         sub = (
             Subscription.objects.select_related('plan')
-            .filter(organization=org, is_active=True, is_internal=False)
+            .filter(organization=org, is_active=True)
+            .order_by('is_internal')
             .first()
         )
         if sub:
@@ -1485,6 +1489,10 @@ class OrganizationDetailView(APIView):
                 'updated_at': usage_record.updated_at.isoformat() if usage_record.updated_at else None,
             }
 
+        # ── Usage breakdown by call_purpose ─────────────────────────────────
+        from stripe_meta.services import get_usage_breakdown  # noqa: PLC0415
+        usage_breakdown = get_usage_breakdown(org, current_month)
+
         # ── Recent org-level activity ────────────────────────────────────────
         from core.services.organization_activity import get_recent_org_activity  # noqa: PLC0415
         activity_qs = get_recent_org_activity(org_id=org.id, limit=15)
@@ -1494,6 +1502,7 @@ class OrganizationDetailView(APIView):
             **org_data,
             'subscription': subscription_data,
             'usage': usage_data,
+            'usage_breakdown': usage_breakdown,
             'recent_activity': activity_data,
         })
 
