@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from core.models import (
     Organization,
+    OrganizationActivityEvent,
     OrganizationInvitation,
     OrganizationMembership,
     Project,
@@ -561,3 +562,41 @@ class SwitchOrganizationSerializer(serializers.Serializer):
     """Serializer for switching current organization."""
 
     organization_id = serializers.IntegerField(required=True, help_text="Target organization ID")
+
+
+class OrgActivityUserSerializer(serializers.Serializer):
+    """Minimal user info embedded in activity events."""
+
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    name = serializers.CharField(allow_null=True, default=None)
+
+
+class OrganizationActivityEventSerializer(serializers.ModelSerializer):
+    """Read-only serializer for OrganizationActivityEvent."""
+
+    actor = OrgActivityUserSerializer(read_only=True)
+    target_user = OrgActivityUserSerializer(read_only=True)
+    category = serializers.SerializerMethodField()
+    message = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrganizationActivityEvent
+        fields = [
+            'id',
+            'event_type',
+            'category',
+            'actor',
+            'target_user',
+            'metadata',
+            'message',
+            'created_at',
+        ]
+        read_only_fields = fields
+
+    def get_category(self, obj):
+        return obj.category
+
+    def get_message(self, obj):
+        from core.services.organization_activity import build_human_readable  # noqa: PLC0415
+        return build_human_readable(obj)

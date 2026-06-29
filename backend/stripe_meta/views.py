@@ -28,6 +28,7 @@ from .tasks import settle_final_overage
 from rest_framework.pagination import PageNumberPagination
 from django.db import transaction
 from core.models import Organization, CustomUser, Project
+from core.services.organization_activity import log_org_activity
 from core.slug_mixins import resolve_project_pk
 
 # Configure Stripe
@@ -1174,6 +1175,13 @@ def handle_subscription_created(subscription_data, event_id=None):
                 deactivated, org_id,
             )
 
+    if subscription.is_active and not subscription.is_internal and plan:
+        log_org_activity(
+            organization,
+            'plan_subscribed',
+            metadata={'plan_name': plan.name, 'seat_count': subscription.seat_count},
+        )
+
     logger.info(
         "handle_subscription_created exit event_id=%s org_id=%s created=%s",
         event_id, org_id, created,
@@ -1249,6 +1257,10 @@ def handle_subscription_updated(subscription_data, event_id=None):
         return
 
     org_id = subscription.organization_id
+    old_plan_name = subscription.plan.name if subscription.plan else None
+    old_seat_count = subscription.seat_count
+    old_cancel = subscription.cancel_at_period_end
+
     subscription.is_active = subscription_data['status'] == 'active'
     subscription.cancel_at_period_end = subscription_data.get('cancel_at_period_end', False)
 
@@ -1286,6 +1298,25 @@ def handle_subscription_updated(subscription_data, event_id=None):
             subscription.seat_count = (subscription.plan.included_seats or 1) + extra_qty
 
     subscription.save()
+
+    # Emit org activity events for meaningful changes only
+    org = subscription.organization
+    new_plan_name = subscription.plan.name if subscription.plan else None
+    if old_plan_name and new_plan_name and old_plan_name != new_plan_name:
+        log_org_activity(
+            org, 'plan_changed',
+            metadata={'old_plan': old_plan_name, 'new_plan': new_plan_name},
+        )
+    if old_seat_count != subscription.seat_count:
+        log_org_activity(
+            org, 'seats_changed',
+            metadata={'old_seats': old_seat_count, 'new_seats': subscription.seat_count},
+        )
+    if not old_cancel and subscription.cancel_at_period_end:
+        log_org_activity(org, 'plan_cancel_scheduled', metadata={})
+    elif old_cancel and not subscription.cancel_at_period_end:
+        log_org_activity(org, 'plan_reactivated', metadata={})
+
     logger.info("handle_subscription_updated exit event_id=%s org_id=%s", event_id, org_id)
 
 def handle_payment_failed(invoice_data, event_id=None):
@@ -1323,7 +1354,13 @@ def handle_subscription_deleted(subscription_data, event_id=None):
     )
 
     subscription.is_active = False
+    plan_name = subscription.plan.name if subscription.plan else None
     subscription.save()
+
+    log_org_activity(
+        org, 'plan_cancelled',
+        metadata={'plan_name': plan_name or ''},
+    )
 
     # Reactivate the Free sentinel so the org falls back to the Free tier.
     # The sentinel was deactivated by handle_subscription_created when the paid sub started.

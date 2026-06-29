@@ -19,6 +19,7 @@ import {
 } from '@/lib/api/projectApi';
 import { OrganizationAPI } from '@/lib/api/organizationApi';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { useAuthStore } from '@/lib/authStore';
 import { useRouter } from 'next/navigation';
 
 type WizardStep = {
@@ -77,6 +78,8 @@ type WizardState = {
     slug: string;
     member_count?: number;
   } | null;
+  // Tracks the org action already committed to the backend so Back can undo it
+  committedOrg: { id: number; action: 'create' | 'join' } | null;
 
   // Original state
   projectName: string;
@@ -91,6 +94,7 @@ const initialState: WizardState = {
   organizationName: '',
   organizationSlug: '',
   selectedOrganization: null,
+  committedOrg: null,
 
   // Original defaults
   projectName: '',
@@ -107,12 +111,14 @@ type OnboardingWizardProps = {
 const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
   const { markCompleted, fetchError, refreshProjects } = useOnboarding();
   const router = useRouter();
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const [state, setState] = useState<WizardState>(initialState);
   const [currentStep, setCurrentStep] = useState(0);
   const [stepError, setStepError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [validatingSlug, setValidatingSlug] = useState(false);
+  const [undoing, setUndoing] = useState(false);
 
   const progress = useMemo(
     () => Math.round(((currentStep + 1) / steps.length) * 100),
@@ -176,6 +182,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
           slug: response.organization.slug,
           member_count: response.organization.member_count,
         },
+        committedOrg: { id: response.organization.id, action: 'create' },
       });
       toast.success(`Organization "${response.organization.name}" created successfully!`);
       return true;
@@ -224,6 +231,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
           slug: response.organization.slug,
           member_count: response.organization.member_count,
         },
+        committedOrg: { id: response.organization.id, action: 'join' },
       });
       toast.success(`Successfully joined "${response.organization.name}"!`);
       return true;
@@ -294,9 +302,41 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
     setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1));
   };
 
-  const handleBack = () => {
+  const handleBack = async () => {
     setSubmitError(null);
     setStepError(null);
+
+    // Going back from step 1 (projectName) to step 0 (organization) —
+    // undo the org action that was already committed to the backend.
+    if (currentStep === 1 && state.committedOrg) {
+      const { id, action } = state.committedOrg;
+      setUndoing(true);
+      try {
+        if (action === 'create') {
+          // force=true bypasses the last-org check for new users
+          await OrganizationAPI.deleteOrganization(id, true);
+        } else {
+          // Remove self from the joined org
+          if (currentUserId) {
+            await OrganizationAPI.removeMember(id, Number(currentUserId));
+          }
+        }
+        // Reset org-related state so the user starts fresh on step 0
+        updateState({
+          committedOrg: null,
+          selectedOrganization: null,
+          organizationName: '',
+          organizationSlug: '',
+        });
+      } catch {
+        // Undo failed — still let the user go back; they can tidy up manually
+        toast.error('Could not undo the previous action. You can remove the organization manually.');
+        updateState({ committedOrg: null, selectedOrganization: null });
+      } finally {
+        setUndoing(false);
+      }
+    }
+
     setCurrentStep((prev) => Math.max(prev - 1, 0));
   };
 
@@ -604,11 +644,11 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
               <button
                 type="button"
                 onClick={handleBack}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-100"
-                disabled={submitting}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-100 disabled:opacity-60"
+                disabled={submitting || undoing}
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back
+                {undoing ? 'Undoing…' : 'Back'}
               </button>
             )}
 
@@ -617,7 +657,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
                 type="button"
                 onClick={handleNext}
                 className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gradient-to-br from-[#3CCED7] to-[#A6E661] rounded-lg hover:opacity-90 disabled:opacity-70"
-                disabled={submitting}
+                disabled={submitting || undoing}
               >
                 Next
                 <ArrowRight className="w-4 h-4" />

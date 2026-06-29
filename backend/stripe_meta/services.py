@@ -151,6 +151,43 @@ def commit_quota(organization, actual_tokens: int, reserved_tokens: int, year_mo
             overage_tokens=F('overage_tokens') + overage_delta,
         )
 
+    # Emit org activity events for token milestones (outside the lock, best-effort)
+    if quota:
+        _emit_token_milestone_events(organization, before_used, new_used, quota, overage_delta, ym)
+
+
+def _emit_token_milestone_events(organization, before_used, new_used, quota, overage_delta, ym):
+    """Check whether this commit crossed a quota threshold and emit activity events."""
+    try:
+        from core.services.organization_activity import log_org_activity  # noqa: PLC0415
+    except ImportError:
+        return
+
+    pct_before = before_used / quota * 100
+    pct_after = new_used / quota * 100
+
+    for threshold in (80, 100):
+        if pct_before < threshold <= pct_after:
+            if threshold == 100:
+                log_org_activity(
+                    organization,
+                    'token_quota_exceeded',
+                    metadata={'year_month': ym, 'threshold': threshold, 'quota': quota},
+                )
+            else:
+                log_org_activity(
+                    organization,
+                    'token_quota_warning',
+                    metadata={'year_month': ym, 'threshold': threshold, 'quota': quota},
+                )
+
+    if overage_delta > 0 and before_used <= quota:
+        log_org_activity(
+            organization,
+            'token_overage_started',
+            metadata={'year_month': ym, 'threshold': 100, 'quota': quota, 'overage_tokens': overage_delta},
+        )
+
 
 def release_quota(organization, tokens: int, year_month: str | None = None) -> None:
     """

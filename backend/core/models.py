@@ -686,3 +686,90 @@ class OrganizationInvitationUse(TimeStampedModel):
     def __str__(self):
         return f"{self.user.email} used invitation at {self.used_at}"
 
+
+class OrganizationActivityEvent(models.Model):
+    """
+    Append-only audit log for organization-level events.
+    Covers member joins/leaves/removals, subscription plan changes,
+    and token quota milestones.
+    """
+
+    class EventType(models.TextChoices):
+        # Member events
+        MEMBER_JOINED = 'member_joined', 'Member Joined'
+        MEMBER_REMOVED = 'member_removed', 'Member Removed'
+        MEMBER_LEFT = 'member_left', 'Member Left'
+        # Subscription / plan events
+        PLAN_SUBSCRIBED = 'plan_subscribed', 'Plan Subscribed'
+        PLAN_CHANGED = 'plan_changed', 'Plan Changed'
+        PLAN_CANCEL_SCHEDULED = 'plan_cancel_scheduled', 'Plan Cancel Scheduled'
+        PLAN_REACTIVATED = 'plan_reactivated', 'Plan Reactivated'
+        SEATS_CHANGED = 'seats_changed', 'Seats Changed'
+        PLAN_CANCELLED = 'plan_cancelled', 'Plan Cancelled'
+        # Token quota events
+        TOKEN_QUOTA_WARNING = 'token_quota_warning', 'Token Quota Warning'
+        TOKEN_QUOTA_EXCEEDED = 'token_quota_exceeded', 'Token Quota Exceeded'
+        TOKEN_OVERAGE_STARTED = 'token_overage_started', 'Token Overage Started'
+
+    CATEGORY_MAP = {
+        'member_joined': 'member',
+        'member_removed': 'member',
+        'member_left': 'member',
+        'plan_subscribed': 'plan',
+        'plan_changed': 'plan',
+        'plan_cancel_scheduled': 'plan',
+        'plan_reactivated': 'plan',
+        'seats_changed': 'plan',
+        'plan_cancelled': 'plan',
+        'token_quota_warning': 'token',
+        'token_quota_exceeded': 'token',
+        'token_overage_started': 'token',
+    }
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='activity_events',
+        db_index=True,
+    )
+    event_type = models.CharField(
+        max_length=40,
+        choices=EventType.choices,
+        db_index=True,
+    )
+    actor = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='org_activity_actor',
+        help_text="User who triggered the event (null = system/webhook)",
+    )
+    target_user = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='org_activity_target',
+        help_text="User affected by the event (for member events)",
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Extra context: plan name, seat count, token threshold, etc.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['organization', '-created_at']),
+        ]
+
+    @property
+    def category(self):
+        return self.CATEGORY_MAP.get(self.event_type, 'other')
+
+    def __str__(self):
+        return f"[{self.organization.name}] {self.event_type} at {self.created_at}"
+

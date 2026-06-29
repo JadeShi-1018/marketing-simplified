@@ -173,6 +173,7 @@ def get_user_organizations(user):
 
     from core.models import Organization, OrganizationMembership
     return Organization.objects.filter(
+        is_active=True,
         memberships__user=user,
         memberships__is_active=True
     ).distinct()

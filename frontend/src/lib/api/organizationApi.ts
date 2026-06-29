@@ -53,6 +53,25 @@ export interface OrgUsage {
   updated_at: string | null;
 }
 
+export type OrgActivityCategory = 'member' | 'plan' | 'token' | 'other';
+
+export interface OrgActivityUser {
+  id: number;
+  username: string;
+  name: string | null;
+}
+
+export interface OrgActivityEvent {
+  id: number;
+  event_type: string;
+  category: OrgActivityCategory;
+  actor: OrgActivityUser | null;
+  target_user: OrgActivityUser | null;
+  metadata: Record<string, unknown>;
+  message: string;
+  created_at: string;
+}
+
 export interface OrgDetail {
   id: number;
   name: string;
@@ -66,6 +85,7 @@ export interface OrgDetail {
   member_count: number;
   subscription: OrgSubscription | null;
   usage: OrgUsage | null;
+  recent_activity: OrgActivityEvent[];
 }
 
 // Member returned by GET /api/core/organizations/<id>/members/
@@ -152,6 +172,28 @@ export const OrganizationAPI = {
   getOrganizationMembers: (orgId: number): Promise<OrgMembersResponse> => {
     return api
       .get<OrgMembersResponse>(`/api/core/organizations/${orgId}/members/`)
+      .then((response) => response.data);
+  },
+
+  // Remove a member from an organization (admin only)
+  removeMember: (orgId: number, userId: number): Promise<{ message: string }> => {
+    return api
+      .delete(`/api/core/organizations/${orgId}/members/${userId}/`)
+      .then((response) => response.data);
+  },
+
+  // Delete an organization (admin only, must have ≥1 other org)
+  // force=true bypasses the last-org check (used by onboarding undo flow)
+  deleteOrganization: (orgId: number, force = false): Promise<{ message: string }> => {
+    return api
+      .delete(`/api/core/organizations/${orgId}/`, { params: force ? { force: 'true' } : undefined })
+      .then((response) => response.data);
+  },
+
+  // Switch the current user's active organization
+  switchOrganization: (orgId: number): Promise<{ message: string; current_organization_id: number }> => {
+    return api
+      .post('/api/core/organizations/switch/', { organization_id: orgId })
       .then((response) => response.data);
   },
 

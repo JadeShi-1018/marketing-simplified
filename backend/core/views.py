@@ -40,9 +40,11 @@ from core.permissions import (
 from core.serializers import (
     AcceptInvitationSerializer,
     AcceptOrganizationInvitationSerializer,
+    OrganizationActivityEventSerializer,
     OrganizationInvitationSerializer,
     OrganizationMembershipSerializer,
     OrganizationSerializer,
+    OrganizationSummarySerializer,
     ProjectInvitationSerializer,
     ProjectMemberInviteSerializer,
     ProjectMemberSerializer,
@@ -55,6 +57,7 @@ from decision.models import Decision, DecisionEdge, DecisionTopicLabel
 from decision.serializers import DecisionEdgeSerializer, DecisionGraphNodeSerializer
 from decision.services import decision_topic_label as default_decision_topic_label, normalize_decision_topic
 from core.services.project_initialization import ProjectInitializationService
+from core.services.organization_activity import log_org_activity
 from core.utils.invitations import accept_invitation, create_project_invitation, send_invitation_email
 from core.utils.kpi_suggestions import get_kpi_suggestions
 from core.utils.project_calendars import (
@@ -1482,11 +1485,66 @@ class OrganizationDetailView(APIView):
                 'updated_at': usage_record.updated_at.isoformat() if usage_record.updated_at else None,
             }
 
+        # ── Recent org-level activity ────────────────────────────────────────
+        from core.services.organization_activity import get_recent_org_activity  # noqa: PLC0415
+        activity_qs = get_recent_org_activity(org_id=org.id, limit=15)
+        activity_data = OrganizationActivityEventSerializer(activity_qs, many=True).data
+
         return Response({
             **org_data,
             'subscription': subscription_data,
             'usage': usage_data,
+            'recent_activity': activity_data,
         })
+
+    def delete(self, request, org_id):
+        """
+        DELETE /api/core/organizations/<org_id>/
+        Soft-deletes an organization (admin only).
+        Fails if this is the requesting user's last active organization,
+        unless ?force=true is passed (used by onboarding undo flow).
+        """
+        user = request.user
+        force = request.query_params.get('force', '').lower() == 'true'
+
+        if not can_user_access_organization(user, org_id):
+            return Response(
+                {'error': 'You do not have access to this organization.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        org = get_object_or_404(Organization, id=org_id, is_active=True)
+
+        # Temporarily set current_organization to this org so is_org_admin works
+        original_org_id = user.current_organization_id
+        user.current_organization_id = org_id
+        if not is_org_admin(user):
+            user.current_organization_id = original_org_id
+            raise PermissionDenied('Only organization admins can delete the organization.')
+        user.current_organization_id = original_org_id
+
+        # Ensure the user has at least one other active org (skip when force=true)
+        if not force:
+            other_orgs = get_user_organizations(user).filter(is_active=True).exclude(id=org_id)
+            if not other_orgs.exists():
+                return Response(
+                    {'error': 'You must belong to at least one organization. Please join or create another organization before deleting this one.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Soft-delete the organization
+        org.is_active = False
+        org.save(update_fields=['is_active', 'updated_at'])
+
+        # Switch current_organization for every user who had this as their active org
+        User = get_user_model()
+        affected_users = User.objects.filter(current_organization_id=org_id)
+        for affected_user in affected_users:
+            alt = get_user_organizations(affected_user).filter(is_active=True).exclude(id=org_id).first()
+            affected_user.current_organization_id = alt.id if alt else None
+            affected_user.save(update_fields=['current_organization_id'])
+
+        return Response({'message': f'Organization "{org.name}" has been deleted.'}, status=status.HTTP_200_OK)
 
 
 class SwitchOrganizationView(APIView):
@@ -1537,25 +1595,14 @@ class OrganizationMembersView(APIView):
     def get(self, request, org_id):
         """
         GET /api/core/organizations/{org_id}/members/
-        Returns list of members for the organization (admin only).
+        Returns list of members for the organization (any member can view).
         """
         user = request.user
         organization = get_object_or_404(Organization, id=org_id)
 
-        # Check if user has access to this organization
+        # Check if user has access to this organization (any member may view)
         if not can_user_access_organization(user, org_id):
             raise PermissionDenied("You do not have access to this organization")
-
-        # Check if user is admin (using updated admin_utils function)
-        # Temporarily set current_organization to check admin status
-        original_org = user.current_organization_id
-        user.current_organization_id = org_id
-
-        if not is_org_admin(user):
-            user.current_organization_id = original_org
-            raise PermissionDenied("Only organization admins can view members")
-
-        user.current_organization_id = original_org
 
         # Get all active memberships for this organization
         memberships = OrganizationMembership.objects.filter(
@@ -1638,6 +1685,14 @@ class RemoveOrganizationMemberView(APIView):
                 target_user.current_organization_id = None
                 target_user.save(update_fields=['current_organization_id'])
 
+        log_org_activity(
+            organization,
+            'member_removed',
+            actor=user,
+            target_user=target_user,
+            metadata={'role': membership.role},
+        )
+
         return Response({
             'message': f'User {target_user.username} removed from organization',
         })
@@ -1690,6 +1745,14 @@ class LeaveOrganizationView(APIView):
         # Deactivate membership
         membership.is_active = False
         membership.save(update_fields=['is_active', 'updated_at'])
+
+        log_org_activity(
+            organization,
+            'member_left',
+            actor=user,
+            target_user=user,
+            metadata={'role': membership.role},
+        )
 
         # Remove all project memberships in this organization
         ProjectMember.objects.filter(
@@ -2014,6 +2077,14 @@ class AcceptOrganizationInvitationView(APIView):
         invitation.use_count += 1
         invitation.save(update_fields=['use_count', 'updated_at'])
 
+        log_org_activity(
+            invitation.organization,
+            'member_joined',
+            actor=invitation.invited_by,
+            target_user=user,
+            metadata={'role': invitation.role, 'via': 'invitation'},
+        )
+
         # Set as current organization if user doesn't have one
         if not user.current_organization_id:
             user.current_organization_id = invitation.organization.id
@@ -2173,7 +2244,7 @@ class ValidateOrganizationSlugView(APIView):
             )
 
         try:
-            organization = Organization.objects.get(slug=slug, is_deleted=False)
+            organization = Organization.objects.get(slug=slug, is_active=True)
             serializer = OrganizationSummarySerializer(organization)
             return Response({
                 'exists': True,
@@ -2212,7 +2283,7 @@ class JoinOrganizationBySlugView(APIView):
 
         # Find organization
         try:
-            organization = Organization.objects.get(slug=slug, is_deleted=False)
+            organization = Organization.objects.get(slug=slug, is_active=True)
         except Organization.DoesNotExist:
             return Response(
                 {'error': 'Organization not found'},
@@ -2240,9 +2311,12 @@ class JoinOrganizationBySlugView(APIView):
                 invited_by=None  # Self-joined via slug
             )
 
-            # Switch user's current organization
-            user.current_organization = organization
-            user.save(update_fields=['current_organization'])
+            # Only switch current_organization if the user doesn't already have one.
+            # Preserving the existing workspace prevents users who already have
+            # projects in another org from being pushed into an empty-project state.
+            if not user.current_organization_id:
+                user.current_organization = organization
+                user.save(update_fields=['current_organization'])
 
             # Create default Media Buyer role in tenant schema
             schema_name = slug_to_schema_name(organization.slug)
@@ -2262,9 +2336,60 @@ class JoinOrganizationBySlugView(APIView):
                 with connection.cursor() as cursor:
                     cursor.execute('SET search_path TO public')
 
+        log_org_activity(
+            organization,
+            'member_joined',
+            actor=user,
+            target_user=user,
+            metadata={'role': 'member', 'via': 'slug'},
+        )
+
         org_serializer = OrganizationSerializer(organization, context={'request': request})
 
         return Response({
             'organization': org_serializer.data,
             'message': f'Successfully joined organization "{organization.name}"'
         }, status=status.HTTP_201_CREATED)
+
+
+class OnboardingStatusView(APIView):
+    """
+    Return whether the authenticated user needs to go through onboarding.
+
+    Rule: onboarding is only required when the user has NO active organization
+    membership. A user who is in an org but has no projects yet should NOT be
+    shown the onboarding wizard — they are simply waiting to be invited to a
+    project, or can create one themselves.
+
+    GET /api/core/onboarding-status/
+    Response:
+      {
+        "needs_onboarding": bool,   // true only when user has no org at all
+        "has_org": bool,            // user has at least one active org membership
+        "has_project": bool,        // has project(s) in the current org's schema
+      }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+
+        # Check org membership (public schema — no tenant scoping)
+        has_org = OrganizationMembership.objects.filter(
+            user=user, is_active=True
+        ).exists()
+
+        # Check project membership (tenant-scoped to current org's schema)
+        has_project = ProjectMember.objects.filter(
+            user=user, is_active=True
+        ).exists()
+
+        # Only force onboarding when the user truly has no organization at all.
+        needs_onboarding = not has_org
+
+        return Response({
+            'needs_onboarding': needs_onboarding,
+            'has_org': has_org,
+            'has_project': has_project,
+        })

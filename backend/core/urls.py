@@ -16,6 +16,7 @@ from core.views import (
     ListPendingInvitationApprovalsView,
     ListProjectAvailableRolesView,
     ListProjectInvitationsView,
+    OnboardingStatusView,
     OrganizationDetailView,
     OrganizationMembersView,
     ProjectMemberViewSet,
@@ -43,6 +44,7 @@ router.register(r'admin/organizations', AdminOrganizationViewSet, basename='admi
 
 urlpatterns = [
     path('check-project-membership/', CheckProjectMembershipView.as_view(), name='check-project-membership'),
+    path('onboarding-status/', OnboardingStatusView.as_view(), name='onboarding-status'),
     path('projects/onboarding/', ProjectOnboardingView.as_view(), name='project-onboarding'),
     path(
         'projects/quick-start/preview/',

@@ -1,11 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Calendar, Clock, Loader2, RefreshCw, Send, UserPlus, Users, Zap } from 'lucide-react';
+import { useParams, useRouter } from 'next/navigation';
+import { AlertTriangle, Calendar, Check, Clock, Copy, Loader2, RefreshCw, Send, Trash2, UserPlus, Users, Zap } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { OrganizationAPI, OrgDetail, OrgMember } from '@/lib/api/organizationApi';
+import OrgRecentActivityCard from '@/components/organizations/OrgRecentActivityCard';
+import { useProjectStore } from '@/lib/projectStore';
+import { useAuthStore } from '@/lib/authStore';
 import { Skeleton } from '@/components/ui/skeleton';
 import toast from 'react-hot-toast';
 
@@ -72,12 +75,27 @@ function roleBadge(role: string) {
 
 function OrgDetailContent() {
   const params = useParams<{ orgId: string }>();
+  const router = useRouter();
+  const currentUserId = useAuthStore((s) => s.user?.id);
+
   const [org, setOrg] = useState<OrgDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [members, setMembers] = useState<OrgMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
+
+  const [switching, setSwitching] = useState(false);
+  const [slugCopied, setSlugCopied] = useState(false);
+
+  // Remove member state
+  const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
+  const [removingMemberId, setRemovingMemberId] = useState<number | null>(null);
+
+  // Delete org state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showLastOrgModal, setShowLastOrgModal] = useState(false);
 
   // Invite form state
   const [showInviteForm, setShowInviteForm] = useState(false);
@@ -138,6 +156,65 @@ function OrgDetailContent() {
       setInviteError(msg);
     } finally {
       setInviting(false);
+    }
+  };
+
+  // ── Switch handler ────────────────────────────────────────────────────────
+
+  const handleSwitch = async () => {
+    if (!org || switching) return;
+    setSwitching(true);
+    try {
+      await OrganizationAPI.switchOrganization(org.id);
+      setOrg({ ...org, is_current: true });
+      useProjectStore.getState().clearProjects();
+      toast.success(`Switched to ${org.name}`);
+    } catch {
+      toast.error('Failed to switch organization.');
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  // ── Remove member handler ─────────────────────────────────────────────────
+
+  const handleRemoveMember = async (userId: number) => {
+    if (!org) return;
+    setRemovingMemberId(userId);
+    try {
+      await OrganizationAPI.removeMember(org.id, userId);
+      setMembers((prev) => prev.filter((m) => m.user.id !== userId));
+      setOrg((prev) => prev ? { ...prev, member_count: prev.member_count - 1 } : prev);
+      setConfirmRemoveId(null);
+      toast.success('Member removed.');
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      toast.error(err?.response?.data?.error ?? 'Failed to remove member.');
+    } finally {
+      setRemovingMemberId(null);
+    }
+  };
+
+  // ── Delete org handler ────────────────────────────────────────────────────
+
+  const handleDeleteOrg = async () => {
+    if (!org) return;
+    setDeleting(true);
+    try {
+      await OrganizationAPI.deleteOrganization(org.id);
+      useProjectStore.getState().clearProjects();
+      toast.success(`"${org.name}" has been deleted.`);
+      router.push('/profile');
+    } catch (e: unknown) {
+      const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error ?? '';
+      setShowDeleteConfirm(false);
+      if (msg.toLowerCase().includes('at least one')) {
+        setShowLastOrgModal(true);
+      } else {
+        toast.error(msg || 'Failed to delete organization.');
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -216,10 +293,53 @@ function OrgDetailContent() {
               </div>
               <div className="min-w-0">
                 <h1 className="text-2xl font-bold text-gray-900 leading-tight">{org.name}</h1>
-                <p className="text-sm text-gray-400 mt-1">
+                <p className="text-sm text-gray-400 mt-1 flex items-center gap-1.5 flex-wrap">
                   <span className="font-mono">slug: {org.slug}</span>
-                  <span className="mx-2">·</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(org.slug);
+                      setSlugCopied(true);
+                      setTimeout(() => setSlugCopied(false), 2000);
+                    }}
+                    title="Copy slug"
+                    className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
+                  >
+                    {slugCopied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                  <span className="mx-1">·</span>
                   <span>Created {formatDate(org.created_at)}</span>
+                  {(['admin', 'owner'] as string[]).includes(org.user_role ?? '') && (
+                    showDeleteConfirm ? (
+                      <span className="inline-flex items-center gap-1 ml-1">
+                        <span className="text-xs text-red-500">Delete?</span>
+                        <button
+                          type="button"
+                          onClick={handleDeleteOrg}
+                          disabled={deleting}
+                          className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition"
+                        >
+                          {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowDeleteConfirm(false)}
+                          className="text-[10px] text-gray-400 hover:text-gray-600 transition"
+                        >
+                          Cancel
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowDeleteConfirm(true)}
+                        title="Delete organization"
+                        className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition ml-1"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )
+                  )}
                 </p>
                 {org.desc && (
                   <p className="text-sm text-gray-600 mt-3 max-w-xl leading-relaxed">{org.desc}</p>
@@ -228,10 +348,20 @@ function OrgDetailContent() {
             </div>
 
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              {org.is_current && (
+              {org.is_current ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-600 text-white">
                   ✨ Current Workspace
                 </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSwitch}
+                  disabled={switching}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-purple-300 text-purple-600 hover:bg-purple-50 transition disabled:opacity-50"
+                >
+                  {switching ? <Loader2 className="w-3 h-3 animate-spin" /> : '✨'}
+                  {switching ? 'Switching…' : 'Set as Current Workspace'}
+                </button>
               )}
               {roleLabel && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -318,15 +448,7 @@ function OrgDetailContent() {
                 </div>
                 <span className="text-base font-semibold text-gray-900">Recent Activity</span>
               </div>
-              <div className="py-8 flex flex-col items-center text-center">
-                <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center mb-3">
-                  <Clock className="w-5 h-5 text-gray-300" />
-                </div>
-                <p className="text-sm text-gray-500">No recent activity.</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  Member joins, plan changes, and token events will appear here.
-                </p>
-              </div>
+              <OrgRecentActivityCard activities={org.recent_activity ?? []} />
             </div>
 
           </div>
@@ -485,7 +607,7 @@ function OrgDetailContent() {
                 <p className="text-xs font-semibold uppercase tracking-widest text-gray-400">Members</p>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-400">{org.member_count} total</span>
-                  {org.user_role === 'admin' && (
+                  {(['admin', 'owner'] as string[]).includes(org.user_role ?? '') && (
                     <button
                       type="button"
                       onClick={() => {
@@ -574,25 +696,65 @@ function OrgDetailContent() {
                   ))}
                 </div>
               ) : members.length > 0 ? (
-                <div className="space-y-3">
-                  {members.slice(0, 5).map((m) => (
-                    <div key={m.id} className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
-                        <span className="text-white text-xs font-bold">
-                          {getInitials(m.user.name || m.user.username)}
-                        </span>
+                <div className="space-y-2">
+                  {members.slice(0, 5).map((m) => {
+                    const isSelf = String(m.user.id) === String(currentUserId);
+                    const canManage = (['admin', 'owner'] as string[]).includes(org.user_role ?? '');
+                    const isConfirming = confirmRemoveId === m.user.id;
+                    const isRemoving = removingMemberId === m.user.id;
+                    return (
+                      <div key={m.id} className="flex items-center gap-3 group">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
+                          <span className="text-white text-xs font-bold">
+                            {getInitials(m.user.name || m.user.username)}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 truncate">
+                            {m.user.name || m.user.username}
+                            {isSelf && <span className="ml-1 text-[10px] text-gray-400">(you)</span>}
+                          </p>
+                          <p className="text-xs text-gray-400 truncate">{m.user.email}</p>
+                        </div>
+
+                        {isConfirming ? (
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveMember(m.user.id)}
+                              disabled={isRemoving}
+                              className="text-[10px] font-medium px-2 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition"
+                            >
+                              {isRemoving ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Remove'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmRemoveId(null)}
+                              className="text-[10px] text-gray-400 hover:text-gray-600 px-1 transition"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${roleBadge(m.role)}`}>
+                              {m.role}
+                            </span>
+                            {canManage && !isSelf && (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmRemoveId(m.user.id)}
+                                title="Remove member"
+                                className="opacity-0 group-hover:opacity-100 inline-flex items-center justify-center w-5 h-5 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {m.user.name || m.user.username}
-                        </p>
-                        <p className="text-xs text-gray-400 truncate">{m.user.email}</p>
-                      </div>
-                      <span className={`shrink-0 text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${roleBadge(m.role)}`}>
-                        {m.role}
-                      </span>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {members.length > 5 && (
                     <p className="text-xs text-center text-gray-400 pt-1">
                       +{members.length - 5} more member{members.length - 5 !== 1 ? 's' : ''}
@@ -609,7 +771,39 @@ function OrgDetailContent() {
 
           </div>
         </div>
+
       </div>
+
+      {/* ── Last-org error modal ──────────────────────────────────────────── */}
+      {showLastOrgModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setShowLastOrgModal(false)} />
+          <div className="relative bg-white rounded-xl shadow-xl max-w-sm w-full p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-500" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">Cannot Delete Organization</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Deletion failed</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              Every user must belong to at least one organization. You cannot delete your only organization.
+            </p>
+            <p className="text-sm text-gray-500">
+              Please join or create another organization first, then try again.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowLastOrgModal(false)}
+              className="w-full py-2 rounded-lg bg-gray-900 text-white text-sm font-medium hover:bg-gray-700 transition"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }
