@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
-from .models import Customer, CustomerOrganisation,Region
+from .models import (
+    Customer, CustomerOrganisation, Region, CustomerStatusLabel,
+    CustomerInternalNote, CustomerInternalNoteAuditLog
+)
 
 class RegionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -45,6 +48,8 @@ class CustomerOrganisationSerializer(serializers.ModelSerializer):
     
 class CustomerSerializer(serializers.ModelSerializer):
     experience_group_name = serializers.SerializerMethodField(read_only=True)
+    status_label_name = serializers.CharField(source='status_label.name', read_only=True, default=None)
+    status_label_color = serializers.CharField(source='status_label.color', read_only=True, default=None)
 
     class Meta:
         model = Customer
@@ -58,11 +63,17 @@ class CustomerSerializer(serializers.ModelSerializer):
             'experience_group_name',
             'region',
             'organisation',
+            'status_label',
+            'status_label_name',
+            'status_label_color',
             'is_active',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'experience_group_name']
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'experience_group_name',
+            'status_label_name', 'status_label_color',
+        ]
 
     def get_experience_group_name(self, obj):
         if obj.experience_group_id:
@@ -100,4 +111,87 @@ class CustomerSerializer(serializers.ModelSerializer):
                 )
         return attrs
 
-    
+
+class CustomerStatusLabelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomerStatusLabel
+        fields = [
+            'id', 'project',
+            'name', 'color', 'order', 'is_active',
+            'created_at', 'updated_at',
+        ]
+        # project is set from the ?project= query param by the viewset.
+        read_only_fields = ['id', 'project', 'created_at', 'updated_at']
+
+    def validate_name(self, value):
+        """Reject a duplicate name within the same project (case-insensitive).
+
+        `project` is read-only (set from the query param), so resolve it from the
+        instance (edit) or the request's ?project= (create) rather than the body.
+        """
+        if self.instance is not None:
+            project_id = self.instance.project_id
+        else:
+            request = self.context.get('request')
+            project_id = request.query_params.get('project') if request else None
+            from core.slug_mixins import resolve_project_pk
+            project_id = resolve_project_pk(project_id)
+
+        if project_id is None:
+            return value
+
+        qs = CustomerStatusLabel.objects.filter(project_id=project_id, name__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError(
+                'A label with this name already exists in this project.'
+            )
+        return value
+
+
+class CustomerInternalNoteSerializer(serializers.ModelSerializer):
+    author_email = serializers.CharField(source='author.email', read_only=True)
+    author_name = serializers.SerializerMethodField(read_only=True)
+    author_avatar = serializers.SerializerMethodField(read_only=True)
+    is_author = serializers.SerializerMethodField()
+    body_text = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = CustomerInternalNote
+        fields = [
+            'id', 'customer', 'author', 'author_email', 'author_name', 'author_avatar',
+            'body', 'body_text', 'body_format',
+            'is_edited', 'created_at', 'updated_at', 'is_author',
+        ]
+        read_only_fields = ['id', 'author', 'body_text', 'body_format', 'created_at', 'updated_at', 'is_author']
+
+    def get_author_name(self, obj):
+        full = obj.author.get_full_name()
+        return full if full.strip() else obj.author.email
+
+    def get_author_avatar(self, obj):
+        avatar = getattr(obj.author, 'avatar', None)
+        if not avatar:
+            return None
+        request = self.context.get('request')
+        url = avatar.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_is_author(self, obj):
+        request = self.context.get('request')
+        return request and request.user == obj.author
+
+
+class CustomerInternalNoteAuditLogSerializer(serializers.ModelSerializer):
+    actor_email = serializers.CharField(source='actor.email', read_only=True, allow_null=True)
+    event_type_display = serializers.CharField(source='get_event_type_display', read_only=True)
+
+    class Meta:
+        model = CustomerInternalNoteAuditLog
+        fields = [
+            'id', 'customer', 'actor', 'actor_email',
+            'event_type', 'event_type_display',
+            'timestamp', 'note_id', 'note_body',
+        ]
+        read_only_fields = ['id', 'customer', 'actor', 'event_type', 'timestamp', 'note_id', 'note_body']
