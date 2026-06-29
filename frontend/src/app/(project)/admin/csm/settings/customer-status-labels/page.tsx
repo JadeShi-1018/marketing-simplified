@@ -10,6 +10,7 @@ import SettingsHubLink from '@/components/csm-settings/SettingsHubLink';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
 import { PORTAL_SUBMIT_BUTTON_CLASS } from '@/components/ticket-form/constants';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 import StatusLabelModal from '@/components/csm-settings/status-labels/StatusLabelModal';
 import StatusLabelSortableList from '@/components/csm-settings/status-labels/StatusLabelSortableList';
 
@@ -22,6 +23,9 @@ export default function CustomerStatusLabelsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerStatusLabel | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // In-use delete confirmation (AC2): holds the label + warning while the modal is open.
+  const [confirmDelete, setConfirmDelete] = useState<{ label: CustomerStatusLabel; detail: string } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!projectValid) {
@@ -67,23 +71,30 @@ export default function CustomerStatusLabelsPage() {
       setLabels((prev) => prev.filter((l) => l.id !== row.id));
     } catch (err: unknown) {
       const resp = (err as { response?: { status?: number; data?: { detail?: string } } })?.response;
-      // 409 → label in use; warn and require explicit confirmation before forcing.
+      // 409 → label in use; open a confirmation modal before forcing (AC2).
       if (resp?.status === 409) {
-        const detail = resp.data?.detail ?? 'This label is in use.';
-        if (window.confirm(`${detail}\n\nDelete anyway?`)) {
-          try {
-            await CustomerStatusLabelAPI.destroy(row.id, { force: true });
-            toast.success('Label deleted.');
-            setLabels((prev) => prev.filter((l) => l.id !== row.id));
-          } catch {
-            toast.error('Could not delete label.');
-          }
-        }
+        setConfirmDelete({ label: row, detail: resp.data?.detail ?? 'This label is in use.' });
       } else {
         toast.error('Could not delete label.');
       }
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const forceDelete = async () => {
+    if (!confirmDelete) return;
+    const { label } = confirmDelete;
+    setConfirmBusy(true);
+    try {
+      await CustomerStatusLabelAPI.destroy(label.id, { force: true });
+      toast.success('Label deleted.');
+      setLabels((prev) => prev.filter((l) => l.id !== label.id));
+      setConfirmDelete(null);
+    } catch {
+      toast.error('Could not delete label.');
+    } finally {
+      setConfirmBusy(false);
     }
   };
 
@@ -167,6 +178,18 @@ export default function CustomerStatusLabelsPage() {
           onSaved={handleSaved}
         />
       )}
+
+      <ConfirmModal
+        isOpen={confirmDelete !== null}
+        type="danger"
+        title="Delete label in use?"
+        message={confirmDelete?.detail ?? ''}
+        confirmText="Delete anyway"
+        cancelText="Cancel"
+        loading={confirmBusy}
+        onConfirm={forceDelete}
+        onClose={() => { if (!confirmBusy) setConfirmDelete(null); }}
+      />
     </CsmSettingsPageRoot>
   );
 }

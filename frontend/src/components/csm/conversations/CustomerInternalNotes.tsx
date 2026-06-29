@@ -73,7 +73,6 @@ export default function CustomerInternalNotes({ customerId }: Props) {
   };
 
   const remove = async (note: CustomerInternalNote) => {
-    if (!window.confirm('Delete this note? This is recorded in the audit log.')) return;
     setBusy(true);
     try {
       await CustomerInternalNoteAPI.destroy(note.id);

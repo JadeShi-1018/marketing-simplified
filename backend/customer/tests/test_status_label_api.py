@@ -44,6 +44,27 @@ class StatusLabelAPITest(APITestCase):
         self.assertEqual(res.data['name'], 'Gold')
         self.assertEqual(res.data['project'], self.project.id)
 
+    def test_duplicate_name_in_same_project_rejected(self):
+        CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#A16207')
+        self.client.force_authenticate(self.member)
+        # Same name (case-insensitive), different color -> 400 with a field error, not a 500.
+        res = self.client.post(
+            f'{LIST_URL}?project={self.project.id}',
+            {'name': 'gold', 'color': '#000000'},
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('name', res.data)
+
+    def test_same_name_allowed_in_different_project(self):
+        CustomerStatusLabel.objects.create(project=self.project, name='Gold', color='#A16207')
+        ProjectMember.objects.create(user=self.member, project=self.other_project, is_active=True)
+        self.client.force_authenticate(self.member)
+        res = self.client.post(
+            f'{LIST_URL}?project={self.other_project.id}',
+            {'name': 'Gold', 'color': '#A16207'},
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
     def test_non_member_cannot_access_project(self):
         self.client.force_authenticate(self.outsider)
         res = self.client.get(f'{LIST_URL}?project={self.project.id}')
