@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from core.models import Organization, Project
+from core.models import Organization, Project, ProjectMember
 from csm.models import CustomerUser
 from customer.models import (
     Customer, CustomerOrganisation, CustomerInternalNote, CustomerInternalNoteAuditLog,
@@ -41,6 +41,11 @@ class InternalNoteAPITest(APITestCase):
         CustomerUser.objects.create(
             user=self.admin, organisation=cust_org, user_type='admin', is_active=True,
         )
+
+        # Notes are project-scoped: all three users are members of self.project
+        # so they can access self.customer's notes.
+        for u in (self.author, self.other, self.admin):
+            ProjectMember.objects.create(user=u, project=self.project, is_active=True)
 
     # ── Create ────────────────────────────────────────────────────────────────
 
@@ -119,3 +124,38 @@ class InternalNoteAPITest(APITestCase):
     def test_requires_authentication(self):
         res = self.client.get(BASE, {'customer': self.customer.id})
         self.assertIn(res.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+
+    # ── Project isolation (no cross-project leakage) ────────────────────────────
+
+    def test_user_cannot_list_notes_from_inaccessible_project(self):
+        """An authenticated user who is not in the customer's project sees nothing."""
+        outsider = User.objects.create_user(username='out', email='out@test.com', password='p')
+        CustomerInternalNote.objects.create(customer=self.customer, author=self.author, body=doc('secret'))
+        self.client.force_authenticate(outsider)
+        res = self.client.get(BASE, {'customer': self.customer.id})
+        rows = res.data['results'] if isinstance(res.data, dict) else res.data
+        self.assertEqual(len(rows), 0)
+
+    def test_user_cannot_retrieve_note_from_inaccessible_project(self):
+        outsider = User.objects.create_user(username='out2', email='out2@test.com', password='p')
+        note = CustomerInternalNote.objects.create(customer=self.customer, author=self.author, body=doc('secret'))
+        self.client.force_authenticate(outsider)
+        res = self.client.get(detail(note.id))
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_user_cannot_create_note_on_inaccessible_customer(self):
+        outsider = User.objects.create_user(username='out3', email='out3@test.com', password='p')
+        self.client.force_authenticate(outsider)
+        res = self.client.post(BASE, {'customer': self.customer.id, 'body': doc('x')}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(CustomerInternalNote.objects.filter(customer=self.customer).exists())
+
+    def test_audit_log_scoped_to_accessible_projects(self):
+        outsider = User.objects.create_user(username='out4', email='out4@test.com', password='p')
+        CustomerInternalNoteAuditLog.objects.create(
+            customer=self.customer, actor=self.author, event_type='note.created', note_id=1,
+        )
+        self.client.force_authenticate(outsider)
+        res = self.client.get(AUDIT, {'customer': self.customer.id})
+        rows = res.data['results'] if isinstance(res.data, dict) else res.data
+        self.assertEqual(len(rows), 0)

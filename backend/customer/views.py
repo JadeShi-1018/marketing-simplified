@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -197,6 +198,11 @@ class CustomerStatusLabelViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSe
                 {'ids': 'A non-empty list of label ids is required.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if len(ids) != len(set(ids)):
+            return Response(
+                {'ids': 'Duplicate label ids are not allowed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Scope to labels the user administers — reuse the same queryset filter.
         labels = list(self.get_queryset().filter(pk__in=ids))
@@ -208,29 +214,42 @@ class CustomerStatusLabelViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSe
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # bulk_update bypasses auto_now, so set updated_at explicitly.
+        now = timezone.now()
         by_id = {label.pk: label for label in labels}
         for index, pk in enumerate(ids):
             by_id[pk].order = index
+            by_id[pk].updated_at = now
         CustomerStatusLabel.objects.bulk_update(by_id.values(), ['order', 'updated_at'])
 
         serializer = self.get_serializer(self.get_queryset(), many=True)
         return Response(serializer.data)
 
 
-class CustomerInternalNoteViewSet(viewsets.ModelViewSet):
-    """Internal notes on customer profiles — never visible to customers"""
+class CustomerInternalNoteViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """Internal notes on customer profiles — never visible to customers.
+
+    Scoped to customers in projects the user can access, so notes never leak
+    across projects (consistent with CustomerViewSet).
+    """
     serializer_class = CustomerInternalNoteSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = CustomerInternalNote.objects.select_related('author', 'customer')
+        # Only notes whose customer belongs to a project the user can access.
+        qs = CustomerInternalNote.objects.select_related('author', 'customer').filter(
+            customer__project_id__in=self._accessible_project_ids(),
+        )
         customer_id = self.request.query_params.get('customer')
         if customer_id:
             qs = qs.filter(customer_id=customer_id)
         return qs
 
     def perform_create(self, serializer):
-        """Automatically set author to current user"""
+        """Set author to current user; block creating notes on inaccessible customers."""
+        customer = serializer.validated_data.get('customer')
+        if customer is not None and customer.project_id not in self._accessible_project_ids():
+            raise PermissionDenied('You cannot add notes to this customer.')
         note = serializer.save(author=self.request.user)
         self._record_audit('note.created', note)
 
@@ -265,13 +284,18 @@ class CustomerInternalNoteViewSet(viewsets.ModelViewSet):
         )
 
 
-class CustomerInternalNoteAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
-    """Read-only audit log for internal note changes (agents/admins only)."""
+class CustomerInternalNoteAuditLogViewSet(ProjectScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    """Read-only audit log for internal note changes (agents/admins only).
+
+    Scoped to customers in projects the user can access (same as the notes).
+    """
     serializer_class = CustomerInternalNoteAuditLogSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        qs = CustomerInternalNoteAuditLog.objects.select_related('actor', 'customer')
+        qs = CustomerInternalNoteAuditLog.objects.select_related('actor', 'customer').filter(
+            customer__project_id__in=self._accessible_project_ids(),
+        )
         customer_id = self.request.query_params.get('customer')
         if customer_id:
             qs = qs.filter(customer_id=customer_id)

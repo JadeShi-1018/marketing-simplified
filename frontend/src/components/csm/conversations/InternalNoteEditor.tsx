@@ -123,7 +123,7 @@ export function InternalNoteEditor({ initialContent, saving, onSave, onCancel }:
         </button>
         <button
           type="button"
-          onClick={() => !editor.isEmpty && onSave(editor.getJSON() as TiptapJSONContent)}
+          onClick={() => !isEmpty && onSave(editor.getJSON() as TiptapJSONContent)}
           disabled={saving || isEmpty}
           className="rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
         >

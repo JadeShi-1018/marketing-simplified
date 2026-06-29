@@ -189,7 +189,12 @@ class CustomerInternalNote(models.Model):
 
             # Recursively process content array
             if 'content' in content and isinstance(content['content'], list):
-                return ''.join(self._extract_text_from_tiptap(item) for item in content['content'])
+                inner = ''.join(self._extract_text_from_tiptap(item) for item in content['content'])
+                # Separate block-level nodes with a newline so text from different
+                # blocks doesn't merge (e.g. two paragraphs -> "Hello\nworld").
+                if content.get('type') in ('paragraph', 'heading', 'blockquote', 'listItem'):
+                    return inner + '\n'
+                return inner
 
             return ''
 
@@ -199,7 +204,8 @@ class CustomerInternalNote(models.Model):
         return ''
 
     def save(self, *args, **kwargs):
-        # Auto-extract plain text from Tiptap JSON before saving
+        # Auto-extract plain text from Tiptap JSON before saving. Collapse the
+        # trailing block newlines and trim so body_text stays clean for search.
         if self.body:
             self.body_text = self._extract_text_from_tiptap(self.body).strip()
         super().save(*args, **kwargs)

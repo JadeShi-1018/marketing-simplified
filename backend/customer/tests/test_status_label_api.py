@@ -107,6 +107,16 @@ class StatusLabelAPITest(APITestCase):
         a.refresh_from_db(); b.refresh_from_db(); c.refresh_from_db()
         self.assertEqual((c.order, a.order, b.order), (0, 1, 2))
 
+    def test_reorder_rejects_duplicate_ids(self):
+        a = CustomerStatusLabel.objects.create(project=self.project, name='A', color='#111', order=0)
+        b = CustomerStatusLabel.objects.create(project=self.project, name='B', color='#222', order=1)
+        self.client.force_authenticate(self.member)
+        res = self.client.put(
+            f'{REORDER_URL}?project={self.project.id}',
+            {'ids': [a.id, a.id, b.id]}, format='json',
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_reorder_rejects_label_from_other_project(self):
         mine = CustomerStatusLabel.objects.create(project=self.project, name='Mine', color='#111')
         theirs = CustomerStatusLabel.objects.create(project=self.other_project, name='Theirs', color='#222')
