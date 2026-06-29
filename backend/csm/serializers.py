@@ -205,9 +205,14 @@ class CustomerProfileSerializer(serializers.Serializer):
     email = serializers.EmailField()
     company = serializers.CharField()
     phone = serializers.CharField()
+    project_id = serializers.IntegerField(default=None)
     organisation_id = serializers.IntegerField(source='organisation.id', default=None)
     organisation_name = serializers.CharField(source='organisation.name', default=None)
     region_name = serializers.CharField(source='region.name', default=None)
+    # Status label (MED-217): agents view/assign it on the profile panel.
+    status_label = serializers.IntegerField(source='status_label_id', default=None)
+    status_label_name = serializers.CharField(source='status_label.name', default=None)
+    status_label_color = serializers.CharField(source='status_label.color', default=None)
 
 
 class ConversationDetailSerializer(ConversationSerializer):

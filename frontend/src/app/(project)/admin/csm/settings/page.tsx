@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { FileText, FolderKanban, ListOrdered, Radio } from 'lucide-react';
+import { FileText, FolderKanban, ListOrdered, Radio, Tag } from 'lucide-react';
 import CsmSettingsPageRoot, { CsmSettingsProjectGuard } from '@/components/csm-settings/CsmSettingsPageRoot';
 import CsmSettingsNavCard from '@/components/csm-settings/CsmSettingsNavCard';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
@@ -52,6 +52,12 @@ export default function CsmSettingsHubPage() {
             icon={ListOrdered}
             title="Work Types"
             description="Define request kinds shown on ticket forms. Drag to reorder."
+          />
+          <CsmSettingsNavCard
+            href={`/admin/csm/settings/customer-status-labels${q}`}
+            icon={Tag}
+            title="Customer Status Labels"
+            description="Create, color, and reorder labels used to segment customers."
           />
         </div>
       )}
