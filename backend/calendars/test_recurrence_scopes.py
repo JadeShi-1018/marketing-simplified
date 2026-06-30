@@ -13,6 +13,7 @@ from calendars.models import (
     EventAttendee,
     EventReminder,
     RecurrenceException,
+    RecurrenceRule,
 )
 from calendars.tests import CalendarTestBase
 from calendars.views import (
@@ -26,9 +27,11 @@ from calendars.views import (
 class RecurringScopeEditTests(CalendarTestBase):
     SERIES_START = "2026-01-15T09:00:00Z"
 
-    def _create_recurring_event(self, count=None, until=None) -> Event:
+    def _create_recurring_event(
+        self, count=None, until=None, frequency="DAILY", interval=1
+    ) -> Event:
         view = EventViewSet.as_view({"post": "create"})
-        recurrence = {"frequency": "DAILY", "interval": 1}
+        recurrence = {"frequency": frequency, "interval": interval}
         if count is not None:
             recurrence["count"] = count
         if until is not None:
@@ -250,3 +253,111 @@ class RecurringScopeEditTests(CalendarTestBase):
         self.assertNotIn(split_point, master_starts)
         self.assertIn(split_point, new_starts)
         self.assertEqual(master_starts & new_starts, set())
+
+    def test_update_recurrence_rule_switches_count_to_until(self):
+        """PATCH master can change end bound without violating count/until constraint."""
+        master = self._create_recurring_event(count=10)
+        rule_id = master.recurrence_rule_id
+
+        update_view = EventViewSet.as_view({"patch": "partial_update"})
+        req = self.factory.patch(
+            f"/api/v1/events/{master.id}/",
+            {
+                "calendar_id": str(self.calendar.id),
+                "is_recurring": True,
+                "recurrence": {
+                    "frequency": "DAILY",
+                    "interval": 1,
+                    "until": "2026-12-31T23:59:59Z",
+                },
+            },
+            format="json",
+        )
+        force_authenticate(req, user=self.user)
+        resp = update_view(req, pk=str(master.id))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK, resp.data)
+
+        rule = RecurrenceRule.objects.get(id=rule_id)
+        self.assertIsNone(rule.count)
+        self.assertIsNotNone(rule.until)
+
+    def test_double_split_on_split_born_series(self):
+        event = self._create_recurring_event()
+        first_split = "2026-01-17T09:00:00Z"
+        resp = self._split_future(event, first_split, "After split 1")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        new_event = Event.objects.get(id=resp.data["id"])
+
+        second_split = "2026-01-19T09:00:00Z"
+        resp2 = self._split_future(new_event, second_split, "After split 2")
+        self.assertEqual(resp2.status_code, status.HTTP_201_CREATED, resp2.data)
+
+        new_event.refresh_from_db()
+        self.assertEqual(
+            new_event.recurrence_rule.until.isoformat().replace("+00:00", "Z"),
+            second_split,
+        )
+
+        third = Event.objects.get(id=resp2.data["id"])
+        self.assertEqual(third.start_datetime.isoformat().replace("+00:00", "Z"), second_split)
+        self.assertEqual(third.title, "After split 2")
+
+    def test_double_split_weekly_series(self):
+        # WEEKLY series anchored on SERIES_START (2026-01-15, a Thursday):
+        # occurrences fall on 01-15, 01-22, 01-29, 02-05, ...
+        event = self._create_recurring_event(frequency="WEEKLY", interval=1)
+
+        first_split = "2026-01-22T09:00:00Z"
+        resp = self._split_future(event, first_split, "Weekly after split 1")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED, resp.data)
+        new_event = Event.objects.get(id=resp.data["id"])
+        self.assertTrue(new_event.is_recurring)
+        self.assertEqual(new_event.recurrence_rule.frequency, "WEEKLY")
+
+        # Split the split-born WEEKLY series AGAIN at a later occurrence.
+        second_split = "2026-02-05T09:00:00Z"
+        resp2 = self._split_future(new_event, second_split, "Weekly after split 2")
+        self.assertEqual(resp2.status_code, status.HTTP_201_CREATED, resp2.data)
+
+        new_event.refresh_from_db()
+        self.assertEqual(
+            new_event.recurrence_rule.until.isoformat().replace("+00:00", "Z"),
+            second_split,
+        )
+        third = Event.objects.get(id=resp2.data["id"])
+        self.assertEqual(
+            third.start_datetime.isoformat().replace("+00:00", "Z"), second_split
+        )
+        self.assertEqual(third.title, "Weekly after split 2")
+
+    def test_split_rejects_occurrence_outside_capped_series(self):
+        event = self._create_recurring_event()
+        split_point = "2026-01-17T09:00:00Z"
+        resp = self._split_future(event, split_point, "New half")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+        # Attempting to split the capped master at an occurrence it no longer owns.
+        resp2 = self._split_future(event, "2026-01-19T09:00:00Z", "Should fail")
+        self.assertEqual(resp2.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_split_born_series_visible_in_later_calendar_week(self):
+        from datetime import datetime, timezone
+
+        from calendars.views import _build_calendar_view_payload
+
+        event = self._create_recurring_event()
+        split_point = "2026-01-17T09:00:00Z"
+        resp = self._split_future(event, split_point, "Later half")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+
+        start_dt = datetime(2026, 1, 24, tzinfo=timezone.utc)
+        end_dt = datetime(2026, 1, 31, tzinfo=timezone.utc)
+        payload = _build_calendar_view_payload(
+            self.user, start_dt, end_dt, None, None, "week"
+        )
+        titles = [
+            item["title"]
+            for item in payload["events"]
+            if item.get("title") == "Later half"
+        ]
+        self.assertGreaterEqual(len(titles), 1)

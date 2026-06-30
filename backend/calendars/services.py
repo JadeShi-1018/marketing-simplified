@@ -147,6 +147,30 @@ def _count_occurrences_before(
     return count
 
 
+def _occurrence_on_series(
+    series_start: datetime, occurrence_start: datetime, rule: RecurrenceRule
+) -> bool:
+    """True when `occurrence_start` is a valid occurrence start for the series."""
+    if occurrence_start < series_start:
+        return False
+    step = _rule_step(rule)
+    if step is None:
+        return False
+    if rule.until is not None and occurrence_start >= rule.until:
+        return False
+
+    delta = occurrence_start - series_start
+    step_seconds = step.total_seconds()
+    if step_seconds <= 0 or delta.total_seconds() % step_seconds != 0:
+        return False
+
+    if rule.count is not None:
+        index = int(delta.total_seconds() // step_seconds)
+        if index >= rule.count:
+            return False
+    return True
+
+
 def _get_or_create_modified_event(
     event: Event, original_start: datetime
 ) -> tuple[Event, RecurrenceException | None]:
@@ -278,6 +302,11 @@ def split_series_from_occurrence(
     from .serializers import EventCreateUpdateSerializer
 
     master_rule = event.recurrence_rule
+
+    if not _occurrence_on_series(event.start_datetime, original_start, master_rule):
+        raise ValueError(
+            "The selected occurrence is not part of this event series."
+        )
 
     with transaction.atomic():
         # Snapshot original bounding before we mutate the master rule.

@@ -12,11 +12,69 @@ type RecurringEditScopeDialogProps = {
   onConfirm: (scope: RecurringEditScope) => void;
 };
 
-const SCOPE_OPTIONS: { value: RecurringEditScope; label: string }[] = [
+export const RECURRING_SCOPE_OPTIONS: {
+  value: RecurringEditScope;
+  label: string;
+}[] = [
   { value: "this", label: "This event" },
   { value: "future", label: "This and following events" },
   { value: "all", label: "All events" },
 ];
+
+type RecurringEditScopeFieldProps = {
+  value: RecurringEditScope;
+  onChange: (scope: RecurringEditScope) => void;
+  lockToAll?: boolean;
+  notice?: string;
+};
+
+/** Inline radio group for choosing recurring edit scope inside a form. */
+export function RecurringEditScopeField({
+  value,
+  onChange,
+  lockToAll = false,
+  notice,
+}: RecurringEditScopeFieldProps) {
+  const visibleOptions = lockToAll
+    ? RECURRING_SCOPE_OPTIONS.filter((option) => option.value === "all")
+    : RECURRING_SCOPE_OPTIONS;
+
+  return (
+    <div
+      className="rounded-lg border border-gray-200 bg-gray-50 p-3"
+      data-testid="recurring-scope-field"
+    >
+      <p className="text-xs font-medium text-gray-600">Apply changes to</p>
+      {notice && (
+        <p
+          className="mt-1 text-xs text-gray-500"
+          data-testid="recurring-scope-notice"
+        >
+          {notice}
+        </p>
+      )}
+      <div className="mt-2 space-y-1">
+        {visibleOptions.map((option) => (
+          <label
+            key={option.value}
+            data-testid={`recurring-scope-option-${option.value}`}
+            className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-white"
+          >
+            <input
+              type="radio"
+              name="recurring-edit-scope"
+              value={option.value}
+              checked={value === option.value}
+              onChange={() => onChange(option.value)}
+              className="h-4 w-4 text-[#3CCED7] focus:ring-[#3CCED7]"
+            />
+            <span className="text-sm text-gray-800">{option.label}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Prompt asking which occurrences a recurring-event edit should apply to.
@@ -46,8 +104,8 @@ export function RecurringEditScopeDialog({
   }
 
   const visibleOptions = lockToAll
-    ? SCOPE_OPTIONS.filter((option) => option.value === "all")
-    : SCOPE_OPTIONS;
+    ? RECURRING_SCOPE_OPTIONS.filter((option) => option.value === "all")
+    : RECURRING_SCOPE_OPTIONS;
 
   return (
     <>

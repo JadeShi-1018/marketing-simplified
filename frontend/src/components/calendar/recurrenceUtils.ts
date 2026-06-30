@@ -73,6 +73,8 @@ export function buildRecurrencePayload(
   const payload: RecurrenceInput = {
     frequency,
     interval: Math.max(state.interval, 1),
+    count: null,
+    until: null,
   };
 
   if (state.endCondition === "count") {

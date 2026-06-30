@@ -619,6 +619,33 @@ def _get_accessible_calendars(
     return qs.distinct()
 
 
+def _events_intersecting_range(start_dt, end_dt, base_qs=None):
+    """
+    Return events that may appear in [start_dt, end_dt).
+
+    Non-recurring events use wall-clock overlap. Recurring masters are included
+    when the series can still produce instances in the window (so split-born
+    series remain visible after their first occurrence day).
+    """
+    if base_qs is None:
+        base_qs = Event.objects.all()
+
+    non_recurring = Q(
+        is_recurring=False,
+        start_datetime__lt=end_dt,
+        end_datetime__gt=start_dt,
+    )
+    recurring = Q(
+        is_recurring=True,
+        recurrence_rule__isnull=False,
+        start_datetime__lt=end_dt,
+    ) & (
+        Q(recurrence_rule__until__isnull=True)
+        | Q(recurrence_rule__until__gt=start_dt)
+    )
+    return base_qs.filter(non_recurring | recurring)
+
+
 def _build_calendar_view_payload(
     user,
     start_dt,
@@ -637,14 +664,13 @@ def _build_calendar_view_payload(
             "calendars": [],
         }
 
-    events_qs = (
-        Event.objects.select_related("calendar", "created_by", "recurrence_rule")
-        .filter(
+    events_qs = _events_intersecting_range(
+        start_dt,
+        end_dt,
+        Event.objects.select_related("calendar", "created_by", "recurrence_rule").filter(
             calendar__in=calendars,
             is_deleted=False,
-            start_datetime__lt=end_dt,
-            end_datetime__gt=start_dt,
-        )
+        ),
     )
 
     instances: list[Any] = []
@@ -1360,12 +1386,18 @@ class EventInstanceModifyFutureView(generics.GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        new_event = split_series_from_occurrence(
-            event,
-            original_start,
-            request.data,
-            context={"request": request},
-        )
+        try:
+            new_event = split_series_from_occurrence(
+                event,
+                original_start,
+                request.data,
+                context={"request": request},
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         output = EventSerializer(new_event)
         return Response(output.data, status=status.HTTP_201_CREATED)
@@ -1422,14 +1454,13 @@ class FreeBusyView(generics.GenericAPIView):
         }
 
         for cal in calendars:
-            events_qs = (
+            events_qs = _events_intersecting_range(
+                time_min,
+                time_max,
                 Event.objects.filter(
                     calendar=cal,
                     is_deleted=False,
-                    start_datetime__lt=time_max,
-                    end_datetime__gt=time_min,
-                )
-                .select_related("recurrence_rule")
+                ).select_related("recurrence_rule"),
             )
 
             intervals = []

@@ -19,6 +19,7 @@ describe("recurrenceUtils", () => {
       frequency: "WEEKLY",
       interval: 2,
       count: 5,
+      until: null,
     });
   });
 

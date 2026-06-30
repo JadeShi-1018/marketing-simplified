@@ -81,10 +81,10 @@ describe("EventPanelDialog recurrence UI", () => {
         expect.objectContaining({
           title: "Weekly standup",
           is_recurring: true,
-          recurrence: {
+          recurrence: expect.objectContaining({
             frequency: "WEEKLY",
             interval: 1,
-          },
+          }),
         }),
       );
     });
@@ -113,32 +113,89 @@ describe("EventPanelDialog recurrence UI", () => {
       />,
     );
 
+    fireEvent.click(screen.getByTestId("recurring-scope-option-all"));
     fireEvent.click(screen.getByTestId("calendar-more-options"));
     fireEvent.change(screen.getByTestId("calendar-repeat-interval"), {
       target: { value: "2" },
     });
     fireEvent.click(screen.getByText("Save"));
 
-    expect(
-      await screen.findByTestId("recurring-scope-notice"),
-    ).toHaveTextContent("Changing the repeat rule applies to the entire series.");
-    expect(
-      screen.queryByTestId("recurring-scope-option-this"),
-    ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("recurring-scope-confirm"));
-
     await waitFor(() => {
       expect(CalendarAPI.updateEvent).toHaveBeenCalledWith(
         "evt-2",
         expect.objectContaining({
           is_recurring: true,
-          recurrence: {
+          recurrence: expect.objectContaining({
             frequency: "WEEKLY",
             interval: 2,
-          },
+          }),
         }),
         undefined,
+      );
+    });
+  });
+
+  it("shows inline scope options and hides repeat fields when scope is this", () => {
+    render(
+      <EventPanelDialog
+        {...baseProps}
+        mode="edit"
+        event={{
+          id: "evt-3",
+          calendar_id: "cal-1",
+          title: "Daily sync",
+          start_datetime: "2026-06-30T09:00:00.000Z",
+          end_datetime: "2026-06-30T10:00:00.000Z",
+          is_all_day: false,
+          is_recurring: true,
+          recurrence_rule: {
+            frequency: "DAILY",
+            interval: 1,
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("recurring-scope-field")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "This event" })).toBeChecked();
+    expect(screen.queryByTestId("calendar-more-options")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("calendar-repeat-options")).not.toBeInTheDocument();
+  });
+
+  it("updates only this occurrence when scope is this", async () => {
+    (CalendarAPI.updateEventInstance as jest.Mock).mockResolvedValue({ id: "evt-4" });
+
+    render(
+      <EventPanelDialog
+        {...baseProps}
+        mode="edit"
+        event={{
+          id: "evt-4",
+          calendar_id: "cal-1",
+          title: "Daily sync",
+          start_datetime: "2026-06-30T09:00:00.000Z",
+          end_datetime: "2026-06-30T10:00:00.000Z",
+          original_start: "2026-06-30T09:00:00.000Z",
+          is_all_day: false,
+          is_recurring: true,
+          recurrence_rule: {
+            frequency: "DAILY",
+            interval: 1,
+          },
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Add title"), {
+      target: { value: "Only this one" },
+    });
+    fireEvent.click(screen.getByText("Save"));
+
+    await waitFor(() => {
+      expect(CalendarAPI.updateEventInstance).toHaveBeenCalledWith(
+        "evt-4",
+        "2026-06-30T09:00:00.000Z",
+        expect.objectContaining({ title: "Only this one" }),
       );
     });
   });

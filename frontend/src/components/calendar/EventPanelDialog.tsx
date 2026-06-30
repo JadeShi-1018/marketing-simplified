@@ -17,7 +17,9 @@ import type {
   RecurringEditScope,
 } from "@/lib/api/calendarApi";
 import type { CalendarDialogMode, EventPanelPosition } from "@/components/calendar/types";
-import { RecurringEditScopeDialog } from "@/components/calendar/RecurringEditScopeDialog";
+import {
+  RecurringEditScopeField,
+} from "@/components/calendar/RecurringEditScopeDialog";
 import {
   buildRecurrencePayload,
   DEFAULT_REPEAT_STATE,
@@ -95,9 +97,8 @@ export function EventPanelDialog({
   const [description, setDescription] = React.useState(event?.description ?? "");
   const [localStart, setLocalStart] = React.useState<Date | null>(start);
   const [localEnd, setLocalEnd] = React.useState<Date | null>(end);
-  const [scopeDialogOpen, setScopeDialogOpen] = React.useState(false);
-  const [scopeLockToAll, setScopeLockToAll] = React.useState(false);
-  const pendingEditRef = React.useRef<Record<string, unknown> | null>(null);
+  const [editScope, setEditScope] = React.useState<RecurringEditScope>("this");
+  const pinnedOriginalStartRef = React.useRef<string | null>(null);
   const initialRepeatRef = React.useRef<RepeatFormState>({ ...DEFAULT_REPEAT_STATE });
   const [showMore, setShowMore] = React.useState(false);
   const [repeatState, setRepeatState] = React.useState<RepeatFormState>({
@@ -132,6 +133,9 @@ export function EventPanelDialog({
       );
       setRepeatState(nextRepeat);
       initialRepeatRef.current = nextRepeat;
+      setEditScope("this");
+      pinnedOriginalStartRef.current =
+        event?.original_start ?? event?.start_datetime ?? null;
       setShowMore(false);
       return;
     }
@@ -151,6 +155,21 @@ export function EventPanelDialog({
     resolveDefaultCalendarId,
     start,
   ]);
+
+  React.useEffect(() => {
+    if (mode === "edit" && event?.is_recurring && editScope !== "all") {
+      setShowMore(false);
+    }
+  }, [editScope, event?.is_recurring, mode]);
+
+  const canShowMoreOptions =
+    mode === "create" || (mode === "edit" && !event?.is_recurring) ||
+    (mode === "edit" && event?.is_recurring && editScope === "all");
+
+  const recurrenceChanged =
+    mode === "edit" &&
+    event?.is_recurring &&
+    !repeatStatesEqual(repeatState, initialRepeatRef.current);
 
   if (!open || !localStart || !localEnd || !position) {
     return null;
@@ -338,17 +357,13 @@ export function EventPanelDialog({
       );
 
       if (recurrenceChanged) {
-        const recurrencePayload = buildRecurrenceWritePayload();
-        if (event.is_recurring) {
-          pendingEditRef.current = {
-            ...fields,
-            ...recurrencePayload,
-          };
-          setScopeLockToAll(true);
-          setScopeDialogOpen(true);
+        if (editScope !== "all") {
+          toast.error(
+            'Changing the repeat rule applies to the entire series. Select "All events".',
+          );
           return;
         }
-
+        const recurrencePayload = buildRecurrenceWritePayload();
         await onSave({
           action: async () => {
             await CalendarAPI.updateEvent(
@@ -364,9 +379,26 @@ export function EventPanelDialog({
       const payload: Partial<EventDTO> = fields;
 
       if (event.is_recurring) {
-        pendingEditRef.current = payload;
-        setScopeLockToAll(false);
-        setScopeDialogOpen(true);
+        const originalStart =
+          pinnedOriginalStartRef.current ??
+          event.original_start ??
+          event.start_datetime;
+
+        await onSave({
+          action: async () => {
+            if (editScope === "all") {
+              await CalendarAPI.updateEvent(event.id, payload, event.etag);
+            } else if (editScope === "future") {
+              await CalendarAPI.splitEventSeries(event.id, originalStart, payload);
+            } else {
+              await CalendarAPI.updateEventInstance(
+                event.id,
+                originalStart,
+                payload,
+              );
+            }
+          },
+        });
         return;
       }
 
@@ -376,34 +408,6 @@ export function EventPanelDialog({
         },
       });
     }
-  };
-
-  const handleScopeConfirm = async (scope: RecurringEditScope) => {
-    const payload = pendingEditRef.current;
-    const applyToAllSeries = scopeLockToAll;
-    if (!event || !payload) {
-      setScopeDialogOpen(false);
-      setScopeLockToAll(false);
-      return;
-    }
-
-    const originalStart = event.original_start ?? event.start_datetime;
-
-    setScopeDialogOpen(false);
-    setScopeLockToAll(false);
-    pendingEditRef.current = null;
-
-    await onSave({
-      action: async () => {
-        if (applyToAllSeries || scope === "all") {
-          await CalendarAPI.updateEvent(event.id, payload, event.etag);
-        } else if (scope === "future") {
-          await CalendarAPI.splitEventSeries(event.id, originalStart, payload);
-        } else {
-          await CalendarAPI.updateEventInstance(event.id, originalStart, payload);
-        }
-      },
-    });
   };
 
   const handleDelete = async () => {
@@ -481,6 +485,19 @@ export function EventPanelDialog({
                   </p>
                 </div>
               </div>
+
+              {mode === "edit" && event?.is_recurring && (
+                <RecurringEditScopeField
+                  value={recurrenceChanged ? "all" : editScope}
+                  onChange={setEditScope}
+                  lockToAll={recurrenceChanged}
+                  notice={
+                    recurrenceChanged
+                      ? "Changing the repeat rule applies to the entire series."
+                      : undefined
+                  }
+                />
+              )}
 
               {showMore && (
                 <div
@@ -655,24 +672,24 @@ export function EventPanelDialog({
                 )
               )}
 
-              {event?.is_recurring && (
-                <p className="text-xs text-gray-500">
-                  This is a recurring event. After you save, you can choose which
-                  occurrences to update.
-                </p>
-              )}
             </div>
           </div>
 
           <div className="flex flex-col gap-3 border-t bg-inherit px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-            <button
-              type="button"
-              className="self-start text-sm font-medium text-[#3CCED7] hover:opacity-80"
-              onClick={() => setShowMore((open) => !open)}
-              data-testid="calendar-more-options"
-            >
-              {showMore ? "Fewer options" : "More options"}
-            </button>
+            {canShowMoreOptions ? (
+              <button
+                type="button"
+                className="self-start text-sm font-medium text-[#3CCED7] hover:opacity-80"
+                onClick={() => setShowMore((open) => !open)}
+                data-testid="calendar-more-options"
+              >
+                {showMore ? "Fewer options" : "More options"}
+              </button>
+            ) : (
+              <span className="self-start text-xs text-gray-500">
+                Repeat settings apply to the entire series only.
+              </span>
+            )}
             <div className="flex flex-wrap items-center justify-end gap-2">
               {mode === "edit" && event && !event.is_recurring && (
                 <button
@@ -701,23 +718,6 @@ export function EventPanelDialog({
           </div>
         </div>
       </div>
-
-      <RecurringEditScopeDialog
-        open={scopeDialogOpen}
-        lockToAll={scopeLockToAll}
-        notice={
-          scopeLockToAll
-            ? "Changing the repeat rule applies to the entire series."
-            : undefined
-        }
-        title={scopeLockToAll ? "Apply repeat change" : "Edit recurring event"}
-        onCancel={() => {
-          setScopeDialogOpen(false);
-          setScopeLockToAll(false);
-          pendingEditRef.current = null;
-        }}
-        onConfirm={handleScopeConfirm}
-      />
     </>
   );
 }
