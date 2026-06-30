@@ -648,16 +648,12 @@ class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
             all_org_ids = set(list(accessible_org_ids) + list(agent_org_ids))
             qs = qs.filter(organisation_id__in=all_org_ids)
 
-        # Team scoping: show templates with no team, OR where the user belongs to the team
-        # Two-step: Django doesn't support chaining two FK levels in a single filter argument
-        customer_user_ids = CustomerUser.objects.filter(
-            user=self.request.user, is_active=True,
-        ).values_list('id', flat=True)
-        user_queue_ids = QueueAgent.objects.filter(
-            user_id__in=customer_user_ids,
-        ).values_list('queue_id', flat=True)
-        user_team_ids = QueueTeam.objects.filter(
-            queue_id__in=user_queue_ids,
+        # Team scoping: show workspace-wide templates (no team) OR templates whose
+        # team the user belongs to. In CSM a user's team membership is recorded on
+        # CustomerUser.team (core.TeamMember is not populated for CSM agents), so
+        # that is the source of truth here.
+        user_team_ids = CustomerUser.objects.filter(
+            user=self.request.user, is_active=True, team__isnull=False,
         ).values_list('team_id', flat=True)
         qs = qs.filter(Q(team__isnull=True) | Q(team_id__in=list(user_team_ids)))
 

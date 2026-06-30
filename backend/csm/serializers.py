@@ -283,6 +283,25 @@ class QuickReplyTemplateSerializer(serializers.ModelSerializer):
         full = obj.created_by.get_full_name()
         return full if full.strip() else obj.created_by.email
 
+    def validate_tags(self, value):
+        cleaned = [str(t).strip() for t in (value or []) if str(t).strip()]
+        if not cleaned:
+            raise serializers.ValidationError('At least one tag is required.')
+        return cleaned
+
+    def validate_organisation(self, value):
+        # Prevent cross-tenant writes: the user must be an active member of the
+        # organisation a template is created in or moved to.
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and not CustomerUser.objects.filter(
+            user=user, organisation=value, is_active=True,
+        ).exists():
+            raise serializers.ValidationError(
+                'You are not a member of this organisation.'
+            )
+        return value
+
 
 class QuickReplyTemplateHistorySerializer(serializers.ModelSerializer):
     edited_by_name = serializers.SerializerMethodField()

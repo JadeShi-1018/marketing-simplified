@@ -437,6 +437,10 @@ function TemplateModal({
       setError('Title and content are required.');
       return;
     }
+    if (form.tags.length === 0) {
+      setError('Please add at least one tag.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -521,7 +525,8 @@ function TemplateModal({
             {/* Tags */}
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                Tags <span className="font-normal text-gray-400 ml-1">(optional)</span>
+                Tags <span className="text-red-400">*</span>
+                <span className="font-normal text-gray-400 ml-1">(at least one)</span>
               </label>
               <TagInput
                 value={form.tags}
