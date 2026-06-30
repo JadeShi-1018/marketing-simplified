@@ -11,8 +11,13 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { CalendarAPI, extractUserDescription } from "@/lib/api/calendarApi";
-import type { CalendarDTO, EventDTO } from "@/lib/api/calendarApi";
+import type {
+  CalendarDTO,
+  EventDTO,
+  RecurringEditScope,
+} from "@/lib/api/calendarApi";
 import type { CalendarDialogMode, EventPanelPosition } from "@/components/calendar/types";
+import { RecurringEditScopeDialog } from "@/components/calendar/RecurringEditScopeDialog";
 
 type EventPanelDialogProps = {
   open: boolean;
@@ -82,6 +87,8 @@ export function EventPanelDialog({
   const [description, setDescription] = React.useState(event?.description ?? "");
   const [localStart, setLocalStart] = React.useState<Date | null>(start);
   const [localEnd, setLocalEnd] = React.useState<Date | null>(end);
+  const [scopeDialogOpen, setScopeDialogOpen] = React.useState(false);
+  const pendingEditRef = React.useRef<Partial<EventDTO> | null>(null);
   const [calendarId, setCalendarId] = React.useState<string>(
     resolveDefaultCalendarId(event?.calendar_id),
   );
@@ -166,7 +173,7 @@ export function EventPanelDialog({
               </span>
             </div>
             <div className="flex items-center gap-2 text-gray-500">
-              {!event.is_recurring && onDelete && (
+              {onDelete && (
                 <button
                   type="button"
                   className="rounded-full p-1 hover:bg-gray-100"
@@ -223,7 +230,8 @@ export function EventPanelDialog({
             </div>
             {event.is_recurring && (
               <p className="mt-2 text-xs text-gray-500">
-                This is a recurring event. Editing applies to the entire series.
+                This is a recurring event. When you edit it you can choose to
+                change only this event, this and following events, or all events.
               </p>
             )}
             {onAskAgent && (
@@ -276,23 +284,54 @@ export function EventPanelDialog({
         },
       });
     } else if (mode === "edit" && event) {
+      const payload: Partial<EventDTO> = {
+        calendar_id: calendarId || event.calendar_id,
+        title: title.trim(),
+        description: description || "",
+        start_datetime: localStart.toISOString(),
+        end_datetime: localEnd.toISOString(),
+        timezone: event.timezone || timezone,
+      };
+
+      // Recurring events require the user to pick a scope first.
+      if (event.is_recurring) {
+        pendingEditRef.current = payload;
+        setScopeDialogOpen(true);
+        return;
+      }
+
       await onSave({
         action: async () => {
-          await CalendarAPI.updateEvent(
-            event.id,
-            {
-              calendar_id: calendarId || event.calendar_id,
-              title: title.trim(),
-              description: description || "",
-              start_datetime: localStart.toISOString(),
-              end_datetime: localEnd.toISOString(),
-              timezone: event.timezone || timezone,
-            },
-            event.etag,
-          );
+          await CalendarAPI.updateEvent(event.id, payload, event.etag);
         },
       });
     }
+  };
+
+  const handleScopeConfirm = async (scope: RecurringEditScope) => {
+    const payload = pendingEditRef.current;
+    if (!event || !payload) {
+      setScopeDialogOpen(false);
+      return;
+    }
+
+    // The occurrence is identified by its original start, never the edited one.
+    const originalStart = event.original_start ?? event.start_datetime;
+
+    setScopeDialogOpen(false);
+    pendingEditRef.current = null;
+
+    await onSave({
+      action: async () => {
+        if (scope === "all") {
+          await CalendarAPI.updateEvent(event.id, payload, event.etag);
+        } else if (scope === "future") {
+          await CalendarAPI.splitEventSeries(event.id, originalStart, payload);
+        } else {
+          await CalendarAPI.updateEventInstance(event.id, originalStart, payload);
+        }
+      },
+    });
   };
 
   const handleDelete = async () => {
@@ -437,8 +476,8 @@ export function EventPanelDialog({
 
               {event?.is_recurring && (
                 <p className="text-xs text-gray-500">
-                  This is a recurring event. Editing is currently applied to the
-                  entire series. Per-instance editing will be added later.
+                  This is a recurring event. After you save, you can choose which
+                  occurrences to update.
                 </p>
               )}
             </div>
@@ -480,6 +519,15 @@ export function EventPanelDialog({
           </div>
         </div>
       </div>
+
+      <RecurringEditScopeDialog
+        open={scopeDialogOpen}
+        onCancel={() => {
+          setScopeDialogOpen(false);
+          pendingEditRef.current = null;
+        }}
+        onConfirm={handleScopeConfirm}
+      />
     </>
   );
 }
