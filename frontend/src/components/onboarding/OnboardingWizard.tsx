@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
+  Check,
   Mail,
   ShieldCheck,
   Sparkles,
@@ -119,6 +120,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [validatingSlug, setValidatingSlug] = useState(false);
   const [undoing, setUndoing] = useState(false);
+  const slugInputRef = useRef<HTMLInputElement>(null);
 
   const progress = useMemo(
     () => Math.round(((currentStep + 1) / steps.length) * 100),
@@ -208,6 +210,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
       if (response.exists && response.organization) {
         updateState({ selectedOrganization: response.organization });
         toast.success(`Found organization: ${response.organization.name}`);
+        slugInputRef.current?.blur();
       } else {
         setStepError('Organization not found. Please check the slug and try again.');
         updateState({ selectedOrganization: null });
@@ -437,11 +440,17 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
                   <label className="block text-sm font-medium text-gray-700">Organization slug</label>
                   <div className="flex gap-2">
                     <input
+                      ref={slugInputRef}
                       type="text"
                       value={state.organizationSlug}
                       onChange={(e) => {
                         updateState({ organizationSlug: e.target.value, selectedOrganization: null });
                         setStepError(null);
+                      }}
+                      onFocus={() => {
+                        if (state.selectedOrganization) {
+                          updateState({ selectedOrganization: null });
+                        }
                       }}
                       placeholder="e.g. acme-corp"
                       className="flex-1 rounded-lg border border-gray-200 px-3 py-2 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 focus:outline-none transition"
@@ -450,10 +459,19 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
                     <button
                       type="button"
                       onClick={() => handleValidateSlug(state.organizationSlug)}
-                      className="px-4 py-2 rounded-lg bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-white font-medium hover:opacity-90 transition disabled:opacity-60"
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-white font-medium hover:opacity-90 transition disabled:opacity-60"
                       disabled={!state.organizationSlug.trim() || validatingSlug || submitting}
                     >
-                      {validatingSlug ? 'Validating...' : 'Validate'}
+                      {validatingSlug ? (
+                        'Validating...'
+                      ) : state.selectedOrganization ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          Validated
+                        </>
+                      ) : (
+                        'Validate'
+                      )}
                     </button>
                   </div>
                   {state.selectedOrganization && (

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { AlertTriangle, Calendar, Check, ChevronRight, Clock, Copy, CreditCard, Loader2, RefreshCw, Send, Trash2, UserPlus, Users, Zap } from 'lucide-react';
+import { AlertTriangle, Calendar, Check, ChevronRight, Clock, Copy, CreditCard, Loader2, Pencil, RefreshCw, Send, Trash2, UserPlus, Users, X as XIcon, Zap } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { OrganizationAPI, OrgDetail, OrgMember } from '@/lib/api/organizationApi';
@@ -94,6 +94,12 @@ function OrgDetailContent() {
   const [switching, setSwitching] = useState(false);
   const [slugCopied, setSlugCopied] = useState(false);
 
+  // Slug edit state
+  const [editingSlug, setEditingSlug] = useState(false);
+  const [slugDraft, setSlugDraft] = useState('');
+  const [slugSaving, setSlugSaving] = useState(false);
+  const [slugError, setSlugError] = useState<string | null>(null);
+
   // Remove member state
   const [confirmRemoveId, setConfirmRemoveId] = useState<number | null>(null);
   const [removingMemberId, setRemovingMemberId] = useState<number | null>(null);
@@ -179,6 +185,50 @@ function OrgDetailContent() {
       toast.error('Failed to switch organization.');
     } finally {
       setSwitching(false);
+    }
+  };
+
+  // ── Slug edit handler ─────────────────────────────────────────────────────
+
+  const handleStartEditSlug = () => {
+    if (!org) return;
+    setSlugDraft(org.slug);
+    setSlugError(null);
+    setEditingSlug(true);
+  };
+
+  const handleCancelEditSlug = () => {
+    setEditingSlug(false);
+    setSlugError(null);
+  };
+
+  const handleSaveSlug = async () => {
+    if (!org || slugSaving) return;
+    const trimmed = slugDraft.trim().toLowerCase();
+    if (!trimmed) {
+      setSlugError('Slug cannot be empty.');
+      return;
+    }
+    if (!/^[a-z0-9-]+$/.test(trimmed)) {
+      setSlugError('Only lowercase letters, numbers, and hyphens are allowed.');
+      return;
+    }
+    if (trimmed === org.slug) {
+      setEditingSlug(false);
+      return;
+    }
+    setSlugSaving(true);
+    setSlugError(null);
+    try {
+      const result = await OrganizationAPI.updateOrgSlug(org.id, trimmed);
+      setOrg({ ...org, slug: result.slug });
+      setEditingSlug(false);
+      toast.success('Slug updated successfully.');
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { error?: string } } };
+      setSlugError(err?.response?.data?.error ?? 'Failed to update slug.');
+    } finally {
+      setSlugSaving(false);
     }
   };
 
@@ -282,10 +332,6 @@ function OrgDetailContent() {
   const seatsUsed = org.member_count;
   const seatsPurchased = sub?.seat_count ?? sub?.plan.included_seats ?? null;
   const seatPct = seatsPurchased ? Math.min((seatsUsed / seatsPurchased) * 100, 100) : null;
-  const roleLabel = org.user_role
-    ? org.user_role.charAt(0).toUpperCase() + org.user_role.slice(1)
-    : null;
-
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6 max-w-[1200px] mx-auto">
@@ -299,54 +345,115 @@ function OrgDetailContent() {
               </div>
               <div className="min-w-0">
                 <h1 className="text-2xl font-bold text-gray-900 leading-tight">{org.name}</h1>
-                <p className="text-sm text-gray-400 mt-1 flex items-center gap-1.5 flex-wrap">
-                  <span className="font-mono">slug: {org.slug}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(org.slug);
-                      setSlugCopied(true);
-                      setTimeout(() => setSlugCopied(false), 2000);
-                    }}
-                    title="Copy slug"
-                    className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
-                  >
-                    {slugCopied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                  <span className="mx-1">·</span>
-                  <span>Created {formatDate(org.created_at)}</span>
-                  {(['admin', 'owner'] as string[]).includes(org.user_role ?? '') && (
-                    showDeleteConfirm ? (
-                      <span className="inline-flex items-center gap-1 ml-1">
-                        <span className="text-xs text-red-500">Delete?</span>
+                <div className="mt-1 flex flex-col gap-1">
+                  {editingSlug ? (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-400 font-mono">slug:</span>
+                        <input
+                          autoFocus
+                          type="text"
+                          value={slugDraft}
+                          onChange={(e) => {
+                            setSlugDraft(e.target.value.toLowerCase());
+                            setSlugError(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveSlug();
+                            if (e.key === 'Escape') handleCancelEditSlug();
+                          }}
+                          className="font-mono text-sm border border-gray-300 rounded-md px-2 py-0.5 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 focus:outline-none transition w-48"
+                          disabled={slugSaving}
+                        />
                         <button
                           type="button"
-                          onClick={handleDeleteOrg}
-                          disabled={deleting}
-                          className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition"
+                          onClick={handleSaveSlug}
+                          disabled={slugSaving}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-[#3CCED7] text-white hover:opacity-90 disabled:opacity-50 transition"
                         >
-                          {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm'}
+                          {slugSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                          {slugSaving ? 'Saving…' : 'Save'}
                         </button>
                         <button
                           type="button"
-                          onClick={() => setShowDeleteConfirm(false)}
-                          className="text-[10px] text-gray-400 hover:text-gray-600 transition"
+                          onClick={handleCancelEditSlug}
+                          disabled={slugSaving}
+                          className="inline-flex items-center justify-center w-5 h-5 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
                         >
-                          Cancel
+                          <XIcon className="w-3.5 h-3.5" />
                         </button>
-                      </span>
-                    ) : (
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-700 self-start">
+                        <AlertTriangle className="w-3 h-3 shrink-0 text-amber-500" />
+                        Lowercase letters, numbers and hyphens only · e.g.{' '}
+                        <span className="font-mono">acme-corp</span>
+                      </div>
+                      {slugError && (
+                        <span className="text-xs text-red-500">{slugError}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-400 flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono">slug: {org.slug}</span>
                       <button
                         type="button"
-                        onClick={() => setShowDeleteConfirm(true)}
-                        title="Delete organization"
-                        className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition ml-1"
+                        onClick={() => {
+                          navigator.clipboard.writeText(org.slug);
+                          setSlugCopied(true);
+                          setTimeout(() => setSlugCopied(false), 2000);
+                        }}
+                        title="Copy slug"
+                        className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
                       >
-                        <Trash2 className="w-3 h-3" />
+                        {slugCopied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
                       </button>
-                    )
+                      {(['admin', 'owner'] as string[]).includes(org.user_role ?? '') && (
+                        <button
+                          type="button"
+                          onClick={handleStartEditSlug}
+                          title="Edit slug"
+                          className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-300 hover:text-[#3CCED7] hover:bg-[#3CCED7]/10 transition"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+                      )}
+                    </p>
                   )}
-                </p>
+                  <p className="text-sm text-gray-400 flex items-center gap-1.5 flex-wrap">
+                    <span>Created {formatDate(org.created_at)}</span>
+                    {(['admin', 'owner'] as string[]).includes(org.user_role ?? '') && (
+                      showDeleteConfirm ? (
+                        <span className="inline-flex items-center gap-1 ml-1">
+                          <span className="text-xs text-red-500">Delete?</span>
+                          <button
+                            type="button"
+                            onClick={handleDeleteOrg}
+                            disabled={deleting}
+                            className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 transition"
+                          >
+                            {deleting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Confirm'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowDeleteConfirm(false)}
+                            className="text-[10px] text-gray-400 hover:text-gray-600 transition"
+                          >
+                            Cancel
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setShowDeleteConfirm(true)}
+                          title="Delete organization"
+                          className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-300 hover:text-red-400 hover:bg-red-50 transition ml-1"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )
+                    )}
+                  </p>
+                </div>
                 {org.desc && (
                   <p className="text-sm text-gray-600 mt-3 max-w-xl leading-relaxed">{org.desc}</p>
                 )}
@@ -356,7 +463,7 @@ function OrgDetailContent() {
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
               {org.is_current ? (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-600 text-white">
-                  ✨ Current Workspace
+                  Current Organization
                 </span>
               ) : (
                 <button
@@ -365,13 +472,13 @@ function OrgDetailContent() {
                   disabled={switching}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-purple-300 text-purple-600 hover:bg-purple-50 transition disabled:opacity-50"
                 >
-                  {switching ? <Loader2 className="w-3 h-3 animate-spin" /> : '✨'}
-                  {switching ? 'Switching…' : 'Set as Current Workspace'}
+                  {switching && <Loader2 className="w-3 h-3 animate-spin" />}
+                  {switching ? 'Switching…' : 'Set as Current Organization'}
                 </button>
               )}
-              {roleLabel && (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  🛠️ {roleLabel}
+              {org.user_role && (
+                <span className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold capitalize ${roleBadge(org.user_role)}`}>
+                  {org.user_role}
                 </span>
               )}
             </div>

@@ -1556,6 +1556,95 @@ class OrganizationDetailView(APIView):
         return Response({'message': f'Organization "{org.name}" has been deleted.'}, status=status.HTTP_200_OK)
 
 
+class UpdateOrganizationSlugView(APIView):
+    """
+    PATCH /api/core/organizations/<org_id>/slug/
+    Admin-only: rename an organization's slug and the underlying tenant schema.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, org_id):
+        from django.core.cache import cache  # noqa: PLC0415
+        from django.db import transaction  # noqa: PLC0415
+        from django.utils.text import slugify  # noqa: PLC0415
+        from core.services.tenant import rename_tenant_schema  # noqa: PLC0415
+
+        user = request.user
+
+        if not can_user_access_organization(user, org_id):
+            return Response(
+                {'error': 'You do not have access to this organization.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        org = get_object_or_404(Organization, id=org_id, is_active=True)
+
+        # Temporarily set current_organization so is_org_admin works
+        original_org_id = user.current_organization_id
+        user.current_organization_id = org_id
+        if not is_org_admin(user):
+            user.current_organization_id = original_org_id
+            raise PermissionDenied('Only organization admins can update the slug.')
+        user.current_organization_id = original_org_id
+
+        new_slug = request.data.get('slug', '').strip().lower()
+
+        if not new_slug:
+            return Response(
+                {'error': 'Slug is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate slug format: lowercase letters, digits, hyphens only
+        if slugify(new_slug) != new_slug:
+            return Response(
+                {'error': 'Slug may only contain lowercase letters, numbers, and hyphens.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_slug == org.slug:
+            return Response({'slug': org.slug, 'message': 'No change.'})
+
+        # Uniqueness check
+        if Organization.objects.filter(slug=new_slug).exclude(pk=org.pk).exists():
+            return Response(
+                {'error': 'This slug is already taken. Please choose another.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        old_slug = org.slug
+
+        try:
+            with transaction.atomic():
+                # 1. Rename PostgreSQL schema atomically with the slug update
+                rename_tenant_schema(old_slug, new_slug)
+
+                # 2. Update the org record (is_new is False, so provision_tenant_schema
+                #    is NOT called again — only save() triggers it for new orgs)
+                org.slug = new_slug
+                org.save(update_fields=['slug', 'updated_at'])
+        except Exception as exc:
+            return Response(
+                {'error': f'Failed to rename slug: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # 3. Invalidate middleware caches so the next request uses the new schema
+        cache.delete(f'tenant:slug:{org_id}')
+        cache.delete(f'tenant:valid:{old_slug}')
+
+        from core.services.organization_activity import log_org_activity  # noqa: PLC0415
+        log_org_activity(
+            org,
+            'org_slug_changed',
+            actor=user,
+            metadata={'old_slug': old_slug, 'new_slug': new_slug},
+        )
+
+        return Response({'slug': new_slug, 'message': 'Slug updated successfully.'})
+
+
 class SwitchOrganizationView(APIView):
     """Switch the user's current organization."""
 

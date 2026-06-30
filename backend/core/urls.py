@@ -27,6 +27,7 @@ from core.views import (
     ResendInvitationView,
     RevokeOrganizationInvitationView,
     SwitchOrganizationView,
+    UpdateOrganizationSlugView,
     UserOrganizationsView,
     ValidateOrganizationSlugView,
 )
@@ -68,6 +69,7 @@ urlpatterns = [
     path('organizations/<int:org_id>/members/', OrganizationMembersView.as_view(), name='organization-members'),
     path('organizations/<int:org_id>/members/<int:user_id>/', RemoveOrganizationMemberView.as_view(), name='remove-organization-member'),
     path('organizations/<int:org_id>/leave/', LeaveOrganizationView.as_view(), name='leave-organization'),
+    path('organizations/<int:org_id>/slug/', UpdateOrganizationSlugView.as_view(), name='update-organization-slug'),
 
     # Organization Invitation endpoints
     path('organizations/<int:org_id>/invitations/', CreateOrganizationInvitationView.as_view(), name='create-org-invitation'),

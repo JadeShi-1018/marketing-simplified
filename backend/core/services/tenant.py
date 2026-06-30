@@ -38,6 +38,33 @@ def slug_to_schema_name(slug: str) -> str:
     return f"org_{safe}"
 
 
+def rename_tenant_schema(old_slug: str, new_slug: str) -> None:
+    """
+    Atomically rename a tenant's PostgreSQL schema when its slug changes.
+
+    MUST be called inside a transaction.atomic() block so that the schema
+    rename and the slug UPDATE on the Organization row are committed together
+    or rolled back together.
+
+    Args:
+        old_slug: The current Organization.slug value (maps to current schema).
+        new_slug: The desired new slug (maps to target schema name).
+    """
+    old_schema = slug_to_schema_name(old_slug)
+    new_schema = slug_to_schema_name(new_slug)
+
+    if old_schema == new_schema:
+        return  # normalised names are identical — nothing to do
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            psql.SQL('ALTER SCHEMA {} RENAME TO {}').format(
+                psql.Identifier(old_schema),
+                psql.Identifier(new_schema),
+            )
+        )
+
+
 def provision_tenant_schema(slug: str) -> None:
     """
     Create a PostgreSQL schema and populate it with all tenant tables.

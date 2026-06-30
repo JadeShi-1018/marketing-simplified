@@ -190,6 +190,13 @@ export const OrganizationAPI = {
       .then((response) => response.data);
   },
 
+  // Update an organization's slug (admin only)
+  updateOrgSlug: (orgId: number, slug: string): Promise<{ slug: string; message: string }> => {
+    return api
+      .patch<{ slug: string; message: string }>(`/api/core/organizations/${orgId}/slug/`, { slug })
+      .then((response) => response.data);
+  },
+
   // Delete an organization (admin only, must have ≥1 other org)
   // force=true bypasses the last-org check (used by onboarding undo flow)
   deleteOrganization: (orgId: number, force = false): Promise<{ message: string }> => {
