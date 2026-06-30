@@ -18,6 +18,14 @@ import type {
 } from "@/lib/api/calendarApi";
 import type { CalendarDialogMode, EventPanelPosition } from "@/components/calendar/types";
 import { RecurringEditScopeDialog } from "@/components/calendar/RecurringEditScopeDialog";
+import {
+  buildRecurrencePayload,
+  DEFAULT_REPEAT_STATE,
+  formatRepeatSummary,
+  repeatStateFromEvent,
+  repeatStatesEqual,
+  type RepeatFormState,
+} from "@/components/calendar/recurrenceUtils";
 
 type EventPanelDialogProps = {
   open: boolean;
@@ -88,7 +96,13 @@ export function EventPanelDialog({
   const [localStart, setLocalStart] = React.useState<Date | null>(start);
   const [localEnd, setLocalEnd] = React.useState<Date | null>(end);
   const [scopeDialogOpen, setScopeDialogOpen] = React.useState(false);
-  const pendingEditRef = React.useRef<Partial<EventDTO> | null>(null);
+  const [scopeLockToAll, setScopeLockToAll] = React.useState(false);
+  const pendingEditRef = React.useRef<Record<string, unknown> | null>(null);
+  const initialRepeatRef = React.useRef<RepeatFormState>({ ...DEFAULT_REPEAT_STATE });
+  const [showMore, setShowMore] = React.useState(false);
+  const [repeatState, setRepeatState] = React.useState<RepeatFormState>({
+    ...DEFAULT_REPEAT_STATE,
+  });
   const [calendarId, setCalendarId] = React.useState<string>(
     resolveDefaultCalendarId(event?.calendar_id),
   );
@@ -112,6 +126,13 @@ export function EventPanelDialog({
       setCalendarId(defaultCalendarId);
       setLocalStart(start);
       setLocalEnd(end);
+      const nextRepeat = repeatStateFromEvent(
+        Boolean(event?.is_recurring),
+        event?.recurrence_rule,
+      );
+      setRepeatState(nextRepeat);
+      initialRepeatRef.current = nextRepeat;
+      setShowMore(false);
       return;
     }
 
@@ -254,6 +275,30 @@ export function EventPanelDialog({
 
   const formatForInput = (date: Date) => format(date, "yyyy-MM-dd'T'HH:mm");
 
+  const buildFieldPayload = () => {
+    const timezone =
+      typeof Intl !== "undefined" && Intl.DateTimeFormat().resolvedOptions().timeZone
+        ? Intl.DateTimeFormat().resolvedOptions().timeZone
+        : "UTC";
+
+    return {
+      calendar_id: calendarId || event?.calendar_id,
+      title: title.trim(),
+      description: description || "",
+      start_datetime: localStart.toISOString(),
+      end_datetime: localEnd.toISOString(),
+      timezone: event?.timezone || timezone,
+    };
+  };
+
+  const buildRecurrenceWritePayload = () => {
+    const recurrence = buildRecurrencePayload(repeatState);
+    if (!recurrence) {
+      return { is_recurring: false as const };
+    }
+    return { is_recurring: true as const, recurrence };
+  };
+
   const handleSubmit = async () => {
     if (!calendarId) {
       toast.error("Please select a calendar");
@@ -270,6 +315,7 @@ export function EventPanelDialog({
         : "UTC";
 
     if (mode === "create") {
+      const recurrencePayload = buildRecurrenceWritePayload();
       await onSave({
         action: async () => {
           await CalendarAPI.createEvent({
@@ -280,22 +326,46 @@ export function EventPanelDialog({
             end_datetime: localEnd.toISOString(),
             timezone,
             is_all_day: false,
+            ...recurrencePayload,
           });
         },
       });
     } else if (mode === "edit" && event) {
-      const payload: Partial<EventDTO> = {
-        calendar_id: calendarId || event.calendar_id,
-        title: title.trim(),
-        description: description || "",
-        start_datetime: localStart.toISOString(),
-        end_datetime: localEnd.toISOString(),
-        timezone: event.timezone || timezone,
-      };
+      const fields = buildFieldPayload();
+      const recurrenceChanged = !repeatStatesEqual(
+        repeatState,
+        initialRepeatRef.current,
+      );
 
-      // Recurring events require the user to pick a scope first.
+      if (recurrenceChanged) {
+        const recurrencePayload = buildRecurrenceWritePayload();
+        if (event.is_recurring) {
+          pendingEditRef.current = {
+            ...fields,
+            ...recurrencePayload,
+          };
+          setScopeLockToAll(true);
+          setScopeDialogOpen(true);
+          return;
+        }
+
+        await onSave({
+          action: async () => {
+            await CalendarAPI.updateEvent(
+              event.id,
+              { ...fields, ...recurrencePayload },
+              event.etag,
+            );
+          },
+        });
+        return;
+      }
+
+      const payload: Partial<EventDTO> = fields;
+
       if (event.is_recurring) {
         pendingEditRef.current = payload;
+        setScopeLockToAll(false);
         setScopeDialogOpen(true);
         return;
       }
@@ -310,20 +380,22 @@ export function EventPanelDialog({
 
   const handleScopeConfirm = async (scope: RecurringEditScope) => {
     const payload = pendingEditRef.current;
+    const applyToAllSeries = scopeLockToAll;
     if (!event || !payload) {
       setScopeDialogOpen(false);
+      setScopeLockToAll(false);
       return;
     }
 
-    // The occurrence is identified by its original start, never the edited one.
     const originalStart = event.original_start ?? event.start_datetime;
 
     setScopeDialogOpen(false);
+    setScopeLockToAll(false);
     pendingEditRef.current = null;
 
     await onSave({
       action: async () => {
-        if (scope === "all") {
+        if (applyToAllSeries || scope === "all") {
           await CalendarAPI.updateEvent(event.id, payload, event.etag);
         } else if (scope === "future") {
           await CalendarAPI.splitEventSeries(event.id, originalStart, payload);
@@ -364,27 +436,10 @@ export function EventPanelDialog({
           </div>
 
           <div className="px-4 pb-4 sm:px-6">
-            <div className="mb-3 flex flex-wrap gap-2 text-sm">
-              <button
-                type="button"
-                className="rounded-full bg-[#3CCED7]/10 px-3 py-1 text-xs font-medium text-[#3CCED7]"
-              >
+            <div className="mb-3 text-sm">
+              <span className="inline-flex rounded-full bg-[#3CCED7]/10 px-3 py-1 text-xs font-medium text-[#3CCED7]">
                 Event
-              </button>
-              <button
-                type="button"
-                disabled
-                className="cursor-default rounded-full px-3 py-1 text-xs font-medium text-gray-400"
-              >
-                Task
-              </button>
-              <button
-                type="button"
-                disabled
-                className="cursor-default rounded-full px-3 py-1 text-xs font-medium text-gray-400"
-              >
-                Appointment schedule
-              </button>
+              </span>
             </div>
 
             <div className="space-y-3 text-sm">
@@ -421,9 +476,135 @@ export function EventPanelDialog({
                       }}
                     />
                   </div>
-                  <p className="text-xs text-gray-500">Time zone • Does not repeat</p>
+                  <p className="text-xs text-gray-500">
+                    Time zone • {formatRepeatSummary(repeatState, localStart)}
+                  </p>
                 </div>
               </div>
+
+              {showMore && (
+                <div
+                  className="ml-8 space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
+                  data-testid="calendar-repeat-options"
+                >
+                  <div>
+                    <label className="text-xs font-medium text-gray-600">Repeat</label>
+                    <select
+                      className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
+                      value={repeatState.preset}
+                      onChange={(e) =>
+                        setRepeatState((current) => ({
+                          ...current,
+                          preset: e.target.value as RepeatFormState["preset"],
+                        }))
+                      }
+                      data-testid="calendar-repeat-preset"
+                    >
+                      <option value="none">Does not repeat</option>
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                    </select>
+                  </div>
+
+                  {repeatState.preset !== "none" && (
+                    <>
+                      <div>
+                        <label className="text-xs font-medium text-gray-600">
+                          Every
+                        </label>
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={1000}
+                            className="w-20 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
+                            value={repeatState.interval}
+                            onChange={(e) =>
+                              setRepeatState((current) => ({
+                                ...current,
+                                interval: Math.max(
+                                  1,
+                                  Number.parseInt(e.target.value, 10) || 1,
+                                ),
+                              }))
+                            }
+                            data-testid="calendar-repeat-interval"
+                          />
+                          <span className="text-sm text-gray-600">
+                            {repeatState.preset === "daily"
+                              ? repeatState.interval === 1
+                                ? "day"
+                                : "days"
+                              : repeatState.interval === 1
+                                ? "week"
+                                : "weeks"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-medium text-gray-600">
+                          Ends
+                        </label>
+                        <select
+                          className="mt-1 w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
+                          value={repeatState.endCondition}
+                          onChange={(e) =>
+                            setRepeatState((current) => ({
+                              ...current,
+                              endCondition: e.target
+                                .value as RepeatFormState["endCondition"],
+                            }))
+                          }
+                          data-testid="calendar-repeat-end"
+                        >
+                          <option value="never">Never</option>
+                          <option value="until">On date</option>
+                          <option value="count">After</option>
+                        </select>
+                      </div>
+
+                      {repeatState.endCondition === "until" && (
+                        <input
+                          type="date"
+                          className="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
+                          value={repeatState.untilDate}
+                          onChange={(e) =>
+                            setRepeatState((current) => ({
+                              ...current,
+                              untilDate: e.target.value,
+                            }))
+                          }
+                          data-testid="calendar-repeat-until"
+                        />
+                      )}
+
+                      {repeatState.endCondition === "count" && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={1}
+                            max={999}
+                            className="w-20 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#3CCED7]"
+                            value={repeatState.occurrenceCount}
+                            onChange={(e) =>
+                              setRepeatState((current) => ({
+                                ...current,
+                                occurrenceCount: Math.max(
+                                  1,
+                                  Number.parseInt(e.target.value, 10) || 1,
+                                ),
+                              }))
+                            }
+                            data-testid="calendar-repeat-count"
+                          />
+                          <span className="text-sm text-gray-600">occurrences</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
 
               <div className="flex items-start gap-4">
                 <AlignLeft className="mt-1 h-4 w-4 text-gray-500" />
@@ -487,9 +668,10 @@ export function EventPanelDialog({
             <button
               type="button"
               className="self-start text-sm font-medium text-[#3CCED7] hover:opacity-80"
-              onClick={() => {}}
+              onClick={() => setShowMore((open) => !open)}
+              data-testid="calendar-more-options"
             >
-              More options
+              {showMore ? "Fewer options" : "More options"}
             </button>
             <div className="flex flex-wrap items-center justify-end gap-2">
               {mode === "edit" && event && !event.is_recurring && (
@@ -522,8 +704,16 @@ export function EventPanelDialog({
 
       <RecurringEditScopeDialog
         open={scopeDialogOpen}
+        lockToAll={scopeLockToAll}
+        notice={
+          scopeLockToAll
+            ? "Changing the repeat rule applies to the entire series."
+            : undefined
+        }
+        title={scopeLockToAll ? "Apply repeat change" : "Edit recurring event"}
         onCancel={() => {
           setScopeDialogOpen(false);
+          setScopeLockToAll(false);
           pendingEditRef.current = null;
         }}
         onConfirm={handleScopeConfirm}

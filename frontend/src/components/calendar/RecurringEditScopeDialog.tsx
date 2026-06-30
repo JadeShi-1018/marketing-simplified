@@ -5,6 +5,9 @@ type RecurringEditScopeDialogProps = {
   open: boolean;
   title?: string;
   defaultScope?: RecurringEditScope;
+  /** When true, only "All events" is shown (e.g. repeat-rule changes). */
+  lockToAll?: boolean;
+  notice?: string;
   onCancel: () => void;
   onConfirm: (scope: RecurringEditScope) => void;
 };
@@ -23,20 +26,28 @@ export function RecurringEditScopeDialog({
   open,
   title = "Edit recurring event",
   defaultScope = "this",
+  lockToAll = false,
+  notice,
   onCancel,
   onConfirm,
 }: RecurringEditScopeDialogProps) {
-  const [scope, setScope] = React.useState<RecurringEditScope>(defaultScope);
+  const [scope, setScope] = React.useState<RecurringEditScope>(
+    lockToAll ? "all" : defaultScope,
+  );
 
   React.useEffect(() => {
     if (open) {
-      setScope(defaultScope);
+      setScope(lockToAll ? "all" : defaultScope);
     }
-  }, [open, defaultScope]);
+  }, [open, defaultScope, lockToAll]);
 
   if (!open) {
     return null;
   }
+
+  const visibleOptions = lockToAll
+    ? SCOPE_OPTIONS.filter((option) => option.value === "all")
+    : SCOPE_OPTIONS;
 
   return (
     <>
@@ -54,8 +65,17 @@ export function RecurringEditScopeDialog({
       >
         <h2 className="text-base font-semibold text-gray-900">{title}</h2>
 
+        {notice && (
+          <p
+            className="mt-2 text-sm text-gray-600"
+            data-testid="recurring-scope-notice"
+          >
+            {notice}
+          </p>
+        )}
+
         <div className="mt-4 space-y-1">
-          {SCOPE_OPTIONS.map((option) => (
+          {visibleOptions.map((option) => (
             <label
               key={option.value}
               data-testid={`recurring-scope-option-${option.value}`}

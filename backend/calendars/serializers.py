@@ -386,7 +386,7 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
 
     def update(self, instance: Event, validated_data: dict) -> Event:
         recurrence_data = validated_data.pop("recurrence", None)
-        validated_data.pop("is_recurring", None)
+        is_recurring = validated_data.pop("is_recurring", None)
         calendar_id = validated_data.pop("calendar_id", None)
 
         organization = instance.organization
@@ -394,7 +394,10 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
             calendar = self._ensure_calendar(calendar_id, organization)
             instance.calendar = calendar
 
-        if recurrence_data is not None:
+        if is_recurring is False:
+            instance.is_recurring = False
+            instance.recurrence_rule = None
+        elif recurrence_data is not None:
             if instance.recurrence_rule:
                 for field, value in recurrence_data.items():
                     setattr(instance.recurrence_rule, field, value)

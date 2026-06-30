@@ -81,4 +81,31 @@ describe('RecurringEditScopeDialog', () => {
 
     expect(onConfirm).toHaveBeenCalledWith('all');
   });
+
+  it('locks to all scope when repeat rule changes', () => {
+    const onConfirm = jest.fn();
+    render(
+      <RecurringEditScopeDialog
+        open
+        lockToAll
+        notice="Changing the repeat rule applies to the entire series."
+        onCancel={jest.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+
+    expect(screen.getByTestId('recurring-scope-notice')).toHaveTextContent(
+      'Changing the repeat rule applies to the entire series.',
+    );
+    expect(
+      screen.queryByTestId('recurring-scope-option-this'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId('recurring-scope-option-all'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('recurring-scope-confirm'));
+
+    expect(onConfirm).toHaveBeenCalledWith('all');
+  });
 });
