@@ -59,6 +59,28 @@ class EmailDraftAPITests(TestCase):
             1,
         )
 
+    def test_create_ignores_client_supplied_user(self):
+        """Owner is forced to request.user; a client-supplied 'user' is ignored."""
+        User = get_user_model()
+        other = User.objects.create_user(
+            username="other_klaviyo_draft",
+            email="other_klaviyo_draft@example.com",
+            password="testpass123",
+        )
+
+        payload = {
+            "name": "Spoofed Owner",
+            "subject": "Spoofed",
+            "status": self.status_draft,
+            "user": other.id,
+        }
+
+        response = self.client.post(DRAFTS_URL, payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        draft = EmailDraft.objects.get(name="Spoofed Owner")
+        self.assertEqual(draft.user, self.user)
+
     # ------------------------------------------------------------------ #
     # List
     # ------------------------------------------------------------------ #
