@@ -73,14 +73,10 @@ class EmailDraftViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        Default the user to request.user if not explicitly provided.
+        Always set the owner to the authenticated user. The serializer treats
+        `user` as read-only, so a client-supplied owner cannot be honoured.
         """
-        user = getattr(self.request, "user", None)
-
-        if "user" not in serializer.validated_data and user and user.is_authenticated:
-            serializer.save(user=user)
-        else:
-            serializer.save()
+        serializer.save(user=self.request.user)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()

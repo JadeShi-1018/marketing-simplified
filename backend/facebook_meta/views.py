@@ -158,20 +158,25 @@ class AdCreativeDetailView(generics.RetrieveUpdateDestroyAPIView):
     lookup_field = 'id'
     
     def get_queryset(self):
-        """Return the ad creative"""
-        return AdCreative.objects.all()
-    
+        """Scope to the current user's ad creatives (owner = actor)."""
+        return AdCreative.objects.filter(actor=self.request.user)
+
     def get_object(self):
         """Resolve the ad creative by slug, falling back to its (string) pk.
 
         AdCreative.id is a CharField (the external Meta creative id, a numeric
         string), so we must NOT coerce to int — look up by slug first, then by
         the raw pk value for legacy/back-compat links.
+
+        Scoped to the requesting user's own creatives (owner = actor), matching
+        the list view, so a user cannot read/update/delete another user's ad
+        creative by id.
         """
         raw = self.kwargs['ad_creative_id']
+        scoped = AdCreative.objects.filter(actor=self.request.user)
         obj = (
-            AdCreative.objects.filter(slug=raw).first()
-            or AdCreative.objects.filter(pk=raw).first()
+            scoped.filter(slug=raw).first()
+            or scoped.filter(pk=raw).first()
         )
         if obj is None:
             raise NotFound("Ad creative not found")
@@ -884,7 +889,7 @@ class AssociateMediaToAdCreativeView(APIView):
             )
         
         try:
-            ad_creative = AdCreative.objects.get(id=ad_creative_id)
+            ad_creative = AdCreative.objects.get(id=ad_creative_id, actor=request.user)
         except AdCreative.DoesNotExist:
             return Response(
                 ErrorResponseSerializer(
@@ -1026,7 +1031,7 @@ class SharePreviewView(APIView):
         try:
             # Validate ad_creative_id
             try:
-                ad_creative = AdCreative.objects.get(id=ad_creative_id)
+                ad_creative = AdCreative.objects.get(id=ad_creative_id, actor=request.user)
             except AdCreative.DoesNotExist:
                 return Response(
                     ErrorResponseSerializer(
@@ -1116,7 +1121,7 @@ class SharePreviewView(APIView):
         try:
             # Validate ad_creative_id
             try:
-                ad_creative = AdCreative.objects.get(id=ad_creative_id)
+                ad_creative = AdCreative.objects.get(id=ad_creative_id, actor=request.user)
             except AdCreative.DoesNotExist:
                 return Response(
                     ErrorResponseSerializer(
@@ -1157,7 +1162,7 @@ class SharePreviewView(APIView):
         try:
             # Validate ad_creative_id
             try:
-                ad_creative = AdCreative.objects.get(id=ad_creative_id)
+                ad_creative = AdCreative.objects.get(id=ad_creative_id, actor=request.user)
             except AdCreative.DoesNotExist:
                 return Response(
                     ErrorResponseSerializer(
