@@ -10,9 +10,10 @@ import { OrganisationAPI } from '@/lib/api/organisationAPI';
 import api from '@/lib/api';
 import { QuickReplyTemplateAPI } from '@/lib/api/csmConversationApi';
 import type { QuickReplyTemplate, QuickReplyTemplateHistory } from '@/types/csmConversation';
+import FilterDropdown from '@/components/ui/FilterDropdown';
 
 interface TeamOption { id: number; name: string; }
-import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List, Building2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List, ListOrdered, Building2, LayoutTemplate, Users, Globe } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // TagInput — chip-style tag editor with suggestions
@@ -50,19 +51,19 @@ function TagInput({
     <div className="relative">
       <div
         onClick={() => inputRef.current?.focus()}
-        className="min-h-[38px] flex flex-wrap gap-1 p-2 rounded-lg border border-gray-200 bg-white cursor-text focus-within:border-blue-400"
+        className="min-h-[38px] flex flex-wrap gap-1 p-2 rounded-lg border border-gray-200 bg-white cursor-text focus-within:border-[#3CCED7]"
       >
         {value.map((tag) => (
           <span
             key={tag}
-            className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full"
+            className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-[#3CCED7]/15 text-[#1a9ba3] rounded-full"
           >
             <Tag size={10} />
             {tag}
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); removeTag(tag); }}
-              className="text-blue-400 hover:text-blue-700 leading-none"
+              className="text-[#3CCED7] hover:text-[#1a9ba3] leading-none"
             >
               ×
             </button>
@@ -93,7 +94,7 @@ function TagInput({
               key={s}
               type="button"
               onMouseDown={() => addTag(s)}
-              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-600"
+              className="w-full text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-[#3CCED7]/15 hover:text-[#1a9ba3]"
             >
               {s}
             </button>
@@ -138,13 +139,13 @@ function RichTextEditor({
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 focus-within:border-blue-400 overflow-hidden">
+    <div className="rounded-lg border border-gray-200 focus-within:border-[#3CCED7] overflow-hidden">
       {/* Mini toolbar */}
       <div className="flex items-center gap-1 px-2 py-1 border-b border-gray-100 bg-gray-50">
         <button
           type="button"
           onClick={() => editor?.chain().focus().toggleBold().run()}
-          className={`p-1 rounded text-xs ${editor?.isActive('bold') ? 'bg-blue-100 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
+          className={`p-1 rounded text-xs ${editor?.isActive('bold') ? 'bg-[#3CCED7]/25 text-[#1a9ba3]' : 'text-gray-500 hover:bg-gray-100'}`}
           title="Bold"
         >
           <Bold size={13} />
@@ -152,7 +153,7 @@ function RichTextEditor({
         <button
           type="button"
           onClick={() => editor?.chain().focus().toggleItalic().run()}
-          className={`p-1 rounded text-xs ${editor?.isActive('italic') ? 'bg-blue-100 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
+          className={`p-1 rounded text-xs ${editor?.isActive('italic') ? 'bg-[#3CCED7]/25 text-[#1a9ba3]' : 'text-gray-500 hover:bg-gray-100'}`}
           title="Italic"
         >
           <Italic size={13} />
@@ -160,10 +161,18 @@ function RichTextEditor({
         <button
           type="button"
           onClick={() => editor?.chain().focus().toggleBulletList().run()}
-          className={`p-1 rounded text-xs ${editor?.isActive('bulletList') ? 'bg-blue-100 text-blue-600' : 'text-gray-500 hover:bg-gray-100'}`}
+          className={`p-1 rounded text-xs ${editor?.isActive('bulletList') ? 'bg-[#3CCED7]/25 text-[#1a9ba3]' : 'text-gray-500 hover:bg-gray-100'}`}
           title="Bullet list"
         >
           <List size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={() => editor?.chain().focus().toggleOrderedList().run()}
+          className={`p-1 rounded text-xs ${editor?.isActive('orderedList') ? 'bg-[#3CCED7]/25 text-[#1a9ba3]' : 'text-gray-500 hover:bg-gray-100'}`}
+          title="Ordered list"
+        >
+          <ListOrdered size={13} />
         </button>
       </div>
       <EditorContent
@@ -199,8 +208,8 @@ function HistoryModal({
     new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm animate-in fade-in-0 duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-in fade-in-0 zoom-in-95 duration-200">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <div>
             <h2 className="font-semibold text-gray-900">Edit History</h2>
@@ -246,7 +255,7 @@ function HistoryModal({
                       {entry.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
                           {entry.tags.map((tag) => (
-                            <span key={tag} className="inline-flex items-center gap-0.5 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full font-medium">
+                            <span key={tag} className="inline-flex items-center gap-0.5 text-xs px-2 py-0.5 bg-[#3CCED7]/15 text-[#1a9ba3] rounded-full font-medium">
                               <Tag size={8} />
                               {tag}
                             </span>
@@ -268,22 +277,44 @@ function HistoryModal({
 // ---------------------------------------------------------------------------
 // TemplateCard
 // ---------------------------------------------------------------------------
+const fmtDate = (iso: string) =>
+  new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+// Wrap occurrences of `query` in <mark> for search-result highlighting.
+function highlightMatch(text: string, query: string): React.ReactNode {
+  const q = query.trim();
+  if (!q) return text;
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
+  return parts.map((part, i) =>
+    part.toLowerCase() === q.toLowerCase() ? (
+      <mark key={i} className="bg-[#A6E661]/60 text-gray-900 rounded-sm px-0.5">{part}</mark>
+    ) : (
+      <React.Fragment key={i}>{part}</React.Fragment>
+    )
+  );
+}
+
 function TemplateCard({
   template,
+  teamName,
+  query = '',
   onEdit,
   onDelete,
   onHistory,
 }: {
   template: QuickReplyTemplate;
+  teamName?: string | null;
+  query?: string;
   onEdit: (t: QuickReplyTemplate) => void;
   onDelete: (id: number) => void;
   onHistory: (t: QuickReplyTemplate) => void;
 }) {
   return (
-    <div className="group bg-white rounded-xl border border-gray-200 p-4 hover:border-blue-200 hover:shadow-md transition-all duration-200 flex flex-col gap-3">
+    <div className="group bg-white rounded-xl border border-gray-200 p-4 hover:border-[#3CCED7]/50 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex flex-col gap-3 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
       {/* Row 1: title + hover actions */}
       <div className="flex items-start justify-between gap-2">
-        <h3 className="font-semibold text-gray-900 text-sm leading-snug flex-1 min-w-0">{template.title}</h3>
+        <h3 className="font-semibold text-gray-900 text-sm leading-snug flex-1 min-w-0">{highlightMatch(template.title, query)}</h3>
         <div className="flex gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={() => onHistory(template)}
@@ -294,7 +325,7 @@ function TemplateCard({
           </button>
           <button
             onClick={() => onEdit(template)}
-            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-[#1a9ba3] hover:bg-[#3CCED7]/15 rounded-lg transition-colors"
             title="Edit"
           >
             <Pencil size={14} />
@@ -310,7 +341,7 @@ function TemplateCard({
       </div>
 
       {/* Row 2: content preview */}
-      <p className="text-xs text-gray-500 line-clamp-3 leading-relaxed flex-1">{template.content}</p>
+      <p className="text-xs text-gray-500 line-clamp-3 leading-relaxed">{highlightMatch(template.content, query)}</p>
 
       {/* Row 3: tags */}
       {template.tags.length > 0 && (
@@ -318,7 +349,7 @@ function TemplateCard({
           {template.tags.map((tag) => (
             <span
               key={tag}
-              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full font-medium"
+              className="inline-flex items-center gap-1 text-xs px-2 py-0.5 bg-[#3CCED7]/15 text-[#1a9ba3] rounded-full font-medium"
             >
               <Tag size={9} />
               {tag}
@@ -326,6 +357,23 @@ function TemplateCard({
           ))}
         </div>
       )}
+
+      {/* Row 4: scope badge + author/date */}
+      <div className="flex items-center justify-between gap-2 pt-2 mt-auto border-t border-gray-100">
+        <span
+          className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+            template.team ? 'bg-amber-50 text-amber-600' : 'bg-[#3CCED7]/15 text-[#1a9ba3]'
+          }`}
+        >
+          {template.team ? <Users size={9} /> : <Globe size={9} />}
+          {template.team ? (teamName ? `Team: ${teamName}` : 'Team only') : 'Workspace-wide'}
+        </span>
+        {template.created_by_name && (
+          <span className="text-[10px] text-gray-400 truncate" title={`Created by ${template.created_by_name}`}>
+            by {template.created_by_name} · {fmtDate(template.created_at)}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -414,8 +462,8 @@ function TemplateModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm animate-in fade-in-0 duration-200">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-in fade-in-0 zoom-in-95 duration-200">
         {/* Modal header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <div>
@@ -437,7 +485,7 @@ function TemplateModal({
                 value={form.title}
                 onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
                 placeholder="e.g. Welcome Greeting, Refund Policy…"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 transition"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 transition"
               />
             </div>
 
@@ -460,7 +508,7 @@ function TemplateModal({
                 <select
                   value={form.team ?? ''}
                   onChange={(e) => setForm((p) => ({ ...p, team: e.target.value ? Number(e.target.value) : null }))}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 bg-white transition"
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 bg-white transition"
                 >
                   <option value="">All agents</option>
                   {teams.map((t) => (
@@ -499,7 +547,7 @@ function TemplateModal({
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className="px-4 py-2 text-sm font-medium bg-[#1a9ba3] text-white rounded-lg hover:bg-[#15848b] disabled:opacity-50 transition-colors"
             >
               {saving ? 'Saving…' : initial ? 'Save Changes' : 'Create Template'}
             </button>
@@ -611,15 +659,20 @@ function TemplatesPageContent() {
         <div className="max-w-4xl mx-auto px-6 py-8">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">Quick Reply Templates</h1>
-              <p className="text-xs text-gray-400 mt-0.5">Pre-written replies agents can insert into the composer</p>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-gradient-to-br from-[#3CCED7] to-[#A6E661]">
+                <LayoutTemplate className="h-5 w-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">Quick Reply Templates</h1>
+                <p className="text-xs text-gray-400 mt-0.5">Pre-written replies agents can insert into the composer</p>
+              </div>
             </div>
             <button
               onClick={() => { setEditTarget(null); setModalOpen(true); }}
               disabled={!selectedOrgId}
               title={!selectedOrgId ? 'You must be an admin of a customer-service organisation to create templates' : undefined}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-[#1a9ba3] text-white rounded-lg hover:bg-[#15848b] disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Plus size={15} />
               New Template
@@ -629,15 +682,18 @@ function TemplatesPageContent() {
           {/* Org selector + filters */}
           <div className="flex flex-wrap gap-3 mb-6">
             {adminOrgs.length > 1 && (
-              <select
-                value={selectedOrgId ?? ''}
-                onChange={(e) => setSelectedOrgId(Number(e.target.value))}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 bg-white"
-              >
-                {adminOrgs.map((o) => (
-                  <option key={o.id} value={o.id}>{o.name}</option>
-                ))}
-              </select>
+              <FilterDropdown
+                label="Organisation"
+                value={selectedOrgId !== null ? String(selectedOrgId) : ''}
+                onChange={(v) => setSelectedOrgId(Number(v))}
+                options={adminOrgs.map((o) => ({ id: String(o.id), name: o.name }))}
+              />
+            )}
+            {adminOrgs.length === 1 && (
+              <div className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg">
+                <Building2 size={14} className="text-gray-400" />
+                {adminOrgs[0].name}
+              </div>
             )}
 
             <div className="relative flex-1 min-w-[200px]">
@@ -646,29 +702,26 @@ function TemplatesPageContent() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search templates…"
-                className="w-full pl-8 pr-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:border-blue-400"
+                className="w-full pl-8 pr-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:border-[#3CCED7]"
               />
             </div>
 
             {allTags.length > 0 && (
-              <select
+              <FilterDropdown
+                label="Tag"
+                placeholder="All tags"
                 value={filterTag}
-                onChange={(e) => setFilterTag(e.target.value)}
-                className="rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 bg-white"
-              >
-                <option value="">All tags</option>
-                {allTags.map((tag) => (
-                  <option key={tag} value={tag}>{tag}</option>
-                ))}
-              </select>
+                onChange={setFilterTag}
+                options={[{ id: '', name: 'All tags' }, ...allTags.map((tag) => ({ id: tag, name: tag }))]}
+              />
             )}
           </div>
 
           {/* Template grid */}
           {!orgsLoading && adminOrgs.length === 0 ? (
             <div className="flex flex-col items-center text-center py-16 px-4">
-              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-blue-50 mb-4">
-                <Building2 className="h-6 w-6 text-blue-500" />
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-[#3CCED7]/15 mb-4">
+                <Building2 className="h-6 w-6 text-[#1a9ba3]" />
               </div>
               <h3 className="text-sm font-semibold text-gray-800 mb-1">No customer-service organisation yet</h3>
               <p className="text-sm text-gray-500 max-w-sm mb-5">
@@ -677,7 +730,7 @@ function TemplatesPageContent() {
               </p>
               <a
                 href="/csm?tab=organisations"
-                className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                className="px-5 py-2.5 text-sm font-medium bg-[#1a9ba3] text-white rounded-lg hover:bg-[#15848b]"
               >
                 Go to Organisations
               </a>
@@ -696,7 +749,7 @@ function TemplatesPageContent() {
               {!search && !filterTag && selectedOrgId && (
                 <button
                   onClick={() => { setEditTarget(null); setModalOpen(true); }}
-                  className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  className="px-5 py-2.5 text-sm font-medium bg-[#1a9ba3] text-white rounded-lg hover:bg-[#15848b]"
                 >
                   Create your first template
                 </button>
@@ -708,6 +761,8 @@ function TemplatesPageContent() {
                 <TemplateCard
                   key={t.id}
                   template={t}
+                  teamName={t.team ? (teams.find((tm) => tm.id === t.team)?.name ?? null) : null}
+                  query={search}
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                   onHistory={setHistoryTarget}
