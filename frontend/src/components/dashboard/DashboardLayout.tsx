@@ -23,6 +23,7 @@ import { NotificationDrawerProvider } from '@/components/notifications/Notificat
 import NotificationDrawer from '@/components/notifications/NotificationDrawer';
 import { useNotificationSSE } from '@/hooks/useNotificationSSE';
 import { useStripProjectIdFromUrl } from '@/lib/useStripProjectIdFromUrl';
+import { useGuardedRouterPush } from '@/contexts/UnsavedChangesGuardContext';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -127,6 +128,7 @@ export default function DashboardLayout({
   );
   const pathname = usePathname();
   const router = useRouter();
+  const guardedPush = useGuardedRouterPush(router.push);
   const searchParams = useSearchParams();
   const breadcrumb = useMemo(() => getBreadcrumb(pathname), [pathname]);
   const showBack = !!pathname && !ROOT_PATHS.has(pathname);
@@ -142,7 +144,7 @@ export default function DashboardLayout({
       parent;
     // Preserve existing query params (e.g. ?project=1) when navigating within admin settings
     const qs = searchParams.toString();
-    router.push(qs ? `${safePath}?${qs}` : safePath);
+    guardedPush(qs ? `${safePath}?${qs}` : safePath);
   };
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);

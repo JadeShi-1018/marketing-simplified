@@ -47,6 +47,14 @@ jest.mock('@/lib/api/quickStartApi', () => ({
   getQuickStartErrorDetail: (_error: unknown, fallback: string) => fallback,
 }));
 
+jest.mock('@/lib/quickStartUserMessages', () => ({
+  QUICK_START_PREVIEW_ERROR_FALLBACK: 'could not generate a preview',
+  QUICK_START_CONFIRM_ERROR_FALLBACK: 'failed to create the project',
+  resolveQuickStartError: (error: any, fallback: string) => ({
+    message: error.message === 'network' ? 'could not generate a preview' : error.message === 'failed' ? 'failed to create the project' : fallback,
+  }),
+}));
+
 jest.mock('@/lib/quickStartPostCreate', () => ({
   saveQuickStartPostCreateGuide: jest.fn(),
 }));

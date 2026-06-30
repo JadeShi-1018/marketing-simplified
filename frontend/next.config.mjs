@@ -1,14 +1,14 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Basic configuration
+  // Lint is enforced separately via `npm run lint` in CI.
+  // Build-time lint is skipped because Storybook .stories.tsx files
+  // trigger react-hooks/rules-of-hooks false positives.
   eslint: {
-    // Ignore ESLint errors during production builds
     ignoreDuringBuilds: true,
   },
   typescript: {
-    // Test files contain pre-existing type errors that don't affect production code.
-    // Type safety is enforced separately via tsc --noEmit in CI.
-    ignoreBuildErrors: true,
+    // TSC errors are now 0 — enforce type checking at build time
+    ignoreBuildErrors: false,
   },
   webpack: (config, { isServer, webpack }) => {
     // Ignore pino-pretty during bundling to prevent build errors

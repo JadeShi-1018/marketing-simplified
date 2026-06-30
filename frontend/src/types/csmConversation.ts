@@ -21,9 +21,13 @@ export interface CustomerProfile {
   email: string;
   company: string;
   phone: string;
+  project_id: number | null;
   organisation_id: number | null;
   organisation_name: string | null;
   region_name: string | null;
+  status_label: number | null;
+  status_label_name: string | null;
+  status_label_color: string | null;
 }
 
 export interface LinkedTicket {

@@ -1,7 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { CustomerProfile, LinkedTicket } from '@/types/csmConversation';
+import CustomerStatusLabelControl from './CustomerStatusLabelControl';
+import CustomerInternalNotes from './CustomerInternalNotes';
+import StatusLabelBadge from '@/components/csm-settings/status-labels/StatusLabelBadge';
 import { CsmPriorityBadge } from '@/components/csm/CsmPriorityBadge';
 
 interface CustomerProfilePanelProps {
@@ -22,6 +25,21 @@ export function CustomerProfilePanel({
   linkedTickets,
   conversationId,
 }: CustomerProfilePanelProps) {
+
+  // Local status-label state so the header badge updates immediately on change.
+  const [label, setLabel] = useState<{ id: number | null; name: string | null; color: string | null }>({
+    id: profile?.status_label ?? null,
+    name: profile?.status_label_name ?? null,
+    color: profile?.status_label_color ?? null,
+  });
+
+  useEffect(() => {
+    setLabel({
+      id: profile?.status_label ?? null,
+      name: profile?.status_label_name ?? null,
+      color: profile?.status_label_color ?? null,
+    });
+  }, [profile?.id, profile?.status_label, profile?.status_label_name, profile?.status_label_color]);
 
   if (!profile) {
     return (
@@ -44,6 +62,21 @@ export function CustomerProfilePanel({
             <p className="text-xs text-gray-400 truncate">{profile.email}</p>
           </div>
         </div>
+        {label.id && label.name && (
+          <StatusLabelBadge name={label.name} color={label.color ?? '#475569'} />
+        )}
+      </div>
+
+      {/* Status label (assign / change) */}
+      <div className="px-4 py-3 border-b border-gray-100">
+        <CustomerStatusLabelControl
+          customerId={profile.id}
+          projectId={profile.project_id}
+          value={label.id}
+          valueName={label.name}
+          valueColor={label.color}
+          onChange={setLabel}
+        />
       </div>
 
       {/* Customer details */}
@@ -93,6 +126,9 @@ export function CustomerProfilePanel({
           ))
         )}
       </div>
+
+      {/* Internal notes (MED-217) — agents/admins only, never shown to the customer */}
+      <CustomerInternalNotes customerId={profile.id} />
 
     </div>
   );

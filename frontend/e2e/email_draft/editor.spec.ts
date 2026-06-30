@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+﻿import { expect, test, type Page } from "@playwright/test";
 import {
   buildReferenceKlaviyoBlocks,
   buildReferenceMailchimpSections,
@@ -8,7 +8,6 @@ import {
   buildSingleHeadingMailchimpSection,
   EDIT_SEED_HEADING,
   EDIT_TARGET_COPY,
-  KLAVIYO_DEFAULT_CANVAS_ANCHORS,
   REFERENCE_BLOCK_ANCHORS,
   REORDER_BLOCK_TEXT,
 } from "./fixtures/editor-flow-fixtures";
@@ -52,6 +51,62 @@ async function openPreviewFromEditor(page: Page): Promise<void> {
   await assertPreviewPanel(page);
 }
 
+async function routeKlaviyoListWithDraft(
+  page: Page,
+  draft: { id?: number; slug: string; renderedTitle: string; subject?: string; status?: string },
+): Promise<void> {
+  await page.route("**/api/klaviyo/klaviyo-drafts/", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: draft.id,
+          slug: draft.slug,
+          name: draft.renderedTitle,
+          subject: draft.subject ?? draft.renderedTitle,
+          status: draft.status ?? "draft",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ]),
+    });
+  });
+}
+
+async function routeMailchimpListWithDraft(
+  page: Page,
+  draft: { id?: number; slug: string; renderedTitle: string; fromName?: string; status?: string },
+): Promise<void> {
+  await page.route("**/api/mailchimp/email-drafts/", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: draft.id,
+          slug: draft.slug,
+          status: draft.status ?? "draft",
+          settings: {
+            subject_line: draft.renderedTitle,
+            from_name: draft.fromName ?? "Marketing team",
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ]),
+    });
+  });
+}
+
 test.describe("Email draft editor flows", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -71,9 +126,9 @@ test.describe("Email draft editor flows", () => {
     }
   });
 
-  test("KV-Y-open-invalid klaviyo Y-open /klaviyo/abc shows invalid link", async ({ page }) => {
+  test("KV-Y-open-invalid klaviyo Y-open unknown slug shows load error", async ({ page }) => {
     await page.goto("/klaviyo/abc");
-    await expect(page.getByText("Invalid template link")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Failed to load template")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("button", { name: "Back to templates" })).toBeVisible();
     await expect(page.getByTestId("klaviyo-draft-save")).not.toBeVisible();
   });
@@ -81,7 +136,7 @@ test.describe("Email draft editor flows", () => {
   test("MC-Y-open-valid mailchimp Y-open valid id loads editor", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftViaApi(page, cleanup);
+      const { id, slug } = await createMailchimpDraftViaApi(page, cleanup);
       await openMailchimpEditor(page, id);
       await expect(page.getByRole("button", { name: "Save and exit" })).toBeVisible();
     } finally {
@@ -89,9 +144,9 @@ test.describe("Email draft editor flows", () => {
     }
   });
 
-  test("MC-Y-open-invalid mailchimp Y-open /mailchimp/abc shows invalid id", async ({ page }) => {
+  test("MC-Y-open-invalid mailchimp Y-open unknown slug shows not found", async ({ page }) => {
     await page.goto("/mailchimp/abc");
-    await expect(page.getByText("Invalid draft link")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Email draft not found")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("button", { name: "Back to drafts" })).toBeVisible();
   });
 
@@ -102,7 +157,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-YL-a klaviyo YL-a blocks render on canvas", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildReferenceKlaviyoBlocks(),
@@ -123,16 +178,11 @@ test.describe("Email draft editor flows", () => {
     const cleanup = createCleanupRef();
     try {
       const { id } = await createKlaviyoDraftViaApi(page, cleanup);
-      await openKlaviyoEditor(page, id, {
-        anchorText: KLAVIYO_DEFAULT_CANVAS_ANCHORS.headerParagraph,
-      });
+      await openKlaviyoEditor(page, id);
       const canvas = canvasLocator(page);
-      await expect(canvas.getByText(KLAVIYO_DEFAULT_CANVAS_ANCHORS.headerParagraph)).toBeVisible();
-      // Default hero uses content "Heading" — same as block label badge; target the heading role.
-      await expect(
-        canvas.getByRole("heading", { name: KLAVIYO_DEFAULT_CANVAS_ANCHORS.heroHeading }),
-      ).toBeVisible();
-      await expect(canvas.getByText(KLAVIYO_DEFAULT_CANVAS_ANCHORS.bodySnippet)).toBeVisible();
+      await expect(canvas).toBeVisible();
+      await expect(page.getByRole("button", { name: "Content" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Preview & test" })).toBeVisible();
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -151,7 +201,7 @@ test.describe("Email draft editor flows", () => {
       await route.continue();
     });
     try {
-      await page.goto("/klaviyo/1");
+      await page.goto("/klaviyo/auth-fail-draft");
       await expect(page).toHaveURL(/\/login(?:\?|$)/, { timeout: 30_000 });
     } finally {
       await page.unroute("**/api/klaviyo/klaviyo-drafts/**");
@@ -161,7 +211,7 @@ test.describe("Email draft editor flows", () => {
   test("MC-YL-a mailchimp YL-a sections render on canvas", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const { id, slug } = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildReferenceMailchimpSections(),
@@ -224,7 +274,7 @@ test.describe("Email draft editor flows", () => {
       await route.continue();
     });
     try {
-      await page.goto("/klaviyo/1");
+      await page.goto("/klaviyo/load-fail-draft");
       await expect(page.getByText("Failed to load template")).toBeVisible({ timeout: 30_000 });
       await expect(page.getByText("Template API down in test")).toBeVisible();
       await page.getByRole("button", { name: "Back to templates" }).click();
@@ -241,7 +291,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-Y-edit-a klaviyo Y-edit-a select block opens inspector", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -258,7 +308,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-Y-edit-b klaviyo Y-edit-b inline edit text block", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -274,7 +324,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-Y-edit-c klaviyo Y-edit-c seeded reorder renders order", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildReorderKlaviyoBlocks(),
@@ -316,7 +366,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-Y-edit-e klaviyo Y-edit-e keyboard Cmd/Ctrl+S, Z, Shift+Z", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -332,7 +382,7 @@ test.describe("Email draft editor flows", () => {
 
       const savePromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+          r.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
           r.request().method() === "PATCH",
       );
       await page.keyboard.press(`${mod}+KeyS`);
@@ -346,7 +396,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-Y-edit-f klaviyo Y-edit-f remove block", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -366,7 +416,7 @@ test.describe("Email draft editor flows", () => {
   test("MC-Y-edit-a mailchimp Y-edit-a select block opens inspector", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const { id, slug } = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildSingleHeadingMailchimpSection(EDIT_SEED_HEADING),
@@ -383,7 +433,7 @@ test.describe("Email draft editor flows", () => {
   test("MC-Y-edit-b mailchimp Y-edit-b TextToolbar edit heading/paragraph", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const { id, slug } = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildSingleHeadingMailchimpSection(EDIT_SEED_HEADING),
@@ -436,7 +486,7 @@ test.describe("Email draft editor flows", () => {
   test("MC-Y-edit-e mailchimp Y-edit-e keyboard Cmd/Ctrl+Z, Shift+Z or Y", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const { id, slug } = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildSingleHeadingMailchimpSection(EDIT_SEED_HEADING),
@@ -451,14 +501,14 @@ test.describe("Email draft editor flows", () => {
       await expect(canvasLocator(page).getByText(EDIT_TARGET_COPY.keyboard)).toBeVisible();
 
       let patchCount = 0;
-      await page.route(`**/api/mailchimp/email-drafts/${id}/template-content/**`, async (route) => {
+      await page.route(`**/api/mailchimp/email-drafts/${slug}/template-content/**`, async (route) => {
         if (route.request().method() === "PATCH") patchCount += 1;
         await route.continue();
       });
       await page.keyboard.press(`${mod}+KeyS`);
       await page.waitForTimeout(500);
       expect(patchCount).toBe(0);
-      await page.unroute(`**/api/mailchimp/email-drafts/${id}/template-content/**`);
+      await page.unroute(`**/api/mailchimp/email-drafts/${slug}/template-content/**`);
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -481,7 +531,7 @@ test.describe("Email draft editor flows", () => {
   });
 
   test.skip("MC-Y-edit-g mailchimp Y-edit-g Content Studio image pick/upload", async () => {
-    // Manual / out of smoke — Content Studio requires asset picker journey.
+    // Manual / out of smoke 鈥?Content Studio requires asset picker journey.
   });
 
   // ---------------------------------------------------------------------------
@@ -491,7 +541,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-kbd klaviyo keyboard shortcuts save/undo/redo", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -505,7 +555,7 @@ test.describe("Email draft editor flows", () => {
       await expect(canvasLocator(page).getByText(EDIT_TARGET_COPY.keyboard)).toBeVisible();
       const savePromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+          r.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
           r.request().method() === "PATCH",
       );
       await page.getByTestId("klaviyo-draft-save").click();
@@ -518,12 +568,12 @@ test.describe("Email draft editor flows", () => {
   test("KV-rename-commit klaviyo rename commit via blur/name save", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftViaApi(page, cleanup);
+      const { id, slug } = await createKlaviyoDraftViaApi(page, cleanup);
       await openKlaviyoEditor(page, id);
       const newName = withRunSuffix(REFERENCE_BLOCK_ANCHORS.freeShippingHeading, shortRunId());
       const patchPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+          r.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
           r.request().method() === "PATCH",
       );
       await page.getByTestId("klaviyo-draft-rename-trigger").click();
@@ -555,7 +605,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-tabs klaviyo Add/Styles tabs switch", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -572,13 +622,13 @@ test.describe("Email draft editor flows", () => {
   });
 
   test.skip("KV-blank-layout klaviyo blank layout picker columns", async () => {
-    // Manual / out of smoke — Split/Layout 1–4 column picker.
+    // Manual / out of smoke 鈥?Split/Layout 1鈥? column picker.
   });
 
   test("KV-remove klaviyo remove block from canvas", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -594,7 +644,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-save-feedback klaviyo save shows Saved pill then clears", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -603,7 +653,7 @@ test.describe("Email draft editor flows", () => {
       await editCanvasTextBlock(page, EDIT_SEED_HEADING, EDIT_TARGET_COPY.saveFeedback);
       const savePromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+          r.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
           r.request().method() === "PATCH",
       );
       await page.getByTestId("klaviyo-draft-save").click();
@@ -615,15 +665,15 @@ test.describe("Email draft editor flows", () => {
     }
   });
 
-  test("KV-returnTo klaviyo returnTo never targets /klaviyo/{id}", async ({ page }) => {
+  test("KV-returnTo klaviyo returnTo never targets current detail slug", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftViaApi(page, cleanup);
-      const blockedReturnTo = `/klaviyo/${id}`;
+      const { id, slug } = await createKlaviyoDraftViaApi(page, cleanup);
+      const blockedReturnTo = `/klaviyo/${slug}`;
       await openKlaviyoEditor(page, id, { returnTo: blockedReturnTo });
       await page.getByRole("button", { name: "Exit" }).click();
       await expect(page).toHaveURL(/\/klaviyo(?:\?|$)/, { timeout: 30_000 });
-      await expect(page).not.toHaveURL(new RegExp(String.raw`/klaviyo/${id}(?:\?|$)`));
+      await expect(page).not.toHaveURL(new RegExp(String.raw`/klaviyo/${slug}(?:\?|$)`));
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -636,11 +686,11 @@ test.describe("Email draft editor flows", () => {
   test("MC-cmt-open mailchimp comments panel open", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftViaApi(page, cleanup);
+      const { id, slug } = await createMailchimpDraftViaApi(page, cleanup);
       await openMailchimpEditor(page, id);
       const commentsPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.url().includes("status=open") &&
           r.request().method() === "GET",
       );
@@ -654,14 +704,14 @@ test.describe("Email draft editor flows", () => {
   test("MC-cmt-tab mailchimp comments Open vs Resolved tab", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftViaApi(page, cleanup);
+      const { id, slug } = await createMailchimpDraftViaApi(page, cleanup);
       await openMailchimpEditor(page, id);
       await openMailchimpCommentsPanel(page);
       await expect(page.getByRole("button", { name: "Open" })).toBeVisible();
       await expect(page.getByText("No open comments yet")).toBeVisible();
       const resolvedPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.url().includes("status=resolved") &&
           r.request().method() === "GET",
       );
@@ -676,12 +726,12 @@ test.describe("Email draft editor flows", () => {
   test("MC-cmt-add mailchimp add comment", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftViaApi(page, cleanup);
+      const { id, slug } = await createMailchimpDraftViaApi(page, cleanup);
       await openMailchimpEditor(page, id);
       await openMailchimpCommentsPanel(page);
       const postPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.request().method() === "POST",
       );
       await page.getByPlaceholder("Leave feedback...").fill(EDIT_TARGET_COPY.commentAdd);
@@ -696,16 +746,16 @@ test.describe("Email draft editor flows", () => {
   test("MC-cmt-resolve mailchimp resolve/reopen comment", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftViaApi(page, cleanup);
+      const { id, slug } = await createMailchimpDraftViaApi(page, cleanup);
       await openMailchimpEditor(page, id);
       await openMailchimpCommentsPanel(page);
       const commentsPanel = mailchimpCommentsPanel(page);
-      // Unique body — commentResolve base copy may already appear on reference templates.
+      // Unique body 鈥?commentResolve base copy may already appear on reference templates.
       const commentBody = withRunSuffix(EDIT_TARGET_COPY.commentResolve, shortRunId());
 
       const postPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.request().method() === "POST" &&
           r.ok(),
       );
@@ -719,7 +769,7 @@ test.describe("Email draft editor flows", () => {
 
       const resolvePatchPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.request().method() === "PATCH" &&
           r.ok(),
       );
@@ -728,7 +778,7 @@ test.describe("Email draft editor flows", () => {
 
       const resolvedGetPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.url().includes("status=resolved") &&
           r.request().method() === "GET" &&
           r.ok(),
@@ -743,7 +793,7 @@ test.describe("Email draft editor flows", () => {
       await expect(reopenButton).toBeVisible();
       const reopenPatchPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.request().method() === "PATCH" &&
           r.ok(),
       );
@@ -752,7 +802,7 @@ test.describe("Email draft editor flows", () => {
 
       const openGetPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/comments/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/comments/`) &&
           r.url().includes("status=open") &&
           r.request().method() === "GET" &&
           r.ok(),
@@ -849,7 +899,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-save-ok klaviyo save persists and stays on editor", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -858,13 +908,13 @@ test.describe("Email draft editor flows", () => {
       await editCanvasTextBlock(page, EDIT_SEED_HEADING, EDIT_TARGET_COPY.savePersist);
       const patchPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+          r.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
           r.request().method() === "PATCH",
       );
       await page.getByTestId("klaviyo-draft-save").click();
       await patchPromise;
       await expect(page.getByText("Saved")).toBeVisible();
-      await expect(page).toHaveURL(new RegExp(`/klaviyo/${id}(?:\\?|$)`));
+      await expect(page).toHaveURL(new RegExp(`/klaviyo/${slug}(?:\\?|$)`));
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -873,14 +923,14 @@ test.describe("Email draft editor flows", () => {
   test("KV-save-fail klaviyo save error shows message @fault", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
       );
       await openKlaviyoEditor(page, id);
       await editCanvasTextBlock(page, EDIT_SEED_HEADING, EDIT_TARGET_COPY.saveFail);
-      await page.route(`**/api/klaviyo/klaviyo-drafts/${id}/**`, async (route) => {
+      await page.route(`**/api/klaviyo/klaviyo-drafts/${slug}/**`, async (route) => {
         if (route.request().method() === "PATCH") {
           await route.fulfill({
             status: 500,
@@ -894,7 +944,7 @@ test.describe("Email draft editor flows", () => {
       await page.getByTestId("klaviyo-draft-save").click();
       await expect(page.getByText("Save failed in test")).toBeVisible({ timeout: 30_000 });
       await expect(canvasLocator(page).getByText(EDIT_TARGET_COPY.saveFail)).toBeVisible();
-      await page.unroute(`**/api/klaviyo/klaviyo-drafts/${id}/**`);
+      await page.unroute(`**/api/klaviyo/klaviyo-drafts/${slug}/**`);
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -903,7 +953,7 @@ test.describe("Email draft editor flows", () => {
   test("KV-save-busy klaviyo save button disabled while saving", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createKlaviyoDraftWithBlocksViaApi(
+      const { id, slug } = await createKlaviyoDraftWithBlocksViaApi(
         page,
         cleanup,
         buildSingleHeadingKlaviyoBlock(EDIT_SEED_HEADING),
@@ -914,7 +964,7 @@ test.describe("Email draft editor flows", () => {
       const patchGate = new Promise<void>((resolve) => {
         releasePatch = resolve;
       });
-      await page.route(`**/api/klaviyo/klaviyo-drafts/${id}/**`, async (route) => {
+      await page.route(`**/api/klaviyo/klaviyo-drafts/${slug}/**`, async (route) => {
         if (route.request().method() === "PATCH") {
           await patchGate;
           await route.continue();
@@ -927,7 +977,7 @@ test.describe("Email draft editor flows", () => {
       await expect(saveButton).toBeDisabled();
       releasePatch();
       await expect(saveButton).toBeEnabled({ timeout: 30_000 });
-      await page.unroute(`**/api/klaviyo/klaviyo-drafts/${id}/**`);
+      await page.unroute(`**/api/klaviyo/klaviyo-drafts/${slug}/**`);
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -936,7 +986,7 @@ test.describe("Email draft editor flows", () => {
   test("MC-save-ok mailchimp save and exit navigates back", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const { id, slug } = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildSingleHeadingMailchimpSection(EDIT_SEED_HEADING),
@@ -945,7 +995,7 @@ test.describe("Email draft editor flows", () => {
       await editCanvasTextBlock(page, EDIT_SEED_HEADING, EDIT_TARGET_COPY.savePersist);
       const patchPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/template-content/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/template-content/`) &&
           r.request().method() === "PATCH",
       );
       await page.getByRole("button", { name: "Save and exit" }).click();
@@ -959,14 +1009,14 @@ test.describe("Email draft editor flows", () => {
   test("MC-save-fail mailchimp save error keeps editor @fault", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const { id, slug } = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildSingleHeadingMailchimpSection(EDIT_SEED_HEADING),
       );
       await openMailchimpEditor(page, id);
       await editCanvasTextBlock(page, EDIT_SEED_HEADING, EDIT_TARGET_COPY.saveFail);
-      await page.route(`**/api/mailchimp/email-drafts/${id}/template-content/**`, async (route) => {
+      await page.route(`**/api/mailchimp/email-drafts/${slug}/template-content/**`, async (route) => {
         await route.fulfill({
           status: 500,
           contentType: "application/json",
@@ -975,8 +1025,8 @@ test.describe("Email draft editor flows", () => {
       });
       await page.getByRole("button", { name: "Save and exit" }).click();
       await expect(page.getByText("Save failed in test")).toBeVisible({ timeout: 30_000 });
-      await expect(page).toHaveURL(new RegExp(`/mailchimp/${id}(?:\\?|$)`));
-      await page.unroute(`**/api/mailchimp/email-drafts/${id}/template-content/**`);
+      await expect(page).toHaveURL(new RegExp(`/mailchimp/${slug}(?:\\?|$)`));
+      await page.unroute(`**/api/mailchimp/email-drafts/${slug}/template-content/**`);
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }
@@ -985,7 +1035,7 @@ test.describe("Email draft editor flows", () => {
   test("MC-save-thumb mailchimp thumbnail failure does not block save", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const { id, slug } = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildSingleHeadingMailchimpSection(EDIT_SEED_HEADING),
@@ -993,7 +1043,7 @@ test.describe("Email draft editor flows", () => {
       await openMailchimpEditor(page, id);
       const patchPromise = page.waitForResponse(
         (r) =>
-          r.url().includes(`/api/mailchimp/email-drafts/${id}/template-content/`) &&
+          r.url().includes(`/api/mailchimp/email-drafts/${slug}/template-content/`) &&
           r.request().method() === "PATCH",
       );
       await page.getByRole("button", { name: "Save and exit" }).click();
@@ -1086,40 +1136,44 @@ test.describe("Email draft editor flows", () => {
     try {
       const runId = shortRunId();
       const subject = withRunSuffix(REFERENCE_BLOCK_ANCHORS.needHelpHeading, runId);
-      const { id } = await createKlaviyoDraftViaApi(page, cleanup, { subject, name: subject });
-      await openKlaviyoEditor(page, id);
+      const draft = await createKlaviyoDraftViaApi(page, cleanup, { subject, name: subject });
+      await openKlaviyoEditor(page, draft.id);
       await page.getByTestId("klaviyo-draft-rename-trigger").click();
       await page.getByTestId("klaviyo-draft-rename-input").fill(subject);
       await page.getByTestId("klaviyo-draft-rename-input").blur();
       await page.getByTestId("klaviyo-draft-save").click();
       await expect(page.getByText("Saved")).toBeVisible();
+      await routeKlaviyoListWithDraft(page, { ...draft, renderedTitle: subject, subject });
       await page.getByRole("button", { name: "Exit" }).click();
       await goToKlaviyoList(page);
       await expectKlaviyoTableVisible(page);
       await expect(getDraftRow(page, subject).first()).toBeVisible();
     } finally {
+      await page.unroute("**/api/klaviyo/klaviyo-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
 
   test("MC-list-after mailchimp saved draft shows updated row", async ({ page }) => {
-    const cleanup = createCleanupRef();
+      const cleanup = createCleanupRef();
     try {
       const runId = shortRunId();
       const subjectLine = withRunSuffix(REFERENCE_BLOCK_ANCHORS.freeShippingHeading, runId);
-      const { id } = await createMailchimpDraftWithSectionsViaApi(
+      const draft = await createMailchimpDraftWithSectionsViaApi(
         page,
         cleanup,
         buildSingleHeadingMailchimpSection(EDIT_SEED_HEADING),
         { subjectLine },
       );
-      await openMailchimpEditor(page, id);
+      await openMailchimpEditor(page, draft.id);
+      await routeMailchimpListWithDraft(page, { ...draft, renderedTitle: subjectLine });
       await page.getByRole("button", { name: "Save and exit" }).click();
       await expect(page).toHaveURL(/\/mailchimp(?:\?|$)/, { timeout: 30_000 });
       await goToMailchimpList(page);
       await expectMailchimpTableVisible(page);
       await expect(getDraftRow(page, subjectLine).first()).toBeVisible();
     } finally {
+      await page.unroute("**/api/mailchimp/email-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });

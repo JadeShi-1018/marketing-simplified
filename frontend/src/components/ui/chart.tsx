@@ -104,7 +104,6 @@ const ChartTooltip = RechartsPrimitive.Tooltip
 
 const ChartTooltipContent = React.forwardRef<
   HTMLDivElement,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   React.ComponentProps<"div"> & {
       active?: boolean
       payload?: any[]
@@ -269,7 +268,6 @@ const ChartLegend = RechartsPrimitive.Legend
 
 const ChartLegendContent = React.forwardRef<
   HTMLDivElement,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   React.ComponentProps<"div"> & {
       payload?: any[]
       verticalAlign?: "top" | "bottom" | "middle"

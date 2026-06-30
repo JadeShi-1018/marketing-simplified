@@ -12,7 +12,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('decision', '0001_initial'),
+        ('decision', '0006_alter_decisionstatetransition_from_status_and_more'),
     ]
 
     operations = [

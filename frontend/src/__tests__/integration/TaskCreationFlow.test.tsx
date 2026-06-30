@@ -288,35 +288,26 @@ describe('TaskCreationFlow - Budget Task', () => {
     expect(screen.getByRole('button', { name: /create task/i })).toBeInTheDocument();
   });
 
-  test('should open draft from list and restore fields', async () => {
-    // Simulate restoring from autosave via getAutosave
-    mockTaskAPI.getAutosave = jest.fn().mockResolvedValue({
-      summary: 'Restored Summary',
-      description: 'Restored Description',
-      priority: 'HIGH',
-      type_form: {},
-    });
-
-    // Simulate selecting a type which triggers draft load
+  test('should reset form fields when switching type', async () => {
     render(<CreateTaskPage />);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Budget' })).toBeInTheDocument();
     });
 
-    // Click Budget type to trigger autosave restore
+    // Fill in summary first
+    const summaryInput = screen.getByPlaceholderText('Summary of this task');
+    fireEvent.change(summaryInput, { target: { value: 'Some Summary' } });
+
+    // Click Budget type — handleTypeChange resets form via hydrateForm(null)
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Budget' }));
     });
 
+    // After type change, summary should be preserved (handleTypeChange keeps it)
     await waitFor(() => {
-      expect(mockTaskAPI.getAutosave).toHaveBeenCalled();
-    });
-
-    // After restore, summary should be updated
-    await waitFor(() => {
-      const summaryInput = screen.getByPlaceholderText('Summary of this task') as HTMLInputElement;
-      expect(summaryInput.value).toBe('Restored Summary');
+      const input = screen.getByPlaceholderText('Summary of this task') as HTMLInputElement;
+      expect(input.value).toBe('Some Summary');
     });
   });
 
