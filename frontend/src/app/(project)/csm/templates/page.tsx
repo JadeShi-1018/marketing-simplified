@@ -12,7 +12,7 @@ import { QuickReplyTemplateAPI } from '@/lib/api/csmConversationApi';
 import type { QuickReplyTemplate, QuickReplyTemplateHistory } from '@/types/csmConversation';
 
 interface TeamOption { id: number; name: string; }
-import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List, Building2 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // TagInput — chip-style tag editor with suggestions
@@ -515,6 +515,7 @@ function TemplateModal({
 // ---------------------------------------------------------------------------
 function TemplatesPageContent() {
   const [adminOrgs, setAdminOrgs] = useState<{ id: number; name: string }[]>([]);
+  const [orgsLoading, setOrgsLoading] = useState(true);
   const [selectedOrgId, setSelectedOrgId] = useState<number | null>(null);
   const [templates, setTemplates] = useState<QuickReplyTemplate[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
@@ -533,7 +534,8 @@ function TemplatesPageContent() {
         setAdminOrgs(data);
         if (data.length > 0) setSelectedOrgId(data[0].id);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setOrgsLoading(false));
   }, []);
 
   // Load teams for scoping selector
@@ -616,7 +618,8 @@ function TemplatesPageContent() {
             <button
               onClick={() => { setEditTarget(null); setModalOpen(true); }}
               disabled={!selectedOrgId}
-              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40"
+              title={!selectedOrgId ? 'You must be an admin of a customer-service organisation to create templates' : undefined}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Plus size={15} />
               New Template
@@ -662,7 +665,24 @@ function TemplatesPageContent() {
           </div>
 
           {/* Template grid */}
-          {loading ? (
+          {!orgsLoading && adminOrgs.length === 0 ? (
+            <div className="flex flex-col items-center text-center py-16 px-4">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-blue-50 mb-4">
+                <Building2 className="h-6 w-6 text-blue-500" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-800 mb-1">No customer-service organisation yet</h3>
+              <p className="text-sm text-gray-500 max-w-sm mb-5">
+                Quick reply templates belong to a customer-service organisation. Create one — or ask an
+                administrator to add you to theirs — before you can add templates.
+              </p>
+              <a
+                href="/csm?tab=organisations"
+                className="px-5 py-2.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Go to Organisations
+              </a>
+            </div>
+          ) : (orgsLoading || loading) ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3, 4, 5, 6].map((i) => (
                 <div key={i} className="h-36 bg-gray-100 rounded-xl animate-pulse" />
