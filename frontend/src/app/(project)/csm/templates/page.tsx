@@ -13,7 +13,7 @@ import type { QuickReplyTemplate, QuickReplyTemplateHistory } from '@/types/csmC
 import FilterDropdown from '@/components/ui/FilterDropdown';
 
 interface TeamOption { id: number; name: string; }
-import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List, ListOrdered, Building2, LayoutTemplate, Users, Globe } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List, ListOrdered, Building2, LayoutTemplate, Users, Globe, Check } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // TagInput — chip-style tag editor with suggestions
@@ -379,6 +379,74 @@ function TemplateCard({
 }
 
 // ---------------------------------------------------------------------------
+// TeamSelect — full-width, non-native dropdown matching the modal's fields
+// ---------------------------------------------------------------------------
+function TeamSelect({
+  value,
+  onChange,
+  teams,
+}: {
+  value: number | null;
+  onChange: (v: number | null) => void;
+  teams: TeamOption[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const selected = value !== null ? teams.find((t) => t.id === value) : null;
+  const options: { id: number | null; name: string }[] = [
+    { id: null, name: 'All agents' },
+    ...teams.map((t) => ({ id: t.id as number | null, name: t.name })),
+  ];
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-label="Visible to team"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="w-full flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-left bg-white outline-none focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 transition"
+      >
+        <span className={selected ? 'text-gray-900' : 'text-gray-500'}>{selected ? selected.name : 'All agents'}</span>
+        <ChevronDown size={15} className={`text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-10 mt-1 w-full max-h-48 overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg" role="listbox">
+          {options.map((opt) => {
+            const isSel = opt.id === value;
+            return (
+              <button
+                key={opt.id ?? 'all'}
+                type="button"
+                role="option"
+                aria-selected={isSel}
+                onClick={() => { onChange(opt.id); setOpen(false); }}
+                className={`w-full flex items-center justify-between px-3 py-1.5 text-sm text-left transition-colors ${
+                  isSel ? 'bg-[#3CCED7]/10 text-[#0f757a]' : 'text-gray-700 hover:bg-[#3CCED7]/15'
+                }`}
+              >
+                <span>{opt.name}</span>
+                {isSel && <Check size={14} className="text-[#3CCED7]" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // TemplateModal — create / edit with Tiptap, team selector, chip tags
 // ---------------------------------------------------------------------------
 interface TemplateFormState {
@@ -509,16 +577,11 @@ function TemplateModal({
                 <label className="block text-xs font-medium text-gray-600 mb-1.5">
                   Visible to team <span className="font-normal text-gray-400 ml-1">(leave blank = all agents)</span>
                 </label>
-                <select
-                  value={form.team ?? ''}
-                  onChange={(e) => setForm((p) => ({ ...p, team: e.target.value ? Number(e.target.value) : null }))}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 bg-white transition"
-                >
-                  <option value="">All agents</option>
-                  {teams.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                <TeamSelect
+                  value={form.team}
+                  onChange={(v) => setForm((p) => ({ ...p, team: v }))}
+                  teams={teams}
+                />
               </div>
             )}
 
