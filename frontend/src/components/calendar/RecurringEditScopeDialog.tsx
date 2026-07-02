@@ -114,7 +114,6 @@ export function RecurringEditScopeDialog({
         aria-hidden
         onClick={onCancel}
       />
-      <div
         role="dialog"
         aria-label={title}
         data-testid="recurring-scope-dialog"
