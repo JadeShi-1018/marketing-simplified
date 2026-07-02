@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 from types import SimpleNamespace
-import uuid
 from datetime import datetime, timedelta, date
 
 from django.db import transaction
@@ -14,7 +13,13 @@ from rest_framework import generics, status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
-from .services import get_calendar_events
+from .services import (
+    get_calendar_events,
+    modify_single_occurrence,
+    cancel_single_occurrence,
+    split_series_from_occurrence,
+    _count_occurrences_before,
+)
 
 from core.models import ProjectMember
 from core.slug_mixins import resolve_project_pk
@@ -615,6 +620,33 @@ def _get_accessible_calendars(
     return qs.distinct()
 
 
+def _events_intersecting_range(start_dt, end_dt, base_qs=None):
+    """
+    Return events that may appear in [start_dt, end_dt).
+
+    Non-recurring events use wall-clock overlap. Recurring masters are included
+    when the series can still produce instances in the window (so split-born
+    series remain visible after their first occurrence day).
+    """
+    if base_qs is None:
+        base_qs = Event.objects.all()
+
+    non_recurring = Q(
+        is_recurring=False,
+        start_datetime__lt=end_dt,
+        end_datetime__gt=start_dt,
+    )
+    recurring = Q(
+        is_recurring=True,
+        recurrence_rule__isnull=False,
+        start_datetime__lt=end_dt,
+    ) & (
+        Q(recurrence_rule__until__isnull=True)
+        | Q(recurrence_rule__until__gt=start_dt)
+    )
+    return base_qs.filter(non_recurring | recurring)
+
+
 def _build_calendar_view_payload(
     user,
     start_dt,
@@ -633,14 +665,13 @@ def _build_calendar_view_payload(
             "calendars": [],
         }
 
-    events_qs = (
-        Event.objects.select_related("calendar", "created_by", "recurrence_rule")
-        .filter(
+    events_qs = _events_intersecting_range(
+        start_dt,
+        end_dt,
+        Event.objects.select_related("calendar", "created_by", "recurrence_rule").filter(
             calendar__in=calendars,
             is_deleted=False,
-            start_datetime__lt=end_dt,
-            end_datetime__gt=start_dt,
-        )
+        ),
     )
 
     instances: list[Any] = []
@@ -710,8 +741,6 @@ def _expand_recurring_event(
     ).select_related("modified_event")
     exceptions_by_date = {exc.exception_date: exc for exc in exceptions}
 
-    current = event.start_datetime
-
     # Fast-forward to first occurrence that could intersect [time_min, time_max)
     if frequency == "DAILY":
         step = timezone.timedelta(days=interval)
@@ -721,7 +750,30 @@ def _expand_recurring_event(
         # For now only basic DAILY/WEEKLY patterns are supported in expansion.
         return []
 
+    # Honor the series bounds so a capped/split series stops generating.
+    # `until` is treated as exclusive (strict-less): an occurrence exactly at
+    # `until` belongs to the next (split) series, never the capped master.
+    rule_until = rule.until
+    rule_count = rule.count
+
+    # Skip occurrences that end at or before time_min (first that can intersect
+    # the window has start > time_min - duration).
+    occurrence_index = _count_occurrences_before(
+        event.start_datetime, time_min - duration, rule
+    )
+    current = event.start_datetime + (step * occurrence_index)
+
+    if rule_count is not None and occurrence_index >= rule_count:
+        return []
+    if rule_until is not None and current >= rule_until:
+        return []
+
     while current + duration <= time_max and len(instances) < max_results:
+        if rule_count is not None and occurrence_index >= rule_count:
+            break
+        if rule_until is not None and current >= rule_until:
+            break
+
         # Check intersection with requested window
         if current < time_max and (current + duration) > time_min:
             exc = exceptions_by_date.get(current)
@@ -749,6 +801,7 @@ def _expand_recurring_event(
                 instances.append(instance_obj)
 
         current = current + step
+        occurrence_index += 1
 
     return instances
 
@@ -1236,66 +1289,18 @@ class EventInstanceModifyView(generics.GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Find existing exception (if any)
-        exc = (
-            RecurrenceException.objects.filter(
-                organization=event.organization,
-                recurrence_rule=event.recurrence_rule,
-                original_event=event,
-                exception_date=original_start,
+        try:
+            modified_event = modify_single_occurrence(
+                event,
+                original_start,
+                request.data,
+                context={"request": request},
             )
-            .select_related("modified_event")
-            .first()
-        )
-
-        modified_event = None
-        if exc and not exc.is_cancelled:
-            modified_event = exc.modified_event
-        else:
-            # Create a cloned one-off event for this instance
-            cloned = Event.objects.get(pk=event.pk)
-            cloned.pk = None
-            cloned.id = uuid.uuid4()
-            cloned.is_recurring = False
-            cloned.recurrence_rule = None
-            cloned.original_start = original_start
-            duration = event.end_datetime - event.start_datetime
-            cloned.start_datetime = original_start
-            cloned.end_datetime = original_start + duration
-            cloned.ical_uid = None
-            cloned.is_deleted = False
-            cloned.save()
-
-            modified_event = cloned
-
-            # Create or update exception record
-            if exc:
-                exc.is_cancelled = False
-                exc.modified_event = modified_event
-                exc.exception_date = original_start
-                exc.organization = event.organization
-                exc.recurrence_rule = event.recurrence_rule
-                exc.original_event = event
-                exc.save()
-            else:
-                RecurrenceException.objects.create(
-                    organization=event.organization,
-                    recurrence_rule=event.recurrence_rule,
-                    original_event=event,
-                    exception_date=original_start,
-                    is_cancelled=False,
-                    modified_event=modified_event,
-                )
-
-        # Apply patch data to the modified_event using EventCreateUpdateSerializer
-        serializer = EventCreateUpdateSerializer(
-            modified_event,
-            data=request.data,
-            partial=True,
-            context={"request": request},
-        )
-        serializer.is_valid(raise_exception=True)
-        modified_event = serializer.save()
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         output = EventSerializer(modified_event)
         return Response(output.data, status=status.HTTP_200_OK)
@@ -1344,36 +1349,80 @@ class EventInstanceCancelView(generics.GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        exc = (
-            RecurrenceException.objects.filter(
-                organization=event.organization,
-                recurrence_rule=event.recurrence_rule,
-                original_event=event,
-                exception_date=original_start,
-            )
-            .select_related("modified_event")
-            .first()
-        )
-
-        if exc:
-            # Soft delete any existing modified_event and mark exception as cancelled
-            if exc.modified_event_id:
-                exc.modified_event.is_deleted = True
-                exc.modified_event.save(update_fields=["is_deleted", "updated_at"])
-            exc.modified_event = None
-            exc.is_cancelled = True
-            exc.save()
-        else:
-            RecurrenceException.objects.create(
-                organization=event.organization,
-                recurrence_rule=event.recurrence_rule,
-                original_event=event,
-                exception_date=original_start,
-                is_cancelled=True,
-                modified_event=None,
+        try:
+            cancel_single_occurrence(event, original_start)
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class EventInstanceModifyFutureView(generics.GenericAPIView):
+    """
+    Modify a recurring event from a given occurrence onward ("this and future").
+
+    Splits the series: the master is capped just before the selected occurrence
+    and a new recurring event/series is created from that occurrence with the
+    edited values. Returns the new series master event.
+    """
+
+    serializer_class = EventCreateUpdateSerializer
+    permission_classes = [IsAuthenticatedInOrganization, EventAccessPermission]
+
+    def _get_event(self, request, *args, **kwargs) -> Event:
+        event_id = self.kwargs["event_id"]
+        event = get_object_or_404(
+            Event,
+            id=event_id,
+            is_deleted=False,
+        )
+
+        perm = EventAccessPermission()
+        setattr(self, "required_permission", "edit")
+        if not perm.has_object_permission(request, self, event):
+            raise PermissionDenied("You do not have permission to modify this event.")
+
+        if not event.is_recurring or not event.recurrence_rule_id:
+            raise PermissionDenied("Event is not recurring.")
+
+        return event
+
+    def post(self, request, *args, **kwargs):
+        event = self._get_event(request, *args, **kwargs)
+
+        original_start_raw = request.query_params.get("original_start")
+        if not original_start_raw:
+            return Response(
+                {"detail": "original_start query parameter is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            original_start = _parse_iso_datetime(original_start_raw)
+        except ValueError:
+            return Response(
+                {"detail": "Invalid datetime format for original_start."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            new_event = split_series_from_occurrence(
+                event,
+                original_start,
+                request.data,
+                context={"request": request},
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        output = EventSerializer(new_event)
+        return Response(output.data, status=status.HTTP_201_CREATED)
 
 
 class FreeBusyView(generics.GenericAPIView):
@@ -1427,14 +1476,13 @@ class FreeBusyView(generics.GenericAPIView):
         }
 
         for cal in calendars:
-            events_qs = (
+            events_qs = _events_intersecting_range(
+                time_min,
+                time_max,
                 Event.objects.filter(
                     calendar=cal,
                     is_deleted=False,
-                    start_datetime__lt=time_max,
-                    end_datetime__gt=time_min,
-                )
-                .select_related("recurrence_rule")
+                ).select_related("recurrence_rule"),
             )
 
             intervals = []
