@@ -116,7 +116,7 @@ export function RecurringEditScopeDialog({
       />
       <div
         role="dialog"
-        aria-label="Edit recurring event"
+        aria-label={title}
         data-testid="recurring-scope-dialog"
         className="fixed left-1/2 top-1/2 z-[70] w-[calc(100vw-2rem)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border bg-white p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}

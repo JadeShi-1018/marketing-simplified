@@ -237,6 +237,13 @@ def modify_single_occurrence(
     """
     from .serializers import EventCreateUpdateSerializer
 
+    if not _occurrence_on_series(
+        event.start_datetime, original_start, event.recurrence_rule
+    ):
+        raise ValueError(
+            "The selected occurrence is not part of this event series."
+        )
+
     with transaction.atomic():
         modified_event, _exc = _get_or_create_modified_event(event, original_start)
 
@@ -255,6 +262,13 @@ def cancel_single_occurrence(event: Event, original_start: datetime) -> None:
     Scope = "this only" delete: cancel a single occurrence, leaving the master
     series intact. Any existing per-occurrence override is soft-deleted.
     """
+    if not _occurrence_on_series(
+        event.start_datetime, original_start, event.recurrence_rule
+    ):
+        raise ValueError(
+            "The selected occurrence is not part of this event series."
+        )
+
     with transaction.atomic():
         exc = (
             RecurrenceException.objects.filter(

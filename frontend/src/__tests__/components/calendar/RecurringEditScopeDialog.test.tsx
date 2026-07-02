@@ -108,4 +108,19 @@ describe('RecurringEditScopeDialog', () => {
 
     expect(onConfirm).toHaveBeenCalledWith('all');
   });
+
+  it('uses the title prop for the dialog accessible name', () => {
+    render(
+      <RecurringEditScopeDialog
+        open
+        title="Change recurring event"
+        onCancel={jest.fn()}
+        onConfirm={jest.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole('dialog', { name: 'Change recurring event' }),
+    ).toBeInTheDocument();
+  });
 });

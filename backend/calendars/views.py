@@ -18,6 +18,7 @@ from .services import (
     modify_single_occurrence,
     cancel_single_occurrence,
     split_series_from_occurrence,
+    _count_occurrences_before,
 )
 
 from core.models import ProjectMember
@@ -740,8 +741,6 @@ def _expand_recurring_event(
     ).select_related("modified_event")
     exceptions_by_date = {exc.exception_date: exc for exc in exceptions}
 
-    current = event.start_datetime
-
     # Fast-forward to first occurrence that could intersect [time_min, time_max)
     if frequency == "DAILY":
         step = timezone.timedelta(days=interval)
@@ -756,7 +755,18 @@ def _expand_recurring_event(
     # `until` belongs to the next (split) series, never the capped master.
     rule_until = rule.until
     rule_count = rule.count
-    occurrence_index = 0
+
+    # Skip occurrences that end at or before time_min (first that can intersect
+    # the window has start > time_min - duration).
+    occurrence_index = _count_occurrences_before(
+        event.start_datetime, time_min - duration, rule
+    )
+    current = event.start_datetime + (step * occurrence_index)
+
+    if rule_count is not None and occurrence_index >= rule_count:
+        return []
+    if rule_until is not None and current >= rule_until:
+        return []
 
     while current + duration <= time_max and len(instances) < max_results:
         if rule_count is not None and occurrence_index >= rule_count:
@@ -1279,12 +1289,18 @@ class EventInstanceModifyView(generics.GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        modified_event = modify_single_occurrence(
-            event,
-            original_start,
-            request.data,
-            context={"request": request},
-        )
+        try:
+            modified_event = modify_single_occurrence(
+                event,
+                original_start,
+                request.data,
+                context={"request": request},
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         output = EventSerializer(modified_event)
         return Response(output.data, status=status.HTTP_200_OK)
@@ -1333,7 +1349,13 @@ class EventInstanceCancelView(generics.GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        cancel_single_occurrence(event, original_start)
+        try:
+            cancel_single_occurrence(event, original_start)
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 

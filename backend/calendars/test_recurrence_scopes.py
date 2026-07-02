@@ -21,6 +21,8 @@ from calendars.views import (
     EventInstancesView,
     EventInstanceModifyView,
     EventInstanceModifyFutureView,
+    EventInstanceCancelView,
+    _expand_recurring_event,
 )
 
 
@@ -86,6 +88,15 @@ class RecurringScopeEditTests(CalendarTestBase):
             f"/api/v1/events/{event.id}/instances/modify-future/",
             {"title": title},
             format="json",
+        )
+        request.META["QUERY_STRING"] = f"original_start={original_start}"
+        force_authenticate(request, user=self.user)
+        return view(request, event_id=event.id)
+
+    def _cancel_instance(self, event, original_start):
+        view = EventInstanceCancelView.as_view()
+        request = self.factory.delete(
+            f"/api/v1/events/{event.id}/instances/cancel/",
         )
         request.META["QUERY_STRING"] = f"original_start={original_start}"
         force_authenticate(request, user=self.user)
@@ -361,3 +372,50 @@ class RecurringScopeEditTests(CalendarTestBase):
             if item.get("title") == "Later half"
         ]
         self.assertGreaterEqual(len(titles), 1)
+
+    def test_modify_rejects_invalid_original_start(self):
+        event = self._create_recurring_event()
+        resp = self._modify_instance(event, "2026-01-16T09:30:00Z", "Bad time")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cancel_rejects_invalid_original_start(self):
+        event = self._create_recurring_event()
+        split_point = "2026-01-17T09:00:00Z"
+        self.assertEqual(
+            self._split_future(event, split_point, "New half").status_code,
+            status.HTTP_201_CREATED,
+        )
+        resp = self._cancel_instance(event, "2026-01-19T09:00:00Z")
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_expand_fast_forwards_long_running_series(self):
+        from datetime import datetime, timezone
+
+        view = EventViewSet.as_view({"post": "create"})
+        payload = {
+            "calendar_id": str(self.calendar.id),
+            "title": "Old daily",
+            "description": "Original",
+            "start_datetime": "2020-01-01T09:00:00Z",
+            "end_datetime": "2020-01-01T10:00:00Z",
+            "timezone": "UTC",
+            "is_all_day": False,
+            "status": "confirmed",
+            "event_type": "default",
+            "is_recurring": True,
+            "recurrence": {"frequency": "DAILY", "interval": 1},
+        }
+        request = self.factory.post("/api/v1/events/", payload, format="json")
+        force_authenticate(request, user=self.user)
+        response = view(request)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        event = Event.objects.get(id=response.data["id"])
+
+        time_min = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        time_max = datetime(2026, 6, 8, tzinfo=timezone.utc)
+        instances = _expand_recurring_event(event, time_min, time_max)
+
+        starts = [item.start_datetime.isoformat().replace("+00:00", "Z") for item in instances]
+        self.assertEqual(starts[0], "2026-06-01T09:00:00Z")
+        self.assertEqual(len(starts), 7)
+        self.assertTrue(all(start.startswith("2026-06-") for start in starts))
