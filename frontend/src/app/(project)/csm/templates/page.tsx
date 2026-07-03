@@ -8,12 +8,12 @@ import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { OrganisationAPI } from '@/lib/api/organisationAPI';
 import api from '@/lib/api';
-import { QuickReplyTemplateAPI } from '@/lib/api/csmConversationApi';
-import type { QuickReplyTemplate, QuickReplyTemplateHistory } from '@/types/csmConversation';
+import { QuickReplyTemplateAPI, TemplateTagAPI } from '@/lib/api/csmConversationApi';
+import type { QuickReplyTemplate, QuickReplyTemplateHistory, TemplateTag } from '@/types/csmConversation';
 import FilterDropdown from '@/components/ui/FilterDropdown';
 
 interface TeamOption { id: number; name: string; }
-import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List, ListOrdered, Building2, LayoutTemplate, Users, Globe, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, Tag, Search, X, History, ChevronDown, ChevronUp, Bold, Italic, List, ListOrdered, Building2, LayoutTemplate, Users, Globe, Check, Settings2 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
 // TagInput — chip-style tag editor with suggestions
@@ -33,7 +33,8 @@ function TagInput({
 
   const addTag = (tag: string) => {
     const trimmed = tag.trim().toLowerCase();
-    if (!trimmed || value.includes(trimmed)) return;
+    // Tags are an admin-managed allowlist: only accept entries in the vocabulary.
+    if (!trimmed || value.includes(trimmed) || !suggestions.includes(trimmed)) return;
     onChange([...value, trimmed]);
     setInput('');
     setShowSuggestions(false);
@@ -198,11 +199,11 @@ function HistoryModal({
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   useEffect(() => {
-    QuickReplyTemplateAPI.history(template.id)
+    QuickReplyTemplateAPI.history(template.slug)
       .then(setHistory)
       .catch(() => setHistory([]))
       .finally(() => setLoading(false));
-  }, [template.id]);
+  }, [template.slug]);
 
   const fmt = (iso: string) =>
     new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -307,7 +308,7 @@ function TemplateCard({
   teamName?: string | null;
   query?: string;
   onEdit: (t: QuickReplyTemplate) => void;
-  onDelete: (id: number) => void;
+  onDelete: (slug: string) => void;
   onHistory: (t: QuickReplyTemplate) => void;
 }) {
   return (
@@ -331,7 +332,7 @@ function TemplateCard({
             <Pencil size={14} />
           </button>
           <button
-            onClick={() => onDelete(template.id)}
+            onClick={() => onDelete(template.slug)}
             className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
             title="Delete"
           >
@@ -462,7 +463,7 @@ function TemplateModal({
   initial,
   orgId,
   teams,
-  allTags,
+  managedTags,
   onClose,
   onSaved,
 }: {
@@ -470,7 +471,7 @@ function TemplateModal({
   initial: QuickReplyTemplate | null;
   orgId: number;
   teams: TeamOption[];
-  allTags: string[];
+  managedTags: string[];
   onClose: () => void;
   onSaved: (t: QuickReplyTemplate) => void;
 }) {
@@ -521,7 +522,7 @@ function TemplateModal({
         team: form.team,
       };
       if (initial) {
-        saved = await QuickReplyTemplateAPI.update(initial.id, payload);
+        saved = await QuickReplyTemplateAPI.update(initial.slug, payload);
       } else {
         saved = await QuickReplyTemplateAPI.create({ organisation: orgId, ...payload });
       }
@@ -594,7 +595,7 @@ function TemplateModal({
               <TagInput
                 value={form.tags}
                 onChange={(tags) => setForm((p) => ({ ...p, tags }))}
-                suggestions={allTags}
+                suggestions={managedTags}
               />
             </div>
 
@@ -641,6 +642,9 @@ function TemplatesPageContent() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<QuickReplyTemplate | null>(null);
   const [historyTarget, setHistoryTarget] = useState<QuickReplyTemplate | null>(null);
+  const [managedTags, setManagedTags] = useState<TemplateTag[]>([]);
+  const [showTagManager, setShowTagManager] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
 
   // Load orgs on mount
   useEffect(() => {
@@ -679,8 +683,25 @@ function TemplatesPageContent() {
     loadTemplates();
   }, [loadTemplates]);
 
+  // Load managed tags when org changes
+  const loadManagedTags = useCallback(async () => {
+    if (!selectedOrgId) return;
+    try {
+      const data = await TemplateTagAPI.list({ organisation: selectedOrgId });
+      setManagedTags(data);
+    } catch {
+      setManagedTags([]);
+    }
+  }, [selectedOrgId]);
+
+  useEffect(() => {
+    loadManagedTags();
+  }, [loadManagedTags]);
+
   // Collect all tags from loaded templates (for suggestions + filter)
-  const allTags = Array.from(new Set(templates.flatMap((t) => t.tags))).sort();
+  // Merge managed tags with any free-text tags already on templates
+  const managedTagNames = managedTags.map((t) => t.name);
+  const allTags = Array.from(new Set([...managedTagNames, ...templates.flatMap((t) => t.tags)])).sort();
 
   // Client-side filter
   const filtered = templates.filter((t) => {
@@ -697,13 +718,33 @@ function TemplatesPageContent() {
     setModalOpen(true);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (slug: string) => {
     if (!confirm('Delete this template?')) return;
     try {
-      await QuickReplyTemplateAPI.remove(id);
-      setTemplates((prev) => prev.filter((t) => t.id !== id));
+      await QuickReplyTemplateAPI.remove(slug);
+      setTemplates((prev) => prev.filter((t) => t.slug !== slug));
     } catch {
       alert('Failed to delete.');
+    }
+  };
+
+  const handleAddTag = async () => {
+    if (!newTagName.trim() || !selectedOrgId) return;
+    try {
+      const tag = await TemplateTagAPI.create({ organisation: selectedOrgId, name: newTagName.trim() });
+      setManagedTags((prev) => [...prev, tag].sort((a, b) => a.name.localeCompare(b.name)));
+      setNewTagName('');
+    } catch {
+      alert('Tag already exists or could not be created.');
+    }
+  };
+
+  const handleRemoveTag = async (id: number) => {
+    try {
+      await TemplateTagAPI.remove(id);
+      setManagedTags((prev) => prev.filter((t) => t.id !== id));
+    } catch {
+      alert('Failed to delete tag.');
     }
   };
 
@@ -745,6 +786,19 @@ function TemplatesPageContent() {
               <Plus size={15} />
               New Template
             </button>
+            {selectedOrgId && (
+              <button
+                onClick={() => setShowTagManager((v) => !v)}
+                className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors ${
+                  showTagManager
+                    ? 'bg-[#3CCED7]/15 text-[#1a9ba3] border-[#3CCED7]'
+                    : 'text-gray-600 border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                <Settings2 size={15} />
+                Manage Tags
+              </button>
+            )}
           </div>
 
           {/* Org selector + filters */}
@@ -784,6 +838,59 @@ function TemplatesPageContent() {
               />
             )}
           </div>
+
+          {/* Tag management panel */}
+          {showTagManager && selectedOrgId && (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6 animate-in fade-in-0 slide-in-from-top-2 duration-200">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Tag Management</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Create and manage tags that agents can use when creating templates.</p>
+                </div>
+                <button onClick={() => setShowTagManager(false)} className="p-1 text-gray-400 hover:text-gray-600">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="flex gap-2 mb-3">
+                <input
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag(); } }}
+                  placeholder="New tag name…"
+                  className="flex-1 rounded-lg border border-gray-200 px-3 py-1.5 text-sm outline-none focus:border-[#3CCED7]"
+                />
+                <button
+                  onClick={handleAddTag}
+                  disabled={!newTagName.trim()}
+                  className="px-3 py-1.5 text-sm font-medium bg-[#1a9ba3] text-white rounded-lg hover:bg-[#15848b] disabled:opacity-40 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+              {managedTags.length === 0 ? (
+                <p className="text-xs text-gray-400">No managed tags yet. Add your first tag above.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {managedTags.map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="inline-flex items-center gap-1 text-xs px-2.5 py-1 bg-[#3CCED7]/15 text-[#1a9ba3] rounded-full font-medium group/tag"
+                    >
+                      <Tag size={10} />
+                      {tag.name}
+                      <button
+                        onClick={() => handleRemoveTag(tag.id)}
+                        className="ml-0.5 text-[#3CCED7] hover:text-red-500 opacity-0 group-hover/tag:opacity-100 transition-opacity"
+                        title="Delete tag"
+                      >
+                        <X size={10} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Template grid */}
           {!orgsLoading && adminOrgs.length === 0 ? (
@@ -847,7 +954,7 @@ function TemplatesPageContent() {
             initial={editTarget}
             orgId={selectedOrgId}
             teams={teams}
-            allTags={allTags}
+            managedTags={managedTagNames}
             onClose={() => { setModalOpen(false); setEditTarget(null); }}
             onSaved={handleSaved}
           />

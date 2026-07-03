@@ -9,6 +9,7 @@ import {
   QuickReplyTemplate,
   QuickReplyTemplatePayload,
   QuickReplyTemplateHistory,
+  TemplateTag,
   Ticket,
 } from '@/types/csmConversation';
 
@@ -114,8 +115,8 @@ export class QuickReplyTemplateAPI {
     return Array.isArray(res.data) ? res.data : (res.data?.results ?? []);
   }
 
-  static async get(id: number): Promise<QuickReplyTemplate> {
-    const res = await api.get<QuickReplyTemplate>(`${TMPL_BASE}/${id}/`);
+  static async get(slug: string): Promise<QuickReplyTemplate> {
+    const res = await api.get<QuickReplyTemplate>(`${TMPL_BASE}/${slug}/`);
     return res.data;
   }
 
@@ -124,17 +125,35 @@ export class QuickReplyTemplateAPI {
     return res.data;
   }
 
-  static async update(id: number, payload: Partial<QuickReplyTemplatePayload>): Promise<QuickReplyTemplate> {
-    const res = await api.patch<QuickReplyTemplate>(`${TMPL_BASE}/${id}/`, payload);
+  static async update(slug: string, payload: Partial<QuickReplyTemplatePayload>): Promise<QuickReplyTemplate> {
+    const res = await api.patch<QuickReplyTemplate>(`${TMPL_BASE}/${slug}/`, payload);
+    return res.data;
+  }
+
+  static async remove(slug: string): Promise<void> {
+    await api.delete(`${TMPL_BASE}/${slug}/`);
+  }
+
+  static async history(slug: string): Promise<QuickReplyTemplateHistory[]> {
+    const res = await api.get<QuickReplyTemplateHistory[]>(`${TMPL_BASE}/${slug}/history/`);
+    return Array.isArray(res.data) ? res.data : [];
+  }
+}
+
+const TAG_BASE = '/api/csm/template-tags';
+
+export class TemplateTagAPI {
+  static async list(params?: { organisation?: number }): Promise<TemplateTag[]> {
+    const res = await api.get(`${TAG_BASE}/`, { params });
+    return Array.isArray(res.data) ? res.data : (res.data?.results ?? []);
+  }
+
+  static async create(payload: { organisation: number; name: string }): Promise<TemplateTag> {
+    const res = await api.post<TemplateTag>(`${TAG_BASE}/`, payload);
     return res.data;
   }
 
   static async remove(id: number): Promise<void> {
-    await api.delete(`${TMPL_BASE}/${id}/`);
-  }
-
-  static async history(id: number): Promise<QuickReplyTemplateHistory[]> {
-    const res = await api.get<QuickReplyTemplateHistory[]>(`${TMPL_BASE}/${id}/history/`);
-    return Array.isArray(res.data) ? res.data : [];
+    await api.delete(`${TAG_BASE}/${id}/`);
   }
 }

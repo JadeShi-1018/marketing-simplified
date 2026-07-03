@@ -4,7 +4,7 @@ from rest_framework.filters import SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count, Q, Case, When, IntegerField, Value
 from django.utils import timezone
@@ -20,6 +20,7 @@ from core.slug_mixins import SlugLookupViewSetMixin
 from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification,
     Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory,
+    TemplateTag,
     TicketForm, TicketFormAssignment, SupportProject, CsmWorkType,
     SupportChannel, SLAPolicy, SLAPriorityTarget,
 )
@@ -30,6 +31,7 @@ from .serializers import (
     ConversationSerializer, ConversationDetailSerializer,
     ConversationMessageSerializer, TicketSerializer,
     QuickReplyTemplateSerializer, QuickReplyTemplateHistorySerializer,
+    TemplateTagSerializer,
     TicketFormListSerializer,
     TicketFormDetailSerializer,
     TicketFormCreateSerializer,
@@ -614,15 +616,15 @@ class CsmNotificationViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(CsmNotificationSerializer(notification).data)
 
 
-class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
+class QuickReplyTemplateViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     CRUD for quick-reply templates scoped to a CSM organisation.
 
     - GET    /templates/?organisation={id}   list active templates
     - POST   /templates/                     create
-    - GET    /templates/{id}/                retrieve
-    - PATCH  /templates/{id}/               update
-    - DELETE /templates/{id}/               delete (hard delete, or set is_active=False)
+    - GET    /templates/{slug}/                retrieve
+    - PATCH  /templates/{slug}/               update
+    - DELETE /templates/{slug}/               delete (soft-delete via is_active=False)
 
     Agents can list/read; only supervisors/admins can create/update/delete.
     """
@@ -699,6 +701,57 @@ class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
         qs = template.history.select_related('edited_by').order_by('-edited_at')
         serializer = QuickReplyTemplateHistorySerializer(qs, many=True)
         return Response(serializer.data)
+
+
+class TemplateTagViewSet(viewsets.ModelViewSet):
+    """
+    Admin-managed tag vocabulary for quick-reply templates.
+
+    - GET    /template-tags/?organisation={id}   list tags (any org member)
+    - POST   /template-tags/                     create  (admin/supervisor only)
+    - DELETE /template-tags/{id}/                delete  (admin/supervisor only)
+
+    Tags are manageable by administrators only; agents may list them so they
+    can apply them when authoring templates.
+    """
+    serializer_class = TemplateTagSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def _user_manages_org(self, user, organisation_id):
+        """True if user is an active admin/supervisor of the given org."""
+        if not organisation_id:
+            return False
+        return CustomerUser.objects.filter(
+            user=user, is_active=True,
+            organisation_id=organisation_id,
+            user_type__in=('supervisor', 'admin'),
+        ).exists()
+
+    def get_queryset(self):
+        qs = TemplateTag.objects.all()
+        org_id = self.request.query_params.get('organisation')
+        if org_id:
+            qs = qs.filter(organisation_id=org_id)
+        else:
+            # Limit to orgs the user belongs to
+            accessible_org_ids = CustomerUser.objects.filter(
+                user=self.request.user, is_active=True,
+            ).values_list('organisation_id', flat=True)
+            qs = qs.filter(organisation_id__in=list(accessible_org_ids))
+        return qs
+
+    def perform_create(self, serializer):
+        org = serializer.validated_data.get('organisation')
+        org_id = org.id if org else None
+        if not self._user_manages_org(self.request.user, org_id):
+            raise PermissionDenied('Only organisation admins/supervisors may manage template tags.')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self._user_manages_org(self.request.user, instance.organisation_id):
+            raise PermissionDenied('Only organisation admins/supervisors may manage template tags.')
+        instance.delete()
 
 
 class TicketViewSet(viewsets.ModelViewSet):
