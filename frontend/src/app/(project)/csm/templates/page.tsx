@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -75,6 +76,11 @@ function TagInput({
           value={input}
           onChange={(e) => { setInput(e.target.value); setShowSuggestions(true); }}
           onKeyDown={(e) => {
+            // Ignore Enter/comma while an IME composition is in progress (e.g.
+            // confirming a pinyin candidate for English text) — otherwise the
+            // tag gets committed with the composition's in-progress spacing
+            // (e.g. "ye s" instead of "yes").
+            if (e.nativeEvent.isComposing) return;
             if ((e.key === 'Enter' || e.key === ',') && input.trim()) {
               e.preventDefault();
               addTag(input);
@@ -208,7 +214,7 @@ function HistoryModal({
   const fmt = (iso: string) =>
     new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm animate-in fade-in-0 duration-200">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-in fade-in-0 zoom-in-95 duration-200">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
@@ -271,7 +277,8 @@ function HistoryModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
@@ -534,7 +541,7 @@ function TemplateModal({
     }
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm animate-in fade-in-0 duration-200">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col animate-in fade-in-0 zoom-in-95 duration-200">
         {/* Modal header */}
@@ -590,7 +597,7 @@ function TemplateModal({
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1.5">
                 Tags <span className="text-red-400">*</span>
-                <span className="font-normal text-gray-400 ml-1">(at least one)</span>
+                <span className="font-normal text-gray-400 ml-1">(at least one, press Enter to confirm)</span>
               </label>
               <TagInput
                 value={form.tags}
@@ -623,7 +630,8 @@ function TemplateModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

@@ -18,7 +18,7 @@ interface ConversationComposerProps {
 // ---------------------------------------------------------------------------
 // TemplatePicker
 // ---------------------------------------------------------------------------
-function TemplatePicker({
+export function TemplatePicker({
   organisationId,
   onSelect,
   onClose,
