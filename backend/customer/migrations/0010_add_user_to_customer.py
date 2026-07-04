@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ('customer', '0001_initial'),
+        ('customer', '0003_unique_email_per_project'),
     ]
 
     operations = [

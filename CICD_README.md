@@ -77,6 +77,8 @@ The workflow still contains a few legacy per-app `makemigrations` calls for exis
 
 **Do not rely on CI/CD to generate migrations.** Migration files are source code and must be reviewed and committed by the developer who changed the model.
 
+**Migration safety:** CI's `migration_guard` job blocks PRs that delete or rename existing migration files — historical migrations must be kept so databases that already applied them stay valid (use the `migration-override` PR label only for intentional, reviewed cleanups). Note the production deploy does **not** run `migrate`, so schema changes must be applied to production manually after deploy. See [backend/MIGRATIONS.md](backend/MIGRATIONS.md) for the full policy and how to add/squash migrations safely.
+
 ---
 
 ### b. Writing Frontend-Backend Integration Tests

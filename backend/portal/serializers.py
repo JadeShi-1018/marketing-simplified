@@ -1,9 +1,43 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.http import Http404
 from customer.models import Customer
 from csm.models import Conversation, ConversationMessage
+from csm.services.support_channels import resolve_active_channel
 
 User = get_user_model()
+
+class PortalConversationCreateSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    subject = serializers.CharField(required=False, allow_blank=True, default='')
+    support_channel_id = serializers.IntegerField(required=False, allow_null=True)
+    embed_key = serializers.UUIDField(required=False, allow_null=True)
+
+    def validate_message(self, value):
+        stripped = value.strip()
+        if not stripped:
+            raise serializers.ValidationError('This field is required.')
+        return stripped
+
+    def validate(self, attrs):
+        channel_id = attrs.get('support_channel_id')
+        embed_key = attrs.get('embed_key')
+        if channel_id is None and embed_key is None:
+            return attrs
+
+        if channel_id is not None and embed_key is not None:
+            try:
+                by_id = resolve_active_channel(channel_id)
+                by_key = resolve_active_channel(embed_key)
+            except Http404 as exc:
+                raise serializers.ValidationError(
+                    'Support channel not found or inactive.',
+                ) from exc
+            if by_id.pk != by_key.pk:
+                raise serializers.ValidationError(
+                    'support_channel_id and embed_key refer to different channels.',
+                )
+        return attrs
 
 
 class PortalRegisterSerializer(serializers.Serializer):

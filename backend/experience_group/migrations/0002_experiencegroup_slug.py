@@ -10,7 +10,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('experience_group', '0001_initial'),
+        ('experience_group', '0003_unique_name_per_project'),
     ]
 
     operations = [

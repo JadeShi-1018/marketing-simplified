@@ -3,7 +3,7 @@ from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, CsmNotification,
     Conversation, ConversationMessage, Ticket, QuickReplyTemplate, QuickReplyTemplateHistory,
     TicketForm, TicketFormField, TicketFormAssignment,
-    SupportProject, CsmWorkType,
+    SupportProject, CsmWorkType, SupportChannel,
     SLAPolicy, SLAPriorityTarget,
 )
 
@@ -205,9 +205,14 @@ class CustomerProfileSerializer(serializers.Serializer):
     email = serializers.EmailField()
     company = serializers.CharField()
     phone = serializers.CharField()
+    project_id = serializers.IntegerField(default=None)
     organisation_id = serializers.IntegerField(source='organisation.id', default=None)
     organisation_name = serializers.CharField(source='organisation.name', default=None)
     region_name = serializers.CharField(source='region.name', default=None)
+    # Status label (MED-217): agents view/assign it on the profile panel.
+    status_label = serializers.IntegerField(source='status_label_id', default=None)
+    status_label_name = serializers.CharField(source='status_label.name', default=None)
+    status_label_color = serializers.CharField(source='status_label.color', default=None)
 
 
 class ConversationDetailSerializer(ConversationSerializer):
@@ -430,3 +435,90 @@ class SLAPolicySerializer(serializers.ModelSerializer):
 
         instance.refresh_from_db()
         return instance
+
+
+class SupportChannelExperienceGroupSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+
+
+class SupportChannelListSerializer(serializers.ModelSerializer):
+    assignment_count = serializers.IntegerField(read_only=True)
+    default_queue_name = serializers.CharField(
+        source='default_queue.name', read_only=True, default=None,
+    )
+    experience_groups = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportChannel
+        fields = [
+            'id', 'display_name', 'channel_type', 'is_active',
+            'assignment_count', 'default_queue_name', 'experience_groups',
+            'sort_order',
+        ]
+        read_only_fields = fields
+
+    def get_experience_groups(self, obj):
+        return [
+            {'id': link.experience_group_id, 'name': link.experience_group.name}
+            for link in obj.experience_group_links.all()
+        ]
+
+
+class SupportChannelDetailSerializer(serializers.ModelSerializer):
+    assignment_count = serializers.IntegerField(read_only=True)
+    default_queue_name = serializers.CharField(
+        source='default_queue.name', read_only=True, default=None,
+    )
+    ticket_form_name = serializers.CharField(
+        source='ticket_form.name', read_only=True, default=None,
+    )
+    experience_groups = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportChannel
+        fields = [
+            'id', 'project', 'channel_type', 'display_name', 'welcome_message',
+            'operating_hours', 'timezone', 'offline_fallback_message',
+            'offline_alternative', 'offline_alternative_target_id',
+            'default_queue', 'default_queue_name',
+            'ticket_form', 'ticket_form_name',
+            'email_address', 'embed_key', 'is_active', 'sort_order',
+            'assignment_count', 'experience_groups',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'project', 'embed_key', 'assignment_count',
+            'default_queue_name', 'ticket_form_name', 'experience_groups',
+            'created_at', 'updated_at',
+        ]
+
+    def get_experience_groups(self, obj):
+        return [
+            {'id': link.experience_group_id, 'name': link.experience_group.name}
+            for link in obj.experience_group_links.all()
+        ]
+
+
+class SupportChannelCreateUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SupportChannel
+        fields = [
+            'channel_type', 'display_name', 'welcome_message', 'operating_hours',
+            'timezone', 'offline_fallback_message', 'offline_alternative',
+            'offline_alternative_target_id', 'default_queue', 'ticket_form',
+            'email_address', 'sort_order', 'is_active',
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance is not None:
+            self.fields['channel_type'].read_only = True
+
+
+class ReplaceChannelAssignmentsSerializer(serializers.Serializer):
+    experience_group_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        default=list,
+    )

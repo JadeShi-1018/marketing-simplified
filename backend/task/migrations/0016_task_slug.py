@@ -12,6 +12,8 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
+        ('task', '0015_merge_20260526_0244'),
+        ('task', '0015_merge_20260527_0357'),
         ('task', '0002_add_origin_action_item'),
     ]
 

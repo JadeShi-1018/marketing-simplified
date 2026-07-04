@@ -15,7 +15,7 @@ def backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('ad_copy_variation', '0001_initial'),
+        ('ad_copy_variation', '0003_adcopyvariation_project_status_position'),
     ]
 
     operations = [

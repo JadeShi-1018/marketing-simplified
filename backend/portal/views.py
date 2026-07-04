@@ -8,15 +8,23 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import Http404
 
 from customer.models import Customer
-from csm.models import Conversation, ConversationMessage, Queue
+from csm.models import Conversation, ConversationMessage, Queue, SupportChannel
 from csm.serializers import ConversationSerializer, ConversationMessageSerializer
+from csm.services.support_channels import (
+    build_offline_payload,
+    evaluate_channel_availability,
+    resolve_channel_for_conversation,
+)
 from .serializers import (
     PortalRegisterSerializer,
     PortalConversationSerializer,
     PortalConversationDetailSerializer,
     PortalMessageSerializer,
+    PortalConversationCreateSerializer,
 )
 
 
@@ -85,14 +93,53 @@ class PortalConversationViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        subject = request.data.get('subject', '').strip()
-        message_text = request.data.get('message', '').strip()
+        serializer = PortalConversationCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        message_text = data['message']
+        subject = data.get('subject', '').strip()
 
-        if not message_text:
-            return Response({'detail': 'message is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        support_channel = None
+        channel_id = data.get('support_channel_id')
+        embed_key = data.get('embed_key')
+        if channel_id is not None or embed_key is not None:
+            try:
+                support_channel = resolve_channel_for_conversation(
+                    support_channel_id=channel_id,
+                    embed_key=str(embed_key) if embed_key is not None else None,
+                )
+            except Http404:
+                return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+            except DjangoValidationError as exc:
+                detail = exc.messages[0] if getattr(exc, 'messages', None) else str(exc)
+                return Response({'detail': detail}, status=status.HTTP_400_BAD_REQUEST)
+
+            if support_channel.channel_type != SupportChannel.ChannelType.LIVE_CHAT:
+                return Response(
+                    {'detail': 'Only live chat channels can start conversations.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            availability = evaluate_channel_availability(support_channel)
+            if not availability['is_online']:
+                return Response(
+                    {
+                        'detail': 'Channel is currently offline.',
+                        'offline': build_offline_payload(support_channel, request),
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+            if not support_channel.default_queue_id:
+                return Response(
+                    {'detail': 'Channel has no default queue configured.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         queue = None
-        if customer.organisation:
+        if support_channel is not None:
+            queue = support_channel.default_queue
+        elif customer.organisation:
             queue = Queue.objects.filter(organisation=customer.organisation).first()
 
         conversation = Conversation.objects.create(
@@ -100,6 +147,7 @@ class PortalConversationViewSet(
             queue=queue,
             status='pending',
             channel='web',
+            support_channel=support_channel,
             tags=[subject] if subject else [],
         )
 

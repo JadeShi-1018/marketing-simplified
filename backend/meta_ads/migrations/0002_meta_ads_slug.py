@@ -25,7 +25,7 @@ def backfill_creative(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("meta_ads", "0001_initial"),
+        ("meta_ads", "0003_metasyncrun_current_phase_and_more"),
     ]
 
     operations = [
