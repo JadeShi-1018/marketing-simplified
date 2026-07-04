@@ -1,7 +1,11 @@
 from django.db import models
 from django.conf import settings
 
-from .crypto import decrypt_token, encrypt_token
+import logging
+
+from .crypto import DecryptionError, decrypt_token, encrypt_token
+
+logger = logging.getLogger(__name__)
 
 
 class ZoomCredential(models.Model):
@@ -29,10 +33,24 @@ class ZoomCredential(models.Model):
         self.encrypted_refresh_token = encrypt_token(refresh_token) or ""
 
     def get_access_token(self) -> str | None:
-        return decrypt_token(self.encrypted_access_token)
+        try:
+            return decrypt_token(self.encrypted_access_token)
+        except DecryptionError:
+            logger.error(
+                "ZoomCredential(user=%s): access token decryption failed — reconnect required.",
+                self.user_id,
+            )
+            return None
 
     def get_refresh_token(self) -> str | None:
-        return decrypt_token(self.encrypted_refresh_token)
+        try:
+            return decrypt_token(self.encrypted_refresh_token)
+        except DecryptionError:
+            logger.error(
+                "ZoomCredential(user=%s): refresh token decryption failed — reconnect required.",
+                self.user_id,
+            )
+            return None
 
     def __str__(self):
         return f"ZoomCredential for {self.user}"

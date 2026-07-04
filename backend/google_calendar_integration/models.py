@@ -1,7 +1,11 @@
 from django.conf import settings
 from django.db import models
 
-from google_docs_integration.crypto import decrypt_token, encrypt_token
+import logging
+
+from google_docs_integration.crypto import DecryptionError, decrypt_token, encrypt_token
+
+logger = logging.getLogger(__name__)
 
 
 class GoogleCalendarConnection(models.Model):
@@ -34,13 +38,27 @@ class GoogleCalendarConnection(models.Model):
         db_table = "google_calendar_connections"
 
     def get_access_token(self) -> str | None:
-        return decrypt_token(self.encrypted_access_token)
+        try:
+            return decrypt_token(self.encrypted_access_token)
+        except DecryptionError:
+            logger.error(
+                "GoogleCalendarConnection(user=%s): access token decryption failed — reconnect required.",
+                self.user_id,
+            )
+            return None
 
     def set_access_token(self, token: str | None) -> None:
         self.encrypted_access_token = encrypt_token(token)
 
     def get_refresh_token(self) -> str | None:
-        return decrypt_token(self.encrypted_refresh_token)
+        try:
+            return decrypt_token(self.encrypted_refresh_token)
+        except DecryptionError:
+            logger.error(
+                "GoogleCalendarConnection(user=%s): refresh token decryption failed — reconnect required.",
+                self.user_id,
+            )
+            return None
 
     def set_refresh_token(self, token: str | None) -> None:
         self.encrypted_refresh_token = encrypt_token(token)
