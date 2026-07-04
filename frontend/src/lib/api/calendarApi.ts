@@ -23,6 +23,23 @@ export interface CalendarDTO {
   location?: string | null;
 }
 
+export type RecurrenceFrequency = "DAILY" | "WEEKLY";
+
+export interface RecurrenceRuleDTO {
+  id?: string;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  count?: number | null;
+  until?: string | null;
+}
+
+export interface RecurrenceInput {
+  frequency: RecurrenceFrequency;
+  interval: number;
+  count?: number | null;
+  until?: string | null;
+}
+
 export interface EventDTO {
   id: string;
   calendar_id?: string;
@@ -33,9 +50,21 @@ export interface EventDTO {
   timezone?: string;
   is_all_day: boolean;
   is_recurring: boolean;
+  recurrence_rule?: RecurrenceRuleDTO | null;
+  // Start of the specific occurrence (set on expanded recurring instances).
+  // Required to target a single occurrence for "this only" / "this and future".
+  original_start?: string | null;
   color?: string;
   etag?: string;
 }
+
+export type EventWritePayload = Partial<EventDTO> & {
+  is_recurring?: boolean;
+  recurrence?: RecurrenceInput | null;
+};
+
+// Scope of a recurring-event edit.
+export type RecurringEditScope = "this" | "future" | "all";
 
 export interface CalendarViewResponse {
   view_type: CalendarViewType;
@@ -140,13 +169,36 @@ export const CalendarAPI = {
       },
     }),
 
-  createEvent: (payload: Partial<EventDTO>) =>
+  createEvent: (payload: EventWritePayload) =>
     api.post<EventDTO>("/api/events/", payload),
 
   // For now we do not send If-Match headers to avoid 412 conflicts
   // when the same user updates an event multiple times quickly.
-  updateEvent: (eventId: string, payload: Partial<EventDTO>, _etag?: string) =>
+  updateEvent: (eventId: string, payload: EventWritePayload, _etag?: string) =>
     api.patch<EventDTO>(`/api/events/${eventId}/`, payload),
+
+  // Scope = "this only": override a single occurrence of a recurring series.
+  updateEventInstance: (
+    eventId: string,
+    originalStart: string,
+    payload: Partial<EventDTO>,
+  ) =>
+    api.patch<EventDTO>(`/api/events/${eventId}/instances/modify/`, payload, {
+      params: { original_start: originalStart },
+    }),
+
+  // Scope = "this and future": split the series at the selected occurrence.
+  // Returns the newly created series master event.
+  splitEventSeries: (
+    eventId: string,
+    originalStart: string,
+    payload: Partial<EventDTO>,
+  ) =>
+    api.post<EventDTO>(
+      `/api/events/${eventId}/instances/modify-future/`,
+      payload,
+      { params: { original_start: originalStart } },
+    ),
 
   deleteEvent: (eventId: string, _etag?: string) =>
     api.delete<void>(`/api/events/${eventId}/`),

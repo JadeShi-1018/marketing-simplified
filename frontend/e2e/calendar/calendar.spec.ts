@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import {
   createEventFromDaySlot,
   createEventViaApi,
+  createRecurringEventViaApi,
   deleteCalendarById,
   deleteEventById,
   ensureCalendarAvailable,
@@ -166,6 +167,80 @@ test.describe('Calendar page', () => {
       ).toBeVisible();
     } finally {
       // Cleanup runs in finally so seeded data does not affect later tests.
+      if (eventId) {
+        await deleteEventById(page, eventId);
+      }
+      if (createdCalendarId) {
+        await deleteCalendarById(page, createdCalendarId);
+      }
+    }
+  });
+
+  test('editing a recurring event prompts for scope and "this only" hits the per-occurrence endpoint', async ({
+    page,
+  }) => {
+    await ensureOnCalendarPage(page);
+
+    let createdCalendarId: string | null = null;
+    let eventId: string | null = null;
+
+    try {
+      const ensuredCalendar = await ensureCalendarAvailable(page);
+      createdCalendarId = ensuredCalendar.createdCalendarId;
+
+      const title = `E2E Recurring ${Date.now()}`;
+      const event = await createRecurringEventViaApi(
+        page,
+        ensuredCalendar.calendarId,
+        title,
+      );
+      eventId = event.id;
+
+      await page.reload();
+      await ensureOnCalendarPage(page);
+      await switchCalendarView(page, 'Day');
+
+      // Open the occurrence, then enter edit mode (now enabled for recurring).
+      const eventCard = getCalendarEventCardByTitle(page, title);
+      await expect(eventCard).toBeVisible({ timeout: 15_000 });
+      await eventCard.click();
+
+      const viewDialog = page.getByRole('dialog', { name: 'View event' });
+      await expect(viewDialog).toBeVisible({ timeout: 10_000 });
+      await viewDialog.getByRole('button', { name: 'Edit event' }).click();
+
+      const editDialog = page.getByRole('dialog', { name: 'Edit event' });
+      await expect(editDialog).toBeVisible({ timeout: 10_000 });
+      const titleInput = editDialog.getByPlaceholder('Add title');
+      await titleInput.fill(`${title} (edited)`);
+
+      // Saving a recurring event must surface the scope prompt instead of
+      // silently editing the whole series.
+      await editDialog.getByRole('button', { name: 'Save' }).click();
+      const scopeDialog = page.getByTestId('recurring-scope-dialog');
+      await expect(scopeDialog).toBeVisible({ timeout: 10_000 });
+
+      // "This event" must route to the per-occurrence modify endpoint.
+      const isInstanceModify = (url: string, method: string) => {
+        const pathname = new URL(url).pathname;
+        return (
+          method === 'PATCH' &&
+          pathname === `/api/events/${eventId}/instances/modify/`
+        );
+      };
+      const responsePromise = page.waitForResponse(
+        (candidate) =>
+          isInstanceModify(candidate.url(), candidate.request().method()),
+        { timeout: 15_000 },
+      );
+
+      await page.getByTestId('recurring-scope-option-this').click();
+      await page.getByTestId('recurring-scope-confirm').click();
+
+      const response = await responsePromise;
+      expect(response.ok()).toBeTruthy();
+      await expect(scopeDialog).not.toBeVisible({ timeout: 10_000 });
+    } finally {
       if (eventId) {
         await deleteEventById(page, eventId);
       }
