@@ -82,7 +82,12 @@ class ProjectInviteNotificationTests(TestCase):
         newly added member with a PROJECT_INVITE notification.
         """
         invitation = self._make_invitation()
-        accept_invitation(token=invitation.token, user=self.invitee)
+
+        def call_immediately(func, using=None):
+            func()
+
+        with patch('django.db.transaction.on_commit', side_effect=call_immediately):
+            accept_invitation(token=invitation.token, user=self.invitee)
 
         mock_publish.assert_called()
         recipient_ids = [c[0][0] for c in mock_publish.call_args_list]

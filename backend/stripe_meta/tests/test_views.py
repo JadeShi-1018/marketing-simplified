@@ -1,5 +1,6 @@
 from django.test import TestCase, Client
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.utils import timezone
 from django.urls import reverse
 from datetime import date, timedelta
@@ -9,6 +10,7 @@ import stripe
 
 from stripe_meta.models import Plan, Subscription, UsageDaily, Payment
 from core.models import Organization, Role
+from core.services.tenant import slug_to_schema_name
 from access_control.models import UserRole
 from stripe_meta.permissions import generate_organization_access_token
 from rest_framework.test import APIClient
@@ -34,6 +36,15 @@ class StripeViewsTestCase(TestCase):
             name="Test Organization",
             slug="test-org"
         )
+
+        # provision_tenant_schema() resets search_path to public when it
+        # finishes.  UserRole lives only in the tenant schema (access_control
+        # migrations are stubs), so we must re-set search_path before writing
+        # any tenant-only models.  Including 'public' as fallback ensures
+        # public-schema models (Plan, Subscription, …) keep working.
+        _schema = slug_to_schema_name(self.organization.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
         
         self.user = User.objects.create_user(
             username="testuser",
@@ -73,6 +84,11 @@ class StripeViewsTestCase(TestCase):
         
         # Force authenticate user (required for IsAuthenticated permission)
         self.client.force_authenticate(user=self.user)
+
+    def tearDown(self):
+        super().tearDown()
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
 
 
 class PlanViewsTest(StripeViewsTestCase):
@@ -1382,6 +1398,12 @@ class SubscriptionCheckoutErrorTests(TestCase):
         )
         self.user.organization = self.organization
         self.user.save()
+
+        # Switch to tenant schema so tenant-only tables (UserRole, etc.) are
+        # accessible.  provision_tenant_schema() resets to public; re-set here.
+        _schema = slug_to_schema_name(self.organization.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
         
         self.plan = Plan.objects.create(
             name="Basic Plan",
@@ -1410,6 +1432,11 @@ class SubscriptionCheckoutErrorTests(TestCase):
         
         # Force authenticate user (required for IsAuthenticated permission)
         self.client.force_authenticate(user=self.user)
+
+    def tearDown(self):
+        super().tearDown()
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
 
     def test_get_subscription_no_active_subscription(self):
         """Test get_subscription when no active subscription exists"""

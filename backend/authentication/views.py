@@ -18,7 +18,8 @@ from core.models import Team, Organization, Role
 from access_control.models import UserRole
 from stripe_meta.permissions import generate_organization_access_token
 from django.conf import settings
-from django.db import transaction
+from django.db import transaction, connection
+from core.services.tenant import slug_to_schema_name
 from google_auth_oauthlib.flow import Flow  # For OAuth start (generating auth URL)
 from requests_oauthlib import OAuth2Session  # For OAuth callback (token exchange)
 from django.core.mail import send_mail
@@ -359,8 +360,16 @@ class SsoCallbackView(APIView):
                     defaults={"level": 30}
                 )
                 
-                # Assign role to user (get_or_create to avoid duplicates)
-                UserRole.objects.get_or_create(user=user, role=default_role)
+                # Assign role to user — UserRole lives only in tenant schemas,
+                # so switch search_path to the org schema for this operation.
+                _schema = slug_to_schema_name(organization.slug)
+                with connection.cursor() as _cur:
+                    _cur.execute(f'SET search_path TO {_schema}, public')
+                try:
+                    UserRole.objects.get_or_create(user=user, role=default_role)
+                finally:
+                    with connection.cursor() as _cur:
+                        _cur.execute('SET search_path TO public')
                 
                 # Generate JWT tokens
                 refresh = RefreshToken.for_user(user)

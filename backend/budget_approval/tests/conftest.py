@@ -1,10 +1,14 @@
 import os
+import uuid
 import pytest
 from decimal import Decimal
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import Client
 from freezegun import freeze_time
 from django.utils import timezone
+
+from core.services.tenant import slug_to_schema_name
 
 # Set Django settings module
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
@@ -38,17 +42,33 @@ def django_client():
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def organization():
-    """Create a test organization"""
+def organization(db):
+    """Create a test organization with a unique name to prevent cross-test UniqueViolation"""
     return Organization.objects.create(
-        name="Test Organization",
+        name=f"Test Org {uuid.uuid4().hex[:8]}",
         email_domain="test.com"
     )
 
 
 @pytest.fixture
-@pytest.mark.django_db
+def tenant_schema(organization):
+    """
+    Switch search_path to the org's tenant schema for the duration of the test.
+
+    access_control tables (UserRole, RolePermission, etc.) live only in the
+    tenant schema, not in the public schema.  provision_tenant_schema() resets
+    search_path to public after provisioning, so any fixture that writes to
+    tenant-only tables must depend on this fixture to restore the correct path.
+    """
+    _schema = slug_to_schema_name(organization.slug)
+    with connection.cursor() as cursor:
+        cursor.execute(f'SET search_path TO {_schema}, public')
+    yield
+    with connection.cursor() as cursor:
+        cursor.execute('SET search_path TO public')
+
+
+@pytest.fixture
 def team(organization):
     """Create a test team"""
     return Team.objects.create(
@@ -58,7 +78,6 @@ def team(organization):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def project(organization):
     """Create a test project"""
     return Project.objects.create(
@@ -68,7 +87,6 @@ def project(organization):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def task(project):
     """Create a test task"""
     return Task.objects.create(
@@ -79,7 +97,6 @@ def task(project):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def ad_channel(project):
     """Create a test ad channel"""
     return AdChannel.objects.create(
@@ -89,7 +106,6 @@ def ad_channel(project):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def budget_pool(project, ad_channel):
     """Create a test budget pool"""
     return BudgetPool.objects.create(
@@ -102,9 +118,8 @@ def budget_pool(project, ad_channel):
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def role(organization):
-    """Create a test role"""
+def role(organization, tenant_schema):
+    """Create a test role (created in org schema so tenant FK lookups find it)"""
     return Role.objects.create(
         name="Budget Approver",
         organization=organization,
@@ -113,32 +128,30 @@ def role(organization):
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def permissions():
+def permissions(db):
     """Create test permissions"""
     from core.models import Permission
-    
+
     permissions = []
     # Create permissions for budget request module
     permissions.append(Permission.objects.get_or_create(module='BUDGET_REQUEST', action='VIEW')[0])
     permissions.append(Permission.objects.get_or_create(module='BUDGET_REQUEST', action='EDIT')[0])
     permissions.append(Permission.objects.get_or_create(module='BUDGET_REQUEST', action='APPROVE')[0])
-    
+
     # Create permissions for budget pool module
     permissions.append(Permission.objects.get_or_create(module='BUDGET_POOL', action='VIEW')[0])
     permissions.append(Permission.objects.get_or_create(module='BUDGET_POOL', action='EDIT')[0])
-    
+
     # Create permissions for budget escalation module
     permissions.append(Permission.objects.get_or_create(module='BUDGET_ESCALATION', action='VIEW')[0])
     permissions.append(Permission.objects.get_or_create(module='BUDGET_ESCALATION', action='EDIT')[0])
-    
+
     return permissions
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def role_permissions(role, permissions):
-    """Create role permissions"""
+def role_permissions(role, permissions, tenant_schema):
+    """Create role permissions (tenant-schema table: access_control_rolepermission)"""
     role_permissions = []
     for permission in permissions:
         role_permissions.append(RolePermission.objects.create(
@@ -149,7 +162,6 @@ def role_permissions(role, permissions):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def user1(organization):
     """Create test user 1"""
     return User.objects.create_user(
@@ -161,7 +173,6 @@ def user1(organization):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def user2(organization):
     """Create test user 2"""
     return User.objects.create_user(
@@ -173,7 +184,6 @@ def user2(organization):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def user3(organization):
     """Create test user 3"""
     return User.objects.create_user(
@@ -185,8 +195,7 @@ def user3(organization):
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def superuser():
+def superuser(db):
     """Create a superuser for testing"""
     return User.objects.create_superuser(
         username='superuser',
@@ -196,8 +205,7 @@ def superuser():
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def different_organization():
+def different_organization(db):
     """Create a different organization for cross-org testing"""
     return Organization.objects.create(
         name="Different Organization",
@@ -206,7 +214,6 @@ def different_organization():
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def different_project(different_organization):
     """Create a project in different organization"""
     return Project.objects.create(
@@ -216,7 +223,6 @@ def different_project(different_organization):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def different_task(different_project):
     """Create a task in different organization"""
     return Task.objects.create(
@@ -227,7 +233,6 @@ def different_task(different_project):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def different_ad_channel(different_project):
     """Create an ad channel in different organization"""
     return AdChannel.objects.create(
@@ -237,7 +242,6 @@ def different_ad_channel(different_project):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def different_budget_pool(different_project, different_ad_channel):
     """Create a budget pool in different organization"""
     return BudgetPool.objects.create(
@@ -250,7 +254,6 @@ def different_budget_pool(different_project, different_ad_channel):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def budget_request_different_org(user1, different_task, different_budget_pool, user2, different_ad_channel):
     """Create a budget request in different organization"""
     return BudgetRequest.objects.create(
@@ -267,9 +270,8 @@ def budget_request_different_org(user1, different_task, different_budget_pool, u
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def user_role1(user1, role, team):
-    """Create user role for user1"""
+def user_role1(user1, role, team, tenant_schema):
+    """Create user role for user1 (tenant-schema table: access_control_userrole)"""
     return UserRole.objects.create(
         user=user1,
         role=role,
@@ -279,9 +281,8 @@ def user_role1(user1, role, team):
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def user_role2(user2, role, team):
-    """Create user role for user2"""
+def user_role2(user2, role, team, tenant_schema):
+    """Create user role for user2 (tenant-schema table: access_control_userrole)"""
     return UserRole.objects.create(
         user=user2,
         role=role,
@@ -291,9 +292,8 @@ def user_role2(user2, role, team):
 
 
 @pytest.fixture
-@pytest.mark.django_db
-def user_role3(user3, role, team):
-    """Create user role for user3"""
+def user_role3(user3, role, team, tenant_schema):
+    """Create user role for user3 (tenant-schema table: access_control_userrole)"""
     return UserRole.objects.create(
         user=user3,
         role=role,
@@ -303,7 +303,6 @@ def user_role3(user3, role, team):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def escalation_rule(budget_pool, role):
     """Create a test escalation rule"""
     return BudgetEscalationRule.objects.create(
@@ -316,7 +315,6 @@ def escalation_rule(budget_pool, role):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def budget_request_draft(user1, task, budget_pool, user2, ad_channel):
     """Create a draft budget request"""
     return BudgetRequest.objects.create(
@@ -333,7 +331,6 @@ def budget_request_draft(user1, task, budget_pool, user2, ad_channel):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def budget_request_submitted(user1, task, budget_pool, user2, ad_channel):
     """Create a submitted budget request"""
     return BudgetRequest.objects.create(
@@ -350,7 +347,6 @@ def budget_request_submitted(user1, task, budget_pool, user2, ad_channel):
 
 
 @pytest.fixture
-@pytest.mark.django_db
 def budget_request_under_review(user1, task, budget_pool, user2, ad_channel):
     """Create a budget request under review"""
     return BudgetRequest.objects.create(

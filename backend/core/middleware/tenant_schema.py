@@ -26,8 +26,10 @@ Recommended position (see settings.py line ~121):
 Schema resolution priority
 --------------------------
 1. Authenticated user  → user.organization.slug  (JWT-backed, not spoofable)
-2. X-Organization-Slug header → validated against DB + cache (service calls)
-3. Fallback → 'public'  (login, register, health-check, etc.)
+2. X-Organization-Token header → decrypted org slug (org-scoped encrypted JWT;
+   also used by tests that rely on DRF force_authenticate instead of JWT)
+3. X-Organization-Slug header → validated against DB + cache (service calls)
+4. Fallback → 'public'  (login, register, health-check, etc.)
 
 Caching
 -------
@@ -50,23 +52,12 @@ class TenantSchemaMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        # DEBUG logging
-        import logging
-        logger = logging.getLogger(__name__)
-
-        # Check initial search_path from connection pool
-        with connection.cursor() as cursor:
-            cursor.execute('SHOW search_path')
-            initial_path = cursor.fetchone()[0]
-            logger.info(f'TenantSchemaMiddleware: Initial search_path from pool: {initial_path} for {request.path}')
-
         # CRITICAL: DRF JWT authentication happens at the view layer, not in
         # AuthenticationMiddleware. We must manually authenticate JWT tokens here
         # so _resolve_schema() can see the authenticated user.
         self._authenticate_jwt(request)
 
         schema = self._resolve_schema(request)
-        logger.info(f'TenantSchemaMiddleware: Setting search_path to {schema} for {request.path}')
 
         # SET search_path requires unquoted identifiers, not string literals.
         # Use psycopg2.sql.Identifier for injection-safe identifier composition:
@@ -75,26 +66,36 @@ class TenantSchemaMiddleware:
             cursor.execute(
                 sql.SQL('SET search_path TO {}, public').format(sql.Identifier(schema))
             )
-            # Verify it was set
-            cursor.execute('SHOW search_path')
-            actual_path = cursor.fetchone()[0]
-            logger.info(f'TenantSchemaMiddleware: Confirmed search_path is now: {actual_path}')
 
         try:
             return self.get_response(request)
         finally:
-            # Check search_path before resetting
-            with connection.cursor() as cursor:
-                cursor.execute('SHOW search_path')
-                final_path = cursor.fetchone()[0]
-                logger.info(f'TenantSchemaMiddleware: Final search_path before reset: {final_path} for {request.path}')
-
             # CRITICAL: Django reuses DB connections across requests (connection
             # pool).  Without this reset the next request on the same connection
             # could inherit this tenant's search_path if the middleware exits
             # early (e.g. a short-circuit 403 before _resolve_schema runs again).
-            with connection.cursor() as cursor:
-                cursor.execute('SET search_path TO public')
+            #
+            # Guard against InFailedSqlTransaction: if a view raised a DB error
+            # that aborted the current transaction, the SET will fail with
+            # InFailedSqlTransaction.  Catch and rollback so the connection is
+            # returned to the pool in a clean state.
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute('SET search_path TO public')
+            except Exception:
+                # If we still can't reset the search_path, roll back the
+                # transaction to return the connection to a clean state.
+                # Do NOT call connection.close() here: Django's test runner
+                # wraps every test in a transaction/savepoint using the same
+                # connection object, so closing it causes
+                # "InterfaceError: connection already closed" in the next test.
+                # In production, a failed rollback means the connection is
+                # truly broken; Django's pool will replace it on the next
+                # request when the health-check fails.
+                try:
+                    connection.rollback()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------
     # Schema resolution
@@ -115,7 +116,18 @@ class TenantSchemaMiddleware:
                 if slug:
                     return slug_to_schema_name(slug)
 
-        # Priority 2: X-Organization-Slug header (inter-service calls).
+        # Priority 2: X-Organization-Token header (encrypted org-scoped JWT).
+        # Used by stripe_meta / org-admin endpoints and DRF force_authenticate
+        # tests where the user is not yet visible to middleware.  The token is
+        # signed + encrypted so it cannot be forged; we additionally validate
+        # the extracted slug against the DB.
+        org_token = request.META.get('HTTP_X_ORGANIZATION_TOKEN')
+        if org_token:
+            slug = self._decode_org_token(org_token)
+            if slug and self._validate_slug(slug):
+                return slug_to_schema_name(slug)
+
+        # Priority 3: X-Organization-Slug header (inter-service calls).
         # MUST be validated: any client can set arbitrary headers, so we
         # confirm the slug exists in the DB before trusting it.
         header_slug = request.headers.get('X-Organization-Slug')
@@ -124,6 +136,43 @@ class TenantSchemaMiddleware:
 
         # Fallback: public schema (unauthenticated endpoints, health checks…)
         return 'public'
+
+    @staticmethod
+    def _decode_org_token(token: str) -> str | None:
+        """
+        Decode an X-Organization-Token (signed + encrypted JWT) and return the
+        organisation slug embedded in it, or None if the token is invalid.
+
+        Mirrors stripe_meta.permissions.decode_organization_access_token but
+        lives here to avoid circular imports between core middleware and
+        stripe_meta.
+        """
+        try:
+            import base64
+            import json
+
+            import jwt
+            from cryptography.fernet import Fernet
+            from django.conf import settings
+
+            secret_key = settings.ORGANIZATION_ACCESS_TOKEN_SECRET_KEY
+            payload = jwt.decode(token, secret_key, algorithms=['HS256'])
+
+            if payload.get('type') != 'access':
+                return None
+
+            encrypted_data = payload.get('encrypted_data')
+            if not encrypted_data:
+                return None
+
+            encryption_key = settings.ORGANIZATION_ACCESS_TOKEN_ENCRYPTION_KEY.encode()
+            fernet = Fernet(encryption_key)
+            decrypted_data = fernet.decrypt(base64.b64decode(encrypted_data))
+            sensitive_data = json.loads(decrypted_data.decode())
+
+            return sensitive_data.get('organization_slug')
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # JWT Authentication

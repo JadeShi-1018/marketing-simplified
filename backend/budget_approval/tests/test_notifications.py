@@ -5,7 +5,7 @@ Integration tests: budget lifecycle in-app notifications.
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TransactionTestCase
 
 from budget_approval.models import BudgetRequest, BudgetRequestStatus, BudgetPool
 from budget_approval.services import BudgetRequestService
@@ -29,7 +29,7 @@ def _make_user(email, username, org):
     return user
 
 
-class BudgetNotificationTests(TestCase):
+class BudgetNotificationTests(TransactionTestCase):
     def _reload_br(self):
         """Re-fetch BR; django-fsm forbids refresh_from_db on status."""
         self.br = BudgetRequest.objects.get(pk=self.br.pk)

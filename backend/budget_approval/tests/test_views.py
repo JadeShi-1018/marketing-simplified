@@ -14,7 +14,7 @@ class TestBudgetRequestViews:
     def test_create_budget_request(self, api_client, user1, task, budget_pool, user2, ad_channel, team, user_role1, role_permissions):
         """Test creating a new budget request"""
         api_client.force_authenticate(user=user1)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'task': task.id,
@@ -40,7 +40,7 @@ class TestBudgetRequestViews:
     def test_create_budget_request_invalid_amount(self, api_client, user1, task, budget_pool, user2, ad_channel, team, user_role1, role_permissions):
         """Test creating a budget request with invalid amount"""
         api_client.force_authenticate(user=user1)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'task': task.id,
@@ -59,7 +59,7 @@ class TestBudgetRequestViews:
     def test_get_budget_request(self, api_client, user1, budget_request_draft, team, user_role1, role_permissions):
         """Test retrieving a budget request"""
         api_client.force_authenticate(user=user1)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         url = reverse('budget-request-detail', kwargs={'pk': budget_request_draft.id})
         response = api_client.get(url)
@@ -72,7 +72,7 @@ class TestBudgetRequestViews:
     def test_update_budget_request(self, api_client, user1, budget_request_draft, user2, ad_channel, team, user_role1, role_permissions):
         """Test updating a budget request"""
         api_client.force_authenticate(user=user1)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'task': budget_request_draft.task.id,
@@ -93,7 +93,7 @@ class TestBudgetRequestViews:
     def test_list_budget_requests(self, api_client, user1, budget_request_draft, team, user_role1, role_permissions):
         """Test listing budget requests"""
         api_client.force_authenticate(user=user1)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         url = reverse('budget-request-list')
         response = api_client.get(url)
@@ -122,7 +122,7 @@ class TestBudgetRequestDecisionView:
     def test_approve_budget_request(self, api_client, user2, budget_request_under_review, team, user_role2, role_permissions):
         """Test approving a budget request"""
         api_client.force_authenticate(user=user2)
-        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'decision': 'approve',
@@ -139,7 +139,7 @@ class TestBudgetRequestDecisionView:
     def test_reject_budget_request(self, api_client, user2, budget_request_under_review, team, user_role2, role_permissions):
         """Test rejecting a budget request"""
         api_client.force_authenticate(user=user2)
-        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'decision': 'reject',
@@ -155,7 +155,7 @@ class TestBudgetRequestDecisionView:
     def test_approve_with_next_approver(self, api_client, user2, budget_request_under_review, user3, team, user_role2, role_permissions):
         """Test approving and forwarding to next approver"""
         api_client.force_authenticate(user=user2)
-        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'decision': 'approve',
@@ -175,7 +175,7 @@ class TestBudgetRequestDecisionView:
     def test_decision_invalid_status(self, api_client, user2, budget_request_draft, team, user_role2, role_permissions):
         """Test making decision on request in invalid status"""
         api_client.force_authenticate(user=user2)
-        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_leader', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'decision': 'approve',
@@ -191,7 +191,7 @@ class TestBudgetRequestDecisionView:
     def test_decision_wrong_approver(self, api_client, user1, budget_request_under_review, team, user_role1, role_permissions):
         """Test making decision with wrong approver"""
         api_client.force_authenticate(user=user1)  # user1 is not the current approver
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'decision': 'approve',
@@ -212,7 +212,7 @@ class TestBudgetPoolViews:
     def test_get_budget_pool(self, api_client, user1, budget_pool, team, user_role1, role_permissions):
         """Test retrieving a budget pool"""
         api_client.force_authenticate(user=user1)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         url = reverse('budget-pool-detail', kwargs={'pk': budget_pool.id})
         response = api_client.get(url)
@@ -228,7 +228,7 @@ class TestBudgetPoolViews:
     def test_list_budget_pools(self, api_client, user1, budget_pool, team, user_role1, role_permissions):
         """Test listing budget pools"""
         api_client.force_authenticate(user=user1)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         url = reverse('budget-pool-list')
         response = api_client.get(url)

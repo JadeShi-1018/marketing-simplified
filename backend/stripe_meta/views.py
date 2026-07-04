@@ -706,9 +706,24 @@ def invite_users_to_organization(request):
 @permission_classes([IsAuthenticated, HasValidOrganizationToken])
 def leave_organization(request):
     """Remove current user from their organization"""
+    user = request.user
+    org = user.organization
+
+    if not org:
+        return Response(
+            {'error': 'User is not in any organization', 'code': 'NO_ORGANIZATION'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Require an explicit org token — do not accept the onboarding exemption
+    # (no-token fallback) for this destructive action.
+    if not request.META.get('HTTP_X_ORGANIZATION_TOKEN'):
+        return Response(
+            {'error': 'Organization token required', 'code': 'TOKEN_REQUIRED'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
     try:
-        user = request.user
-        org = user.organization
         user.organization = None
         user.save()
 

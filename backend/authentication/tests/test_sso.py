@@ -1,9 +1,11 @@
 from django.urls import reverse
 from django.test import override_settings
+from django.db import connection
 from rest_framework.test import APITestCase
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from core.models import Organization, Role
+from core.services.tenant import slug_to_schema_name
 from access_control.models import UserRole
 
 User = get_user_model()
@@ -82,9 +84,16 @@ class SsoCallbackViewTests(APITestCase):
         self.assertTrue(user.is_verified)
         self.assertTrue(user.is_active)
         
-        # Check role was assigned
-        user_role = UserRole.objects.get(user=user, role=self.default_role)
-        self.assertIsNotNone(user_role)
+        # Check role was assigned — UserRole lives in org schema
+        _schema = slug_to_schema_name(self.organization.slug)
+        try:
+            with connection.cursor() as _cur:
+                _cur.execute('SET search_path TO %s, public', [_schema])
+            user_role = UserRole.objects.get(user=user, role=self.default_role)
+            self.assertIsNotNone(user_role)
+        finally:
+            with connection.cursor() as _cur:
+                _cur.execute('SET search_path TO public')
 
     def test_sso_callback_success_existing_user(self):
         """Test successful SSO callback updates existing user"""
@@ -112,9 +121,16 @@ class SsoCallbackViewTests(APITestCase):
         self.assertTrue(existing_user.is_verified)
         self.assertTrue(existing_user.is_active)
         
-        # Check role was assigned
-        user_role = UserRole.objects.get(user=existing_user, role=self.default_role)
-        self.assertIsNotNone(user_role)
+        # Check role was assigned — UserRole lives in org schema
+        _schema = slug_to_schema_name(self.organization.slug)
+        try:
+            with connection.cursor() as _cur:
+                _cur.execute('SET search_path TO %s, public', [_schema])
+            user_role = UserRole.objects.get(user=existing_user, role=self.default_role)
+            self.assertIsNotNone(user_role)
+        finally:
+            with connection.cursor() as _cur:
+                _cur.execute('SET search_path TO public')
 
     def test_sso_callback_default_email(self):
         """Test SSO callback works with default email when no email provided"""
@@ -212,10 +228,17 @@ class SsoCallbackViewTests(APITestCase):
         response2 = self.client.get(f"{self.sso_callback_url}?email={email}")
         self.assertEqual(response2.status_code, status.HTTP_200_OK)
         
-        # Check only one user role exists
+        # Check only one user role exists — UserRole lives in org schema
         user = User.objects.get(email=email)
-        user_roles = UserRole.objects.filter(user=user, role=self.default_role)
-        self.assertEqual(user_roles.count(), 1)
+        _schema = slug_to_schema_name(self.organization.slug)
+        try:
+            with connection.cursor() as _cur:
+                _cur.execute('SET search_path TO %s, public', [_schema])
+            user_roles = UserRole.objects.filter(user=user, role=self.default_role)
+            self.assertEqual(user_roles.count(), 1)
+        finally:
+            with connection.cursor() as _cur:
+                _cur.execute('SET search_path TO public')
 
 
 

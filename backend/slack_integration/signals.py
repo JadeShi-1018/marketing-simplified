@@ -38,26 +38,14 @@ def _get_connection(project):
     if not project or not project.organization:
         return None
 
-    # SlackWorkspaceConnection is in public schema, need to temporarily switch
-    from django.db import connection as db_connection
-    from core.services.tenant import slug_to_schema_name
-
-    cursor = db_connection.cursor()
-    cursor.execute('SET search_path TO public')
-    cursor.close()
-
-    try:
-        return SlackWorkspaceConnection.objects.filter(
-            organization=project.organization,
-            is_active=True
-        ).first()
-    finally:
-        # Reset to tenant schema
-        cursor = db_connection.cursor()
-        if project.organization:
-            schema_name = slug_to_schema_name(project.organization.slug)
-            cursor.execute(f'SET search_path TO {schema_name}, public')
-        cursor.close()
+    # SlackWorkspaceConnection lives in the public schema.  The public schema
+    # is always present as a fallback in the search_path (both in production
+    # where TenantSchemaMiddleware sets "tenant, public" and in tests where the
+    # default is "public"), so no search_path manipulation is needed.
+    return SlackWorkspaceConnection.objects.filter(
+        organization=project.organization,
+        is_active=True
+    ).first()
 
 
 def _check_preference(connection, project, event_type, task_status=None):
@@ -303,26 +291,11 @@ def notify_on_decision_commit(sender, instance, created, **kwargs):
     else:
         author = instance.author
         if author and getattr(author, 'organization', None):
-            # SlackWorkspaceConnection is in public schema, need to temporarily switch
-            from django.db import connection as db_connection
-            from core.services.tenant import slug_to_schema_name
-
-            cursor = db_connection.cursor()
-            cursor.execute('SET search_path TO public')
-            cursor.close()
-
-            try:
-                connection = SlackWorkspaceConnection.objects.filter(
-                    organization=author.organization,
-                    is_active=True,
-                ).first()
-            finally:
-                # Reset to tenant schema
-                cursor = db_connection.cursor()
-                if author.organization:
-                    schema_name = slug_to_schema_name(author.organization.slug)
-                    cursor.execute(f'SET search_path TO {schema_name}, public')
-                cursor.close()
+            # public is always a fallback in the search_path; no manipulation needed.
+            connection = SlackWorkspaceConnection.objects.filter(
+                organization=author.organization,
+                is_active=True,
+            ).first()
 
             if connection:
                 preference = NotificationPreference.objects.filter(

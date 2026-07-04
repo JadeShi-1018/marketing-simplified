@@ -86,16 +86,19 @@ class AuthorizationMiddleware:
                 permission__action=action_key
             ).exists()
 
-            # If user has no matching permission, allow access for new organizations
-            # This handles both cases:
-            # 1. User has no roles yet
-            # 2. User has roles but permissions haven't been configured yet
             if not has:
-                has = True
+                # Only enforce denial if the user has been assigned at least one role.
+                # If no roles exist (new org / no RBAC configured), allow through as a
+                # grace period.  Users with roles that are all expired or lack the
+                # required permission are still denied.
+                any_role = UserRole.objects.filter(user=request.user).exists()
+                if not any_role:
+                    return None
+
         except Exception:
-            # If permission tables don't exist or query fails, allow access
-            # This handles new organizations where RBAC hasn't been set up yet
-            has = True
+            # If permission tables don't exist or query fails, allow access.
+            # This handles new organizations where RBAC hasn't been configured yet.
+            return None
 
         if has:
             return None  # Allow request to proceed
