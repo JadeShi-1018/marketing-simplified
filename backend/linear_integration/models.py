@@ -1,7 +1,11 @@
 from django.conf import settings
 from django.db import models
 
-from .crypto import decrypt_token, encrypt_token
+import logging
+
+from .crypto import DecryptionError, decrypt_token, encrypt_token
+
+logger = logging.getLogger(__name__)
 
 
 class LinearCredential(models.Model):
@@ -37,7 +41,14 @@ class LinearCredential(models.Model):
         self.encrypted_access_token = encrypt_token(access_token) or ""
 
     def get_access_token(self) -> str | None:
-        return decrypt_token(self.encrypted_access_token)
+        try:
+            return decrypt_token(self.encrypted_access_token)
+        except DecryptionError:
+            logger.error(
+                "LinearCredential(user=%s): access token decryption failed — reconnect required.",
+                self.user_id,
+            )
+            return None
 
     def __str__(self) -> str:
         return f"LinearCredential for {self.user}"

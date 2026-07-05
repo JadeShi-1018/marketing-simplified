@@ -2,7 +2,8 @@
 from django.test import TestCase
 from unittest.mock import patch, MagicMock
 from slack_integration.services import send_slack_message, check_and_send_reminders
-from slack_integration.models import encrypt_token, decrypt_token, SlackWorkspaceConnection, NotificationPreference
+from core.crypto import decrypt_token, encrypt_token
+from slack_integration.models import SlackWorkspaceConnection, NotificationPreference
 from core.models import Organization, Project, CustomUser
 from task.models import Task
 from django.utils import timezone
