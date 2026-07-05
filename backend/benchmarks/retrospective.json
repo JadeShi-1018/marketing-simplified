@@ -1,17 +1,17 @@
 {
-  "run_timestamp": "2026-07-04T02:09:51.228024",
+  "run_timestamp": "2026-07-05T00:36:59.988713",
   "total_tests": 1,
   "passed_tests": 1,
   "failed_tests": 0,
   "benchmarks": [
     {
       "test_name": "kpi_query_1000_records",
-      "duration_seconds": 0.151,
+      "duration_seconds": 0.185,
       "target_seconds": 2.0,
       "passed": true,
       "success": true,
       "error": null,
-      "timestamp": "2026-07-04T02:09:51.222506",
+      "timestamp": "2026-07-05T00:36:59.983237",
       "result_data": 1000
     }
   ]

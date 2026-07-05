@@ -50,19 +50,27 @@ class SsoCallbackViewTests(APITestCase):
 
     def setUp(self):
         self.sso_callback_url = reverse('sso-callback')
-        
-        # Create test organization
+
+        # Create test organization (this also provisions the tenant schema)
         self.organization = Organization.objects.create(
             name="Test Agency",
             email_domain="testagency.com"
         )
-        
-        # Create default role
-        self.default_role = Role.objects.create(
-            organization=self.organization,
-            name="Media Buyer",
-            level=30
-        )
+
+        # Role is tenant-scoped; create it inside the org schema so the FK in
+        # tenant.access_control_userrole is satisfied during constraint checks.
+        _schema = slug_to_schema_name(self.organization.slug)
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO %s, public', [_schema])
+        try:
+            self.default_role = Role.objects.create(
+                organization=self.organization,
+                name="Media Buyer",
+                level=30
+            )
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO public')
 
     def test_sso_callback_success_new_user(self):
         """Test successful SSO callback creates new user and assigns role"""
@@ -204,17 +212,30 @@ class SsoCallbackViewTests(APITestCase):
 
     def test_sso_callback_creates_default_role_if_not_exists(self):
         """Test that default role is created if it doesn't exist"""
-        # Delete existing default role
-        Role.objects.filter(organization=self.organization, name="Media Buyer").delete()
-        
+        # Role is tenant-scoped; delete it from the org schema
+        _schema = slug_to_schema_name(self.organization.slug)
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO %s, public', [_schema])
+        try:
+            Role.objects.filter(organization=self.organization, name="Media Buyer").delete()
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO public')
+
         email = "user@testagency.com"
         response = self.client.get(f"{self.sso_callback_url}?email={email}")
-        
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        
-        # Check default role was created
-        default_role = Role.objects.get(organization=self.organization, name="Media Buyer")
-        self.assertEqual(default_role.level, 30)
+
+        # Check default role was created in the org schema
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO %s, public', [_schema])
+        try:
+            default_role = Role.objects.get(organization=self.organization, name="Media Buyer")
+            self.assertEqual(default_role.level, 30)
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO public')
 
     def test_sso_callback_user_role_not_duplicated(self):
         """Test that user role is not duplicated on multiple calls"""

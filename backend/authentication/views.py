@@ -353,19 +353,19 @@ class SsoCallbackView(APIView):
                     user.set_unusable_password()
                     user.save()
                 
-                # Get or create default role
-                default_role, _ = Role.objects.get_or_create(
-                    organization=organization,
-                    name="Media Buyer",
-                    defaults={"level": 30}
-                )
-                
-                # Assign role to user — UserRole lives only in tenant schemas,
-                # so switch search_path to the org schema for this operation.
+                # Assign role to user — both Role and UserRole must be resolved
+                # inside the tenant schema context so the FK in the tenant
+                # schema's access_control_userrole resolves to the tenant's
+                # core_role table (not the public one).
                 _schema = slug_to_schema_name(organization.slug)
                 with connection.cursor() as _cur:
                     _cur.execute(f'SET search_path TO {_schema}, public')
                 try:
+                    default_role, _ = Role.objects.get_or_create(
+                        organization=organization,
+                        name="Media Buyer",
+                        defaults={"level": 30}
+                    )
                     UserRole.objects.get_or_create(user=user, role=default_role)
                 finally:
                     with connection.cursor() as _cur:
