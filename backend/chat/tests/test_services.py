@@ -7,7 +7,7 @@ from django.core.cache import cache
 from core.models import Organization, Project, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatType
 from chat.serializers import ChatCreateSerializer
-from chat.services import ChatService, OnlineStatusService
+from chat.services import ChatService, MessageService, OnlineStatusService
 pytestmark = pytest.mark.django_db
 User = get_user_model()
 
@@ -227,3 +227,100 @@ class TestPresenceRecipientCacheInvalidation:
             with capture_on_commit_callbacks(execute=True):
                 ChatService.leave_chat(self.chat, self.user_b)
         assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) == [self.user_b.id]
+
+class TestMessageServiceIdempotentCreate:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        cache.clear()
+        self.org = Organization.objects.create(name='Msg Org')
+        self.project = Project.objects.create(name='Msg Project', organization=self.org)
+        self.sender = User.objects.create_user(username='sender', email='sender@example.com', password='testpass123')
+        self.recipient = User.objects.create_user(username='recipient', email='recipient@example.com', password='testpass123')
+        for user in (self.sender, self.recipient):
+            ProjectMember.objects.create(user=user, project=self.project, role='Member', is_active=True)
+        self.chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=self.chat, user=self.sender, is_active=True)
+        ChatParticipant.objects.create(chat=self.chat, user=self.recipient, is_active=True)
+        yield
+        cache.clear()
+
+    @patch('agent.tasks.handle_chat_message_for_agent.delay')
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_create_message_with_attachments_dedupes_by_client_message_id(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        mock_agent_route,
+        capture_on_commit_callbacks,
+    ):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from chat.models import Message, MessageAttachment, MessageStatus
+        from chat.services import MessageService
+
+        attachment = MessageAttachment.objects.create(
+            message=None,
+            uploader=self.sender,
+            file=SimpleUploadedFile('note.txt', b'hello'),
+            file_type='document',
+            file_size=5,
+            original_filename='note.txt',
+            mime_type='text/plain',
+        )
+        client_message_id = 'client-msg-001'
+
+        with capture_on_commit_callbacks(execute=True):
+            first, created_first = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='With attachment',
+                attachment_ids=[attachment.id],
+                client_message_id=client_message_id,
+            )
+        assert created_first is True
+        assert first.attachments.count() == 1
+
+        with capture_on_commit_callbacks(execute=True):
+            second, created_second = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='With attachment',
+                attachment_ids=[attachment.id],
+                client_message_id=client_message_id,
+            )
+        assert created_second is False
+        assert second.id == first.id
+        assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 1
+        assert MessageStatus.objects.filter(message=first).count() == 1
+        mock_notify_recipients.assert_called_once_with(first.id)
+        mock_notify_ws.assert_called_once_with(first.id)
+        mock_agent_route.assert_not_called()
+
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_create_without_client_message_id_always_creates(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        capture_on_commit_callbacks,
+    ):
+        from chat.models import Message
+        from chat.services import MessageService
+
+        with capture_on_commit_callbacks(execute=True):
+            first, created_first = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='First',
+            )
+            second, created_second = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='Second',
+            )
+        assert created_first is True
+        assert created_second is True
+        assert first.id != second.id
+        assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 2
+        assert mock_notify_recipients.call_count == 2
+        assert mock_notify_ws.call_count == 2

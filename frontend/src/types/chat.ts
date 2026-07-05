@@ -175,6 +175,32 @@ export interface Message {
   thread_participants?: Array<{ id: number; username: string; email: string; avatar?: string | null }>;
   /** True when there are thread replies the current user has not seen. */
   has_unread_thread_replies?: boolean;
+  /** Client idempotency key while a send is still in the outbox. */
+  client_message_id?: string;
+  /** Local delivery state for optimistic / retried sends. */
+  send_status?: OutboxSendStatus;
+}
+
+// ==================== Outbox Types ====================
+
+export type OutboxSendStatus = 'pending' | 'sending' | 'failed';
+
+export interface OutboxEntry {
+  clientMessageId: string;
+  chatId: number;
+  content: string;
+  richBody?: TiptapJSONContent | null;
+  attachmentIds: number[];
+  mentionIds?: number[];
+  replyToId?: number | null;
+  parentMessageId?: number | null;
+  status: OutboxSendStatus;
+  enqueuedAt: string;
+}
+
+export interface OutboxAckCommit {
+  client_message_id: string;
+  message_id: number;
 }
 
 // ==================== API Request/Response Types ====================
@@ -199,6 +225,8 @@ export interface SendMessageRequest {
   rich_body?: TiptapJSONContent | null;
   /** IDs of @-mentioned users. */
   mention_ids?: number[];
+  /** Idempotency key for retried sends after reconnect. */
+  client_message_id?: string;
 }
 
 export interface SendMessageResponse extends Message {}
@@ -337,6 +365,7 @@ export interface ChatState {
   currentChatId: number | null;  // For Messages page
   widgetChatId: number | null;   // For Chat Widget (independent)
   messages: Record<number, Message[]>; // Keyed by chat_id
+  outbox: OutboxEntry[];
   unreadCounts: Record<number, number>; // Keyed by chat_id
   capturedUnreadCounts: Record<number, number>; // Snapshot taken at the moment a chat is opened — used for the "New messages" divider
   globalUnreadCount: number; // Total unread across ALL projects
@@ -366,7 +395,16 @@ export interface ChatState {
   
   setMessages: (chatId: number, messages: Message[]) => void;
   addMessage: (chatId: number, message: Message, currentUserId?: number) => void;
-  prependMessages: (chatId: number, messages: Message[]) => void;
+  enqueueOutbox: (entry: OutboxEntry) => void;
+  markOutboxSending: (clientMessageId: string) => void;
+  markOutboxSent: (clientMessageId: string, message: Message) => void;
+  markOutboxFailed: (clientMessageId: string) => void;
+  getOutboxDigest: () => string[];
+  flushOutbox: () => Promise<void>;
+  retryOutboxEntry: (clientMessageId: string) => Promise<void>;
+  reconcileOutboxAck: (committed: OutboxAckCommit[]) => Promise<void>;
+
+    prependMessages: (chatId: number, messages: Message[]) => void;
   updateMessage: (messageId: number, updates: Partial<Message>) => void;
   removeMessage: (messageId: number) => void;
   applyReactionUpdate: (messageId: number, emoji: string, action: 'added' | 'removed', user: ReactionUser, currentUserId: number | null) => void;

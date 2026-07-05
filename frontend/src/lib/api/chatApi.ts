@@ -338,6 +338,10 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
     payload.parent_message_id = data.parent_message_id;
   }
 
+  if (data.client_message_id) {
+    payload.client_message_id = data.client_message_id;
+  }
+
   const response = await api.post('/api/chat/messages/', payload);
   return response.data;
 };

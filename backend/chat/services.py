@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from django.contrib.auth import get_user_model
@@ -807,12 +808,263 @@ class ChatStarService:
 class MessageService:
     """Service for message-related business logic"""
 
+    # Cache-only idempotency for client_message_id retries (no DB column).
+    # Late retries after TTL expiry or Redis eviction may create duplicates.
+    CLIENT_MESSAGE_PENDING = '__pending__'
+    CLIENT_MESSAGE_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days
+    CLIENT_MESSAGE_CLAIM_POLL_INTERVAL = 0.05
+    CLIENT_MESSAGE_CLAIM_POLL_ATTEMPTS = 40  # up to ~2s
+
     class SourceAttachmentMissingError(Exception):
         """Raised when source attachment file cannot be read during forward."""
 
     class AttachmentCopyError(Exception):
         """Raised when attachment file copy fails during forward."""
-    
+
+    @staticmethod
+    def _client_message_cache_key(sender_id: int, client_message_id: str) -> str:
+        return f'chat:client_msg:{sender_id}:{client_message_id}'
+
+    @classmethod
+    def get_cached_message_id_for_client_key(
+        cls,
+        sender_id: int,
+        client_message_id: str,
+    ) -> Optional[int]:
+        cached = cache.get(cls._client_message_cache_key(sender_id, client_message_id))
+        if cached is None or cached == cls.CLIENT_MESSAGE_PENDING:
+            return None
+        try:
+            return int(cached)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _wait_for_client_message_cache(cls, cache_key: str) -> Optional[int]:
+        for _ in range(cls.CLIENT_MESSAGE_CLAIM_POLL_ATTEMPTS):
+            cached = cache.get(cache_key)
+            if cached is None:
+                return None
+            if cached != cls.CLIENT_MESSAGE_PENDING:
+                try:
+                    return int(cached)
+                except (TypeError, ValueError):
+                    return None
+            time.sleep(cls.CLIENT_MESSAGE_CLAIM_POLL_INTERVAL)
+        return None
+
+    @staticmethod
+    def _load_message_for_sender(message_id: int, sender: User, chat: Chat) -> Message:
+        message = (
+            Message.objects
+            .select_related('sender', 'reply_to', 'reply_to__sender', 'chat')
+            .prefetch_related('attachments')
+            .get(id=message_id)
+        )
+        if message.sender_id != sender.id or message.chat_id != chat.id:
+            raise ValueError('Cached client message does not match sender or chat')
+        return message
+
+    @staticmethod
+    def _link_attachments_to_message(
+        message: Message,
+        sender: User,
+        attachment_ids: List[int],
+    ) -> None:
+        if not attachment_ids:
+            return
+        linked_count = MessageAttachment.objects.filter(
+            id__in=attachment_ids,
+            uploader=sender,
+            message__isnull=True,
+        ).update(message=message)
+        if linked_count > 0 and not message.has_attachments:
+            message.has_attachments = True
+            message.save(update_fields=['has_attachments', 'updated_at'])
+
+    @staticmethod
+    def _create_recipient_statuses(message: Message, sender: User) -> None:
+        recipients = ChatParticipant.objects.filter(
+            chat=message.chat,
+            is_active=True,
+        ).exclude(user=sender).select_related('user')
+        MessageStatus.objects.bulk_create([
+            MessageStatus(
+                message=message,
+                user=recipient.user,
+                status='sent',
+            )
+            for recipient in recipients
+        ])
+
+    @staticmethod
+    def _schedule_new_message_side_effects(message: Message, sender: User) -> None:
+        message_id = message.id
+
+        def schedule_delivery() -> None:
+            from .tasks import notify_message_recipients, notify_new_message
+            notify_message_recipients.delay(message_id)
+            notify_new_message.delay(message_id)
+
+        transaction.on_commit(schedule_delivery)
+
+        def route_agent_bot() -> None:
+            try:
+                agent_bot_email = 'agent-bot@system.local'
+                if sender.email == agent_bot_email:
+                    return
+                bot_participant = ChatParticipant.objects.filter(
+                    chat_id=message.chat_id,
+                    user__email=agent_bot_email,
+                    is_active=True,
+                ).first()
+                if bot_participant:
+                    from agent.tasks import handle_chat_message_for_agent
+                    handle_chat_message_for_agent.delay(message_id)
+            except Exception:
+                logger.exception(
+                    'Failed to route message to agent bot for message %s',
+                    message_id,
+                )
+
+        transaction.on_commit(route_agent_bot)
+
+    @staticmethod
+    @transaction.atomic
+    def _persist_message_with_attachments(
+        *,
+        sender: User,
+        chat: Chat,
+        content: str,
+        attachment_ids: List[int],
+        mention_ids: List[int],
+        rich_body: Any,
+        reply_to_id: Optional[int],
+        parent_message_id: Optional[int],
+    ) -> Message:
+        if not ChatParticipant.objects.filter(chat=chat, user=sender, is_active=True).exists():
+            logger.warning('User %s is not a participant of chat %s', sender.id, chat.id)
+            raise ValueError('You are not a participant of this chat')
+
+        message = Message.objects.create(
+            chat=chat,
+            sender=sender,
+            content=content,
+            rich_body=rich_body,
+            reply_to_id=reply_to_id,
+            parent_message_id=parent_message_id,
+        )
+
+        if mention_ids:
+            MessageMention.objects.bulk_create(
+                [MessageMention(message=message, mentioned_user_id=uid) for uid in mention_ids],
+                ignore_conflicts=True,
+            )
+
+        MessageService._link_attachments_to_message(message, sender, attachment_ids)
+        MessageService._create_recipient_statuses(message, sender)
+        MessageService._schedule_new_message_side_effects(message, sender)
+
+        logger.info(
+            'Created message %s in chat %s by user %s with %s attachment(s)',
+            message.id,
+            chat.id,
+            sender.id,
+            len(attachment_ids),
+        )
+        return message
+
+    @classmethod
+    def resolve_client_message_commits(
+        cls,
+        sender_id: int,
+        client_message_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Map client outbox ids to committed server message ids (cache lookup)."""
+        committed: List[Dict[str, Any]] = []
+        for client_message_id in client_message_ids:
+            if not client_message_id:
+                continue
+            message_id = cls.get_cached_message_id_for_client_key(sender_id, client_message_id)
+            if message_id is not None:
+                committed.append({
+                    'client_message_id': client_message_id,
+                    'message_id': message_id,
+                })
+        return committed
+
+    @classmethod
+    def create_message_with_attachments(
+        cls,
+        *,
+        sender: User,
+        chat: Chat,
+        content: str,
+        attachment_ids: Optional[List[int]] = None,
+        mention_ids: Optional[List[int]] = None,
+        rich_body: Any = None,
+        reply_to_id: Optional[int] = None,
+        parent_message_id: Optional[int] = None,
+        client_message_id: Optional[str] = None,
+    ) -> Tuple[Message, bool]:
+        """
+        Create a chat message with optional attachments and idempotent retries.
+
+        When client_message_id is supplied, concurrent or retried requests with the
+        same key return the existing message without re-running statuses, Celery
+        fanout, or agent-bot routing.
+
+        Returns:
+            (message, created) where created is False on a dedupe cache hit.
+        """
+        attachment_ids = attachment_ids or []
+        mention_ids = mention_ids or []
+        claimed_cache_key: Optional[str] = None
+
+        if client_message_id:
+            existing_id = cls.get_cached_message_id_for_client_key(sender.id, client_message_id)
+            if existing_id is not None:
+                return cls._load_message_for_sender(existing_id, sender, chat), False
+
+            claimed_cache_key = cls._client_message_cache_key(sender.id, client_message_id)
+            if not cache.add(
+                claimed_cache_key,
+                cls.CLIENT_MESSAGE_PENDING,
+                cls.CLIENT_MESSAGE_CACHE_TTL,
+            ):
+                existing_id = cls._wait_for_client_message_cache(claimed_cache_key)
+                if existing_id is not None:
+                    return cls._load_message_for_sender(existing_id, sender, chat), False
+                raise ValueError('Message creation already in progress')
+
+        try:
+            message = cls._persist_message_with_attachments(
+                sender=sender,
+                chat=chat,
+                content=content,
+                attachment_ids=attachment_ids,
+                mention_ids=mention_ids,
+                rich_body=rich_body,
+                reply_to_id=reply_to_id,
+                parent_message_id=parent_message_id,
+            )
+            if claimed_cache_key:
+                message_id = message.id
+
+                def commit_cache_key() -> None:
+                    cache.set(
+                        claimed_cache_key,
+                        message_id,
+                        cls.CLIENT_MESSAGE_CACHE_TTL,
+                    )
+
+                transaction.on_commit(commit_cache_key)
+            return message, True
+        except Exception:
+            if claimed_cache_key:
+                cache.delete(claimed_cache_key)
+            raise
+
     @staticmethod
     @transaction.atomic
     def create_message(

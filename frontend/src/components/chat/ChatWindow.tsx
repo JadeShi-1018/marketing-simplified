@@ -176,6 +176,11 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     useChatStore.getState().setPresenceSnapshot(event.users);
   }, []);
 
+  const handleOutboxAck = useCallback((event: ChatWsEvent) => {
+    const committed = Array.isArray(event.committed) ? event.committed : [];
+    void useChatStore.getState().reconcileOutboxAck(committed);
+  }, []);
+
   const { sendTypingStart, sendTypingStop } = useChatWebSocket(currentUserId, {
     onChatMessage: handleSocketChatMessage,
     onTypingIndicator: handleSocketTypingIndicator,
@@ -183,6 +188,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     onReactionUpdate: handleSocketReactionUpdate,
     onPresenceUpdate: handleSocketPresenceUpdate,
     onPresenceSnapshot: handleSocketPresenceSnapshot,
+    onOutboxAck: handleOutboxAck,
   });
 
   const {

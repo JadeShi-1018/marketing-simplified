@@ -351,6 +351,49 @@ class TestChatConsumer:
             return ChatParticipant.objects.create(chat=chat, user=user, is_active=True)
         return await create()
 
+    async def test_outbox_digest_returns_committed_client_message_ids(self, db):
+        """Reconnect outbox_digest should ack server-committed client message ids."""
+        from asgiref.sync import sync_to_async
+        from chat.services import MessageService
+
+        user = await self._create_user('outboxuser', 'outbox@example.com')
+        org = await self._create_organization('Outbox Org')
+        team = await self._create_team(org, 'Outbox Team')
+        project = await self._create_project(org, 'Outbox Project')
+        await self._add_team_member(user, team, 'owner')
+        await self._add_project_member(user, project, 'owner')
+        chat = await self._create_chat(project, ChatType.PRIVATE)
+        await self._add_chat_participant(chat, user)
+        client_message_id = 'ws-outbox-client-001'
+
+        message, created = await sync_to_async(MessageService.create_message_with_attachments)(
+            sender=user,
+            chat=chat,
+            content='Already committed',
+            client_message_id=client_message_id,
+        )
+        assert created is True
+
+        token = str(AccessToken.for_user(user))
+        application = JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+        communicator = WebsocketCommunicator(application, f'/ws/chat/{user.id}/?token={token}')
+        try:
+            connected, _ = await communicator.connect()
+            assert connected
+            snapshot = await communicator.receive_json_from(timeout=5)
+            assert snapshot['type'] == 'presence_snapshot'
+            await communicator.send_json_to({
+                'type': 'outbox_digest',
+                'client_message_ids': [client_message_id, 'unknown-id'],
+            })
+            ack = await communicator.receive_json_from(timeout=5)
+            assert ack['type'] == 'outbox_ack'
+            assert len(ack['committed']) == 1
+            assert ack['committed'][0]['client_message_id'] == client_message_id
+            assert ack['committed'][0]['message_id'] == message.id
+        finally:
+            await _disconnect_communicators(communicator)
+
 class TestChatConsumerSync:
     """Synchronous tests for ChatConsumer."""
 
@@ -430,3 +473,4 @@ class TestChatConsumerSync:
         assert payload['attachments'] == []
         assert not payload['is_forwarded']
         assert payload['forwarded_from'] is None
+

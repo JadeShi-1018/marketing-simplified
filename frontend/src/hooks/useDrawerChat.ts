@@ -8,6 +8,32 @@ import type { Chat, Message, SendMessageRequest } from '@/types/chat';
 import type { TiptapJSONContent } from '@/types/comment';
 import toast from 'react-hot-toast';
 
+async function sendDrawerMessageWithOutbox(request: SendMessageRequest): Promise<Message> {
+  const clientMessageId = crypto.randomUUID();
+  const store = useChatStore.getState();
+  store.enqueueOutbox({
+    clientMessageId,
+    chatId: request.chat_id,
+    content: request.content,
+    richBody: request.rich_body ?? null,
+    attachmentIds: request.attachment_ids ?? [],
+    mentionIds: request.mention_ids,
+    replyToId: request.reply_to_id,
+    parentMessageId: request.parent_message_id,
+    status: 'pending',
+    enqueuedAt: new Date().toISOString(),
+  });
+  store.markOutboxSending(clientMessageId);
+  try {
+    const message = await sendMessage({ ...request, client_message_id: clientMessageId });
+    store.markOutboxSent(clientMessageId, message);
+    return message;
+  } catch (error) {
+    store.markOutboxFailed(clientMessageId);
+    throw error;
+  }
+}
+
 const DEFAULT_MESSAGE_LIMIT = 20;
 const EMPTY_MESSAGES: Message[] = [];
 
@@ -209,7 +235,7 @@ export function useDrawerChat({
           reply_to_id: replyToId ?? undefined,
         };
 
-        const newMessage = await sendMessage(data);
+        const newMessage = await sendDrawerMessageWithOutbox(data);
 
         // Add to local messages
         setLocalMessages((prev) => {
@@ -253,7 +279,7 @@ export function useDrawerChat({
           reply_to_id: replyToId ?? undefined,
         };
 
-        const newMessage = await sendMessage(data);
+        const newMessage = await sendDrawerMessageWithOutbox(data);
 
         // Add to local messages
         setLocalMessages((prev) => {
@@ -304,7 +330,7 @@ export function useDrawerChat({
           ...(replyToId ? { reply_to_id: replyToId } : {}),
         };
 
-        const newMessage = await sendMessage(data);
+        const newMessage = await sendDrawerMessageWithOutbox(data);
 
         setLocalMessages((prev) => {
           if (prev.some((m) => m.id === newMessage.id)) return prev;

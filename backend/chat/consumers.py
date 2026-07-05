@@ -134,6 +134,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 await self.handle_mark_as_read(data)
             elif message_type == 'heartbeat':
                 await self.handle_heartbeat(data)
+            elif message_type == 'outbox_digest':
+                await self.handle_outbox_digest(data)
             else:
                 logger.warning(f"Unknown message type: {message_type}")
                 await self.send_error(f"Unknown message type: {message_type}")
@@ -145,6 +147,28 @@ class ChatConsumer(AsyncWebsocketConsumer):
             logger.error(f"Error handling message from user {self.user_id}: {e}")
             await self.send_error(f"Error: {str(e)}")
     
+    async def handle_outbox_digest(self, data):
+        """Ack client outbox entries already committed on the server (idempotent REST retries)."""
+        client_message_ids = data.get('client_message_ids')
+        if client_message_ids is None:
+            client_message_ids = []
+        if not isinstance(client_message_ids, list):
+            await self.send_error('client_message_ids must be a list')
+            return
+
+        try:
+            committed = await database_sync_to_async(
+                MessageService.resolve_client_message_commits,
+            )(self.user.id, client_message_ids)
+            await self.send(text_data=json.dumps({
+                'type': 'outbox_ack',
+                'committed': committed,
+                'timestamp': timezone.now().isoformat(),
+            }))
+        except Exception as e:
+            logger.error('Error handling outbox digest for user %s: %s', self.user_id, e)
+            await self.send_error('Failed to process outbox digest')
+
     async def handle_chat_message(self, data):
         """Handle incoming chat message"""
         chat_id = data.get('chat_id')
