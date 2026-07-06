@@ -356,7 +356,6 @@ class TestMessageAPI:
         """Retried REST sends with the same client_message_id must not duplicate side effects."""
         from django.core.files.uploadedfile import SimpleUploadedFile
         from chat.models import Message, MessageAttachment, MessageStatus
-        from chat.services import MessageService
 
         attachment = MessageAttachment.objects.create(
             uploader=self.user1,
@@ -386,7 +385,10 @@ class TestMessageAPI:
         assert MessageStatus.objects.filter(message_id=first.data['id']).count() == 1
         mock_notify_recipients.assert_called_once_with(first.data['id'])
         mock_notify_ws.assert_called_once_with(first.data['id'])
-        assert MessageService.get_cached_message_id_for_client_key(self.user1.id, client_message_id) == first.data['id']
+        assert Message.objects.get(
+            sender=self.user1,
+            client_message_id=client_message_id,
+        ).id == first.data['id']
 
     def test_send_empty_message_fails(self):
         """Test sending an empty message fails"""

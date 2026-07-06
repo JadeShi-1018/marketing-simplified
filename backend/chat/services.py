@@ -1,11 +1,10 @@
 import logging
 import os
-import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from django.contrib.auth import get_user_model
 from django.core.files import File
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Prefetch, Max
 from django.core.cache import cache
 from django.utils import timezone
@@ -808,13 +807,6 @@ class ChatStarService:
 class MessageService:
     """Service for message-related business logic"""
 
-    # Cache-only idempotency for client_message_id retries (no DB column).
-    # Late retries after TTL expiry or Redis eviction may create duplicates.
-    CLIENT_MESSAGE_PENDING = '__pending__'
-    CLIENT_MESSAGE_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days
-    CLIENT_MESSAGE_CLAIM_POLL_INTERVAL = 0.05
-    CLIENT_MESSAGE_CLAIM_POLL_ATTEMPTS = 40  # up to ~2s
-
     class SourceAttachmentMissingError(Exception):
         """Raised when source attachment file cannot be read during forward."""
 
@@ -822,36 +814,18 @@ class MessageService:
         """Raised when attachment file copy fails during forward."""
 
     @staticmethod
-    def _client_message_cache_key(sender_id: int, client_message_id: str) -> str:
-        return f'chat:client_msg:{sender_id}:{client_message_id}'
+    def _get_message_by_client_key(sender: User, client_message_id: str) -> Message:
+        return (
+            Message.objects
+            .select_related('sender', 'reply_to', 'reply_to__sender', 'chat')
+            .prefetch_related('attachments')
+            .get(sender=sender, client_message_id=client_message_id)
+        )
 
-    @classmethod
-    def get_cached_message_id_for_client_key(
-        cls,
-        sender_id: int,
-        client_message_id: str,
-    ) -> Optional[int]:
-        cached = cache.get(cls._client_message_cache_key(sender_id, client_message_id))
-        if cached is None or cached == cls.CLIENT_MESSAGE_PENDING:
-            return None
-        try:
-            return int(cached)
-        except (TypeError, ValueError):
-            return None
-
-    @classmethod
-    def _wait_for_client_message_cache(cls, cache_key: str) -> Optional[int]:
-        for _ in range(cls.CLIENT_MESSAGE_CLAIM_POLL_ATTEMPTS):
-            cached = cache.get(cache_key)
-            if cached is None:
-                return None
-            if cached != cls.CLIENT_MESSAGE_PENDING:
-                try:
-                    return int(cached)
-                except (TypeError, ValueError):
-                    return None
-            time.sleep(cls.CLIENT_MESSAGE_CLAIM_POLL_INTERVAL)
-        return None
+    @staticmethod
+    def _assert_message_matches_request(message: Message, sender: User, chat: Chat) -> None:
+        if message.sender_id != sender.id or message.chat_id != chat.id:
+            raise ValueError('Cached client message does not match sender or chat')
 
     @staticmethod
     def _load_message_for_sender(message_id: int, sender: User, chat: Chat) -> Message:
@@ -941,6 +915,7 @@ class MessageService:
         rich_body: Any,
         reply_to_id: Optional[int],
         parent_message_id: Optional[int],
+        client_message_id: Optional[str] = None,
     ) -> Message:
         if not ChatParticipant.objects.filter(chat=chat, user=sender, is_active=True).exists():
             logger.warning('User %s is not a participant of chat %s', sender.id, chat.id)
@@ -953,6 +928,7 @@ class MessageService:
             rich_body=rich_body,
             reply_to_id=reply_to_id,
             parent_message_id=parent_message_id,
+            client_message_id=client_message_id,
         )
 
         if mention_ids:
@@ -980,18 +956,21 @@ class MessageService:
         sender_id: int,
         client_message_ids: List[str],
     ) -> List[Dict[str, Any]]:
-        """Map client outbox ids to committed server message ids (cache lookup)."""
-        committed: List[Dict[str, Any]] = []
-        for client_message_id in client_message_ids:
-            if not client_message_id:
-                continue
-            message_id = cls.get_cached_message_id_for_client_key(sender_id, client_message_id)
-            if message_id is not None:
-                committed.append({
-                    'client_message_id': client_message_id,
-                    'message_id': message_id,
-                })
-        return committed
+        """Map client outbox ids to committed server message ids (DB lookup)."""
+        valid_ids = [client_message_id for client_message_id in client_message_ids if client_message_id]
+        if not valid_ids:
+            return []
+        rows = Message.objects.filter(
+            sender_id=sender_id,
+            client_message_id__in=valid_ids,
+        ).values('id', 'client_message_id')
+        return [
+            {
+                'client_message_id': row['client_message_id'],
+                'message_id': row['id'],
+            }
+            for row in rows
+        ]
 
     @classmethod
     def create_message_with_attachments(
@@ -1015,29 +994,12 @@ class MessageService:
         fanout, or agent-bot routing.
 
         Returns:
-            (message, created) where created is False on a dedupe cache hit.
+            (message, created) where created is False on a dedupe DB hit.
         """
         attachment_ids = attachment_ids or []
         mention_ids = mention_ids or []
-        claimed_cache_key: Optional[str] = None
 
-        if client_message_id:
-            existing_id = cls.get_cached_message_id_for_client_key(sender.id, client_message_id)
-            if existing_id is not None:
-                return cls._load_message_for_sender(existing_id, sender, chat), False
-
-            claimed_cache_key = cls._client_message_cache_key(sender.id, client_message_id)
-            if not cache.add(
-                claimed_cache_key,
-                cls.CLIENT_MESSAGE_PENDING,
-                cls.CLIENT_MESSAGE_CACHE_TTL,
-            ):
-                existing_id = cls._wait_for_client_message_cache(claimed_cache_key)
-                if existing_id is not None:
-                    return cls._load_message_for_sender(existing_id, sender, chat), False
-                raise ValueError('Message creation already in progress')
-
-        try:
+        if not client_message_id:
             message = cls._persist_message_with_attachments(
                 sender=sender,
                 chat=chat,
@@ -1048,22 +1010,26 @@ class MessageService:
                 reply_to_id=reply_to_id,
                 parent_message_id=parent_message_id,
             )
-            if claimed_cache_key:
-                message_id = message.id
-
-                def commit_cache_key() -> None:
-                    cache.set(
-                        claimed_cache_key,
-                        message_id,
-                        cls.CLIENT_MESSAGE_CACHE_TTL,
-                    )
-
-                transaction.on_commit(commit_cache_key)
             return message, True
-        except Exception:
-            if claimed_cache_key:
-                cache.delete(claimed_cache_key)
-            raise
+
+        try:
+            with transaction.atomic():
+                message = cls._persist_message_with_attachments(
+                    sender=sender,
+                    chat=chat,
+                    content=content,
+                    attachment_ids=attachment_ids,
+                    mention_ids=mention_ids,
+                    rich_body=rich_body,
+                    reply_to_id=reply_to_id,
+                    parent_message_id=parent_message_id,
+                    client_message_id=client_message_id,
+                )
+            return message, True
+        except IntegrityError:
+            message = cls._get_message_by_client_key(sender, client_message_id)
+            cls._assert_message_matches_request(message, sender, chat)
+            return message, False
 
     @staticmethod
     @transaction.atomic

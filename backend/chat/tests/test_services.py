@@ -278,6 +278,7 @@ class TestMessageServiceIdempotentCreate:
                 client_message_id=client_message_id,
             )
         assert created_first is True
+        assert first.client_message_id == client_message_id
         assert first.attachments.count() == 1
 
         with capture_on_commit_callbacks(execute=True):
@@ -324,3 +325,39 @@ class TestMessageServiceIdempotentCreate:
         assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 2
         assert mock_notify_recipients.call_count == 2
         assert mock_notify_ws.call_count == 2
+
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_dedupe_via_integrity_error(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        capture_on_commit_callbacks,
+    ):
+        from django.db import IntegrityError
+        from chat.models import Message, MessageStatus
+        from chat.services import MessageService
+
+        client_message_id = 'integrity-error-client-001'
+        existing = Message.objects.create(
+            chat=self.chat,
+            sender=self.sender,
+            content='Already committed',
+            client_message_id=client_message_id,
+        )
+        MessageStatus.objects.create(message=existing, user=self.recipient, status='sent')
+
+        with patch.object(Message.objects, 'create', side_effect=IntegrityError('duplicate key')):
+            with capture_on_commit_callbacks(execute=True):
+                message, created = MessageService.create_message_with_attachments(
+                    sender=self.sender,
+                    chat=self.chat,
+                    content='Retry',
+                    client_message_id=client_message_id,
+                )
+
+        assert created is False
+        assert message.id == existing.id
+        assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 1
+        mock_notify_recipients.assert_not_called()
+        mock_notify_ws.assert_not_called()

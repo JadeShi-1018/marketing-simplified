@@ -392,6 +392,13 @@ class Message(TimeStampedModel):
         blank=True,
         help_text="Tiptap JSON document for rich rendering. content holds the searchable plain-text copy."
     )
+    client_message_id = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Client idempotency key for retried sends; NULL for legacy messages.",
+    )
     is_edited = models.BooleanField(default=False, help_text="True after content has been edited")
     is_deleted = models.BooleanField(default=False, help_text="Soft delete flag")
     deleted_at = models.DateTimeField(null=True, blank=True, help_text="When the message was soft deleted")
@@ -408,6 +415,12 @@ class Message(TimeStampedModel):
 
     class Meta:
         ordering = ['created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sender', 'client_message_id'],
+                name='chat_message_sender_client_msg_uniq',
+            ),
+        ]
         indexes = [
             models.Index(fields=['chat', 'created_at']),
             models.Index(fields=['sender', 'created_at']),
