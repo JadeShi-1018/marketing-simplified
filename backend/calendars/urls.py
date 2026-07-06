@@ -15,6 +15,7 @@ from .views import (
     EventRSVPView,
     EventInstancesView,
     EventInstanceModifyView,
+    EventInstanceModifyFutureView,
     EventInstanceCancelView,
     DayView,
     WeekView,
@@ -96,6 +97,11 @@ urlpatterns = [
         "events/<uuid:event_id>/instances/modify/",
         EventInstanceModifyView.as_view(),
         name="event-instance-modify",
+    ),
+    path(
+        "events/<uuid:event_id>/instances/modify-future/",
+        EventInstanceModifyFutureView.as_view(),
+        name="event-instance-modify-future",
     ),
     path(
         "events/<uuid:event_id>/instances/cancel/",
