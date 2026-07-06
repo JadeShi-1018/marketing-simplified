@@ -44,6 +44,14 @@ from .serializers import (
     SupportChannelDetailSerializer,
     SupportChannelCreateUpdateSerializer,
     ReplaceChannelAssignmentsSerializer,
+    TicketStatusSerializer,
+    TicketStatusCreateSerializer,
+    TicketAutoResolveConfigSerializer,
+    StatusMachineSerializer,
+    ReplaceTransitionsSerializer,
+)
+from .models import (
+    TicketStatus, TicketStatusTransition, TicketAutoResolveConfig,
 )
 from .services import (
     ensure_system_fields,
@@ -789,38 +797,41 @@ class TicketViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def claim(self, request, pk=None):
         """Assign ticket to current user and set status to in_progress."""
+        from csm.services.status_machine import assert_transition_allowed
         ticket = self.get_object()
         ticket.assigned_to = request.user
-        if ticket.status == 'todo':
+        update_fields = ['assigned_to']
+        if ticket.status != 'in_progress':
+            try:
+                assert_transition_allowed(ticket, 'in_progress')
+            except DjangoValidationError as exc:
+                _raise_drf_validation(exc)
             ticket.status = 'in_progress'
-        ticket.save(update_fields=['assigned_to', 'status'])
+            update_fields.append('status')
+        ticket.save(update_fields=update_fields)
         return Response(TicketSerializer(ticket).data)
 
     def partial_update(self, request, *args, **kwargs):
-        """Override PATCH to sync SLA on priority change and broadcast status changes."""
+        """Override PATCH to enforce the state machine and sync SLA on priority change."""
         from csm.services.sla import recalculate_ticket_sla
+        from csm.services.status_machine import assert_transition_allowed
         ticket = self.get_object()
-        old_status = ticket.status
         old_priority = ticket.priority
         new_status = request.data.get('status')
         new_priority = request.data.get('priority')
 
-        response = super().partial_update(request, *args, **kwargs)
+        # Enforce the state machine before persisting (AC #1, #4).
+        if new_status and new_status != ticket.status:
+            try:
+                assert_transition_allowed(ticket, new_status)
+            except DjangoValidationError as exc:
+                _raise_drf_validation(exc)
 
-        # Conversation sync on status change
-        if new_status and old_status != new_status and ticket.conversation_id:
-            if new_status == 'resolved':
-                msg = ConversationMessage.objects.create(
-                    conversation_id=ticket.conversation_id,
-                    sender_type='system',
-                    content=f'Ticket #{ticket.id} has been marked as resolved.',
-                )
-                channel_layer = get_channel_layer()
-                async_to_sync(channel_layer.group_send)(
-                    f'csm_conversation_{ticket.conversation_id}',
-                    {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
-                )
-                Conversation.objects.filter(id=ticket.conversation_id).update(status='resolved')
+        # pending_since is stamped/cleared centrally in Ticket.save() (MED-215).
+        # No customer notification on manual status change: MED-215 only requires
+        # notifying on *auto*-resolution (see tasks.py). Ticket and conversation
+        # lifecycles stay independent (MED-221).
+        response = super().partial_update(request, *args, **kwargs)
 
         # Recalculate SLA when priority changes, using now() so the countdown
         # restarts from the moment of the change rather than ticket creation.
@@ -836,24 +847,17 @@ class TicketViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
         """Close a ticket."""
+        from csm.services.status_machine import assert_transition_allowed
         ticket = self.get_object()
+        if ticket.status != 'closed':
+            try:
+                assert_transition_allowed(ticket, 'closed')
+            except DjangoValidationError as exc:
+                _raise_drf_validation(exc)
         ticket.status = 'closed'
         ticket.save(update_fields=['status'])
 
-        # If linked to a conversation, post a system message and sync status
-        if ticket.conversation_id:
-            Conversation.objects.filter(id=ticket.conversation_id).update(status='closed')
-            msg = ConversationMessage.objects.create(
-                conversation_id=ticket.conversation_id,
-                sender_type='system',
-                content=f'Ticket #{ticket.id} has been closed.',
-            )
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                f'csm_conversation_{ticket.conversation_id}',
-                {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
-            )
-
+        # No customer notification on close: MED-215 has no such requirement.
         return Response(TicketSerializer(ticket).data)
 
 
@@ -1296,4 +1300,137 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         if open_tickets:
             Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
 
+        return Response(serializer.data)
+
+
+# --- MED-215: status machine admin config ---------------------------------
+
+class TicketStatusViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """CRUD for a project's ticket statuses (CSM-S02-03).
+
+    - GET    /ticket-statuses/?project={id}   list (seeds built-ins on first read)
+    - POST   /ticket-statuses/?project={id}   create custom status at a position
+    - PATCH  /ticket-statuses/{id}/           rename / recolour / (de)activate
+    - DELETE /ticket-statuses/{id}/           delete custom status (see below)
+
+    Built-in statuses cannot be deleted. Deleting a status still in use on
+    tickets requires ?confirm=true (the UI warns first).
+    """
+    serializer_class = TicketStatusSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        from csm.services.status_machine import ensure_status_machine
+        if self.action == 'list':
+            project_id = self.get_required_project_id()
+            ensure_status_machine(project_id)
+            return TicketStatus.objects.filter(project_id=project_id)
+        return TicketStatus.objects.filter(
+            project_id__in=self._accessible_project_ids(),
+        )
+
+    def create(self, request, *args, **kwargs):
+        from csm.services.status_machine import insert_custom_status
+        project_id = self.get_required_project_id()
+        serializer = TicketStatusCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            instance = insert_custom_status(
+                project_id=project_id,
+                name=data['name'],
+                color=data.get('color'),
+                position=data.get('position', 0),
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation(exc)
+        return Response(
+            TicketStatusSerializer(instance).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        from csm.services.status_machine import tickets_using_status
+        instance = self.get_object()
+        if instance.is_builtin:
+            raise ValidationError(
+                {'detail': 'Built-in statuses cannot be deleted.'}
+            )
+        in_use = tickets_using_status(instance.project_id, instance.slug).count()
+        confirmed = request.query_params.get('confirm') in ('1', 'true', 'True')
+        if in_use and not confirmed:
+            raise ValidationError({
+                'detail': (
+                    f'{in_use} ticket(s) currently use this status. '
+                    'Retry with ?confirm=true to delete anyway.'
+                ),
+                'tickets_in_use': in_use,
+            })
+        # Drop transitions referencing the deleted slug so the machine stays clean.
+        TicketStatusTransition.objects.filter(
+            Q(project_id=instance.project_id),
+            Q(from_status=instance.slug) | Q(to_status=instance.slug),
+        ).delete()
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class StatusMachineView(ProjectScopedViewSetMixin, viewsets.ViewSet):
+    """The whole status machine for a project, for the matrix-style admin UI.
+
+    - GET  /ticket-status-machine/?project={id}   statuses + transitions + auto-resolve
+    - PUT  /ticket-status-machine/?project={id}   replace transition set
+    - PATCH/ticket-status-machine/auto-resolve/   update the auto-resolution rule
+    """
+    permission_classes = [IsAuthenticated, IsProjectMember]
+
+    def list(self, request):
+        from csm.services.status_machine import (
+            get_statuses, get_transitions, get_auto_resolve_config,
+        )
+        project_id = self.get_required_project_id()
+        data = StatusMachineSerializer({
+            'statuses': get_statuses(project_id).filter(is_active=True),
+            'transitions': get_transitions(project_id),
+            'auto_resolve': get_auto_resolve_config(project_id),
+        }).data
+        return Response(data)
+
+    def update(self, request, *args, **kwargs):
+        """Bulk-replace the permitted transitions (AC #4)."""
+        from csm.services.status_machine import ensure_status_machine
+        project_id = self.get_required_project_id()
+        ensure_status_machine(project_id)
+        serializer = ReplaceTransitionsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        valid_slugs = set(
+            TicketStatus.objects.filter(project_id=project_id)
+            .values_list('slug', flat=True)
+        )
+        edges = []
+        for edge in serializer.validated_data['transitions']:
+            frm, to = edge.get('from_status'), edge.get('to_status')
+            if frm not in valid_slugs or to not in valid_slugs:
+                raise ValidationError(
+                    {'transitions': f'Unknown status in transition {frm} -> {to}.'}
+                )
+            edges.append((frm, to))
+        TicketStatusTransition.objects.filter(project_id=project_id).delete()
+        TicketStatusTransition.objects.bulk_create([
+            TicketStatusTransition(project_id=project_id, from_status=f, to_status=t)
+            for f, t in set(edges)
+        ])
+        return self.list(request)
+
+    @action(detail=False, methods=['patch'], url_path='auto-resolve')
+    def auto_resolve(self, request):
+        from csm.services.status_machine import get_auto_resolve_config
+        project_id = self.get_required_project_id()
+        config = get_auto_resolve_config(project_id)
+        serializer = TicketAutoResolveConfigSerializer(
+            config, data=request.data, partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response(serializer.data)

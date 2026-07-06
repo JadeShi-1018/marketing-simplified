@@ -483,6 +483,12 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=2, minute=0),
         'options': {'timezone': 'UTC'},
     },
+    # CSM MED-215: auto-resolve tickets stuck in Pending Customer Response
+    'csm-auto-resolve-pending-tickets': {
+        'task': 'csm.tasks.auto_resolve_pending_tickets',
+        'schedule': crontab(hour=1, minute=30),  # daily 01:30 UTC
+        'options': {'timezone': 'UTC'},
+    },
 }
 
 # Shared secret for the platform-native cron endpoint that triggers the
