@@ -206,44 +206,58 @@ class BudgetRequestService:
         if not budget_request.can_lock():
             raise ValidationError("Budget request cannot be locked in current status")
 
-        with transaction.atomic():
-            # Lock the budget request for update to prevent concurrent lock operations
-            # Use nowait=True to prevent deadlocks and return conflict response
-            try:
-                locked_request = BudgetRequest.objects.select_for_update(nowait=True).get(id=budget_request.id)
+        # Captured outside the atomic block so the notification can be sent
+        # after the rolled-back transaction exits (on_commit callbacks are
+        # discarded when a transaction rolls back).
+        _insufficient_request = None
 
-                # Re-check if the request can still be locked (status might have changed)
-                if not locked_request.can_lock():
-                    raise ValidationError("Budget request cannot be locked in current status")
+        try:
+            with transaction.atomic():
+                # Lock the budget request for update to prevent concurrent lock operations
+                # Use nowait=True to prevent deadlocks and return conflict response
+                try:
+                    locked_request = BudgetRequest.objects.select_for_update(nowait=True).get(id=budget_request.id)
 
-                # Lock the budget pool to prevent concurrent modifications
-                budget_pool = BudgetPool.objects.select_for_update(nowait=True).get(id=locked_request.budget_pool.id)
+                    # Re-check if the request can still be locked (status might have changed)
+                    if not locked_request.can_lock():
+                        raise ValidationError("Budget request cannot be locked in current status")
 
-                # Validate budget availability before locking (critical check)
-                if not BudgetRequestService.check_budget_availability(budget_pool, locked_request.amount):
-                    budget_notifications.notify_budget_pool_insufficient(
+                    # Lock the budget pool to prevent concurrent modifications
+                    budget_pool = BudgetPool.objects.select_for_update(nowait=True).get(id=locked_request.budget_pool.id)
+
+                    # Validate budget availability before locking (critical check)
+                    if not BudgetRequestService.check_budget_availability(budget_pool, locked_request.amount):
+                        # Mark for notification; do NOT call notify here — the
+                        # upcoming ValidationError rolls back this atomic block
+                        # which would discard any on_commit callbacks.
+                        _insufficient_request = locked_request
+                        raise ValidationError("Insufficient budget available for locking")
+
+                    # status: APPROVED --> LOCKED or REJECTED --> LOCKED
+                    # The lock() method in the model will automatically deduct from budget pool
+                    locked_request.lock()
+                    locked_request.save()
+
+                    budget_notifications.notify_budget_locked(
                         locked_request,
                         actor_id=actor_id,
                     )
-                    raise ValidationError("Insufficient budget available for locking")
 
-                # status: APPROVED --> LOCKED or REJECTED --> LOCKED
-                # The lock() method in the model will automatically deduct from budget pool
-                locked_request.lock()
-                locked_request.save()
+                    return locked_request
 
-                budget_notifications.notify_budget_locked(
-                    locked_request,
+                except OperationalError as e:
+                    # Handle lock acquisition failures - return conflict response
+                    if "could not obtain lock" in str(e) or "LockNotAvailable" in str(e):
+                        raise ValidationError("Budget request or pool is currently being accessed by another request. Please try again.")
+                    raise
+        finally:
+            # Send the pool-insufficient notification outside the rolled-back
+            # transaction so its on_commit callback is not discarded.
+            if _insufficient_request is not None:
+                budget_notifications.notify_budget_pool_insufficient(
+                    _insufficient_request,
                     actor_id=actor_id,
                 )
-
-                return locked_request
-
-            except OperationalError as e:
-                # Handle lock acquisition failures - return conflict response
-                if "could not obtain lock" in str(e) or "LockNotAvailable" in str(e):
-                    raise ValidationError("Budget request or pool is currently being accessed by another request. Please try again.")
-                raise
     
 
     @staticmethod

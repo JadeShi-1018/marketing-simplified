@@ -378,6 +378,11 @@ class TestConcurrentTransitions(TransactionTestCase):
     Uses TransactionTestCase so each thread can commit its own transaction.
     """
 
+    # PostgreSQL requires CASCADE when truncating tables referenced by FK
+    # constraints. Setting allow_cascade=True passes --allow-cascade to the
+    # flush command during teardown.
+    allow_cascade = True
+
     def setUp(self):
         self.organization = Organization.objects.create(name="Org", slug="org-conc")
         self.project = Project.objects.create(name="Project", organization=self.organization)

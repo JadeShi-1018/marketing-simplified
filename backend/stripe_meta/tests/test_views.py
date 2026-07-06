@@ -519,6 +519,12 @@ class OrganizationCreationViewsTest(TestCase):
         cu = CustomerUser.objects.filter(user=self.user, organisation=cust_org, is_creator=True).first()
         self.assertIsNotNone(cu, "CustomerUser.is_creator=True must be created")
 
+        # Switch to the tenant schema before querying UserRole, which lives
+        # only in the tenant schema (access_control migrations are stubs).
+        _schema = slug_to_schema_name(org.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
+
         # Organization Admin role assigned
         is_admin = UserRole.objects.filter(
             user=self.user,
