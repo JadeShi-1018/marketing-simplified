@@ -8,7 +8,7 @@ from django.test import TestCase
 from core.models import Organization, Project, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatType
 from chat.serializers import ChatCreateSerializer
-from chat.services import ChatService, OnlineStatusService
+from chat.services import ChatService, OnlineStatusService, UnsupportedAttachmentMimeType, validate_attachment_mime_type
 
 User = get_user_model()
 
@@ -307,3 +307,37 @@ class PresenceRecipientCacheInvalidationTest(TestCase):
             cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)),
             [self.user_b.id],
         )
+
+class AttachmentMimeValidationTest(TestCase):
+    def test_allows_supported_mime_types(self):
+        allowed_types = [
+            "image/png",
+            "image/jpeg",
+            "image/svg+xml",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ]
+
+        for mime_type in allowed_types:
+            with self.subTest(mime_type=mime_type):
+                validate_attachment_mime_type(mime_type)
+
+    def test_rejects_unsupported_mime_types(self):
+        rejected_types = [
+            "video/mp4",
+            "audio/webm",
+            "text/plain",
+            "text/csv",
+            "application/x-msdownload",
+            "application/x-sh",
+            "application/zip",
+            "text/html",
+            "",
+        ]
+
+        for mime_type in rejected_types:
+            with self.subTest(mime_type=mime_type):
+                with self.assertRaises(UnsupportedAttachmentMimeType):
+                    validate_attachment_mime_type(mime_type)

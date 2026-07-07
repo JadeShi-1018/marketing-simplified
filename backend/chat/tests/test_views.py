@@ -1207,19 +1207,40 @@ class AttachmentAPITest(TestCase):
         from django.core.files.uploadedfile import SimpleUploadedFile
         
         test_file = SimpleUploadedFile(
-            'test.txt',
-            b'Test file content',
-            content_type='text/plain'
+            'test.pdf',
+            b'%PDF-1.4 test content',
+            content_type='application/pdf'
         )
         
         url = reverse('attachment-list')
         response = self.client.post(url, {'file': test_file}, format='multipart')
         
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['original_filename'], 'test.txt')
+        self.assertEqual(response.data['original_filename'], 'test.pdf')
         self.assertEqual(response.data['file_type'], 'document')
         self.assertIn('file_url', response.data)
         self.assertIn('file_size_display', response.data)
+
+    def test_rejects_unsupported_mime_before_attachment_save(self):
+        """Unsupported MIME types return 415 and do not create an attachment row."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from chat.models import MessageAttachment
+
+        initial_count = MessageAttachment.objects.count()
+        test_file = SimpleUploadedFile(
+            'archive.zip',
+            b'PK\x03\x04',
+            content_type='application/zip'
+        )
+
+        url = reverse('attachment-list')
+        response = self.client.post(url, {'file': test_file}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+        self.assertEqual(response.data['code'], 'unsupported_mime_type')
+        self.assertEqual(response.data['mime_type'], 'application/zip')
+        self.assertIn('Unsupported MIME type', response.data['error'])
+        self.assertEqual(MessageAttachment.objects.count(), initial_count)
     
     def test_upload_image(self):
         """Test uploading an image attachment"""

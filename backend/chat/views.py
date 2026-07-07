@@ -44,7 +44,14 @@ from .serializers import (
     ScheduledMessageSerializer,
     ScheduledMessageCreateSerializer,
 )
-from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
+from .services import (
+    ChatService,
+    ChatStarService,
+    MessageService,
+    OnlineStatusService,
+    UnsupportedAttachmentMimeType,
+    validate_attachment_mime_type,
+)
 from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
 from core.models import ProjectMember
 
@@ -319,7 +326,6 @@ class ChatViewSet(viewsets.ModelViewSet):
         
         except Exception as e:
             logger.error(f"Failed to notify participants about new chat: {e}")
-    
     def retrieve(self, request, *args, **kwargs):
         """Get chat details"""
         chat = self.get_object()
@@ -1602,6 +1608,22 @@ class AttachmentViewSet(viewsets.GenericViewSet):
         The attachment is initially unlinked (message=null).
         When sending a message, include the attachment IDs to link them.
         """
+
+        uploaded_file = request.FILES.get("file")
+
+        if uploaded_file:
+            try:
+                validate_attachment_mime_type(uploaded_file.content_type)
+            except UnsupportedAttachmentMimeType as e:
+                return Response(
+                    {
+                        "code": "unsupported_mime_type",
+                        "error": str(e),
+                        "mime_type": uploaded_file.content_type,
+                    },
+                    status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                )
+
         serializer = AttachmentUploadSerializer(
             data=request.data, 
             context={'request': request}

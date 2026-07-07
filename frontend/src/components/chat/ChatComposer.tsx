@@ -80,6 +80,8 @@ import {
   validateFile,
   getFileTypeFromMime,
   formatFileSize,
+  CHAT_ATTACHMENT_INPUT_ACCEPT,
+  getAttachmentUploadErrorMessage,
 } from '@/lib/api/attachmentApi';
 import {
   createChatEditorExtensions,
@@ -1290,10 +1292,10 @@ export default function ChatComposer({
 
   const uploadFiles = useCallback(async (files: File[]) => {
     const newAttachments: PendingAttachment[] = [];
+    const uploadQueue: PendingAttachment[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const { isValid, error } = validateFile(file);
-      if (!isValid) { toast.error(error || `Invalid file: ${file.name}`); continue; }
       const preview = (
         file.type.startsWith('image/') ||
         file.type.startsWith('video/') ||
@@ -1301,21 +1303,35 @@ export default function ChatComposer({
       )
         ? URL.createObjectURL(file)
         : undefined;
-      newAttachments.push({ id: `tmp-${Date.now()}-${i}`, file, preview, progress: 0, uploading: true });
+      const attachment: PendingAttachment = {
+        id: `tmp-${Date.now()}-${i}`,
+        file,
+        preview,
+        progress: 0,
+        uploading: isValid,
+        error: isValid ? undefined : (error || `Invalid file: ${file.name}`),
+      };
+      newAttachments.push(attachment);
+      if (!isValid) {
+        toast.error(attachment.error || `Invalid file: ${file.name}`);
+        continue;
+      }
+      uploadQueue.push(attachment);
     }
     if (newAttachments.length === 0) return;
     setPendingAttachments((prev) => [...prev, ...newAttachments]);
+    if (uploadQueue.length === 0) return;
     setIsUploading(true);
-    for (const att of newAttachments) {
+    for (const att of uploadQueue) {
       try {
         const uploaded = await uploadAttachment(att.file, (progress) => {
           setPendingAttachments((prev) => prev.map((a) => a.id === att.id ? { ...a, progress } : a));
         });
         setPendingAttachments((prev) => prev.map((a) => a.id === att.id ? { ...a, uploading: false, uploaded } : a));
       } catch (err: unknown) {
-        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Upload failed';
+        const msg = getAttachmentUploadErrorMessage(err, att.file.type);
         setPendingAttachments((prev) => prev.map((a) => a.id === att.id ? { ...a, uploading: false, error: msg } : a));
-        toast.error(`Failed to upload ${att.file.name}`);
+        toast.error(msg);
       }
     }
     setIsUploading(false);
@@ -2043,7 +2059,11 @@ export default function ChatComposer({
                     <span className="text-xs text-[#3CCED7]">{att.progress}%</span>
                   </div>
                 )}
-                {att.error && <span className="text-xs text-red-600">Failed</span>}
+                {att.error && (
+                  <p className="max-w-[200px] truncate text-xs text-red-600" title={att.error}>
+                    {att.error}
+                  </p>
+                )}
                 {att.uploaded && !att.uploading && <span className="text-xs text-green-600">✓</span>}
                 <button
                   type="button"
@@ -2135,7 +2155,7 @@ export default function ChatComposer({
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
+            accept={CHAT_ATTACHMENT_INPUT_ACCEPT}
             onChange={handleFileSelect}
             className="hidden"
           />
