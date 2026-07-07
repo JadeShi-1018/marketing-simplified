@@ -166,6 +166,46 @@ export async function setupLoginFailureMock(page: Page, status = 401) {
 }
 
 
+export async function setupLoginThrottleMock(page: Page) {
+	await page.route("**/*", async (route) => {
+		const req = route.request();
+		const url = req.url();
+		const method = req.method();
+
+		if (method === "POST" && (url.includes("auth/login") || url.includes("auth%2Flogin"))) {
+			await route.fulfill({
+				status: 429,
+				contentType: "application/json",
+				body: JSON.stringify({
+					error: "Too many login attempts. Please wait before trying again.",
+					errorCode: "TOO_MANY_ATTEMPTS",
+					retry_after_seconds: 60,
+					requires_captcha: true,
+				}),
+			});
+			return;
+		}
+		if (method === "GET" && (url.includes("auth/me/teams") || url.includes("auth%2Fme%2Fteams"))) {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ team_ids: [] }),
+			});
+			return;
+		}
+		if (method === "GET" && (url.includes("/auth/me") || url.includes("auth%2Fme")) && !url.includes("teams")) {
+			await route.fulfill({
+				status: 401,
+				contentType: "application/json",
+				body: JSON.stringify({ detail: "Authentication credentials were not provided." }),
+			});
+			return;
+		}
+		await route.continue();
+	});
+}
+
+
 export const SET_PASSWORD_TOKEN = process.env.E2E_SET_PASSWORD_TOKEN ?? "fake-set-password-token";
 
 
