@@ -37,6 +37,9 @@ export default function useAuth() {
         error: result.error,
         statusCode: result.statusCode,
         errorCode: result.errorCode,
+        retry_after_seconds: result.retry_after_seconds,
+        requires_captcha: result.requires_captcha,
+        lockout_until: result.lockout_until,
       };
     } catch (error: any) {
       if (isNetworkError(error)) {
@@ -52,11 +55,20 @@ export default function useAuth() {
       const errorData = error?.response?.data;
       const errorCode = errorData?.errorCode;
       const backendMessage = errorData?.error;
+      const retryAfterSeconds = errorData?.retry_after_seconds;
+      const requiresCaptcha = errorData?.requires_captcha;
+      const lockoutUntil = errorData?.lockout_until;
 
       let message: string = LOGIN_ERROR_MESSAGES.GENERIC;
 
       if (statusCode === 401) {
         message = LOGIN_ERROR_MESSAGES.INVALID_PASSWORD;
+      } else if (statusCode === 429) {
+        if (errorCode === 'LOGIN_LOCKED') {
+          message = backendMessage || LOGIN_ERROR_MESSAGES.LOGIN_LOCKED;
+        } else {
+          message = backendMessage || LOGIN_ERROR_MESSAGES.TOO_MANY_ATTEMPTS;
+        }
       } else if (statusCode === 403) {
         if (errorCode === 'EMAIL_NOT_VERIFIED' || backendMessage?.toLowerCase().includes('not verified')) {
           message = LOGIN_ERROR_MESSAGES.EMAIL_NOT_VERIFIED;
@@ -74,6 +86,9 @@ export default function useAuth() {
         error: message,
         statusCode,
         errorCode,
+        retry_after_seconds: retryAfterSeconds,
+        requires_captcha: requiresCaptcha,
+        lockout_until: lockoutUntil,
       };
     }
   };
@@ -201,4 +216,4 @@ export default function useAuth() {
     hasRole,
     hasAnyRole
   };
-} 
+}
