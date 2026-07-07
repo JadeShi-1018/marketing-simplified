@@ -44,6 +44,21 @@ class AuthorizationMiddleware:
         if getattr(user, 'is_superuser', False):
             return None
 
+        # Org admins (role level <= 2) bypass module-level permission checks.
+        # TenantSchemaMiddleware has already set the correct search_path, so
+        # querying UserRole here hits the right tenant schema directly.
+        # Temporal validity is enforced: expired admin roles do not grant bypass.
+        try:
+            _now = timezone.now()
+            if UserRole.objects.filter(
+                user=user,
+                role__level__lte=2,
+                valid_from__lte=_now,
+            ).filter(Q(valid_to__gte=_now) | Q(valid_to__isnull=True)).exists():
+                return None
+        except Exception:
+            pass
+
         # Parse the module from the path, e.g. /api/assets/... → ASSET
         parts = request.path.strip('/').split('/')
         if len(parts) < 2 or parts[0] != 'api':
