@@ -4,6 +4,7 @@ from unittest.mock import patch
 from types import SimpleNamespace
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.test import TestCase
 from core.models import Organization, Project, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatType
 from chat.serializers import ChatCreateSerializer
@@ -230,6 +231,7 @@ class TestPresenceRecipientCacheInvalidation:
                 ChatService.leave_chat(self.chat, self.user_b)
                 
         assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) == [self.user_b.id]
+
 
 class AttachmentMimeValidationTest(TestCase):
     def test_allows_supported_mime_types(self):
