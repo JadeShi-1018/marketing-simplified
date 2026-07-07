@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { AlertCircle, Pencil, Plus, Save, Trash2 } from 'lucide-react';
+import { AlertCircle, Minus, Pencil, Plus, Save, Trash2 } from 'lucide-react';
 import {
   TicketStatusMachineAPI,
   type StatusMachine,
@@ -41,7 +41,7 @@ export default function TicketStatusesPage() {
 
   // Auto-resolution draft
   const [arEnabled, setArEnabled] = useState(false);
-  const [arDays, setArDays] = useState('3');
+  const [arDays, setArDays] = useState('2');
   const [arMessage, setArMessage] = useState('');
   const [arDirty, setArDirty] = useState(false);
   const [savingAr, setSavingAr] = useState(false);
@@ -89,8 +89,14 @@ export default function TicketStatusesPage() {
     } catch (err: unknown) {
       const resp = (err as { response?: { status?: number; data?: { detail?: string; tickets_in_use?: unknown } } })?.response;
       // 400 + tickets_in_use → status is on live tickets; confirm before forcing.
+      // Build a friendly prompt from the count rather than surfacing the raw API detail.
       if (resp?.status === 400 && resp.data?.tickets_in_use != null && !confirm) {
-        setConfirmDelete({ status, detail: resp.data.detail ?? 'This status is in use on tickets.' });
+        const count = Number(resp.data.tickets_in_use) || 0;
+        const subject = count === 1 ? '1 ticket currently uses' : `${count} tickets currently use`;
+        setConfirmDelete({
+          status,
+          detail: `${subject} “${status.name}”. Deleting it will clear the status from ${count === 1 ? 'that ticket' : 'those tickets'}. Are you sure you want to delete it?`,
+        });
       } else {
         toast.error(resp?.data?.detail ?? 'Could not delete status.');
       }
@@ -129,6 +135,13 @@ export default function TicketStatusesPage() {
     } finally {
       setSavingEdges(false);
     }
+  };
+
+  const stepDays = (delta: number) => {
+    const current = parseInt(arDays, 10);
+    const next = Math.max(1, (isNaN(current) ? 1 : current) + delta);
+    setArDays(String(next));
+    setArDirty(true);
   };
 
   const saveAutoResolve = async () => {
@@ -324,17 +337,38 @@ export default function TicketStatusesPage() {
 
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-600">Resolve after</span>
-                <input
-                  inputMode="numeric"
-                  value={arDays}
-                  onChange={(e) => {
-                    if (e.target.value !== '' && !/^\d+$/.test(e.target.value)) return;
-                    setArDays(e.target.value); setArDirty(true);
-                  }}
-                  onBlur={() => { if (arDays === '') { setArDays('1'); setArDirty(true); } }}
-                  disabled={!arEnabled}
-                  className="w-20 rounded-lg border border-gray-200 px-3 py-1.5 text-right text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 disabled:bg-gray-50 disabled:text-gray-400"
-                />
+                <div className="inline-flex items-center rounded-lg border border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => stepDays(-1)}
+                    disabled={!arEnabled || (parseInt(arDays, 10) || 1) <= 1}
+                    className="flex h-8 w-8 items-center justify-center rounded-l-lg text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                    aria-label="Decrease days"
+                  >
+                    <Minus className="h-4 w-4" />
+                  </button>
+                  <input
+                    inputMode="numeric"
+                    value={arDays}
+                    onChange={(e) => {
+                      if (e.target.value !== '' && !/^\d+$/.test(e.target.value)) return;
+                      setArDays(e.target.value); setArDirty(true);
+                    }}
+                    onBlur={() => { if (arDays === '' || arDays === '0') { setArDays('1'); setArDirty(true); } }}
+                    disabled={!arEnabled}
+                    className="h-8 w-12 border-x border-gray-200 text-center text-sm outline-none focus:bg-blue-50/40 disabled:bg-gray-50 disabled:text-gray-400"
+                    aria-label="Days of no reply"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => stepDays(1)}
+                    disabled={!arEnabled}
+                    className="flex h-8 w-8 items-center justify-center rounded-r-lg text-gray-500 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                    aria-label="Increase days"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
                 <span className="text-sm text-gray-600">day(s) of no reply</span>
               </div>
 

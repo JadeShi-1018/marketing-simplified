@@ -18,12 +18,14 @@ from csm.models import (
 )
 
 # Five built-in statuses, in canonical order. (slug, name, color)
+# Colors mirror the conversation status palette (active=green, pending=yellow,
+# resolved=blue, closed=gray) so agents don't juggle two color languages.
 BUILTIN_STATUSES = [
-    ('todo', 'To Do', '#94a3b8'),
-    ('in_progress', 'In Progress', '#3b82f6'),
-    ('pending_customer', 'Pending Customer Response', '#f59e0b'),
-    ('resolved', 'Resolved', '#22c55e'),
-    ('closed', 'Closed', '#64748b'),
+    ('todo', 'To Do', '#94a3b8'),                                  # slate — neutral, no conversation equivalent
+    ('in_progress', 'In Progress', '#22c55e'),                     # green — like conversation "active"
+    ('pending_customer', 'Pending Customer Response', '#eab308'),  # yellow — like "pending"
+    ('resolved', 'Resolved', '#3b82f6'),                           # blue — like "resolved"
+    ('closed', 'Closed', '#6b7280'),                               # gray — like "closed"
 ]
 
 # Default permitted transitions seeded for a new project. Sensible support

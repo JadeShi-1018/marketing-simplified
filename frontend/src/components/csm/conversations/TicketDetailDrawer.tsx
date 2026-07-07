@@ -38,6 +38,8 @@ export default function TicketDetailDrawer({
 }: Props) {
   const [updating, setUpdating] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [desc, setDesc] = useState('');
+  const [savingDesc, setSavingDesc] = useState(false);
 
   // Keep the SLA countdown fresh while the drawer is open.
   useEffect(() => {
@@ -45,6 +47,12 @@ export default function TicketDetailDrawer({
     const id = setInterval(() => setNow(Date.now()), 30_000);
     return () => clearInterval(id);
   }, [open]);
+
+  // Reset the editable description when the drawer switches tickets or the
+  // ticket's saved description changes.
+  useEffect(() => {
+    setDesc(ticket?.description ?? '');
+  }, [ticket?.id, ticket?.description]);
 
   if (!ticket) return null;
 
@@ -65,7 +73,21 @@ export default function TicketDetailDrawer({
     }
   };
 
+  const saveDescription = async () => {
+    setSavingDesc(true);
+    try {
+      const updated = await TicketAPI.update(ticket.id, { description: desc });
+      onUpdated(updated);
+      toast.success('Description saved.');
+    } catch {
+      toast.error('Failed to save description.');
+    } finally {
+      setSavingDesc(false);
+    }
+  };
+
   const nextStatuses = ticket.available_next_statuses ?? [];
+  const descDirty = desc !== (ticket.description ?? '');
 
   return (
       <CsmSettingsDrawerShell
@@ -132,16 +154,38 @@ export default function TicketDetailDrawer({
             </Row>
           </div>
 
-          {ticket.description && (
-            <div className="mt-4">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                Description
-              </span>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-gray-700">
-                {ticket.description}
-              </p>
-            </div>
-          )}
+          <div className="mt-4">
+            <span className="text-[11px] font-medium uppercase tracking-wide text-gray-400">
+              Description
+            </span>
+            <textarea
+              value={desc}
+              onChange={(e) => setDesc(e.target.value)}
+              rows={4}
+              placeholder="Add a description…"
+              className="mt-1 w-full resize-y rounded-md border border-gray-200 px-2.5 py-2 text-sm text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-300"
+            />
+            {descDirty && (
+              <div className="mt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDesc(ticket.description ?? '')}
+                  disabled={savingDesc}
+                  className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-500 hover:text-gray-700 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveDescription}
+                  disabled={savingDesc}
+                  className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {savingDesc ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            )}
+          </div>
           {/* MED-220 ticket history timeline plugs in here later. */}
         </div>
       </CsmSettingsDrawerShell>

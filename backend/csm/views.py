@@ -1367,6 +1367,10 @@ class TicketStatusViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
                 ),
                 'tickets_in_use': in_use,
             })
+        # Reassign any tickets still on this status to 'in_progress' (a built-in
+        # that can't be deleted) so they aren't stranded on a slug that no longer
+        # exists — matches what the delete warning promises.
+        tickets_using_status(instance.project_id, instance.slug).update(status='in_progress')
         # Drop transitions referencing the deleted slug so the machine stays clean.
         TicketStatusTransition.objects.filter(
             Q(project_id=instance.project_id),

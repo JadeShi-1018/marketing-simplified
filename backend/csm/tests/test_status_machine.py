@@ -192,9 +192,12 @@ def test_delete_custom_status_in_use_requires_confirm(admin_client, project, tic
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
     # DRF stringifies values inside a validation-error payload.
     assert int(resp.data['tickets_in_use']) == 1
-    # with confirm -> deleted
+    # with confirm -> deleted, and the ticket is moved off the deleted status
+    # (reassigned to the default built-in) rather than stranded on a dead slug
     resp = admin_client.delete(detail + f'?project={project.id}&confirm=true')
     assert resp.status_code == status.HTTP_204_NO_CONTENT
+    ticket.refresh_from_db()
+    assert ticket.status == 'in_progress'
 
 
 # --- AC #3: automatic resolution ------------------------------------------
@@ -255,3 +258,38 @@ def test_auto_resolve_disabled_does_nothing(project, pending_ticket):
     assert auto_resolve_pending_tickets() == 0
     pending_ticket.refresh_from_db()
     assert pending_ticket.status == 'pending_customer'
+
+
+# --- manual status changes must NOT notify the customer -------------------
+# MED-215 only requires a customer notification on *auto*-resolution. A manual
+# resolve/close is a plain transition; these guard against a system message
+# creeping back in (it used to, and was removed).
+
+def test_manual_resolve_does_not_notify_customer(admin_client, queue):
+    conv = Conversation.objects.create(queue=queue)
+    t = Ticket.objects.create(
+        queue=queue, title='M', status='pending_customer', conversation=conv,
+    )
+    resp = admin_client.patch(
+        _ticket_detail(t.id), {'status': 'resolved'}, format='json',
+    )
+    assert resp.status_code == status.HTTP_200_OK
+    t.refresh_from_db()
+    assert t.status == 'resolved'
+    assert not ConversationMessage.objects.filter(
+        conversation=conv, sender_type='system',
+    ).exists()
+
+
+def test_manual_close_does_not_notify_customer(admin_client, queue):
+    conv = Conversation.objects.create(queue=queue)
+    t = Ticket.objects.create(
+        queue=queue, title='C', status='resolved', conversation=conv,
+    )
+    resp = admin_client.post(reverse('ticket-close', kwargs={'pk': t.id}))
+    assert resp.status_code == status.HTTP_200_OK
+    t.refresh_from_db()
+    assert t.status == 'closed'
+    assert not ConversationMessage.objects.filter(
+        conversation=conv, sender_type='system',
+    ).exists()

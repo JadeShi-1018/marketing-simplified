@@ -841,7 +841,7 @@ class TicketAutoResolveConfig(TimeStampedModel):
         Project, on_delete=models.CASCADE, related_name='ticket_auto_resolve_config',
     )
     enabled = models.BooleanField(default=False)
-    days_until_resolve = models.PositiveIntegerField(default=3)
+    days_until_resolve = models.PositiveIntegerField(default=2)
     notification_message = models.TextField(
         default=(
             'This ticket has been automatically resolved as we did not hear '
