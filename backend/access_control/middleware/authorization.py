@@ -44,7 +44,9 @@ class AuthorizationMiddleware:
         if getattr(user, 'is_superuser', False):
             return None
 
-        # Org admins (role level <= 2) bypass module-level permission checks.
+        # Org admins (role level == 2) bypass module-level permission checks.
+        # Level 2 is the Organization Admin level created by assign_org_admin().
+        # This matches the criterion used by is_org_admin() in admin_utils.py.
         # TenantSchemaMiddleware has already set the correct search_path, so
         # querying UserRole here hits the right tenant schema directly.
         # Temporal validity is enforced: expired admin roles do not grant bypass.
@@ -52,7 +54,7 @@ class AuthorizationMiddleware:
             _now = timezone.now()
             if UserRole.objects.filter(
                 user=user,
-                role__level__lte=2,
+                role__level=2,
                 valid_from__lte=_now,
             ).filter(Q(valid_to__gte=_now) | Q(valid_to__isnull=True)).exists():
                 return None

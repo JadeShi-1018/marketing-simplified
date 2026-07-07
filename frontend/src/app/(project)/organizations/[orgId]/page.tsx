@@ -206,7 +206,7 @@ function OrgDetailContent() {
     if (!org || slugSaving) return;
     const trimmed = slugDraft.trim().toLowerCase();
     if (!trimmed) {
-      setSlugError('Slug cannot be empty.');
+      setSlugError('Organization code cannot be empty.');
       return;
     }
     if (!/^[a-z0-9-]+$/.test(trimmed)) {
@@ -223,10 +223,10 @@ function OrgDetailContent() {
       const result = await OrganizationAPI.updateOrgSlug(org.id, trimmed);
       setOrg({ ...org, slug: result.slug });
       setEditingSlug(false);
-      toast.success('Slug updated successfully.');
+      toast.success('Organization code updated successfully.');
     } catch (e: unknown) {
       const err = e as { response?: { data?: { error?: string } } };
-      setSlugError(err?.response?.data?.error ?? 'Failed to update slug.');
+      setSlugError(err?.response?.data?.error ?? 'Failed to update organization code.');
     } finally {
       setSlugSaving(false);
     }
@@ -349,7 +349,7 @@ function OrgDetailContent() {
                   {editingSlug ? (
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-gray-400 font-mono">slug:</span>
+                        <span className="text-sm text-gray-400">Organization code:</span>
                         <input
                           autoFocus
                           type="text"
@@ -394,7 +394,7 @@ function OrgDetailContent() {
                     </div>
                   ) : (
                     <p className="text-sm text-gray-400 flex items-center gap-1.5 flex-wrap">
-                      <span className="font-mono">slug: {org.slug}</span>
+                      <span><span className="text-gray-400">Organization code:</span>{' '}<span className="font-mono">{org.slug}</span></span>
                       <button
                         type="button"
                         onClick={() => {
@@ -402,7 +402,7 @@ function OrgDetailContent() {
                           setSlugCopied(true);
                           setTimeout(() => setSlugCopied(false), 2000);
                         }}
-                        title="Copy slug"
+                        title="Copy organization code"
                         className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition"
                       >
                         {slugCopied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
@@ -411,7 +411,7 @@ function OrgDetailContent() {
                         <button
                           type="button"
                           onClick={handleStartEditSlug}
-                          title="Edit slug"
+                          title="Edit organization code"
                           className="inline-flex items-center justify-center w-4 h-4 rounded text-gray-300 hover:text-[#3CCED7] hover:bg-[#3CCED7]/10 transition"
                         >
                           <Pencil className="w-3 h-3" />

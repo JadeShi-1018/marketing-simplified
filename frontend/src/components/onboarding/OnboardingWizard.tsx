@@ -198,7 +198,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
 
   const handleValidateSlug = async (slug: string) => {
     if (!slug.trim()) {
-      setStepError('Please enter an organization slug.');
+      setStepError('Please enter your organization code.');
       return;
     }
 
@@ -212,11 +212,11 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
         toast.success(`Found organization: ${response.organization.name}`);
         slugInputRef.current?.blur();
       } else {
-        setStepError('Organization not found. Please check the slug and try again.');
+        setStepError('Organization not found. Please check the code and try again.');
         updateState({ selectedOrganization: null });
       }
     } catch (error: any) {
-      const message = error?.response?.data?.error || error?.message || 'Failed to validate slug';
+      const message = error?.response?.data?.error || error?.message || 'Failed to validate organization code';
       setStepError(message);
       updateState({ selectedOrganization: null });
     } finally {
@@ -257,11 +257,11 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
         } else {
           // Join mode
           if (!state.organizationSlug.trim()) {
-            setStepError('Organization slug is required.');
+            setStepError('Organization code is required.');
             return false;
           }
           if (!state.selectedOrganization) {
-            setStepError('Please validate the slug first.');
+            setStepError('Please validate the organization code first.');
             return false;
           }
         }
@@ -437,7 +437,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
             ) : (
               <>
                 <div className="space-y-3">
-                  <label className="block text-sm font-medium text-gray-700">Organization slug</label>
+                  <label className="block text-sm font-medium text-gray-700">Organization code</label>
                   <div className="flex gap-2">
                     <input
                       ref={slugInputRef}
@@ -477,7 +477,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
                   {state.selectedOrganization && (
                     <div className="rounded-lg border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-4 py-3 text-sm">
                       <div className="font-semibold text-gray-900">{state.selectedOrganization.name}</div>
-                      <div className="text-gray-600">Slug: {state.selectedOrganization.slug}</div>
+                      <div className="text-gray-600">Organization code: {state.selectedOrganization.slug}</div>
                       {state.selectedOrganization.member_count !== undefined && (
                         <div className="text-gray-600">{state.selectedOrganization.member_count} members</div>
                       )}
@@ -490,7 +490,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
                   className="text-sm text-[#3CCED7] hover:text-[#0F172A] hover:underline transition"
                   disabled={submitting}
                 >
-                  Don&apos;t have a slug? Create your own organization
+                  Don&apos;t have a code? Create your own organization
                 </button>
               </>
             )}
