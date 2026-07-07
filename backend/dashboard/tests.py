@@ -25,9 +25,13 @@ class ProjectWorkspaceDashboardTest(TestCase):
         self.org = Organization.objects.create(name="TestOrg")
 
         # Create users
-        self.user = User.objects.create_user(
-            username="testuser", email="test@test.com", password="pass"
+        self.user, created = User.objects.get_or_create(
+            username="testuser",
+            defaults={"email": "test@test.com"},
         )
+        if created:
+            self.user.set_password("pass")
+            self.user.save()
         # Provide names so workspace avatar initials are stable and human-friendly.
         self.user.first_name = "Test"
         self.user.last_name = "User"
@@ -45,7 +49,7 @@ class ProjectWorkspaceDashboardTest(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-        self.url = f"/api/dashboard/workspace/?project_id={self.project.id}"
+        self.url = f"/api/dashboard/workspace/?project_id={self.project.slug}"
 
     # ── helpers ────────────────────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 import logging
 from rest_framework import viewsets, status, generics, permissions
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 
 logger = logging.getLogger(__name__)
 from rest_framework.decorators import action, api_view, permission_classes
@@ -54,7 +55,7 @@ def _debug_log(session_id, location, message, data=None, hypothesis_id=None):
 # endregion
 
 
-class TaskViewSet(viewsets.ModelViewSet):
+class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """ViewSet for Task model"""
     queryset = Task.objects.select_related(
         'project',
@@ -104,8 +105,11 @@ class TaskViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Get the project (404 if it doesn't exist)
-        project = get_object_or_404(Project, id=project_id)
+        # Get the project (404 if it doesn't exist). Accept slug or numeric pk.
+        resolved_pk = resolve_project_pk(project_id)
+        if not resolved_pk:
+            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        project = get_object_or_404(Project, id=resolved_pk)
 
         # Ensure the current user is a member of this project
         ProjectMember.objects.get_or_create(
@@ -177,10 +181,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         has_explicit_project_id = requested_project_id_raw is not None
         requested_project_id = None
         if has_explicit_project_id:
-            try:
-                requested_project_id = int(requested_project_id_raw)
-            except (TypeError, ValueError):
-                raise DRFValidationError({'project_id': 'project_id must be an integer'})
+            # Accept slug (current frontend) or numeric pk (legacy); resolve to pk.
+            requested_project_id = resolve_project_pk(requested_project_id_raw)
 
             if requested_project_id not in accessible_project_ids:
                 raise PermissionDenied('You do not have access to this project.')
@@ -406,10 +408,9 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
-                raise DRFValidationError({'project_id': 'project_id must be an integer'})
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
+                raise DRFValidationError({'project_id': 'Unknown project'})
             if pid not in accessible_ids:
                 raise PermissionDenied('You do not have access to this project.')
             return pid
@@ -513,9 +514,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -619,9 +619,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -659,9 +658,8 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -690,9 +688,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         if not project_id_param:
             return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            project_id = int(project_id_param)
-        except (TypeError, ValueError):
+        project_id = resolve_project_pk(project_id_param)
+        if project_id is None:
             return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
 
         has_membership = ProjectMember.objects.filter(
@@ -756,7 +753,10 @@ class TaskViewSet(viewsets.ModelViewSet):
             'current_approver',
             'meeting_origin__meeting__type_definition',
         )
-        task = get_object_or_404(base_qs, pk=self.kwargs.get('pk'))
+        from core.slug_mixins import resolve_lookup_kwargs
+        lookup_value = self.kwargs.get('pk')
+        filter_kwargs = resolve_lookup_kwargs(lookup_value, 'pk')
+        task = get_object_or_404(base_qs, **filter_kwargs)
 
         user = self.request.user
         if not user.is_authenticated:
@@ -813,7 +813,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 body="You have been assigned to a new task.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=task_action_url(task.id),
+                action_url=task_action_url(task.slug),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -837,7 +837,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 body="You have been assigned as approver for this task.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=task_action_url(task.id),
+                action_url=task_action_url(task.slug),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -878,7 +878,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         actor_id   = self.request.user.id
         project_id = task.project_id
-        action_url = task_action_url(task.id)
+        action_url = task_action_url(task.slug)
         task_meta  = {"task_id": task.id, "project_id": project_id}
 
         # ── Owner reassigned ──────────────────────────────────────────────────
@@ -1777,7 +1777,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     def subtask_detail(self, request, pk=None, subtask_id=None):
         """Remove a subtask relationship (unlink only — does not delete the task)."""
         parent_task = self.get_object()
-        child_task = get_object_or_404(Task, pk=subtask_id)
+        child_task = get_object_or_404(Task, **resolve_lookup_kwargs(subtask_id))
         qs = TaskHierarchy.objects.filter(parent_task=parent_task, child_task=child_task)
         if not qs.exists():
             return Response({'error': 'Subtask relationship not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -1802,7 +1802,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             return Response({'error': 'old_parent_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         old_parent = get_object_or_404(Task, pk=old_parent_id)
-        child_task = get_object_or_404(Task, pk=subtask_id)
+        child_task = get_object_or_404(Task, **resolve_lookup_kwargs(subtask_id))
 
         # remove old relationship
         TaskHierarchy.objects.filter(parent_task=old_parent, child_task=child_task).delete()
@@ -1954,18 +1954,18 @@ class TaskCommentListView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to this task.')
 
-        return TaskComment.objects.filter(task_id=task_id)
+        return TaskComment.objects.filter(task=task)
 
     def perform_create(self, serializer):
         import re  # noqa: PLC0415
 
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to comment on this task.')
@@ -1993,7 +1993,7 @@ class TaskCommentListView(generics.ListCreateAPIView):
                     body=body[:200] + ("…" if len(body) > 200 else ""),
                     related_object_type="task",
                     related_object_id=str(task.id),
-                    action_url=task_action_url(task.id),
+                    action_url=task_action_url(task.slug),
                     metadata={
                         "task_id": task.id,
                         "project_id": task.project_id,
@@ -2015,16 +2015,16 @@ class TaskAttachmentListView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to this task.')
 
-        return TaskAttachment.objects.filter(task_id=task_id)
+        return TaskAttachment.objects.filter(task=task)
 
     def perform_create(self, serializer):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to upload attachments to this task.')
@@ -2042,12 +2042,12 @@ class TaskAttachmentDetailView(generics.RetrieveDestroyAPIView):
 
     def get_queryset(self):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to this task.')
 
-        return TaskAttachment.objects.filter(task_id=task_id)
+        return TaskAttachment.objects.filter(task=task)
 
     def perform_destroy(self, instance):
         task_id = instance.task_id
@@ -2071,7 +2071,8 @@ class TaskAttachmentDownloadView(APIView):
         attachment_id = self.kwargs.get('pk')
         
         # Get the specific attachment
-        attachment = get_object_or_404(TaskAttachment, pk=attachment_id, task_id=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
+        attachment = get_object_or_404(TaskAttachment, pk=attachment_id, task=task)
         
         if not _user_can_access_task(request.user, attachment.task):
             raise PermissionDenied('You do not have access to this task.')

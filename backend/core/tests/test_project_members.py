@@ -35,7 +35,7 @@ class TestProjectMemberViewSet:
             organization=None,
         )
 
-        url = reverse("list-project-roles", kwargs={"project_id": project.id})
+        url = reverse("list-project-roles", kwargs={"project_id": project.slug})
         response = authenticated_client.get(url)
 
         assert response.status_code == status.HTTP_200_OK
@@ -60,7 +60,7 @@ class TestProjectMemberViewSet:
         client = APIClient()
         client.force_authenticate(user=user2)
 
-        url = reverse("list-project-roles", kwargs={"project_id": project.id})
+        url = reverse("list-project-roles", kwargs={"project_id": project.slug})
         response = client.get(url)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -75,7 +75,7 @@ class TestProjectMemberViewSet:
             is_active=True
         )
 
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
 
         response = authenticated_client.get(url)
 
@@ -98,7 +98,7 @@ class TestProjectMemberViewSet:
             is_active=False
         )
 
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
 
         response = authenticated_client.get(url)
 
@@ -120,7 +120,7 @@ class TestProjectMemberViewSet:
         )
         # Don't create membership
 
-        url = reverse('project-member-list', kwargs={'project_id': other_project.id})
+        url = reverse('project-member-list', kwargs={'project_id': other_project.slug})
 
         response = authenticated_client.get(url)
 
@@ -132,7 +132,7 @@ class TestProjectMemberViewSet:
 
     def test_invite_existing_user(self, authenticated_client, project, user2):
         """Inviting existing user should create a pending invitation"""
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": user2.email,
             "role": "member"
@@ -153,7 +153,7 @@ class TestProjectMemberViewSet:
 
     def test_invite_existing_user_with_role(self, authenticated_client, project, user2):
         """Inviting user with specific role should set invitation role"""
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": user2.email,
             "role": "viewer"
@@ -167,7 +167,7 @@ class TestProjectMemberViewSet:
 
     def test_cannot_invite_non_existent_user(self, authenticated_client, project):
         """Inviting non-existent user should create invitation"""
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": "nonexistent@test.com",
             "role": "member"
@@ -189,7 +189,7 @@ class TestProjectMemberViewSet:
             is_active=True
         )
 
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": user2.email,
             "role": "member"
@@ -206,7 +206,7 @@ class TestProjectMemberViewSet:
         owner_membership = ProjectMember.objects.get(user=user, project=project, role='owner')
 
         url = reverse('project-member-detail', kwargs={
-            'project_id': project.id,
+            'project_id': project.slug,
             'pk': owner_membership.id
         })
 
@@ -230,7 +230,7 @@ class TestProjectMemberViewSet:
         )
 
         url = reverse('project-member-detail', kwargs={
-            'project_id': project.id,
+            'project_id': project.slug,
             'pk': membership.id
         })
 
@@ -261,7 +261,7 @@ class TestProjectMemberViewSet:
         # Try to remove another member (should fail)
         other_membership = ProjectMember.objects.get(user=user2, project=project)
         url = reverse('project-member-detail', kwargs={
-            'project_id': project.id,
+            'project_id': project.slug,
             'pk': other_membership.id
         })
 
@@ -290,7 +290,7 @@ class TestProjectMemberViewSet:
         client = APIClient()
         client.force_authenticate(user=viewer)
 
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": user2.email,
             "role": "member"
@@ -306,7 +306,7 @@ class TestProjectMemberViewSet:
         client = APIClient()
         client.force_authenticate(user=user2)
 
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": "newmember@test.com",
             "role": "member"
@@ -330,7 +330,7 @@ class TestProjectMemberViewSet:
         client = APIClient()
         client.force_authenticate(user=user2)
 
-        url = reverse("project-member-list", kwargs={"project_id": project.id})
+        url = reverse("project-member-list", kwargs={"project_id": project.slug})
         payload = {
             "email": "newmember@test.com",
             "role": "viewer",
@@ -353,7 +353,7 @@ class TestProjectMemberViewSet:
         client = APIClient()
         client.force_authenticate(user=user2)
 
-        url = reverse("project-member-list", kwargs={"project_id": project.id})
+        url = reverse("project-member-list", kwargs={"project_id": project.slug})
         payload = {
             "email": "newmember@test.com",
             "role": "viewer",
@@ -364,7 +364,7 @@ class TestProjectMemberViewSet:
 
     def test_invite_owner_role_rejected(self, authenticated_client, project, user2):
         """Inviting with owner role should be rejected"""
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": user2.email,
             "role": "owner"
@@ -376,7 +376,7 @@ class TestProjectMemberViewSet:
 
     def test_invite_with_team_leader_role_succeeds(self, authenticated_client, project, user2):
         """Team Leader must be valid without a matching RBAC Role row (SMP-484 / UI default)."""
-        url = reverse('project-member-list', kwargs={'project_id': project.id})
+        url = reverse('project-member-list', kwargs={'project_id': project.slug})
         payload = {
             "email": user2.email,
             "role": "Team Leader",
@@ -399,7 +399,7 @@ class TestProjectMemberViewSet:
         )
 
         url = reverse('project-member-detail', kwargs={
-            'project_id': project.id,
+            'project_id': project.slug,
             'pk': membership.id
         })
         payload = {"role": "viewer"}
@@ -420,7 +420,7 @@ class TestProjectMemberViewSet:
         )
 
         url = reverse('project-member-detail', kwargs={
-            'project_id': project.id,
+            'project_id': project.slug,
             'pk': membership.id,
         })
         payload = {"role": "owner"}
@@ -474,7 +474,7 @@ class TestProjectMemberViewSet:
         ensure_project_calendar(project)
 
         url = reverse('project-member-detail', kwargs={
-            'project_id': project.id,
+            'project_id': project.slug,
             'pk': membership.id,
         })
         response = authenticated_client.patch(url, {"role": "owner"}, format='json')
@@ -498,7 +498,7 @@ class TestProjectMemberViewSet:
         )
 
         url = reverse('project-member-detail', kwargs={
-            'project_id': project.id,
+            'project_id': project.slug,
             'pk': owner_membership.id,
         })
         payload = {"role": "Team Leader"}

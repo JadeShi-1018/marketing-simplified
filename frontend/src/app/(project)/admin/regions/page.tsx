@@ -8,7 +8,8 @@ import Modal from '@/components/ui/Modal';
 import { RegionAPI } from '@/lib/api/regionAPI';
 import { Region, CreateRegionData, UpdateRegionData } from '@/types/region';
 import { Plus, Pencil, Trash2, AlertCircle, X, Globe, ArrowLeft } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 
 // ── Create Form ───────────────────────────────────────────────────────────────
 
@@ -243,9 +244,9 @@ const EditForm: React.FC<EditFormProps> = ({ regionId, onSaved, onClose }) => {
 
 const RegionsPage: React.FC = () => {  
     const router = useRouter();                                                                                                       
-    const searchParams = useSearchParams();                                                                                         
-    const projectId = Number(searchParams.get('project'));                                                                            
-    const projectValid = Number.isFinite(projectId) && projectId > 0;                                                                 
+    const { activeProject } = useActiveProjectForFlatRoute();
+    const projectId = Number(activeProject?.id ?? 0);
+    const projectValid = projectId > 0;
                                                                                                                                       
     const [regions, setRegions] = useState<Region[]>([]);                                                                             
     const [loading, setLoading] = useState(true);                                                                                     

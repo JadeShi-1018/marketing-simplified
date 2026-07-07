@@ -222,6 +222,7 @@ function makeCreativeRow(
 ): MetaCreativePerformanceRow {
   return {
     id,
+    slug: `c${id}`,
     meta_creative_id: `c${id}`,
     name: `Creative ${id}`,
     title: `Title ${id}`,

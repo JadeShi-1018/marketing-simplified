@@ -2,6 +2,7 @@ from rest_framework import generics, permissions
 from django.shortcuts import get_object_or_404
 
 from task.models import Task
+from core.slug_mixins import resolve_pk_for
 from .models import ClientCommunication
 from .serializers import (
     ClientCommunicationSerializer,
@@ -17,10 +18,10 @@ class ClientCommunicationListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        task_id = self.request.query_params.get("task_id")
+        task_pk = resolve_pk_for(Task, self.request.query_params.get("task_id"))
         queryset = ClientCommunication.objects.all()
-        if task_id:
-            queryset = queryset.filter(task_id=task_id)
+        if task_pk:
+            queryset = queryset.filter(task_id=task_pk)
         return queryset
 
     def get_serializer_class(self):

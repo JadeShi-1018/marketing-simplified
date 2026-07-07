@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
+import { useProjectStore } from '@/lib/projectStore';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { ExperienceGroup } from '@/types/experienceGroup';
 import type { RequestFormResponse } from '@/types/ticketForm';
@@ -13,9 +14,8 @@ import { AlertCircle } from 'lucide-react';
 
 const PreviewPage: React.FC = () => {
   const params = useParams();
-  const searchParams = useSearchParams();
-  const id = Number(params.id);
-  const projectId = searchParams.get('project');
+  const id = String(params.id);
+  const projectId = useProjectStore((s) => s.activeProject)?.id ?? null;
 
   const [data, setData] = useState<(ExperienceGroup & { is_preview: boolean }) | null>(null);
   const [loading, setLoading] = useState(true);
@@ -63,9 +63,7 @@ const PreviewPage: React.FC = () => {
     fetchRequestForm();
   }, [fetchPreview, fetchRequestForm]);
 
-  const ticketFormsHref = projectId
-    ? `/admin/ticket-forms?project=${projectId}`
-    : '/admin/ticket-forms';
+  const ticketFormsHref = '/admin/ticket-forms';
 
   if (loading) {
     return (

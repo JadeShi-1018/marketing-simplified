@@ -108,6 +108,7 @@ function flatItemKey(item: FlatItem, index: number): string {
 
 export default function MessageList({
   messages,
+  chatSlug,
   currentUserId,
   onLoadMore,
   hasMore,
@@ -743,6 +744,7 @@ export default function MessageList({
                         {item.type === 'message' && (
                           <MessageItem
                             message={item.message}
+                            chatSlug={chatSlug}
                             isOwnMessage={item.message.sender.id === currentUserId}
                             showSender={item.showSender}
                             isCompact={!item.showSender}

@@ -7,6 +7,7 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.db.models import Q
 from rest_framework import viewsets, status
+from core.slug_mixins import SlugLookupViewSetMixin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -30,7 +31,7 @@ IMAGE_MAX_BYTES = 10 * 1024 * 1024  # 10MB limit for images
 MIN_DIMENSION = 1
 
 
-class EmailDraftViewSet(viewsets.ModelViewSet):
+class EmailDraftViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for EmailDraft CRUD.
 
@@ -72,14 +73,10 @@ class EmailDraftViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        Default the user to request.user if not explicitly provided.
+        Always set the owner to the authenticated user. The serializer treats
+        `user` as read-only, so a client-supplied owner cannot be honoured.
         """
-        user = getattr(self.request, "user", None)
-
-        if "user" not in serializer.validated_data and user and user.is_authenticated:
-            serializer.save(user=user)
-        else:
-            serializer.save()
+        serializer.save(user=self.request.user)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -139,6 +136,8 @@ class EmailDraftViewSet(viewsets.ModelViewSet):
 class WorkflowViewSet(viewsets.ModelViewSet):
     """
     ViewSet for Workflow CRUD.
+
+    Note: klaviyo.Workflow has no slug field, so detail lookups remain pk-based.
 
     Supports:
     - GET    /api/klaviyo/klaviyo-workflows/        (list)

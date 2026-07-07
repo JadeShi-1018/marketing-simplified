@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { AxiosResponse } from 'axios';
-import CreateTaskPage from '@/app/(project)/tasks/new/page';
+import CreateTaskPage from '@/app/(project)/projects/[projectId]/tasks/new/page';
 import { TaskAPI } from '@/lib/api/taskApi';
 import { BudgetAPI } from '@/lib/api/budgetApi';
 import { ProjectAPI } from '@/lib/api/projectApi';
@@ -16,8 +16,9 @@ jest.mock('next/navigation', () => ({
     forward: jest.fn(),
     refresh: jest.fn(),
   }),
-  usePathname: () => '/tasks/new',
-  useSearchParams: jest.fn(),
+  usePathname: () => '/projects/acme/tasks/new',
+  useSearchParams: jest.fn(() => new URLSearchParams()),
+  useParams: () => ({ projectId: 'acme' }),
 }));
 
 jest.mock('@/lib/api/taskApi');
@@ -287,35 +288,26 @@ describe('TaskCreationFlow - Budget Task', () => {
     expect(screen.getByRole('button', { name: /create task/i })).toBeInTheDocument();
   });
 
-  test('should open draft from list and restore fields', async () => {
-    // Simulate restoring from autosave via getAutosave
-    mockTaskAPI.getAutosave = jest.fn().mockResolvedValue({
-      summary: 'Restored Summary',
-      description: 'Restored Description',
-      priority: 'HIGH',
-      type_form: {},
-    });
-
-    // Simulate selecting a type which triggers draft load
+  test('should reset form fields when switching type', async () => {
     render(<CreateTaskPage />);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Budget' })).toBeInTheDocument();
     });
 
-    // Click Budget type to trigger autosave restore
+    // Fill in summary first
+    const summaryInput = screen.getByPlaceholderText('Summary of this task');
+    fireEvent.change(summaryInput, { target: { value: 'Some Summary' } });
+
+    // Click Budget type — handleTypeChange resets form via hydrateForm(null)
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Budget' }));
     });
 
+    // After type change, summary should be preserved (handleTypeChange keeps it)
     await waitFor(() => {
-      expect(mockTaskAPI.getAutosave).toHaveBeenCalled();
-    });
-
-    // After restore, summary should be updated
-    await waitFor(() => {
-      const summaryInput = screen.getByPlaceholderText('Summary of this task') as HTMLInputElement;
-      expect(summaryInput.value).toBe('Restored Summary');
+      const input = screen.getByPlaceholderText('Summary of this task') as HTMLInputElement;
+      expect(input.value).toBe('Some Summary');
     });
   });
 

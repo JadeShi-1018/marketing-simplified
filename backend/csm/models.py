@@ -1,11 +1,31 @@
+import uuid
+
 from django.db import models
 from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from core.models import TimeStampedModel, Project, Team
+from core.slug_mixins import SluggedResourceModelMixin
 
 
-class Queue(TimeStampedModel):
+def default_operating_hours():
+    disabled = {'enabled': False}
+    weekday = {'enabled': True, 'start': '09:00', 'end': '17:00'}
+    return {
+        'monday': weekday.copy(),
+        'tuesday': weekday.copy(),
+        'wednesday': weekday.copy(),
+        'thursday': weekday.copy(),
+        'friday': weekday.copy(),
+        'saturday': disabled.copy(),
+        'sunday': disabled.copy(),
+    }
+
+
+class Queue(SluggedResourceModelMixin, TimeStampedModel):
+    # Slug-only URLs. Slug is derived from name.
+    slug_source_field = 'name'
+
     TIER_CHOICES = [
         ('T1', 'T1 Frontline'),
         ('T2', 'T2 Technical Support'),
@@ -148,11 +168,12 @@ class Ticket(TimeStampedModel):
         ('closed', 'Closed'),
     ]
     PRIORITY_CHOICES = [
-        ('low', 'Low'),
-        ('medium', 'Medium'),
+        ('critical', 'Critical'),
         ('high', 'High'),
-        ('urgent', 'Urgent'),
+        ('medium', 'Medium'),
+        ('low', 'Low'),
     ]
+    PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 
     queue = models.ForeignKey(Queue, on_delete=models.CASCADE, related_name='tickets')
     title = models.CharField(max_length=300)
@@ -165,6 +186,13 @@ class Ticket(TimeStampedModel):
         related_name='assigned_tickets',
     )
     customer_email = models.EmailField(blank=True)
+    conversation = models.ForeignKey(
+        'Conversation', on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='tickets',
+    )
+    first_response_due = models.DateTimeField(null=True, blank=True)
+    resolution_due = models.DateTimeField(null=True, blank=True)
 
     # --- CSM-S01-07: form submission context ---
     form = models.ForeignKey(
@@ -194,6 +222,147 @@ class Ticket(TimeStampedModel):
 
     def __str__(self):
         return f"[{self.get_status_display()}] {self.title}"
+
+
+class Conversation(TimeStampedModel):
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('pending', 'Pending'),
+        ('resolved', 'Resolved'),
+        ('closed', 'Closed'),
+    ]
+    CHANNEL_CHOICES = [
+        ('web', 'Web'),
+        ('email', 'Email'),
+        ('whatsapp', 'WhatsApp'),
+    ]
+
+    customer = models.ForeignKey(
+        'customer.Customer',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='conversations',
+    )
+    queue = models.ForeignKey(
+        Queue, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='conversations',
+    )
+    assigned_to = models.ForeignKey(
+        CustomerUser, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assigned_conversations',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default='web')
+    support_channel = models.ForeignKey(
+        'SupportChannel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='conversations',
+    )
+    tags = models.JSONField(default=list, blank=True)
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        customer_name = self.customer.full_name if self.customer else 'Unknown'
+        return f"Conversation with {customer_name} [{self.get_status_display()}]"
+
+    @property
+    def elapsed_seconds(self):
+        end = self.ended_at or timezone.now()
+        return int((end - self.started_at).total_seconds())
+
+
+class ConversationMessage(models.Model):
+    SENDER_TYPE_CHOICES = [
+        ('agent', 'Agent'),
+        ('customer', 'Customer'),
+        ('system', 'System'),
+    ]
+
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE,
+        related_name='messages',
+    )
+    sender_type = models.CharField(max_length=20, choices=SENDER_TYPE_CHOICES)
+    sender_agent = models.ForeignKey(
+        CustomerUser, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='sent_messages',
+    )
+    content = models.TextField(blank=True)
+    rich_body = models.JSONField(null=True, blank=True)
+    image = models.ImageField(upload_to='conversation_images/', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"[{self.sender_type}] {self.content[:50]}"
+
+
+class QuickReplyTemplate(TimeStampedModel):
+    """Pre-written reply templates that agents can insert into the conversation composer."""
+
+    organisation = models.ForeignKey(
+        'customer.CustomerOrganisation',
+        on_delete=models.CASCADE,
+        related_name='quick_reply_templates',
+    )
+    team = models.ForeignKey(
+        Team, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='quick_reply_templates',
+        help_text="If set, only members of this team can see the template",
+    )
+    title = models.CharField(max_length=200, help_text="Short label shown in the template picker")
+    content = models.TextField(help_text="Plain-text content inserted into the composer")
+    rich_body = models.JSONField(null=True, blank=True, help_text="Optional Tiptap JSON")
+    tags = models.JSONField(default=list, blank=True, help_text="List of tag strings for filtering")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='created_templates',
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['title']
+
+    def __str__(self):
+        return f"[Template] {self.title}"
+
+
+class QuickReplyTemplateHistory(models.Model):
+    """Snapshot of a QuickReplyTemplate captured before each edit."""
+
+    template = models.ForeignKey(
+        QuickReplyTemplate, on_delete=models.CASCADE,
+        related_name='history',
+    )
+    edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='template_edits',
+    )
+    edited_at = models.DateTimeField(auto_now_add=True)
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    rich_body = models.JSONField(null=True, blank=True)
+    tags = models.JSONField(default=list)
+
+    class Meta:
+        ordering = ['-edited_at']
+
+    def __str__(self):
+        return f"History of template {self.template_id} at {self.edited_at}"
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +419,10 @@ class CsmWorkType(TimeStampedModel):
         return self.name
 
 
-class TicketForm(TimeStampedModel):
+class TicketForm(SluggedResourceModelMixin, TimeStampedModel):
+    # Slug-only URLs. Slug is derived from name.
+    slug_source_field = 'name'
+
     project = models.ForeignKey(
         Project, on_delete=models.CASCADE, related_name='ticket_forms',
     )
@@ -433,6 +605,128 @@ class TicketAttachment(models.Model):
 
     def __str__(self):
         return self.original_name or str(self.file)
+
+
+class SLAPolicy(TimeStampedModel):
+    """One SLA policy per project. Defines per-priority time targets."""
+
+    project = models.OneToOneField(
+        'core.Project', on_delete=models.CASCADE,
+        related_name='sla_policy',
+    )
+    name = models.CharField(max_length=200, default='Default SLA Policy')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'SLA Policy'
+        verbose_name_plural = 'SLA Policies'
+
+    def __str__(self):
+        return f"SLA Policy — {self.project_id}"
+
+
+class SLAPriorityTarget(models.Model):
+    """Per-priority SLA time targets within an SLAPolicy."""
+
+    PRIORITY_CHOICES = Ticket.PRIORITY_CHOICES
+
+    policy = models.ForeignKey(
+        SLAPolicy, on_delete=models.CASCADE,
+        related_name='priority_targets',
+    )
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES)
+    first_response_minutes = models.PositiveIntegerField(
+        default=480,
+        help_text='Minutes until first response is due (e.g. 60 = 1 hour)',
+    )
+    resolution_minutes = models.PositiveIntegerField(
+        default=1440,
+        help_text='Minutes until resolution is due (e.g. 480 = 8 hours)',
+    )
+
+    class Meta:
+        unique_together = ('policy', 'priority')
+        ordering = ['policy', 'priority']
+
+    def __str__(self):
+        return (
+            f"{self.policy_id} | {self.priority}: "
+            f"{self.first_response_minutes}m / {self.resolution_minutes}m"
+        )
+
+
+class SupportChannel(TimeStampedModel):
+    class ChannelType(models.TextChoices):
+        LIVE_CHAT = 'live_chat', 'Live chat'
+        CONTACT_FORM = 'contact_form', 'Contact form'
+        EMAIL = 'email', 'Email'
+
+    class OfflineAlternative(models.TextChoices):
+        MESSAGE_ONLY = 'message_only', 'Message only'
+        CONTACT_FORM = 'contact_form', 'Contact form'
+        KNOWLEDGE_BASE = 'knowledge_base', 'Knowledge base'
+
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='support_channels',
+    )
+    channel_type = models.CharField(max_length=20, choices=ChannelType.choices)
+    display_name = models.CharField(max_length=200)
+    welcome_message = models.TextField(blank=True)
+    operating_hours = models.JSONField(default=default_operating_hours)
+    timezone = models.CharField(max_length=64, default='UTC')
+    offline_fallback_message = models.TextField(blank=True)
+    offline_alternative = models.CharField(
+        max_length=20,
+        choices=OfflineAlternative.choices,
+        default=OfflineAlternative.MESSAGE_ONLY,
+    )
+    offline_alternative_target_id = models.PositiveIntegerField(null=True, blank=True)
+    default_queue = models.ForeignKey(
+        Queue, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='support_channels',
+    )
+    ticket_form = models.ForeignKey(
+        TicketForm, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='support_channels',
+    )
+    email_address = models.EmailField(blank=True)
+    embed_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order', 'display_name']
+        indexes = [
+            models.Index(fields=['project', 'is_active'], name='csm_sc_proj_active_idx'),
+            models.Index(fields=['embed_key'], name='csm_sc_embed_key_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.display_name} ({self.get_channel_type_display()})"
+
+
+class SupportChannelExperienceGroup(models.Model):
+    channel = models.ForeignKey(
+        SupportChannel, on_delete=models.CASCADE, related_name='experience_group_links',
+    )
+    experience_group = models.ForeignKey(
+        'experience_group.ExperienceGroup', on_delete=models.CASCADE,
+        related_name='support_channel_links',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['channel', 'experience_group'],
+                name='csm_sceg_unique_channel_eg',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Channel {self.channel_id} → EG {self.experience_group_id}"
 
 
 class CSMInvitation(TimeStampedModel):

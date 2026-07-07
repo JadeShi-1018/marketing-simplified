@@ -369,7 +369,7 @@ class CreateMiroBoardExecutor(BaseStepExecutor):
                     sse_events=[{
                         'type': 'miro_board_created',
                         'content': f'Miro board created: {getattr(board, "title", "")}'.strip(),
-                        'data': {'board_id': str(getattr(board, 'id', None))},
+                        'data': {'board_id': str(getattr(board, 'id', None)), 'board_slug': getattr(board, 'slug', None)},
                     }],
                 )
 

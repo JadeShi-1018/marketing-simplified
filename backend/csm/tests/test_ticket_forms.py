@@ -84,7 +84,7 @@ class TestBulkFields:
         payload = {'fields': _base_system_fields() + [
             {'field_key': 'account_id', 'label': 'Account ID', 'field_type': 'short_text', 'sort_order': 4, 'is_required': False},
         ]}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_200_OK
         assert form.fields.filter(field_key='account_id').exists()
 
@@ -94,7 +94,7 @@ class TestBulkFields:
         ensure_system_fields(form)
 
         payload = {'fields': _base_system_fields()[1:]}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_rejects_duplicate_field_labels(self, member_client, project):
@@ -106,7 +106,7 @@ class TestBulkFields:
             {'field_key': 'account_id', 'label': 'Account ID', 'field_type': 'short_text', 'sort_order': 4, 'is_required': False},
             {'field_key': 'account_id_2', 'label': 'account id', 'field_type': 'short_text', 'sort_order': 5, 'is_required': False},
         ]}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_rejects_dropdown_without_options(self, member_client, project):
@@ -117,7 +117,7 @@ class TestBulkFields:
         payload = {'fields': _base_system_fields() + [
             {'field_key': 'priority', 'label': 'Priority', 'field_type': 'dropdown', 'sort_order': 4, 'is_required': False, 'options': []},
         ]}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_accepts_dropdown_with_options(self, member_client, project):
@@ -143,7 +143,7 @@ class TestBulkFields:
                 'options': [{'value': 'a', 'label': 'A'}],
             },
         ]}
-        response = member_client.put(_fields_url(form.id), payload, format='json')
+        response = member_client.put(_fields_url(form.slug), payload, format='json')
         assert response.status_code == status.HTTP_200_OK
         assert form.fields.filter(field_key='priority', field_type='dropdown').exists()
         priority = form.fields.get(field_key='priority')
@@ -155,7 +155,7 @@ class TestDefaultForm:
         f1 = TicketForm.objects.create(project=project, name='F1', is_default=True)
         f2 = TicketForm.objects.create(project=project, name='F2')
 
-        response = member_client.post(_set_default_url(f2.id))
+        response = member_client.post(_set_default_url(f2.slug))
         assert response.status_code == status.HTTP_200_OK
 
         f1.refresh_from_db()
@@ -172,7 +172,7 @@ class TestAssignments:
         TicketFormAssignment.objects.create(form=f1, experience_group=eg)
 
         response = member_client.put(
-            _assignments_url(f2.id),
+            _assignments_url(f2.slug),
             {'experience_group_ids': [eg.id]},
             format='json',
         )

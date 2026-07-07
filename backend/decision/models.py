@@ -1,4 +1,5 @@
 from django.db import models, transaction
+from core.slug_mixins import SluggedResourceModelMixin
 from django.db.models import Max
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -10,7 +11,7 @@ from core.models import TimeStampedModel, Project
 User = get_user_model()
 
 
-class Decision(TimeStampedModel):
+class Decision(SluggedResourceModelMixin, TimeStampedModel):
     class Status(models.TextChoices):
         PREDRAFT = 'PREDRAFT', 'Pre-Draft'
         DRAFT = 'DRAFT', 'Draft'

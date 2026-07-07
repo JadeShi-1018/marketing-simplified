@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Id } from "@/types/common";
 import { useSearchParams } from "next/navigation";
 import toast from "react-hot-toast";
 import { ArrowLeft, Loader2, Pencil } from "lucide-react";
@@ -58,6 +59,7 @@ const EMPTY_COPY: AdCopyVariationCopy = {
 interface CardState {
   key: string;
   id: number;
+  slug?: string;
   batch_id: string;
   source_mode: AdCopyVariationSourceMode;
   source_ref: string;
@@ -101,6 +103,7 @@ function cardFromVariation(row: AdCopyVariation): CardState {
   return {
     key: `draft-${row.id}`,
     id: row.id,
+    slug: row.slug,
     batch_id: row.batch_id || "",
     source_mode: row.source_mode,
     source_ref: row.source_ref || "",
@@ -129,11 +132,9 @@ function VariationsStudioContent() {
   const activeProject = useProjectStore((state) => state.activeProject);
   const hasProjectStoreHydrated = useProjectStore((state) => state.hasHydrated);
   const initialCreativeIdParam = searchParams.get("creative");
-  const initialCreativeId = initialCreativeIdParam
-    ? Number(initialCreativeIdParam)
-    : null;
+  const initialCreativeId = initialCreativeIdParam || null;
   const initialMode: AdCopyVariationSourceMode =
-    initialCreativeId && Number.isFinite(initialCreativeId) ? "existing" : "custom";
+    initialCreativeId ? "existing" : "custom";
 
   const [studioTab, setStudioTab] = useState<"generate" | "drafts">("generate");
   const [mode, setMode] = useState<AdCopyVariationSourceMode>(initialMode);
@@ -155,7 +156,7 @@ function VariationsStudioContent() {
   const [bulkReviewing, setBulkReviewing] = useState<boolean>(false);
 
   useEffect(() => {
-    if (!initialCreativeId || !Number.isFinite(initialCreativeId)) return;
+    if (!initialCreativeId) return;
     let active = true;
     setCreativeMetaLoading(true);
     facebookApi
@@ -290,7 +291,7 @@ function VariationsStudioContent() {
     if (!card) return;
     updateCard(key, { saving: true });
     try {
-      const updated = await updateVariation(card.id, card.draft);
+      const updated = await updateVariation(card.slug ?? card.id, card.draft);
       const copy = copyFromVariation(updated);
       setCards((prev) =>
         prev.map((c) =>
@@ -358,7 +359,7 @@ function VariationsStudioContent() {
   return (
     <div className="min-h-[calc(100vh-3rem)] bg-gray-50">
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] max-w-[1440px] flex-col px-6 py-4">
-        {initialCreativeId !== null && Number.isFinite(initialCreativeId) && (
+        {initialCreativeId !== null && (
           <Link
             href="/meta-ads?tab=creatives"
             className="mb-4 inline-flex w-fit items-center gap-1 text-[14px] text-gray-500 transition-colors hover:text-gray-900"
@@ -923,15 +924,15 @@ function AiDraftsTab({
   projectId,
   initialCreativeId,
 }: {
-  projectId: number | null;
-  initialCreativeId: number | null;
+  projectId: Id | null;
+  initialCreativeId: string | null;
 }) {
   const [rows, setRows] = useState<AdCopyVariation[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [statusFilter, setStatusFilter] = useState<DraftStatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState<AdCopyVariationSourceMode | "all">("all");
   const [creativeFilter, setCreativeFilter] = useState<string>(
-    initialCreativeId && Number.isFinite(initialCreativeId) ? String(initialCreativeId) : ""
+    initialCreativeId ? String(initialCreativeId) : ""
   );
   const [batchFilter, setBatchFilter] = useState<string>("");
   const [loadingLatestBatch, setLoadingLatestBatch] = useState<boolean>(false);
@@ -1034,7 +1035,8 @@ function AiDraftsTab({
     if (!editingRowId) return;
     setSavingEditId(editingRowId);
     try {
-      const updated = await updateVariation(editingRowId, editingDraft);
+      const editingRow = rows.find((r) => r.id === editingRowId);
+      const updated = await updateVariation(editingRow?.slug ?? editingRowId, editingDraft);
       setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
       setEditingRowId(null);
       setEditingDraft(EMPTY_COPY);

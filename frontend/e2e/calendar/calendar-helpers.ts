@@ -400,6 +400,52 @@ export async function createEventViaApi(
   return (await response.json()) as EventDTO;
 }
 
+/**
+ * Seed a daily recurring event through the API so recurring-scope tests can
+ * focus on the edit dialog rather than on building a series through the UI.
+ */
+export async function createRecurringEventViaApi(
+  page: Page,
+  calendarId: string,
+  title: string,
+): Promise<EventDTO> {
+  const { baseUrl, headers } = await getAuthenticatedApiContext(page);
+  const eventWindow = await page.evaluate(() => {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    const start = new Date();
+    start.setHours(11, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(12, 0, 0, 0);
+
+    return {
+      timezone,
+      startDatetime: start.toISOString(),
+      endDatetime: end.toISOString(),
+    };
+  });
+
+  const response = await page.request.post(`${baseUrl}/api/events/`, {
+    headers,
+    data: {
+      calendar_id: calendarId,
+      title,
+      description: 'Recurring event created by Playwright E2E',
+      start_datetime: eventWindow.startDatetime,
+      end_datetime: eventWindow.endDatetime,
+      timezone: eventWindow.timezone,
+      is_all_day: false,
+      is_recurring: true,
+      recurrence: { frequency: 'DAILY', interval: 1, count: 5 },
+    },
+  });
+
+  if (!response.ok()) {
+    throw new Error(`Failed to create recurring event (${response.status()}).`);
+  }
+
+  return (await response.json()) as EventDTO;
+}
+
 /** Best-effort event cleanup helper for events created or seeded during a test. */
 export async function deleteEventById(page: Page, eventId: string) {
   try {

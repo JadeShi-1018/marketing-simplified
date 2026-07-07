@@ -93,8 +93,7 @@ function CanvasInner({ template, steps, onCreateWorkflow, onCancel, isCreating }
         type: "agentStepEdge",
         markerEnd: { type: MarkerType.ArrowClosed, color: meta.edgeColor, width: 16, height: 16 },
         data: {
-          label: meta.label,
-          color: meta.edgeColor,
+          onAddBetween: () => {},
         } satisfies AgentStepEdgeData,
       });
     }
@@ -202,7 +201,7 @@ export default function TemplatePreviewCanvas({ template, onBack }: TemplatePrev
       console.log("[CREATE] Project ID:", projectParams.project_id);
 
       const newWorkflow = await AgentAPI.applyTemplate(template.id, {
-        project_id: projectParams.project_id,
+        project_id: Number(projectParams.project_id),
         name: template.name, // Use template name as initial workflow name
       });
 
@@ -216,7 +215,7 @@ export default function TemplatePreviewCanvas({ template, onBack }: TemplatePrev
       toast.success("Workflow created successfully");
 
       // Navigate to the new workflow canvas with new=1 parameter
-      const targetUrl = `/workflows/${newWorkflow.id}?new=1`;
+      const targetUrl = `/workflows/${newWorkflow.slug}?new=1`;
       console.log("[CREATE] Navigating to:", targetUrl);
       router.push(targetUrl);
     } catch (err) {

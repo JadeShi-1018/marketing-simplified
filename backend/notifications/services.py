@@ -657,6 +657,13 @@ def create_or_update_chat_notification(
         return updated
 
     try:
+        from chat.models import Chat
+        from chat.url_helpers import build_messages_action_url
+
+        chat_slug = Chat.objects.filter(pk=chat_id).values_list('slug', flat=True).first()
+        if not chat_slug:
+            chat_slug = str(chat_id)
+
         n = Notification.objects.create(
             recipient_id=recipient_id,
             actor_id=actor_id,
@@ -666,9 +673,10 @@ def create_or_update_chat_notification(
             related_object_id=str(chat_id),
             title="New message",
             body=_truncate_message_preview(message_preview),
-            action_url=f"/messages?chatId={chat_id}&projectId={project_id}",
+            action_url=build_messages_action_url(chat_slug),
             metadata={
                 "chat_id": chat_id,
+                "chat_slug": chat_slug,
                 "message_id": message_id,
                 "project_id": project_id,
                 "message_count": 1,

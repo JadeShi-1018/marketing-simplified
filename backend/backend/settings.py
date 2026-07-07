@@ -103,6 +103,7 @@ INSTALLED_APPS = [
     'customer',
     'tracking',
     'csm',
+    'portal',
 ]
 
 MIDDLEWARE = [
@@ -624,6 +625,18 @@ FREE_USER_MAX_COST_CENTS = 200    # safety cap for fair-use alert on Free tier
 # Organization Access Token Configuration
 ORGANIZATION_ACCESS_TOKEN_SECRET_KEY = config('ORGANIZATION_ACCESS_TOKEN_SECRET_KEY', default='52r(=liv3ro&zsuau-doa(wekq-(x^&y8(b$5h@k(g(c9&jlmp')
 ORGANIZATION_ACCESS_TOKEN_ENCRYPTION_KEY = config('ORGANIZATION_ACCESS_TOKEN_ENCRYPTION_KEY', default='jtBsdl7-HVKnF61JnesSM0xpqB-vkAXboBbIRawVUhU=')
+
+# Field-level encryption keys for OAuth tokens and API secrets stored in the DB.
+# Format: comma-separated list of "key_id:fernet_base64_key" pairs.
+# The FIRST entry is the active key (used for new encryptions).
+# All entries are tried on decryption, enabling zero-downtime key rotation.
+# To generate a new key:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Then prepend "new_id:new_key," to this setting and run the reencrypt_secret_fields task.
+FIELD_ENCRYPTION_KEYS = config(
+    'FIELD_ENCRYPTION_KEYS',
+    default='v1:VeVFSKpPagu0DlIXDGJl_3bcyVc7uSwzChn2kDCRims=',
+)
 
 # Email Configuration
 # For development, use console backend to print emails to console

@@ -1,28 +1,12 @@
+import logging
+
 from django.db import models
 from core.models import TimeStampedModel, Organization, Project
 from task.models import Task
 
-from cryptography.fernet import Fernet
-from django.conf import settings
-import base64
+from core.crypto import DecryptionError, decrypt_token, encrypt_token
 
-# Helper for encryption
-def encrypt_token(token):
-    if not token:
-        return None
-    # Retrieve the secret key from settings.
-    # In a production environment, ensure SECRET_KEY is securely managed.
-    # We derive a uniform key for Fernet encryption.
-    key = base64.urlsafe_b64encode(settings.SECRET_KEY[:32].encode().ljust(32, b'='))
-    f = Fernet(key)
-    return f.encrypt(token.encode()).decode()
-
-def decrypt_token(encrypted_token):
-    if not encrypted_token:
-        return None
-    key = base64.urlsafe_b64encode(settings.SECRET_KEY[:32].encode().ljust(32, b'='))
-    f = Fernet(key)
-    return f.decrypt(encrypted_token.encode()).decode()
+logger = logging.getLogger(__name__)
 
 class SlackWorkspaceConnection(TimeStampedModel):
     """
@@ -90,7 +74,15 @@ class SlackWorkspaceConnection(TimeStampedModel):
         self.encrypted_access_token = encrypt_token(raw_token)
 
     def get_access_token(self):
-        return decrypt_token(self.encrypted_access_token)
+        try:
+            return decrypt_token(self.encrypted_access_token)
+        except DecryptionError:
+            logger.error(
+                "SlackWorkspaceConnection(org=%s, team=%s): token decryption failed — reconnect required.",
+                self.organization_id,
+                self.slack_team_id,
+            )
+            return None
 
     def __str__(self):
         return f"{self.organization.name} - {self.slack_team_name} ({self.slack_team_id})"

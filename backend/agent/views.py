@@ -31,6 +31,7 @@ class EventStreamRenderer(BaseRenderer):
         return json.dumps(data).encode('utf-8')
 
 from core.models import Project, ProjectMember
+from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin, resolve_lookup_kwargs
 from spreadsheet.models import Spreadsheet
 from .models import (
     AgentSession, AgentMessage, AgentWorkflowDefinition,
@@ -68,10 +69,13 @@ class EnglishResponseMixin:
 
 def _get_user_project(request):
     """Get the active project for the current user, with membership check."""
-    project_id = request.headers.get('X-Project-Id') or request.query_params.get('project_id')
-    if project_id:
+    raw_project_id = request.headers.get('X-Project-Id') or request.query_params.get('project_id')
+    if raw_project_id:
+        pk = resolve_project_pk(raw_project_id)
+        if pk is None:
+            return None
         try:
-            project = Project.objects.get(id=project_id, is_deleted=False)
+            project = Project.objects.get(id=pk, is_deleted=False)
             if not ProjectMember.objects.filter(project=project, user=request.user).exists():
                 return None
             return project
@@ -158,6 +162,7 @@ class ChatView(EnglishResponseMixin, APIView):
         file_id = serializer.validated_data.get('file_id')
         action = serializer.validated_data.get('action')
         calendar_context = serializer.validated_data.get('calendar_context')
+        draft_context = serializer.validated_data.get('draft_context')
         workflow_id = serializer.validated_data.get('workflow_id')
         column_mapping = serializer.validated_data.get('column_mapping')
         user_context = serializer.validated_data.get('user_context') or None
@@ -245,6 +250,7 @@ class ChatView(EnglishResponseMixin, APIView):
                     action=action,
                     file_id=file_id,
                     calendar_context=calendar_context,
+                    draft_context=draft_context,
                     workflow_id=workflow_id,
                     column_mapping=column_mapping,
                     approval_id=approval_id,
@@ -692,7 +698,7 @@ class AnomalyLatestView(EnglishResponseMixin, APIView):
         return Response(msg.metadata['anomalies'])
 
 
-class AgentWorkflowDefinitionViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
+class AgentWorkflowDefinitionViewSet(SlugLookupViewSetMixin, EnglishResponseMixin, viewsets.ModelViewSet):
     """CRUD for workflow definitions. Shows project-level + system-level workflows."""
     permission_classes = [IsAuthenticated]
     pagination_class = None
@@ -826,7 +832,7 @@ def _get_workflow_or_404(request, workflow_id):
     """Fetch workflow with project-level access check. Returns (workflow, error_response)."""
     try:
         workflow = AgentWorkflowDefinition.objects.get(
-            id=workflow_id, is_deleted=False,
+            **resolve_lookup_kwargs(workflow_id), is_deleted=False,
         )
     except AgentWorkflowDefinition.DoesNotExist:
         return None, Response(
@@ -1100,7 +1106,7 @@ def _clone_workflow_definition(
         return new_workflow
 
 
-class AgentWorkflowTemplateViewSet(EnglishResponseMixin, viewsets.ModelViewSet):
+class AgentWorkflowTemplateViewSet(SlugLookupViewSetMixin, EnglishResponseMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing workflow templates.
 

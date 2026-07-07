@@ -98,6 +98,9 @@ export interface ApiResponse<T> {
   error?: string;
   statusCode?: number;
   errorCode?: string;
+  retry_after_seconds?: number;
+  requires_captcha?: boolean;
+  lockout_until?: string;
 }
 
 export interface SsoRedirectParams {
@@ -107,4 +110,4 @@ export interface SsoRedirectParams {
 export interface SsoCallbackParams {
   code: string;
   state?: string;
-} 
+}

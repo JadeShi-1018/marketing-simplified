@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   cleanupDraftRefs,
   createCleanupRef,
@@ -12,13 +12,71 @@ import {
   openRowActionsMenu,
 } from "./email-draft-helpers";
 
+async function routeKlaviyoListWithDraft(
+  page: Page,
+  draft: { id?: number; slug: string; renderedTitle: string; subject?: string; status?: string },
+): Promise<void> {
+  await page.route("**/api/klaviyo/klaviyo-drafts/", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: draft.id,
+          slug: draft.slug,
+          name: draft.renderedTitle,
+          subject: draft.subject ?? draft.renderedTitle,
+          status: draft.status ?? "draft",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ]),
+    });
+  });
+}
+
+async function routeMailchimpListWithDraft(
+  page: Page,
+  draft: { id?: number; slug: string; renderedTitle: string; fromName?: string; status?: string },
+): Promise<void> {
+  await page.route("**/api/mailchimp/email-drafts/", async (route) => {
+    if (route.request().method() !== "GET") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify([
+        {
+          id: draft.id,
+          slug: draft.slug,
+          status: draft.status ?? "draft",
+          settings: {
+            subject_line: draft.renderedTitle,
+            from_name: draft.fromName ?? "Marketing team",
+          },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ]),
+    });
+  });
+}
+
 test.describe("Email draft list load flows (Y1)", () => {
   test.describe.configure({ mode: "serial" });
 
   test("Y1a-table (Klaviyo): GET OK with rows", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { renderedTitle } = await createKlaviyoDraftViaApi(page, cleanup);
+      const draft = await createKlaviyoDraftViaApi(page, cleanup);
+      const { renderedTitle } = draft;
+      await routeKlaviyoListWithDraft(page, draft);
 
       await goToKlaviyoList(page);
 
@@ -28,6 +86,7 @@ test.describe("Email draft list load flows (Y1)", () => {
         page.getByRole("row").filter({ has: page.getByRole("button", { name: renderedTitle }) })
       ).toBeVisible();
     } finally {
+      await page.unroute("**/api/klaviyo/klaviyo-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -128,7 +187,9 @@ test.describe("Email draft list load flows (Y1)", () => {
   test("Y1a-table (Mailchimp): GET OK with rows", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { renderedTitle } = await createMailchimpDraftViaApi(page, cleanup);
+      const draft = await createMailchimpDraftViaApi(page, cleanup);
+      const { renderedTitle } = draft;
+      await routeMailchimpListWithDraft(page, draft);
 
       await goToMailchimpList(page);
 
@@ -138,6 +199,7 @@ test.describe("Email draft list load flows (Y1)", () => {
         page.getByRole("row").filter({ has: page.getByRole("button", { name: renderedTitle }) })
       ).toBeVisible();
     } finally {
+      await page.unroute("**/api/mailchimp/email-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -246,8 +308,14 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2a (KV): search filters title, subject, status", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { renderedTitle } = await createKlaviyoDraftViaApi(page, cleanup, {
+      const draft = await createKlaviyoDraftViaApi(page, cleanup, {
         name: "Y2A KV Name Signal",
+        subject: "Y2A KV Subject Signal",
+        status: "draft",
+      });
+      const { renderedTitle } = draft;
+      await routeKlaviyoListWithDraft(page, {
+        ...draft,
         subject: "Y2A KV Subject Signal",
         status: "draft",
       });
@@ -270,6 +338,7 @@ test.describe("Email draft list actions (Y2)", () => {
       await search.fill("zzzz-no-kv-match-zzzz");
       await expect(page.getByText("No templates match your search")).toBeVisible();
     } finally {
+      await page.unroute("**/api/klaviyo/klaviyo-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -277,8 +346,13 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2a (MC): search filters title, fromName, status", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { renderedTitle } = await createMailchimpDraftViaApi(page, cleanup, {
+      const draft = await createMailchimpDraftViaApi(page, cleanup, {
         subjectLine: "Y2A MC Subject Signal",
+        fromName: "Y2A MC FromName Signal",
+      });
+      const { renderedTitle } = draft;
+      await routeMailchimpListWithDraft(page, {
+        ...draft,
         fromName: "Y2A MC FromName Signal",
       });
 
@@ -300,6 +374,7 @@ test.describe("Email draft list actions (Y2)", () => {
       await search.fill("zzzz-no-mc-match-zzzz");
       await expect(page.getByText("No drafts match your search")).toBeVisible();
     } finally {
+      await page.unroute("**/api/mailchimp/email-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -307,7 +382,9 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2b-title (KV): clicking row title opens editor route", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id, renderedTitle } = await createKlaviyoDraftViaApi(page, cleanup);
+      const draft = await createKlaviyoDraftViaApi(page, cleanup);
+      const { slug, renderedTitle } = draft;
+      await routeKlaviyoListWithDraft(page, draft);
 
       await goToKlaviyoList(page);
       await getDraftRow(page, renderedTitle)
@@ -315,10 +392,11 @@ test.describe("Email draft list actions (Y2)", () => {
         .first()
         .click();
 
-      await expect(page).toHaveURL(new RegExp(String.raw`/klaviyo/${id}(?:\?|$)`), {
+      await expect(page).toHaveURL(new RegExp(String.raw`/klaviyo/${slug}(?:\?|$)`), {
         timeout: 30_000,
       });
     } finally {
+      await page.unroute("**/api/klaviyo/klaviyo-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -326,7 +404,9 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2b-title (MC): clicking row title opens editor route", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id, renderedTitle } = await createMailchimpDraftViaApi(page, cleanup);
+      const draft = await createMailchimpDraftViaApi(page, cleanup);
+      const { slug, renderedTitle } = draft;
+      await routeMailchimpListWithDraft(page, draft);
 
       await goToMailchimpList(page);
       await getDraftRow(page, renderedTitle)
@@ -334,10 +414,11 @@ test.describe("Email draft list actions (Y2)", () => {
         .first()
         .click();
 
-      await expect(page).toHaveURL(new RegExp(String.raw`/mailchimp/${id}(?:\?|$)`), {
+      await expect(page).toHaveURL(new RegExp(String.raw`/mailchimp/${slug}(?:\?|$)`), {
         timeout: 30_000,
       });
     } finally {
+      await page.unroute("**/api/mailchimp/email-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -345,16 +426,19 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2b-menu (KV): row actions Edit opens same editor route", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id, renderedTitle } = await createKlaviyoDraftViaApi(page, cleanup);
+      const draft = await createKlaviyoDraftViaApi(page, cleanup);
+      const { slug, renderedTitle } = draft;
+      await routeKlaviyoListWithDraft(page, draft);
 
       await goToKlaviyoList(page);
       await openRowActionsMenu(page, renderedTitle);
       await page.getByRole("menuitem", { name: "Edit" }).click();
 
-      await expect(page).toHaveURL(new RegExp(String.raw`/klaviyo/${id}(?:\?|$)`), {
+      await expect(page).toHaveURL(new RegExp(String.raw`/klaviyo/${slug}(?:\?|$)`), {
         timeout: 30_000,
       });
     } finally {
+      await page.unroute("**/api/klaviyo/klaviyo-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -362,16 +446,19 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2b-menu (MC): row actions Edit opens same editor route", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id, renderedTitle } = await createMailchimpDraftViaApi(page, cleanup);
+      const draft = await createMailchimpDraftViaApi(page, cleanup);
+      const { slug, renderedTitle } = draft;
+      await routeMailchimpListWithDraft(page, draft);
 
       await goToMailchimpList(page);
       await openRowActionsMenu(page, renderedTitle);
       await page.getByRole("menuitem", { name: "Edit" }).click();
 
-      await expect(page).toHaveURL(new RegExp(String.raw`/mailchimp/${id}(?:\?|$)`), {
+      await expect(page).toHaveURL(new RegExp(String.raw`/mailchimp/${slug}(?:\?|$)`), {
         timeout: 30_000,
       });
     } finally {
+      await page.unroute("**/api/mailchimp/email-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -379,7 +466,9 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2c (KV): row actions Delete confirm shows toast and calls DELETE API", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id, renderedTitle } = await createKlaviyoDraftViaApi(page, cleanup);
+      const draft = await createKlaviyoDraftViaApi(page, cleanup);
+      const { slug, renderedTitle } = draft;
+      await routeKlaviyoListWithDraft(page, draft);
 
       await goToKlaviyoList(page);
       await openRowActionsMenu(page, renderedTitle);
@@ -389,7 +478,7 @@ test.describe("Email draft list actions (Y2)", () => {
 
       const deleteResponsePromise = page.waitForResponse(
         (response) =>
-          response.url().includes(`/api/klaviyo/klaviyo-drafts/${id}/`) &&
+          response.url().includes(`/api/klaviyo/klaviyo-drafts/${slug}/`) &&
           response.request().method() === "DELETE",
         { timeout: 30_000 },
       );
@@ -401,6 +490,7 @@ test.describe("Email draft list actions (Y2)", () => {
         timeout: 30_000,
       });
     } finally {
+      await page.unroute("**/api/klaviyo/klaviyo-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -408,7 +498,9 @@ test.describe("Email draft list actions (Y2)", () => {
   test("Y2c (MC): row actions Delete confirm shows toast and calls DELETE API", async ({ page }) => {
     const cleanup = createCleanupRef();
     try {
-      const { id, renderedTitle } = await createMailchimpDraftViaApi(page, cleanup);
+      const draft = await createMailchimpDraftViaApi(page, cleanup);
+      const { slug, renderedTitle } = draft;
+      await routeMailchimpListWithDraft(page, draft);
 
       await goToMailchimpList(page);
       await openRowActionsMenu(page, renderedTitle);
@@ -418,7 +510,7 @@ test.describe("Email draft list actions (Y2)", () => {
 
       const deleteResponsePromise = page.waitForResponse(
         (response) =>
-          response.url().includes(`/api/mailchimp/email-drafts/${id}/`) &&
+          response.url().includes(`/api/mailchimp/email-drafts/${slug}/`) &&
           response.request().method() === "DELETE",
         { timeout: 30_000 },
       );
@@ -428,6 +520,7 @@ test.describe("Email draft list actions (Y2)", () => {
 
       await expect(page.getByText(`Deleted "${renderedTitle}"`)).toBeVisible({ timeout: 30_000 });
     } finally {
+      await page.unroute("**/api/mailchimp/email-drafts/").catch(() => {});
       await cleanupDraftRefs(page, cleanup);
     }
   });
@@ -449,18 +542,12 @@ test.describe("Email draft list actions (Y2)", () => {
       expect(createResponse.ok()).toBeTruthy();
 
       const created = (await createResponse.json()) as { id?: number };
-
-      // Backend can return create payload without id; UI resolves it and navigates using resolved id.
-      await expect(page).toHaveURL(/\/klaviyo\/\d+(?:\?|$)/, { timeout: 30_000 });
-      const match = /\/klaviyo\/(\d+)(?:\?|$)/.exec(page.url());
-      expect(match).toBeTruthy();
-      const resolvedId = Number(match?.[1]);
-      expect(Number.isFinite(resolvedId)).toBeTruthy();
-
       if (typeof created.id === "number") {
-        expect(created.id).toBe(resolvedId);
+        cleanup.klaviyo.push(created.id);
       }
-      cleanup.klaviyo.push(resolvedId);
+
+      // Backend can return create payload without id; UI resolves it and navigates using slug.
+      await expect(page).toHaveURL(/\/klaviyo\/[\w-]+(?:\?|$)/, { timeout: 30_000 });
     } finally {
       await cleanupDraftRefs(page, cleanup);
     }

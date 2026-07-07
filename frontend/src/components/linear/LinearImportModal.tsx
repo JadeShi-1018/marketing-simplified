@@ -15,10 +15,12 @@ import { getApiErrorDetail } from '@/lib/api/errorMessage';
 import { linearApi, type LinearIssueListItem, type LinearTeam } from '@/lib/api/linearApi';
 import { useRouter } from 'next/navigation';
 
+import { Id } from '@/types/common';
+
 interface LinearImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  projectId: number | null;
+  projectId: Id | null;
   onImported?: () => void | Promise<void>;
 }
 

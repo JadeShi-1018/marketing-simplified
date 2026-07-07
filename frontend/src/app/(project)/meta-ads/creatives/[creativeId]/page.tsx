@@ -55,12 +55,12 @@ export default function CreativeDetailPage({
 }: {
   params: { creativeId: string };
 }) {
-  const creativeId = Number(params.creativeId);
+  const creativeId = String(params.creativeId);
   return (
     <ProtectedRoute>
       <DashboardLayout>
         <div className="p-6">
-          {Number.isFinite(creativeId) ? (
+          {creativeId ? (
             <CreativeDetailContent creativeId={creativeId} />
           ) : (
             <div className="text-sm text-gray-500">Invalid creative id.</div>
@@ -71,7 +71,7 @@ export default function CreativeDetailPage({
   );
 }
 
-function CreativeDetailContent({ creativeId }: { creativeId: number }) {
+function CreativeDetailContent({ creativeId }: { creativeId: string }) {
   const router = useRouter();
   const [days, setDays] = useState<number>(28);
   const [detail, setDetail] = useState<MetaCreativeDetail | null>(null);

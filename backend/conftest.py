@@ -156,3 +156,38 @@ def member_client(api_client, user):
 def outsider_client(api_client, user2):
     api_client.force_authenticate(user=user2)
     return api_client
+
+
+@pytest.fixture
+def portal_user(organization):
+    return User.objects.create_user(
+        username='portal@test.com',
+        email='portal@test.com',
+        password='testpass123',
+        organization=organization,
+    )
+
+
+@pytest.fixture
+def customer(portal_user, customer_organisation, project):
+    from customer.models import Customer
+    return Customer.objects.create(
+        user=portal_user,
+        email='portal@test.com',
+        full_name='Portal User',
+        organisation=customer_organisation,
+        project=project,
+    )
+
+
+@pytest.fixture
+def portal_customer_client(api_client, portal_user):
+    api_client.force_authenticate(user=portal_user)
+    return api_client
+
+
+@pytest.fixture
+def published_experience_group(experience_group):
+    experience_group.publish()
+    experience_group.save()
+    return experience_group

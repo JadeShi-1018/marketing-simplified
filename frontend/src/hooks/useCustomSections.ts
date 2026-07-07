@@ -23,11 +23,11 @@ export interface CustomSection {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function storageKey(projectId: number): string {
+function storageKey(projectId: number | string): string {
   return `ms_sidebar_custom_sections_v1_${projectId}`;
 }
 
-function load(projectId: number): CustomSection[] {
+function load(projectId: number | string): CustomSection[] {
   try {
     const raw = localStorage.getItem(storageKey(projectId));
     if (!raw) return [];
@@ -39,7 +39,7 @@ function load(projectId: number): CustomSection[] {
   }
 }
 
-function save(projectId: number, sections: CustomSection[]): void {
+function save(projectId: number | string, sections: CustomSection[]): void {
   try {
     localStorage.setItem(storageKey(projectId), JSON.stringify(sections));
   } catch {
@@ -55,16 +55,17 @@ function uid(): string {
 // Hook
 // ---------------------------------------------------------------------------
 
-export function useCustomSections(projectId: number | null) {
+export function useCustomSections(projectId: number | string | null) {
   const [sections, setSections] = useState<CustomSection[]>([]);
 
   // Load from localStorage whenever the project changes
   useEffect(() => {
     if (projectId === null) {
-      setSections([]);
+      setSections((prev) => (prev.length === 0 ? prev : []));
       return;
     }
-    setSections(load(projectId));
+    const loaded = load(projectId);
+    setSections((prev) => (JSON.stringify(prev) === JSON.stringify(loaded) ? prev : loaded));
   }, [projectId]);
 
   // Persist whenever sections change

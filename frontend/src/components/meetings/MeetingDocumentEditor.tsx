@@ -11,8 +11,8 @@ import type { MeetingDocument } from '@/types/meeting';
 import { Button } from '@/components/ui/button';
 
 type Props = {
-  projectId: number;
-  meetingId: number;
+  projectId: number | string;
+  meetingId: number | string;
 };
 
 type DocumentWsEvent = {

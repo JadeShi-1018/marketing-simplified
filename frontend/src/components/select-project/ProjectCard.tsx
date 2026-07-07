@@ -2,10 +2,12 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useProjectStore } from '@/lib/projectStore';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Users, Clock, Activity, Trash2, Loader2, Settings2 } from 'lucide-react';
 import type { ProjectData } from '@/lib/api/projectApi';
+import { Id } from '@/types/common';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -16,9 +18,9 @@ import {
 interface ProjectCardProps {
   project: ProjectData;
   isDefault: boolean;
-  onSetDefault: (id: number) => Promise<boolean> | boolean;
-  onSelect: (id: number) => Promise<boolean> | boolean;
-  onDelete: (id: number, name: string) => void;
+  onSetDefault: (id: Id) => Promise<boolean> | boolean;
+  onSelect: (id: Id) => Promise<boolean> | boolean;
+  onDelete: (id: Id, name: string) => void;
   deleting?: boolean;
 }
 
@@ -82,6 +84,7 @@ function joinList(values?: string[] | null, limit = 3): string | null {
 
 export default function ProjectCard({ project, isDefault, onSetDefault, onSelect, onDelete, deleting }: ProjectCardProps) {
   const router = useRouter();
+  const setActiveProject = useProjectStore((s) => s.setActiveProject);
   // `is_active` is a membership / current-default flag (see 01_Projects bible §4.1),
   // not a project lifecycle status. Until a real status field lands, the label
   // distinguishes the user's current default from other available projects.
@@ -223,13 +226,13 @@ export default function ProjectCard({ project, isDefault, onSetDefault, onSelect
          <DropdownMenuContent side="bottom" align="start" sideOffset={4} className="w-48 p-1">
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/admin/experience-groups?project=${project.id}`), 0)}
+            onSelect={() => { setActiveProject(project); setTimeout(() => router.push('/admin/experience-groups'), 0); }}
           >
             <span>Experience Groups</span>
           </DropdownMenuItem>
           <DropdownMenuItem
             className="text-[13px] px-2 py-1.5 gap-2 [&>svg]:size-3.5"
-            onSelect={() => setTimeout(() => router.push(`/admin/customers?project=${project.id}`), 0)}
+            onSelect={() => { setActiveProject(project); setTimeout(() => router.push('/admin/customers'), 0); }}
           >
             <span>Customers</span>
           </DropdownMenuItem>

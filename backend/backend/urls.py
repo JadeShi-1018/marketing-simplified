@@ -66,7 +66,7 @@ urlpatterns = [
     path('api/', include('decision.urls')),
     path('api/spreadsheet/', include('spreadsheet.urls')),
     path(
-        'api/projects/<int:project_id>/spreadsheets/<int:spreadsheet_id>/sheets/<int:sheet_id>/',
+        'api/projects/<str:project_id>/spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/',
         spreadsheet_views.ProjectSheetDeleteView.as_view(),
         name='project-sheet-delete'
     ),
@@ -87,6 +87,7 @@ urlpatterns = [
     path('api/', include('experience_group.urls')),
     path('api/', include('customer.urls')),
     path('api/tracking/', include('tracking.urls')),
+    path('api/portal/', include('portal.urls')),
 ]
 
 if settings.DEBUG:

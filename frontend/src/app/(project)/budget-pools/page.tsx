@@ -185,7 +185,7 @@ export default function BudgetPoolsPage() {
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
   const [currentPage, setCurrentPage] = useState(1);
 
-  const restoredForProject = useRef<number | null | 'all'>(undefined as any);
+  const restoredForProject = useRef<string | number | null | 'all'>(undefined as any);
   useEffect(() => {
     const key = projectId ?? 'all';
     if (restoredForProject.current === key) return;

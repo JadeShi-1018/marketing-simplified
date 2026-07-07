@@ -15,6 +15,7 @@ jest.mock('next/navigation', () => ({
     push: mockPush,
     back: jest.fn(),
   }),
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 jest.mock('react-hot-toast', () => ({
@@ -44,6 +45,14 @@ jest.mock('@/lib/api/quickStartApi', () => ({
     confirm: jest.fn(),
   },
   getQuickStartErrorDetail: (_error: unknown, fallback: string) => fallback,
+}));
+
+jest.mock('@/lib/quickStartUserMessages', () => ({
+  QUICK_START_PREVIEW_ERROR_FALLBACK: 'could not generate a preview',
+  QUICK_START_CONFIRM_ERROR_FALLBACK: 'failed to create the project',
+  resolveQuickStartError: (error: any, fallback: string) => ({
+    message: error.message === 'network' ? 'could not generate a preview' : error.message === 'failed' ? 'failed to create the project' : fallback,
+  }),
 }));
 
 jest.mock('@/lib/quickStartPostCreate', () => ({
@@ -126,9 +135,11 @@ describe('QuickStartWizard', () => {
       created: {
         task_ids: [1, 2],
         spreadsheet_ids: [3],
+        spreadsheet_slugs: ['q1-meta-budget'],
         calendar_event_ids: ['evt-1'],
         decision_ids: [],
         miro_board_ids: [],
+        miro_board_slugs: [],
       },
       summary: {
         tasks: 2,
@@ -203,7 +214,7 @@ describe('QuickStartWizard', () => {
       expect.objectContaining({
         projectId: 42,
         projectName: 'Q1 Meta Launch',
-        spreadsheetId: 3,
+        spreadsheetId: 'q1-meta-budget',
       })
     );
     expect(mockPush).toHaveBeenCalledWith('/overview');

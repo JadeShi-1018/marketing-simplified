@@ -59,6 +59,28 @@ class EmailDraftAPITests(TestCase):
             1,
         )
 
+    def test_create_ignores_client_supplied_user(self):
+        """Owner is forced to request.user; a client-supplied 'user' is ignored."""
+        User = get_user_model()
+        other = User.objects.create_user(
+            username="other_klaviyo_draft",
+            email="other_klaviyo_draft@example.com",
+            password="testpass123",
+        )
+
+        payload = {
+            "name": "Spoofed Owner",
+            "subject": "Spoofed",
+            "status": self.status_draft,
+            "user": other.id,
+        }
+
+        response = self.client.post(DRAFTS_URL, payload, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        draft = EmailDraft.objects.get(name="Spoofed Owner")
+        self.assertEqual(draft.user, self.user)
+
     # ------------------------------------------------------------------ #
     # List
     # ------------------------------------------------------------------ #
@@ -93,12 +115,26 @@ class EmailDraftAPITests(TestCase):
             user=self.user,   
         )
 
-        url = f"{DRAFTS_URL}{draft.id}/"
+        url = f"{DRAFTS_URL}{draft.slug}/"
         response = self.client.get(url, format="json")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["id"], draft.id)
         self.assertEqual(response.data["name"], "Retrieve Draft")
+
+    def test_numeric_id_url_is_rejected(self):
+        """Resource lookups are slug-only — a numeric id must 404 (not resolve by pk)."""
+        draft = EmailDraft.objects.create(
+            name="Numeric Reject",
+            subject="Numeric Reject Subject",
+            status=self.status_draft,
+            user=self.user,
+        )
+
+        url = f"{DRAFTS_URL}{draft.id}/"
+        response = self.client.get(url, format="json")
+
+        self.assertEqual(response.status_code, 404)
 
     # ------------------------------------------------------------------ #
     # Update / PATCH
@@ -111,7 +147,7 @@ class EmailDraftAPITests(TestCase):
             user=self.user,  
         )
 
-        url = f"{DRAFTS_URL}{draft.id}/"
+        url = f"{DRAFTS_URL}{draft.slug}/"
         payload = {"status": self.status_ready}
 
         response = self.client.patch(url, payload, format="json")
@@ -133,7 +169,7 @@ class EmailDraftAPITests(TestCase):
             user=self.user,   
         )
 
-        url = f"{DRAFTS_URL}{draft.id}/"
+        url = f"{DRAFTS_URL}{draft.slug}/"
         response = self.client.delete(url, format="json")
 
         self.assertIn(response.status_code, (200, 204))

@@ -11,7 +11,9 @@ interface QuotaPreview {
 }
 
 interface TokenBadgeProps {
-  projectId: number;
+  // Project routes now carry the slug, so projectId may be a slug
+  // (quota-preview backend tolerates slug-or-id).
+  projectId: number | string;
 }
 
 export default function TokenBadge({ projectId }: TokenBadgeProps) {

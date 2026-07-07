@@ -51,7 +51,7 @@ export function getMvpWorkflowMenuItems(task: TaskData): { kind: WorkflowMvpKind
   return items;
 }
 
-export async function runWorkflowMvpAction(taskId: number, kind: WorkflowMvpKind): Promise<TaskData> {
+export async function runWorkflowMvpAction(taskId: number | string, kind: WorkflowMvpKind): Promise<TaskData> {
   let res: { data: unknown };
   switch (kind) {
     case 'submit':

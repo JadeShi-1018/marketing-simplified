@@ -8,7 +8,7 @@ import CsmAPI from '@/lib/api/csmApi';
 import { AlertCircle } from 'lucide-react';
 
 interface QueueFormProps {
-  projectId: number;
+  projectId: number | string;
   organisationId?: number;
   queue?: Queue;
   onSuccess: (queue: Queue) => void;

@@ -305,7 +305,7 @@ function Row({
             <>
               <span>·</span>
               <Link
-                href={`/meta-ads/creatives/${row.creative.id}`}
+                href={`/meta-ads/creatives/${row.creative.slug}`}
                 className="font-mono hover:text-[#1a9ba3]"
               >
                 creative {row.creative.meta_creative_id}

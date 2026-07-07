@@ -18,7 +18,7 @@ interface RevisionItem {
 interface VersionHistoryPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  draftId: number | null;
+  draftId: number | string | null;
   onRestored: () => void;
 }
 

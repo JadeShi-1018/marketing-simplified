@@ -69,9 +69,10 @@ def test_commit_rejects_blank_title_without_side_effects(title_value):
     create_resp = client.post("/api/decisions/drafts/", {"title": "Has title"}, format="json")
     assert create_resp.status_code == 201
     decision_id = create_resp.data["id"]
+    decision_slug = create_resp.data["slug"]
     Decision.objects.filter(pk=decision_id).update(title=title_value)
 
-    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client.post(f"/api/decisions/{decision_slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 400
     _assert_has_error_details(commit_resp.data)
 
@@ -90,8 +91,9 @@ def test_commit_succeeds_with_title_only_without_optional_fields():
     create_resp = client.post("/api/decisions/drafts/", {"title": "Title only"}, format="json")
     assert create_resp.status_code == 201
     decision_id = create_resp.data["id"]
+    decision_slug = create_resp.data["slug"]
 
-    commit_resp = client.post(f"/api/decisions/{decision_id}/commit/", {}, format="json")
+    commit_resp = client.post(f"/api/decisions/{decision_slug}/commit/", {}, format="json")
     assert commit_resp.status_code == 200
 
     decision = Decision.objects.get(pk=decision_id)

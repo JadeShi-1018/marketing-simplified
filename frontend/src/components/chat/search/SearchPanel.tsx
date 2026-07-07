@@ -18,7 +18,7 @@ import type { SearchFilters } from '@/hooks/useMessageSearch';
 import { useAuthStore } from '@/lib/authStore';
 
 interface Props {
-  projectId: number | null;
+  projectId: number | string | null;
   chats?: Chat[];
   onSelectResult: (result: MessageSearchResult) => void;
   onClose: () => void;

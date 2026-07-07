@@ -11,7 +11,8 @@ import { Organisation, CreateOrganisationData, UpdateOrganisationData } from '@/
 import { Region } from '@/types/region';
 import { useAuthStore } from '@/lib/authStore';
 import { Plus, Pencil, Trash2, AlertCircle, X, Building2, ArrowLeft, ChevronDown, ChevronUp } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 
 // ── Region Select (shared) ───────────────────────────────────────────────────
 
@@ -396,9 +397,9 @@ const EditForm: React.FC<EditFormProps> = ({ orgId, regions, onSaved, onClose })
 
 const OrganisationsPage: React.FC = () => {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectId = Number(searchParams.get('project'));
-  const projectValid = Number.isFinite(projectId) && projectId > 0;
+  const { activeProject } = useActiveProjectForFlatRoute();
+  const projectId = Number(activeProject?.id ?? 0);
+  const projectValid = projectId > 0;
 
   const user = useAuthStore((s) => s.user);
   const isCsmAdmin = user?.is_csm_admin ?? false;

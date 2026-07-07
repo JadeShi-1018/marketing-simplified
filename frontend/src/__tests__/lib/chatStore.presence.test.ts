@@ -20,6 +20,7 @@ const makeMessage = (overrides: Partial<Message> = {}): Message => ({
 
 const makeChat = (overrides: Partial<Chat> = {}): Chat => ({
   id: 3,
+  slug: 'chat-3',
   project_id: 9,
   project: 9,
   type: 'private',

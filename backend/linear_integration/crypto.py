@@ -1,23 +1,8 @@
-"""Fernet encryption for OAuth tokens (same derivation as zoom_integration.crypto)."""
+"""Re-exports from the shared core.crypto module.
 
-import base64
+All encryption logic now lives in core.crypto.  This module is kept so that
+existing imports (e.g. `from .crypto import encrypt_token`) continue to work
+without change.
+"""
 
-from cryptography.fernet import Fernet
-from django.conf import settings
-
-
-def _fernet() -> Fernet:
-    key = base64.urlsafe_b64encode(settings.SECRET_KEY[:32].encode().ljust(32, b"="))
-    return Fernet(key)
-
-
-def encrypt_token(token: str | None) -> str | None:
-    if not token:
-        return None
-    return _fernet().encrypt(token.encode()).decode()
-
-
-def decrypt_token(encrypted_token: str | None) -> str | None:
-    if not encrypted_token:
-        return None
-    return _fernet().decrypt(encrypted_token.encode()).decode()
+from core.crypto import DecryptionError, decrypt_token, encrypt_token, needs_rotation  # noqa: F401

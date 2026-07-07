@@ -1,9 +1,10 @@
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 from django.core.exceptions import ValidationError
 from core.models import TimeStampedModel
 
 
-class Workflow(TimeStampedModel):
+class Workflow(SluggedResourceModelMixin, TimeStampedModel):
     """
     Workflow model - Represents a workflow graph template.
     Stores the basic information about a workflow that can be used

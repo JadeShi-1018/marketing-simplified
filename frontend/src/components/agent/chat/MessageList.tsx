@@ -91,7 +91,7 @@ export interface MessageListProps {
   approvalRequired?: boolean
   generatedTaskIndexes?: number[]
   skippedTaskIndexes?: number[]
-  createdTaskIdByIndex?: Record<number, number>
+  createdTaskIdByIndex?: Record<number, number | string>
   generatingTasks?: boolean
   pendingTaskApproval?: PendingExternalApproval | null
   pendingDecisionApproval?: PendingExternalApproval | null

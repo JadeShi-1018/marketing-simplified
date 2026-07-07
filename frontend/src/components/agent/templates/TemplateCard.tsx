@@ -94,7 +94,7 @@ export function TemplateCard({
 
           {/* Workflow info */}
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <span>Workflow: {template.workflow_name || "Unknown"}</span>
+            <span>Workflow: {template.name || "Unknown"}</span>
             {template.workflow_step_count !== undefined && (
               <span>{template.workflow_step_count} steps</span>
             )}
@@ -128,7 +128,7 @@ export function TemplateCard({
                 <Copy className="h-4 w-4 mr-2" />
                 Clone
               </DropdownMenuItem>
-              {template.workflow_definition && (
+              {template.steps_config && template.steps_config.length > 0 && (
                 <DropdownMenuItem onClick={() => {/* TODO: View workflow */}}>
                   <ExternalLink className="h-4 w-4 mr-2" />
                   View Workflow

@@ -23,7 +23,7 @@ export default function TaskCardMini({ task, columnAccentHex }: TaskCardMiniProp
   return (
     <button
       type="button"
-      onClick={() => router.push(`/tasks/${task.id}`)}
+      onClick={() => router.push(`/tasks/${task.slug}`)}
       className={`group flex w-full flex-col rounded-md border-t-4 border-solid bg-white px-3 py-3 text-left shadow-sm ring-1 ring-gray-100 transition hover:shadow-md hover:ring-gray-200${columnAccentHex ? '' : ` ${statusMeta.cardTopBorder}`}`}
       style={columnAccentHex ? { borderTopColor: columnAccentHex } : undefined}
     >

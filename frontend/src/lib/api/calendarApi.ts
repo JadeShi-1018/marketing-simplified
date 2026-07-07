@@ -23,6 +23,23 @@ export interface CalendarDTO {
   location?: string | null;
 }
 
+export type RecurrenceFrequency = "DAILY" | "WEEKLY";
+
+export interface RecurrenceRuleDTO {
+  id?: string;
+  frequency: RecurrenceFrequency;
+  interval: number;
+  count?: number | null;
+  until?: string | null;
+}
+
+export interface RecurrenceInput {
+  frequency: RecurrenceFrequency;
+  interval: number;
+  count?: number | null;
+  until?: string | null;
+}
+
 export interface EventDTO {
   id: string;
   calendar_id?: string;
@@ -33,9 +50,21 @@ export interface EventDTO {
   timezone?: string;
   is_all_day: boolean;
   is_recurring: boolean;
+  recurrence_rule?: RecurrenceRuleDTO | null;
+  // Start of the specific occurrence (set on expanded recurring instances).
+  // Required to target a single occurrence for "this only" / "this and future".
+  original_start?: string | null;
   color?: string;
   etag?: string;
 }
+
+export type EventWritePayload = Partial<EventDTO> & {
+  is_recurring?: boolean;
+  recurrence?: RecurrenceInput | null;
+};
+
+// Scope of a recurring-event edit.
+export type RecurringEditScope = "this" | "future" | "all";
 
 export interface CalendarViewResponse {
   view_type: CalendarViewType;
@@ -62,11 +91,11 @@ export interface CreateCalendarPayload {
   description?: string;
 }
 
-const withProjectScope = (projectId?: number | null) =>
+const withProjectScope = (projectId?: number | string | null) =>
   projectId != null ? { params: { project_id: projectId } } : {};
 
 export const CalendarAPI = {
-  listCalendars: (projectId?: number | null) =>
+  listCalendars: (projectId?: number | string | null) =>
     api.get<CalendarDTO[]>("/api/calendars/", withProjectScope(projectId)),
 
   createCalendar: (payload: CreateCalendarPayload) =>
@@ -87,7 +116,7 @@ export const CalendarAPI = {
   getDayView: (params: {
     date: string;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/day/", {
       params: {
@@ -100,7 +129,7 @@ export const CalendarAPI = {
   getWeekView: (params: {
     start_date: string;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/week/", {
       params: {
@@ -114,7 +143,7 @@ export const CalendarAPI = {
     year: number;
     month: number;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/month/", {
       params: {
@@ -129,7 +158,7 @@ export const CalendarAPI = {
     start_date: string;
     end_date?: string;
     calendar_ids?: string[];
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<CalendarViewResponse>("/api/views/agenda/", {
       params: {
@@ -140,13 +169,36 @@ export const CalendarAPI = {
       },
     }),
 
-  createEvent: (payload: Partial<EventDTO>) =>
+  createEvent: (payload: EventWritePayload) =>
     api.post<EventDTO>("/api/events/", payload),
 
   // For now we do not send If-Match headers to avoid 412 conflicts
   // when the same user updates an event multiple times quickly.
-  updateEvent: (eventId: string, payload: Partial<EventDTO>, _etag?: string) =>
+  updateEvent: (eventId: string, payload: EventWritePayload, _etag?: string) =>
     api.patch<EventDTO>(`/api/events/${eventId}/`, payload),
+
+  // Scope = "this only": override a single occurrence of a recurring series.
+  updateEventInstance: (
+    eventId: string,
+    originalStart: string,
+    payload: Partial<EventDTO>,
+  ) =>
+    api.patch<EventDTO>(`/api/events/${eventId}/instances/modify/`, payload, {
+      params: { original_start: originalStart },
+    }),
+
+  // Scope = "this and future": split the series at the selected occurrence.
+  // Returns the newly created series master event.
+  splitEventSeries: (
+    eventId: string,
+    originalStart: string,
+    payload: Partial<EventDTO>,
+  ) =>
+    api.post<EventDTO>(
+      `/api/events/${eventId}/instances/modify-future/`,
+      payload,
+      { params: { original_start: originalStart } },
+    ),
 
   deleteEvent: (eventId: string, _etag?: string) =>
     api.delete<void>(`/api/events/${eventId}/`),
@@ -155,7 +207,7 @@ export const CalendarAPI = {
   getDerivedEvents: (params: {
     start: string;
     end: string;
-    project_id?: number | null;
+    project_id?: number | string | null;
   }) =>
     api.get<{ count: number; results: DerivedCalendarEventDTO[] }>("/api/derived-events/", {
       params: {
@@ -176,6 +228,8 @@ export interface DerivedCalendarEventDTO {
   end_time: string | null;
   decision_id: number | null;
   task_id: number | null;
+  decision_slug: string | null;
+  task_slug: string | null;
   review_id: number | null;
   project_id: number | null;  // For permission header on navigation
 }
@@ -189,6 +243,8 @@ export function derivedEventToEventDTO(event: DerivedCalendarEventDTO): EventDTO
     event_type: event.event_type,
     decision_id: event.decision_id,
     task_id: event.task_id,
+    decision_slug: event.decision_slug,
+    task_slug: event.task_slug,
     review_id: event.review_id,
     project_id: event.project_id,  // Used to build correct navigation URL with permission
   });

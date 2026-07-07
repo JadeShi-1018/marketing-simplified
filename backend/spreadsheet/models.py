@@ -1,12 +1,13 @@
 import uuid
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 from django.conf import settings
 from django.db.models import Q
 from django.core.exceptions import ValidationError
 from core.models import TimeStampedModel
 
 
-class Spreadsheet(TimeStampedModel):
+class Spreadsheet(SluggedResourceModelMixin, TimeStampedModel):
     project = models.ForeignKey(
         'core.Project',
         on_delete=models.CASCADE,

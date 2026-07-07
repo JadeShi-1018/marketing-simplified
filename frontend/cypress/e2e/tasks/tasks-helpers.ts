@@ -45,7 +45,7 @@ export function selectProject(): void {
     .first()
     .click();
 
-  cy.url().should("match", /\/tasks\?project_id=\d+/, { timeout: 10_000 });
+  cy.url().should("match", /\/tasks(\?project_id=\d+|$)/, { timeout: 10_000 });
 
   waitForTasksPageReady();
 

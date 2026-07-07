@@ -20,20 +20,29 @@ A robust CI/CD pipeline ensures that every code change is automatically built, t
 ### How Are Backend and Frontend Tested?
 
 - **Backend (Django):**
-  - All migrations are applied, then all unit and integration tests are run inside the backend Docker container:
+  - CI first checks that model changes have committed migration files, then applies migrations:
     ```bash
-    python manage.py test
+    python manage.py makemigrations --check --dry-run --settings=backend.ci_settings
+    python manage.py migrate --noinput --settings=backend.ci_settings
     ```
-  - This ensures the database schema is current and backend logic is validated.
+  - Backend tests are run inside the backend Docker container with `pytest`. The default `backend/pytest.ini` config uses pytest-xdist (`-n auto`) for parallel execution:
+    ```bash
+    pytest
+    ```
+  - Excluded tests that are not thread-safe under parallel execution are run serially afterwards:
+    ```bash
+    pytest -o addopts='' --ds=backend.settings --timeout=300 metric_upload/tests/integration asset/tests/test_tasks.py budget_approval/tests/test_concurrency.py
+    ```
+  - This ensures all backend logic is validated efficiently.
 
 - **Frontend (Next.js):**
   - The frontend Docker container runs:
     ```bash
-    npm run lint
+    npx next lint --max-warnings 9999
     npm run build
     npm test
     ```
-  - Linting checks code style, build ensures production readiness, and tests validate UI and integration.
+  - Linting checks code style (errors block CI, warnings are allowed up to 9999), build ensures production readiness with TypeScript type checking enforced (`ignoreBuildErrors: false`), and tests validate UI and integration.
   - During integration tests, all API requests from the frontend are routed through nginx to the backend, exactly as in real deployment.
 
 ---
@@ -52,16 +61,23 @@ To ensure your code passes CI/CD and integrates smoothly with the team:
 
 **Current workflow:**
 
-1. When you add a new Django model, you must also update the CI/CD workflow file (`.github/workflows/mediajira-ci.yml`) to include the following template for your app:
-   ```yaml
-   python manage.py makemigrations your_app_name &&
-   python manage.py migrate your_app_name &&
+1. Generate migrations locally for the app you changed:
+   ```bash
+   python manage.py makemigrations your_app_name
    ```
-   Add these lines in the backend test step, following the existing pattern for other apps.
 
-2. In the future, the preferred approach will be to generate migration files locally and commit them to git, rather than relying on CI/CD to generate migrations. This will improve reliability and team collaboration.
+2. Review the generated migration file, run it locally, and commit it with the model change:
+   ```bash
+   python manage.py migrate
+   ```
 
-**Never rely on CI/CD to generate migrations for you in the long term!**
+3. CI verifies this contract with `makemigrations --check --dry-run`. If you forget to commit a migration, CI fails instead of generating one for you.
+
+The workflow still contains a few legacy per-app `makemigrations` calls for existing apps. These should be no-ops after the dry-run check passes, and new apps should not copy that pattern.
+
+**Do not rely on CI/CD to generate migrations.** Migration files are source code and must be reviewed and committed by the developer who changed the model.
+
+**Migration safety:** CI's `migration_guard` job blocks PRs that delete or rename existing migration files — historical migrations must be kept so databases that already applied them stay valid (use the `migration-override` PR label only for intentional, reviewed cleanups). Note the production deploy does **not** run `migrate`, so schema changes must be applied to production manually after deploy. See [backend/MIGRATIONS.md](backend/MIGRATIONS.md) for the full policy and how to add/squash migrations safely.
 
 ---
 

@@ -118,7 +118,7 @@ export default function ComparisonTable({
                         />
                         {row.creative?.id ? (
                           <Link
-                            href={`/meta-ads/creatives/${row.creative.id}`}
+                            href={`/meta-ads/creatives/${row.creative.slug}`}
                             className="truncate text-sm font-medium text-gray-900 hover:text-[#1a9ba3]"
                             title={row.name || row.meta_ad_id}
                           >

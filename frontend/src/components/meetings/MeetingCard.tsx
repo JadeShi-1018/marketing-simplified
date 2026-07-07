@@ -1,13 +1,14 @@
 'use client';
 
 import Link from 'next/link';
+import { nestedProjectPath } from '@/lib/projectNestedRoutes';
 import { CalendarDays, FileText, ListChecks, Users } from 'lucide-react';
 import type { MeetingListItem } from '@/types/meeting';
 import MeetingStatusPill from './MeetingStatusPill';
 
 interface Props {
   meeting: MeetingListItem;
-  projectId: number;
+  projectId: number | string;
 }
 
 function formatScheduled(dateIso: string | null): string {
@@ -29,7 +30,7 @@ export default function MeetingCard({ meeting, projectId }: Props) {
 
   return (
     <Link
-      href={`/meetings/${meeting.id}?project_id=${projectId}`}
+      href={nestedProjectPath(projectId, `/meetings/${meeting.slug}`)}
       className={`group block rounded-xl bg-white p-4 shadow-sm ring-1 ring-gray-100 transition hover:-translate-y-0.5 hover:shadow-md hover:ring-gray-200 ${
         meeting.is_archived ? 'opacity-70' : ''
       }`}

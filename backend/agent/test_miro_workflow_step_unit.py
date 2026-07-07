@@ -249,7 +249,7 @@ def test_create_tasks_from_analysis_creates_tasks_without_queueing_miro(mock_tas
 
     def _make_task(**kwargs):
         task_id = len(created) + 1
-        task = type("TaskStub", (), {"id": task_id, **kwargs})()
+        task = type("TaskStub", (), {"id": task_id, "slug": f"task-{task_id}", **kwargs})()
         created.append(task)
         return task
 
@@ -321,9 +321,10 @@ def test_normalize_miro_snapshot_layout_pushes_overlapping_items_down():
     assert action["y"] + action["height"] <= frame["y"] + frame["height"] - 24
 
 
-@patch("agent.gemini_client.call_gemini_json")
-def test_call_gemini_miro_generator_normalizes_layout_before_validation(mock_call_gemini):
-    mock_call_gemini.return_value = _overlapping_snapshot()
+@patch("agent.llm_client.call_llm")
+def test_call_gemini_miro_generator_normalizes_layout_before_validation(mock_call_llm):
+    import json as _json
+    mock_call_llm.return_value = {'text': _json.dumps(_overlapping_snapshot()), 'usage': {'input': 10, 'output': 20}}
 
     snapshot = call_gemini_miro_generator({"analysis": {"anomalies": []}}, user_id=1)
     title = snapshot["items"][1]
@@ -332,5 +333,6 @@ def test_call_gemini_miro_generator_normalizes_layout_before_validation(mock_cal
 
     assert reason["y"] >= title["y"] + title["height"] + 24
     assert action["y"] >= reason["y"] + reason["height"] + 24
+
 
 
