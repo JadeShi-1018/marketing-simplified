@@ -16,7 +16,7 @@ def auto_resolve_pending_tickets():
     Runs on Celery Beat (see CELERY_BEAT_SCHEDULE). Returns the count resolved.
     """
     resolved = 0
-    for ticket, config in list(tickets_due_for_auto_resolve()):
+    for ticket, config in tickets_due_for_auto_resolve():
         ticket.status = RESOLVED_STATUS
         ticket.pending_since = None
         ticket.save(update_fields=['status', 'pending_since'])

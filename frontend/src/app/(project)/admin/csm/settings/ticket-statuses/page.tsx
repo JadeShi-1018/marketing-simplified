@@ -95,7 +95,7 @@ export default function TicketStatusesPage() {
         const subject = count === 1 ? '1 ticket currently uses' : `${count} tickets currently use`;
         setConfirmDelete({
           status,
-          detail: `${subject} “${status.name}”. Deleting it will clear the status from ${count === 1 ? 'that ticket' : 'those tickets'}. Are you sure you want to delete it?`,
+          detail: `${subject} “${status.name}”. Deleting it will move ${count === 1 ? 'that ticket' : 'those tickets'} to “In Progress”. Are you sure you want to delete it?`,
         });
       } else {
         toast.error(resp?.data?.detail ?? 'Could not delete status.');

@@ -267,13 +267,16 @@ class TicketSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'first_response_due', 'resolution_due']
 
     def _resolve_status(self, obj):
-        """Memoised lookup of the ticket's current TicketStatus row (one query
-        per ticket, shared by status_display + status_color)."""
-        if not hasattr(obj, '_resolved_status'):
+        """The ticket's current TicketStatus row, cached per (project, slug) in
+        the serializer context so a list response resolves each distinct status
+        once instead of once per ticket (shared by status_display + color)."""
+        project_id = obj.queue.project_id if obj.queue_id else None
+        cache = self.context.setdefault('_ticket_status_cache', {})
+        key = (project_id, obj.status)
+        if key not in cache:
             from csm.services.status_machine import get_status
-            project_id = obj.queue.project_id if obj.queue_id else None
-            obj._resolved_status = get_status(project_id, obj.status)
-        return obj._resolved_status
+            cache[key] = get_status(project_id, obj.status)
+        return cache[key]
 
     def get_status_display(self, obj):
         status = self._resolve_status(obj)
@@ -290,11 +293,17 @@ class TicketSerializer(serializers.ModelSerializer):
         project_id = obj.queue.project_id if obj.queue_id else None
         if project_id is None:
             return []
-        from csm.services.status_machine import get_next_statuses
-        return [
-            {'slug': s.slug, 'name': s.name, 'color': s.color}
-            for s in get_next_statuses(project_id, obj.status)
-        ]
+        # Cached per (project, from_status) in context: every ticket on the same
+        # status shares one computation across a list response (avoids N+1).
+        cache = self.context.setdefault('_next_status_cache', {})
+        key = (project_id, obj.status)
+        if key not in cache:
+            from csm.services.status_machine import get_next_statuses
+            cache[key] = [
+                {'slug': s.slug, 'name': s.name, 'color': s.color}
+                for s in get_next_statuses(project_id, obj.status)
+            ]
+        return cache[key]
 
     def get_assigned_to_name(self, obj):
         if not obj.assigned_to:
