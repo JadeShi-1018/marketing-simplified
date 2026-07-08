@@ -297,6 +297,38 @@ class CustomerUserViewSet(viewsets.ModelViewSet):
 
 
 
+def _send_ticket_confirmation(conversation):
+    """
+    AC5: notify the customer with the channel's configured confirmation message
+    after a ticket is created from their conversation. No-op when the conversation's
+    support channel has no confirmation message configured.
+    """
+    channel = conversation.support_channel
+    message_text = (channel.ticket_confirmation_message or '').strip() if channel else ''
+    if not message_text:
+        return None
+
+    msg = ConversationMessage.objects.create(
+        conversation=conversation,
+        sender_type='system',
+        content=message_text,
+    )
+
+    channel_layer = get_channel_layer()
+    # Agent side: appears in the workspace thread.
+    async_to_sync(channel_layer.group_send)(
+        f'csm_conversation_{conversation.id}',
+        {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
+    )
+    # Customer side: delivered to the customer portal in real time.
+    from portal.serializers import PortalMessageSerializer
+    async_to_sync(channel_layer.group_send)(
+        f'portal_conversation_{conversation.id}',
+        {'type': 'conversation.message', 'message': PortalMessageSerializer(msg).data},
+    )
+    return msg
+
+
 class ConversationPagination(PageNumberPagination):
     page_size = 50
     page_size_query_param = 'page_size'
@@ -434,6 +466,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
             {'type': 'conversation.updated', 'conversation': ConversationSerializer(conversation).data},
         )
 
+        # AC5: deliver the channel's configured confirmation message to the customer.
+        _send_ticket_confirmation(conversation)
+
         return Response(TicketSerializer(ticket).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -541,6 +576,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
             'csm_new_conversations',
             {'type': 'conversation.updated', 'conversation': ConversationSerializer(conversation).data},
         )
+
+        # AC5: deliver the channel's configured confirmation message to the customer.
+        _send_ticket_confirmation(conversation)
 
         return Response(
             {
@@ -1199,7 +1237,8 @@ class SupportChannelViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
     def _service_kwargs(self, data):
         kwargs = {}
         for key in (
-            'channel_type', 'display_name', 'welcome_message', 'operating_hours',
+            'channel_type', 'display_name', 'welcome_message',
+            'ticket_confirmation_message', 'operating_hours',
             'timezone', 'offline_fallback_message', 'offline_alternative',
             'offline_alternative_target_id', 'email_address', 'sort_order', 'is_active',
         ):

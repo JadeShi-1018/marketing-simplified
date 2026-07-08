@@ -579,6 +579,7 @@ class SupportChannelDetailSerializer(serializers.ModelSerializer):
         model = SupportChannel
         fields = [
             'id', 'project', 'channel_type', 'display_name', 'welcome_message',
+            'ticket_confirmation_message',
             'operating_hours', 'timezone', 'offline_fallback_message',
             'offline_alternative', 'offline_alternative_target_id',
             'default_queue', 'default_queue_name',
@@ -604,7 +605,8 @@ class SupportChannelCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = SupportChannel
         fields = [
-            'channel_type', 'display_name', 'welcome_message', 'operating_hours',
+            'channel_type', 'display_name', 'welcome_message',
+            'ticket_confirmation_message', 'operating_hours',
             'timezone', 'offline_fallback_message', 'offline_alternative',
             'offline_alternative_target_id', 'default_queue', 'ticket_form',
             'email_address', 'sort_order', 'is_active',
