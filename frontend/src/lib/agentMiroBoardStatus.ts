@@ -2,6 +2,7 @@ export type MiroBoardCardStatus =
   | "idle"
   | "waiting_tasks_generation"
   | "generating"
+  | "retrying"
   | "ready"
   | "failed"
 
@@ -42,14 +43,14 @@ export function getPendingMiroWorkflowRunIds(messages: ChatMessageLike[]): strin
 
 function getLatestTerminalMiroEvent(
   messages: ChatMessageLike[]
-): { type: "ready" | "failed"; message: ChatMessageLike } | null {
+): { type: "ready" | "failed"; message: ChatMessageLike; index: number } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i]
     if (message.eventType === "miro_board_created") {
-      return { type: "ready", message }
+      return { type: "ready", message, index: i }
     }
     if (message.eventType === "miro_generation_failed") {
-      return { type: "failed", message }
+      return { type: "failed", message, index: i }
     }
   }
   return null
@@ -71,18 +72,29 @@ export function deriveMiroBoardCardState(
     const boardHref = terminal.message.navigateHref
     return { status: "ready", boardHref }
   }
+
+  const pendingRuns = getPendingMiroWorkflowRunIds(messages)
+  const startedAfterFailure = terminal?.type === "failed"
+    ? messages
+        .slice(terminal.index + 1)
+        .some((message) => message.eventType === "miro_generation_started" && message.workflowRunId)
+    : false
+  const isGenerating =
+    miroGenerateInFlight ||
+    (terminal?.type === "failed" ? startedAfterFailure : pendingRuns.length > 0)
+
+  if (isGenerating) {
+    if (terminal?.type === "failed") {
+      return { status: "retrying" }
+    }
+    return { status: "generating" }
+  }
+
   if (terminal?.type === "failed") {
     return {
       status: "failed",
       errorMessage: terminal.message.content,
     }
-  }
-
-  const pendingRuns = getPendingMiroWorkflowRunIds(messages)
-  const isGenerating = miroGenerateInFlight || pendingRuns.length > 0
-
-  if (isGenerating) {
-    return { status: "generating" }
   }
 
   if (approvalRequired && wantsTasks && !tasksCreated) {
