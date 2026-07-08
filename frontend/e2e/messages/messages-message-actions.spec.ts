@@ -21,6 +21,9 @@ const CHAT_ID = 9901;
 const CREATED_AT = '2026-05-28T10:00:00.000Z';
 
 type MockMessage = Record<string, any>;
+type SetupMessagesPageOptions = {
+	attachmentUploadHandler?: (requestIndex: number) => Promise<Record<string, any>>;
+};
 
 function buildChat() {
 	return {
@@ -86,7 +89,7 @@ function buildMessage(overrides: Record<string, any>): MockMessage {
 	};
 }
 
-async function setupMessagesPage(page: Page) {
+async function setupMessagesPage(page: Page, options: SetupMessagesPageOptions = {}) {
 	const chat = buildChat();
 	const messagesStore = [
 		buildMessage({
@@ -319,6 +322,42 @@ async function setupMessagesPage(page: Page) {
 		await route.fallback();
 	});
 
+	let attachmentUploadRequestCount = 0;
+	await page.route('**/api/chat/attachments/**', async (route) => {
+		const req = route.request();
+		const pathname = new URL(req.url()).pathname.replace(/\/+$/, '');
+
+		if (pathname === '/api/chat/attachments' && req.method() === 'POST') {
+			attachmentUploadRequestCount += 1;
+			const attachment = options.attachmentUploadHandler
+				? await options.attachmentUploadHandler(attachmentUploadRequestCount)
+				: {
+					id: 7000 + attachmentUploadRequestCount,
+					message: null,
+					file_type: 'document',
+					file_url: `/media/e2e-upload-${attachmentUploadRequestCount}.pdf`,
+					thumbnail_url: null,
+					file_size: 20,
+					file_size_display: '20 B',
+					original_filename: `e2e-upload-${attachmentUploadRequestCount}.pdf`,
+					mime_type: 'application/pdf',
+				};
+			await route.fulfill({
+				status: 201,
+				contentType: 'application/json',
+				body: JSON.stringify(attachment),
+			});
+			return;
+		}
+
+		if (/\/api\/chat\/attachments\/\d+$/.test(pathname) && req.method() === 'DELETE') {
+			await route.fulfill({ status: 204, body: '' });
+			return;
+		}
+
+		await route.fallback();
+	});
+
 	await page.goto(`/messages?projectId=${PROJECT.id}&chatId=${CHAT_ID}`);
 	await waitForLayoutMain(page);
 	await expect(page.getByTestId('messages-chat-window')).toBeVisible({ timeout: 15_000 });
@@ -353,6 +392,37 @@ test.describe('Message timeline actions', () => {
 		await page.getByRole('button', { name: 'Hide formatting' }).click();
 		await expect(page.getByRole('button', { name: 'Show formatting' })).toBeVisible();
 		await expect(page.getByRole('button', { name: /Bold/ })).not.toBeVisible();
+	});
+
+	test('attachment picker rejects unsupported MIME inline and retry with valid file succeeds', async ({ page }) => {
+		await setupMessagesPage(page);
+
+		const fileInput = page.locator('input[type="file"][accept*=".pdf"]').first();
+		await fileInput.setInputFiles({
+			name: 'bad.zip',
+			mimeType: 'application/zip',
+			buffer: Buffer.from('zip-content'),
+		});
+
+		await expect(page.getByText('bad.zip')).toBeVisible();
+		await expect(
+			page
+			.getByTestId('messages-chat-window')
+			.getByText('Unsupported file type "application/zip"')
+		).toBeVisible();
+
+		await page.getByRole('button', { name: 'Remove attachment' }).click();
+		await expect(page.getByText('bad.zip')).not.toBeVisible();
+
+		await fileInput.setInputFiles({
+			name: 'approved.pdf',
+			mimeType: 'application/pdf',
+			buffer: Buffer.from('%PDF-1.4 valid'),
+		});
+
+		const approvedAttachment = page.locator('div').filter({ hasText: 'approved.pdf' }).first();
+		await expect(approvedAttachment).toContainText('approved.pdf');
+		await expect(approvedAttachment).toContainText('✓');
 	});
 
 	test('hover toolbar can edit an own message and delete it into a tombstone', async ({ page }) => {
