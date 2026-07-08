@@ -12,15 +12,9 @@ export const FILE_SIZE_LIMITS = {
   document: 20 * 1024 * 1024, // 20 MB
 };
 
-export const CHAT_ATTACHMENT_INPUT_ACCEPT =
-  'image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx';
-
-export const SUPPORTED_ATTACHMENT_DOCUMENT_LABEL =
-  'images, PDF, Word, Excel, and PowerPoint files';
-
 // Allowed MIME types
 export const ALLOWED_MIME_TYPES = {
-  imagePrefix: 'image/',
+  image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
   video: ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo'],
   document: [
     'application/pdf',
@@ -30,6 +24,13 @@ export const ALLOWED_MIME_TYPES = {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'application/vnd.ms-powerpoint',
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/ogg',
+    'audio/wav',
+    'audio/webm',
+    'text/plain',
+    'text/csv',
   ],
 };
 
@@ -37,39 +38,19 @@ export const ALLOWED_MIME_TYPES = {
  * Get file type from MIME type
  */
 export function getFileTypeFromMime(mimeType: string): 'image' | 'video' | 'document' {
-  if (mimeType.startsWith(ALLOWED_MIME_TYPES.imagePrefix)) return 'image';
+  if (mimeType.startsWith('image/')) return 'image';
   if (mimeType.startsWith('video/')) return 'video';
   return 'document';
-}
-
-export function isAllowedAttachmentMimeType(mimeType: string): boolean {
-  const normalizedMimeType = mimeType.trim().toLowerCase();
-  return (
-    normalizedMimeType.startsWith(ALLOWED_MIME_TYPES.imagePrefix) ||
-    ALLOWED_MIME_TYPES.document.includes(normalizedMimeType)
-  );
-}
-
-export function buildUnsupportedAttachmentMessage(mimeType: string): string {
-  const normalizedMimeType = mimeType.trim() || 'unknown';
-  return `Unsupported file type "${normalizedMimeType}". Accepted formats: ${SUPPORTED_ATTACHMENT_DOCUMENT_LABEL}.`;
 }
 
 /**
  * Validate file before upload
  */
 export function validateFile(file: File): { isValid: boolean; error?: string } {
-  const mimeType = file.type.trim().toLowerCase();
-  if (!isAllowedAttachmentMimeType(mimeType)) {
-    return {
-      isValid: false,
-      error: buildUnsupportedAttachmentMessage(mimeType),
-    };
-  }
-
-  const fileType = getFileTypeFromMime(mimeType);
+  const fileType = getFileTypeFromMime(file.type);
   const maxSize = FILE_SIZE_LIMITS[fileType];
-
+  
+  // Check file size
   if (file.size > maxSize) {
     const maxMB = maxSize / (1024 * 1024);
     return {
@@ -77,33 +58,22 @@ export function validateFile(file: File): { isValid: boolean; error?: string } {
       error: `File too large. Maximum size for ${fileType} is ${maxMB} MB`,
     };
   }
-
+  
+  // Check MIME type
+  const allowedTypes = [
+    ...ALLOWED_MIME_TYPES.image,
+    ...ALLOWED_MIME_TYPES.video,
+    ...ALLOWED_MIME_TYPES.document,
+  ];
+  
+  if (!allowedTypes.includes(file.type)) {
+    return {
+      isValid: false,
+      error: `File type "${file.type}" is not allowed`,
+    };
+  }
+  
   return { isValid: true };
-}
-
-export function getAttachmentUploadErrorMessage(error: unknown, fallbackMimeType?: string): string {
-  const responseData = (error as { response?: { data?: Record<string, unknown> } })?.response?.data;
-  const mimeType = typeof responseData?.mime_type === 'string'
-    ? responseData.mime_type
-    : fallbackMimeType;
-
-  if (responseData?.code === 'unsupported_mime_type' && mimeType) {
-    return buildUnsupportedAttachmentMessage(mimeType);
-  }
-
-  if (typeof responseData?.error === 'string' && responseData.error.trim()) {
-    return responseData.error;
-  }
-
-  if ((error as Error)?.message) {
-    return (error as Error).message;
-  }
-
-  if (mimeType) {
-    return buildUnsupportedAttachmentMessage(mimeType);
-  }
-
-  return 'Failed to upload attachment';
 }
 
 /**
@@ -113,11 +83,6 @@ export async function uploadAttachment(
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<MessageAttachment> {
-  const validation = validateFile(file);
-  if (!validation.isValid) {
-    throw new Error(validation.error || 'Unsupported file type');
-  }
-
   const formData = new FormData();
   formData.append('file', file);
   
@@ -200,7 +165,7 @@ export function getFileIconType(mimeType: string): FileIconType {
   return 'file';
 }
 
-const attachmentApi = {
+export default {
   uploadAttachment,
   getAttachment,
   deleteAttachment,
@@ -210,5 +175,3 @@ const attachmentApi = {
   formatFileSize,
   getFileIconType,
 };
-
-export default attachmentApi;
