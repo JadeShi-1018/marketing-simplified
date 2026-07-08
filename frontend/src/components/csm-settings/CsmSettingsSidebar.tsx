@@ -4,10 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { ClipboardList, FolderKanban, ListOrdered, Radio, Settings, Shield } from 'lucide-react';
 
-interface Props {
-  projectId: number;
-}
-
 const ACTIVE_COLOR = 'text-[#3CCED7]';
 const ACTIVE_BAR = 'bg-[#3CCED7]';
 
@@ -43,15 +39,14 @@ function NavLink({
   );
 }
 
-export default function CsmSettingsSidebar({ projectId }: Props) {
+export default function CsmSettingsSidebar() {
   const pathname = usePathname();
-  const q = '';
-  const hub = `/admin/csm/settings${q}`;
-  const supportProjects = `/admin/csm/settings/support-projects${q}`;
-  const channels = `/admin/csm/settings/channels${q}`;
-  const workTypes = `/admin/csm/settings/work-types${q}`;
-  const assignments = `/admin/csm/settings/assignments${q}`;
-  const slaPolicy = `/admin/csm/settings/sla${q}`;
+  const hub = '/admin/csm/settings';
+  const supportProjects = '/admin/csm/settings/support-projects';
+  const channels = '/admin/csm/settings/channels';
+  const workTypes = '/admin/csm/settings/work-types';
+  const assignments = '/admin/csm/settings/assignments';
+  const slaPolicy = '/admin/csm/settings/sla';
 
   return (
     <aside className="hidden w-[240px] shrink-0 flex-col border-r border-gray-200 bg-white sm:flex">
