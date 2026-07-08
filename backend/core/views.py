@@ -106,11 +106,7 @@ class ProjectOnboardingView(APIView):
             # Fallback to legacy organization field
             organization = getattr(user, 'organization', None)
         if not organization:
-            # MULTI-ORG: User must create or join an organization before creating projects
-            return Response(
-                {'error': 'You must create or join an organization before creating projects.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            organization = self._ensure_organization_for_user(user)
 
         data = serializer.validated_data
 
@@ -370,9 +366,7 @@ class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             organization = getattr(user, 'organization', None)
 
         if not organization:
-            # MULTI-ORG: User must create or join an organization before creating projects
-            from rest_framework.exceptions import ValidationError
-            raise ValidationError('You must create or join an organization before creating projects.')
+            organization = self._auto_create_organization(user)
 
         project = serializer.save(
             organization=organization,
@@ -517,9 +511,9 @@ class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             with connection.cursor() as cursor:
                 # Delete child records first (bottom-up approach)
 
-                # Delete calendars (this might have child records too)
+                # Soft-delete calendars (set is_deleted=True instead of hard delete)
                 cursor.execute(
-                    'DELETE FROM calendars_calendar WHERE project_id = %s',
+                    'UPDATE calendars_calendar SET is_deleted = TRUE WHERE project_id = %s',
                     [project_id]
                 )
 

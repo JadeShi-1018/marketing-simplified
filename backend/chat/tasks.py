@@ -166,15 +166,36 @@ async def _broadcast_presence_to_recipients(channel_layer, recipient_ids, event)
     ))
 
 
-def finalize_presence_offline_now(user_id: int, offline_token: str) -> bool:
-    """Finalize delayed offline presence once and broadcast if state changed."""
+def get_offline_broadcast_params(user_id: int, offline_token: str):
+    """Finalize offline presence in cache/DB; return (version, recipient_ids) for broadcast.
+
+    Separated from finalize_presence_offline_now so that the consumer's
+    async disconnect() handler can call this via sync_to_async and then
+    broadcast directly from its own async context, avoiding the nested
+    sync_to_async → async_to_sync deadlock that occurs when
+    InMemoryChannelLayer asyncio.Queue objects are accessed from a thread
+    that is itself running inside the test event loop.
+
+    Returns (None, []) when the user reconnected before this ran.
+    """
     version = OnlineStatusService.finalize_offline_if_still_disconnected(user_id, offline_token)
     if version is None:
-        return False
-
+        return None, []
     recipient_ids = ChatService.get_presence_recipient_ids(user_id)
     recipient_ids = OnlineStatusService.get_online_users(recipient_ids)
-    if not recipient_ids:
+    return version, recipient_ids
+
+
+def finalize_presence_offline_now(user_id: int, offline_token: str) -> bool:
+    """Finalize delayed offline presence once and broadcast if state changed.
+
+    Safe to call from regular sync threads (e.g. Celery workers) where there
+    is no outer asyncio event loop.  Do NOT call this from inside sync_to_async
+    — use get_offline_broadcast_params + consumer.broadcast_presence_update
+    instead to avoid nested async_to_sync deadlocks.
+    """
+    version, recipient_ids = get_offline_broadcast_params(user_id, offline_token)
+    if version is None or not recipient_ids:
         return False
 
     channel_layer = get_channel_layer()

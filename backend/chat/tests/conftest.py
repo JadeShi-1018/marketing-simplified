@@ -7,6 +7,42 @@ from rest_framework.test import APIClient
 from core.models import Organization, Project, ProjectMember, Team, TeamMember
 from chat.models import Chat, ChatParticipant, ChatType
 
+
+@pytest.fixture()
+def transactional_db(request, django_db_setup, django_db_blocker):
+    """Override transactional_db to flush with CASCADE.
+
+    Tests in this package may create Organization objects which trigger
+    provision_tenant_schema(), producing cross-schema FK constraints
+    (e.g. org_<slug>.core_project → public.core_customuser).  The default
+    Django flush uses plain TRUNCATE (no CASCADE) and fails with a FK
+    violation, leaving stale rows that corrupt every subsequent test.
+
+    Overriding _fixture_teardown with allow_cascade=True makes PostgreSQL
+    cascade the TRUNCATE into the tenant schema automatically.
+    """
+    from django.test import TransactionTestCase
+
+    class _CascadeTC(TransactionTestCase):
+        def _fixture_teardown(self):
+            from django.core.management import call_command
+            for db_name in self._databases_names(include_mirrors=False):
+                call_command(
+                    'flush',
+                    verbosity=0,
+                    interactive=False,
+                    database=db_name,
+                    reset_sequences=False,
+                    allow_cascade=True,
+                    inhibit_post_migrate=True,
+                )
+
+    with django_db_blocker.unblock():
+        tc = _CascadeTC('runTest')
+        tc._pre_setup()
+        yield
+        tc._post_teardown()
+
 User = get_user_model()
 
 
