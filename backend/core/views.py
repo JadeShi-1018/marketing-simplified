@@ -79,7 +79,8 @@ class CheckProjectMembershipView(APIView):
         user = request.user
         memberships = ProjectMember.objects.filter(user=user, is_active=True)
         project_count = memberships.count()
-        active_project_id = user.active_project_id if user.active_project else None
+        # Use the raw FK column — never raises DoesNotExist even when the project is deleted.
+        active_project_id = user.active_project_id
 
         return Response(
             {
@@ -337,7 +338,7 @@ class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
         # Filter by active_only query parameter
         active_only = self.request.query_params.get('active_only', 'false').lower() == 'true'
-        if active_only and user.active_project:
+        if active_only and user.active_project_id:
             queryset = queryset.filter(id=user.active_project_id)
 
         return queryset.order_by('-created_at')

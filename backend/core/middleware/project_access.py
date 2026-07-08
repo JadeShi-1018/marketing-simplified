@@ -1,8 +1,7 @@
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
-from django.db import connection
 
-from core.models import ProjectMember
+from core.models import Project, ProjectMember
 
 
 class CheckProjectAccessMiddleware(MiddlewareMixin):
@@ -36,27 +35,28 @@ class CheckProjectAccessMiddleware(MiddlewareMixin):
         if not requires_project:
             return None
 
-        # CRITICAL: TenantSchemaMiddleware may have already switched search_path
-        # to a tenant schema. User/Project metadata lives in public schema, so
-        # we must temporarily switch back to read active_project and memberships.
-        with connection.cursor() as cursor:
-            cursor.execute('SHOW search_path')
-            original_path = cursor.fetchone()[0]
+        # If the request carries an explicit project_id, the view will resolve it
+        # and enforce access control itself — no need to block here.
+        if request.GET.get('project_id'):
+            return None
 
-        # Temporarily switch to public for metadata queries
-        with connection.cursor() as cursor:
-            cursor.execute('SET search_path TO public')
-
+        # Check whether the user has an active project or any project membership.
+        # Run under the search_path already set by TenantSchemaMiddleware so that
+        # ProjectMember (tenant schema) queries work correctly.  Do NOT switch to
+        # 'public' here: ProjectMember lives in the tenant schema, not in public,
+        # so querying it with search_path=public always returns empty and causes
+        # false 403s for users with memberships.
         try:
-            if user.active_project:
-                return None
+            active_project = user.active_project
+        except Project.DoesNotExist:
+            # active_project_id is stale (project deleted, db_constraint=False
+            # means no DB-level cascade). Treat as no active project.
+            active_project = None
 
-            has_membership = ProjectMember.objects.filter(user=user, is_active=True).exists()
-        finally:
-            # Restore original search_path
-            # CRITICAL: Use f-string instead of %s parameter to avoid quoting the path
-            with connection.cursor() as cursor:
-                cursor.execute(f'SET search_path TO {original_path}')
+        if active_project:
+            return None
+
+        has_membership = ProjectMember.objects.filter(user=user, is_active=True).exists()
 
         if not has_membership:
             return JsonResponse(
