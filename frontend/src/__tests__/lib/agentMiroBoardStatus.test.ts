@@ -87,6 +87,40 @@ describe("agentMiroBoardStatus", () => {
       expect(deriveMiroBoardCardState(messages)).toEqual({ status: "generating" })
     })
 
+    it("returns retrying when a failed Miro generation is started again", () => {
+      const messages = [
+        {
+          eventType: "miro_generation_started",
+          workflowRunId: "run-1",
+        },
+        {
+          eventType: "miro_generation_failed",
+          workflowRunId: "run-1",
+          content: "Miro API unavailable",
+        },
+        {
+          eventType: "miro_generation_started",
+          workflowRunId: "run-1",
+        },
+      ]
+
+      expect(deriveMiroBoardCardState(messages)).toEqual({ status: "retrying" })
+    })
+
+    it("returns retrying while a retry is in flight after failure", () => {
+      const messages = [
+        {
+          eventType: "miro_generation_failed",
+          workflowRunId: "run-1",
+          content: "Miro API unavailable",
+        },
+      ]
+
+      expect(deriveMiroBoardCardState(messages, { miroGenerateInFlight: true })).toEqual({
+        status: "retrying",
+      })
+    })
+
     it("returns ready from the latest miro_board_created message", () => {
       const messages = [
         {
@@ -109,6 +143,25 @@ describe("agentMiroBoardStatus", () => {
 
     it("returns failed from the latest miro_generation_failed message", () => {
       const messages = [
+        {
+          eventType: "miro_generation_failed",
+          workflowRunId: "run-1",
+          content: "Miro API unavailable",
+        },
+      ]
+
+      expect(deriveMiroBoardCardState(messages)).toEqual({
+        status: "failed",
+        errorMessage: "Miro API unavailable",
+      })
+    })
+
+    it("returns failed after a started run fails before the user retries", () => {
+      const messages = [
+        {
+          eventType: "miro_generation_started",
+          workflowRunId: "run-1",
+        },
         {
           eventType: "miro_generation_failed",
           workflowRunId: "run-1",

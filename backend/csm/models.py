@@ -308,8 +308,9 @@ class ConversationMessage(models.Model):
         return f"[{self.sender_type}] {self.content[:50]}"
 
 
-class QuickReplyTemplate(TimeStampedModel):
+class QuickReplyTemplate(SluggedResourceModelMixin, TimeStampedModel):
     """Pre-written reply templates that agents can insert into the conversation composer."""
+    slug_source_field = 'title'
 
     organisation = models.ForeignKey(
         'customer.CustomerOrganisation',
@@ -363,6 +364,27 @@ class QuickReplyTemplateHistory(models.Model):
 
     def __str__(self):
         return f"History of template {self.template_id} at {self.edited_at}"
+
+
+class TemplateTag(TimeStampedModel):
+    """Admin-managed tag entity for quick-reply templates.
+
+    Tags are scoped to an organisation so each CS org has its own tag vocabulary.
+    """
+
+    organisation = models.ForeignKey(
+        'customer.CustomerOrganisation',
+        on_delete=models.CASCADE,
+        related_name='template_tags',
+    )
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        unique_together = [('organisation', 'name')]
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
 
 
 # ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 from django.core.cache import cache
+from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework.throttling import ScopedRateThrottle
@@ -716,14 +717,21 @@ class TestAttachmentAPI:
     def test_upload_attachment(self):
         """Test uploading an attachment"""
         from django.core.files.uploadedfile import SimpleUploadedFile
-        test_file = SimpleUploadedFile('test.txt', b'Test file content', content_type='text/plain')
+        
+        test_file = SimpleUploadedFile(
+            'test.pdf',
+            b'%PDF-1.4 test content',
+            content_type='application/pdf'
+        )
+        
         url = reverse('attachment-list')
         response = self.client.post(url, {'file': test_file}, format='multipart')
+        
         assert response.status_code == status.HTTP_201_CREATED
-        assert response.data['original_filename'] == 'test.txt'
-        assert response.data['file_type'] == 'document'
-        assert 'file_url' in response.data
-        assert 'file_size_display' in response.data
+        assert response.data["original_filename"] == "test.pdf"
+        assert response.data["file_type"] == "document"
+        assert "file_url" in response.data
+        assert "file_size_display" in response.data
 
     def test_upload_image(self):
         """Test uploading an image attachment"""
@@ -947,3 +955,45 @@ class TestStarredChatAPI:
         self.client.post(reverse('chat-starred-list'), {'chat_id': c2.id}, format='json')
         r = self.client.post(reverse('chat-starred-reorder'), {'project_id': self.project.id, 'chat_ids': [c1.id]}, format='json')
         assert r.status_code == status.HTTP_400_BAD_REQUEST
+
+
+class AttachmentMimeUploadAPITest(TestCase):
+    def setUp(self):
+        self.user1 = User.objects.create_user(
+            email='mime-user1@example.com',
+            username='mime-user1',
+            password='testpass123',
+        )
+        self.user2 = User.objects.create_user(
+            email='mime-user2@example.com',
+            username='mime-user2',
+            password='testpass123',
+        )
+        self.organization = Organization.objects.create(name='MIME Test Organization')
+        self.team = Team.objects.create(organization=self.organization, name='MIME Test Team')
+        self.project = Project.objects.create(name='MIME Test Project', organization=self.organization)
+        TeamMember.objects.create(user=self.user1, team=self.team)
+        TeamMember.objects.create(user=self.user2, team=self.team)
+        ProjectMember.objects.create(user=self.user1, project=self.project, role='owner', is_active=True)
+        ProjectMember.objects.create(user=self.user2, project=self.project, role='member', is_active=True)
+        self.chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=self.chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=self.chat, user=self.user2, is_active=True)
+        self.client = APIClient()
+        self.client.force_authenticate(user=self.user1)
+
+    def test_rejects_unsupported_mime_before_attachment_save(self):
+        initial_count = MessageAttachment.objects.count()
+        test_file = SimpleUploadedFile(
+            'archive.zip',
+            b'PK\x03\x04',
+            content_type='application/zip',
+        )
+
+        response = self.client.post(reverse('attachment-list'), {'file': test_file}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+        self.assertEqual(response.data['code'], 'unsupported_mime_type')
+        self.assertEqual(response.data['mime_type'], 'application/zip')
+        self.assertIn('Unsupported MIME type', response.data['error'])
+        self.assertEqual(MessageAttachment.objects.count(), initial_count)

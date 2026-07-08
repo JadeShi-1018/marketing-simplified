@@ -1,11 +1,17 @@
 // Chat API client
 import api from '../api';
+import {
+  formatFileSize,
+  getFileTypeFromMime,
+} from './attachmentApi';
+export { formatFileSize, getFileTypeFromMime };
 import type {
   Chat,
   ChatParticipant,
   ChannelVisibility,
   ChatStarRow,
   Message,
+  MessageAttachment,
   CreateChatRequest,
   CreateChatResponse,
   SendMessageRequest,
@@ -19,6 +25,113 @@ import type {
   SearchMessagesResponse,
 } from '@/types/chat';
 import type { TiptapJSONContent } from '@/types/comment';
+
+const ATTACHMENT_FILE_SIZE_LIMITS = {
+  image: 10 * 1024 * 1024,
+  video: 25 * 1024 * 1024,
+  document: 20 * 1024 * 1024,
+} as const;
+
+const ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX = 'image/';
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
+
+const SUPPORTED_ATTACHMENT_DOCUMENT_LABEL =
+  'images, PDF, Word, Excel, and PowerPoint files';
+
+export function isAllowedAttachmentMimeType(mimeType: string): boolean {
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  return (
+    normalizedMimeType.startsWith(ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX) ||
+    ALLOWED_ATTACHMENT_MIME_TYPES.has(normalizedMimeType)
+  );
+}
+
+export function buildUnsupportedAttachmentMessage(mimeType: string): string {
+  const normalizedMimeType = mimeType.trim() || 'unknown';
+  return `Unsupported file type "${normalizedMimeType}". Accepted formats: ${SUPPORTED_ATTACHMENT_DOCUMENT_LABEL}.`;
+}
+
+export function validateFile(file: File): { isValid: boolean; error?: string } {
+  const mimeType = file.type.trim().toLowerCase();
+  if (!isAllowedAttachmentMimeType(mimeType)) {
+    return {
+      isValid: false,
+      error: buildUnsupportedAttachmentMessage(mimeType),
+    };
+  }
+
+  const fileType = getFileTypeFromMime(mimeType);
+  const maxSize = ATTACHMENT_FILE_SIZE_LIMITS[fileType];
+  if (file.size > maxSize) {
+    const maxMB = maxSize / (1024 * 1024);
+    return {
+      isValid: false,
+      error: `File too large. Maximum size for ${fileType} is ${maxMB} MB`,
+    };
+  }
+
+  return { isValid: true };
+}
+
+export function getAttachmentUploadErrorMessage(error: unknown, fallbackMimeType?: string): string {
+  const responseData = (error as { response?: { data?: Record<string, unknown> } })?.response?.data;
+  const mimeType = typeof responseData?.mime_type === 'string'
+    ? responseData.mime_type
+    : fallbackMimeType;
+
+  if (responseData?.code === 'unsupported_mime_type' && mimeType) {
+    return buildUnsupportedAttachmentMessage(mimeType);
+  }
+
+  if (typeof responseData?.error === 'string' && responseData.error.trim()) {
+    return responseData.error;
+  }
+
+  if ((error as Error)?.message) {
+    return (error as Error).message;
+  }
+
+  if (mimeType) {
+    return buildUnsupportedAttachmentMessage(mimeType);
+  }
+
+  return 'Failed to upload attachment';
+}
+
+export async function uploadAttachment(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<MessageAttachment> {
+  const validation = validateFile(file);
+  if (!validation.isValid) {
+    throw new Error(validation.error || 'Unsupported file type');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post('/api/chat/attachments/', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: (progressEvent) => {
+      if (progressEvent.total && onProgress) {
+        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        onProgress(progress);
+      }
+    },
+  });
+
+  return response.data;
+}
 
 // ==================== Chat Endpoints ====================
 
