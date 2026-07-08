@@ -489,6 +489,14 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation = self.get_object()
         customer = conversation.customer
 
+        # Enforce 1 conversation : 1 ticket (mirrors the claim flow).
+        existing = conversation.tickets.first()
+        if existing:
+            return Response(
+                {'detail': 'This conversation already has a linked ticket.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         title = request.data.get('title', f'Ticket from conversation #{conversation.id}')
         description = request.data.get('description', '')
         priority = request.data.get('priority', 'medium')
@@ -525,6 +533,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
         async_to_sync(channel_layer.group_send)(
             f'csm_conversation_{conversation.id}',
             {'type': 'conversation.message', 'message': payload},
+        )
+        # Broadcast the updated conversation so all agents' lists (and the active
+        # workspace) pick up the newly linked ticket and unlock the composer.
+        conversation.refresh_from_db()
+        async_to_sync(channel_layer.group_send)(
+            'csm_new_conversations',
+            {'type': 'conversation.updated', 'conversation': ConversationSerializer(conversation).data},
         )
 
         return Response(

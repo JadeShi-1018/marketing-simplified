@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { CustomerProfile } from '@/types/csmConversation';
 import CsmConversationAPI from '@/lib/api/csmConversationApi';
 import { useCsmConversationStore } from '@/lib/csmConversationStore';
 import api from '@/lib/api';
@@ -12,19 +13,35 @@ interface Queue {
 
 interface CreateTicketModalProps {
   conversationId: number;
-  customerName: string;
+  customerProfile: CustomerProfile | null;
   defaultQueueId: number | null;
   onClose: () => void;
+  onCreated?: () => void;
+}
+
+/** Build the initial description from the linked customer's profile (AC4: form pre-populated). */
+function buildInitialDescription(profile: CustomerProfile | null): string {
+  if (!profile) return '';
+  const lines: string[] = [];
+  if (profile.full_name) lines.push(`Customer: ${profile.full_name}`);
+  if (profile.email) lines.push(`Email: ${profile.email}`);
+  if (profile.company) lines.push(`Company: ${profile.company}`);
+  if (profile.phone) lines.push(`Phone: ${profile.phone}`);
+  if (profile.organisation_name) lines.push(`Organisation: ${profile.organisation_name}`);
+  if (profile.region_name) lines.push(`Region: ${profile.region_name}`);
+  return lines.join('\n');
 }
 
 export function CreateTicketModal({
   conversationId,
-  customerName,
+  customerProfile,
   defaultQueueId,
   onClose,
+  onCreated,
 }: CreateTicketModalProps) {
+  const customerName = customerProfile?.full_name || 'customer';
   const [title, setTitle] = useState(`Support request from ${customerName}`);
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = useState(() => buildInitialDescription(customerProfile));
   const [priority, setPriority] = useState<'critical' | 'high' | 'medium' | 'low'>('medium');
   const [selectedQueueId, setSelectedQueueId] = useState<number | null>(defaultQueueId);
   const [queues, setQueues] = useState<Queue[]>([]);
@@ -64,9 +81,12 @@ export function CreateTicketModal({
         queue: selectedQueueId,
       });
       addMessage(conversationId, result.system_message);
+      onCreated?.();
       onClose();
-    } catch {
-      setError('Failed to create ticket. Please try again.');
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setError(detail || 'Failed to create ticket. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -96,7 +116,7 @@ export function CreateTicketModal({
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              rows={3}
+              rows={5}
               className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-400 resize-none"
             />
           </div>
