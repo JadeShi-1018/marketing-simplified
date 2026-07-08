@@ -13,6 +13,7 @@ import { ConversationComposer } from '@/components/csm/conversations/Conversatio
 import { CustomerProfilePanel } from '@/components/csm/conversations/CustomerProfilePanel';
 import { MyTicketsPanel } from '@/components/csm/conversations/MyTicketsPanel';
 import { ConversationActions } from '@/components/csm/conversations/ConversationActions';
+import { CreateTicketModal } from '@/components/csm/conversations/CreateTicketModal';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
@@ -21,6 +22,7 @@ function ConversationsPageContent() {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [leftTab, setLeftTab] = useState<'conversations' | 'mytickets'>('conversations');
   const [ticketRefreshKey, setTicketRefreshKey] = useState(0);
+  const [showCreateTicket, setShowCreateTicket] = useState(false);
 
   // Queue selector state
   const [queues, setQueues] = useState<Queue[]>([]);
@@ -171,8 +173,16 @@ function ConversationsPageContent() {
 
       {/* RIGHT: Customer profile panel */}
       <div className="hidden h-full w-72 shrink-0 border-l border-gray-200 md:flex md:flex-col">
-        <div className="px-4 py-3 border-b border-gray-100 shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
           <h2 className="font-semibold text-gray-900 text-sm">Customer Profile</h2>
+          {detail && !activeConversation?.ticket && (
+            <button
+              onClick={() => setShowCreateTicket(true)}
+              className="px-2.5 py-1 text-xs font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              Create Ticket
+            </button>
+          )}
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto">
           {detail ? (
@@ -188,6 +198,24 @@ function ConversationsPageContent() {
           )}
         </div>
       </div>
+
+      {/* Create Ticket modal (AC4): form pre-populated from the linked customer profile */}
+      {showCreateTicket && detail && activeId && (
+        <CreateTicketModal
+          conversationId={activeId}
+          customerProfile={detail.customer_profile}
+          defaultQueueId={activeConversation?.queue ?? null}
+          onClose={() => setShowCreateTicket(false)}
+          onCreated={() => {
+            setTicketRefreshKey((k) => k + 1);
+            loadConversations();
+            CsmConversationAPI.get(activeId).then((data) => {
+              setDetail(data);
+              setMessages(activeId, data.messages);
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
