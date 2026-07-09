@@ -5,10 +5,13 @@ Tests for:
 - ProjectViewSet
 """
 import pytest
+from django.db import connection
 from django.urls import reverse
+from psycopg2 import sql as psql
 from rest_framework import status
 from calendars.models import Calendar
 from core.models import Project, ProjectMember
+from core.services.tenant import slug_to_schema_name
 from core.utils.project_calendars import ensure_project_calendar
 
 
@@ -175,17 +178,46 @@ class TestProjectViewSet:
         assert 'member_count' in response.data
 
     @pytest.mark.timeout(600)
-    def test_delete_project_soft_deletes_calendar(self, authenticated_client, project):
-        """Deleting a project should soft-delete its calendar."""
+    def test_delete_project_soft_deletes_calendar(self, authenticated_client, project, user):
+        """Deleting a project should soft-delete its calendar in the tenant schema.
+
+        Calendar is a tenant model.  provision_tenant_schema() resets
+        search_path to 'public' after provisioning, so ensure_project_calendar()
+        called from test scope creates the row in the *public* schema unless we
+        switch to the tenant schema first.  TenantSchemaMiddleware then runs the
+        DELETE request in the tenant schema, so we must also verify the
+        soft-delete via raw SQL there rather than calling refresh_from_db()
+        (which would re-query the public schema after the request has reset the
+        search_path).
+        """
+        schema = slug_to_schema_name(user.organization.slug)
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                psql.SQL('SET search_path TO {}, public').format(psql.Identifier(schema))
+            )
         calendar = ensure_project_calendar(project)
-        assert calendar.is_deleted is False
+        calendar_id = str(calendar.id)
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
 
         url = reverse('project-detail', kwargs={'pk': project.slug})
         response = authenticated_client.delete(url)
-
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        calendar.refresh_from_db()
-        assert calendar.is_deleted is True
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                psql.SQL('SET search_path TO {}, public').format(psql.Identifier(schema))
+            )
+            cursor.execute(
+                'SELECT is_deleted FROM calendars_calendar WHERE id = %s',
+                [calendar_id],
+            )
+            row = cursor.fetchone()
+            cursor.execute('SET search_path TO public')
+
+        assert row is not None, "Calendar should still exist (soft-deleted, not hard-deleted)"
+        assert row[0] is True, "Calendar.is_deleted should be True after project deletion"
 
     def test_get_project_requires_membership(self, authenticated_client, user, organization):
         """Getting project details requires membership"""

@@ -3,6 +3,7 @@ import logging
 import json
 import pytest
 from contextlib import suppress
+from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
 from channels.routing import URLRouter
 from channels.layers import channel_layers
@@ -51,7 +52,12 @@ def reset_channel_layer_cache(settings):
     OnlineStatusService.OFFLINE_GRACE_SECONDS = 0
     _reset_channel_layers()
     cache.clear()
-    yield
+    # Force all OnlineStatusService Redis calls to raise NotImplementedError so
+    # they fall back to the LocMemCache set above.  This prevents tests from
+    # hitting a real Redis server (or failing when Redis is unavailable) and
+    # eliminates cross-worker data contamination when pytest-xdist is active.
+    with patch('chat.services.get_redis_connection', side_effect=NotImplementedError):
+        yield
     OnlineStatusService.OFFLINE_GRACE_SECONDS = old_grace_seconds
     cache.clear()
     _reset_channel_layers()
