@@ -8,58 +8,48 @@ from core.models import Organization, Project, ProjectMember, Team, TeamMember
 from chat.models import Chat, ChatParticipant, ChatType
 
 
-@pytest.fixture()
-def transactional_db(request, django_db_setup, django_db_blocker):
-    """Override transactional_db to flush with tenant schema cleanup.
+@pytest.fixture(autouse=True)
+def _drop_tenant_schemas_before_flush(request, db):
+    """Drop org_* schemas before pytest-django's transactional DB teardown.
 
-    Tests in this package may create Organization objects which trigger
-    provision_tenant_schema(), producing cross-schema FK constraints
-    (e.g. org_<slug>.core_project -> public.core_customuser). Django flush
-    command generates TRUNCATE for all tables in search_path=public, but
-    tenant tables only exist in org_* schemas, causing CommandError.
+    Tests marked @pytest.mark.django_db(transaction=True) that create
+    Organization objects trigger provision_tenant_schema(), which creates an
+    org_<slug> schema containing a core_role table with a FK to
+    public.core_organization.
 
-    Fix: drop all org_* schemas first (removing cross-schema FK refs),
-    then run the standard flush on the public schema without cascade.
+    pytest-django's _django_db_helper creates its own PytestDjangoTestCase
+    (a subclass of TransactionTestCase) and calls _post_teardown() directly
+    — our transactional_db override is bypassed entirely.  That teardown
+    calls Django's default _fixture_teardown, which runs TRUNCATE with
+    allow_cascade=False.  The cross-schema FK from the tenant core_role table
+    to public.core_organization causes the TRUNCATE to fail.
+
+    Fix: this autouse fixture's teardown executes BEFORE _django_db_helper's
+    teardown (fixture teardown is reverse of setup order; this fixture depends
+    on `db` which depends on `_django_db_helper`).  Dropping the org_* schemas
+    removes the cross-schema FK references so the subsequent flush succeeds.
     """
-    from django.test import TransactionTestCase
+    yield
 
-    class _CascadeTC(TransactionTestCase):
-        def _fixture_teardown(self):
-            from django.db import connection
-            from django.core.management import call_command
+    # Only transactional tests commit real tenant data; skip for others.
+    marker = request.node.get_closest_marker("django_db")
+    if not (marker and marker.kwargs.get("transaction", False)):
+        return
 
-            # Drop all tenant schemas first so cross-schema FK references
-            # (e.g. org_<slug>.core_project -> public.core_customuser) are
-            # removed before Django flush tries to TRUNCATE public tables.
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    "SELECT schema_name FROM information_schema.schemata "
-                    "WHERE schema_name LIKE %(pat)s ESCAPE %(esc)s",
-                    {"pat": "org\_%%", "esc": "\\"},
-                )
-                schemas = [row[0] for row in cursor.fetchall()]
-            for schema in schemas:
-                safe = schema.replace('"', '""')
-                with connection.cursor() as cursor:
-                    cursor.execute(f'DROP SCHEMA IF EXISTS "{safe}" CASCADE')
+    from django.db import connection
 
-            # Standard flush for public-schema tables (no cascade needed)
-            for db_name in self._databases_names(include_mirrors=False):
-                call_command(
-                    'flush',
-                    verbosity=0,
-                    interactive=False,
-                    database=db_name,
-                    reset_sequences=False,
-                    allow_cascade=False,
-                    inhibit_post_migrate=True,
-                )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT schema_name FROM information_schema.schemata "
+            "WHERE schema_name LIKE %(pat)s ESCAPE %(esc)s",
+            {"pat": "org\\_%%", "esc": "\\"},
+        )
+        schemas = [row[0] for row in cursor.fetchall()]
 
-    with django_db_blocker.unblock():
-        tc = _CascadeTC('runTest')
-        tc._pre_setup()
-        yield
-        tc._post_teardown()
+    for schema in schemas:
+        safe = schema.replace('"', '""')
+        with connection.cursor() as cursor:
+            cursor.execute(f'DROP SCHEMA IF EXISTS "{safe}" CASCADE')
 
 User = get_user_model()
 
