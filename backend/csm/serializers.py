@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, CsmNotification,
     Conversation, ConversationMessage, Ticket, QuickReplyTemplate, QuickReplyTemplateHistory,
+    TemplateTag,
     TicketForm, TicketFormField, TicketFormAssignment,
     SupportProject, CsmWorkType, SupportChannel,
     SLAPolicy, SLAPriorityTarget,
@@ -322,16 +323,52 @@ class QuickReplyTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuickReplyTemplate
         fields = [
-            'id', 'organisation', 'team', 'title', 'content', 'rich_body',
+            'id', 'slug', 'organisation', 'team', 'title', 'content', 'rich_body',
             'tags', 'is_active', 'created_by', 'created_by_name', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'slug', 'created_by', 'created_at', 'updated_at']
 
     def get_created_by_name(self, obj):
         if not obj.created_by:
             return None
         full = obj.created_by.get_full_name()
         return full if full.strip() else obj.created_by.email
+
+    def validate_tags(self, value):
+        cleaned = [str(t).strip() for t in (value or []) if str(t).strip()]
+        if not cleaned:
+            raise serializers.ValidationError('At least one tag is required.')
+        # Allowlist: every tag must exist in this organisation's admin-managed
+        # vocabulary (TemplateTag names are stored lowercased).
+        org_id = (
+            self.initial_data.get('organisation')
+            or (self.instance.organisation_id if self.instance else None)
+        )
+        if org_id:
+            allowed = set(
+                TemplateTag.objects.filter(organisation_id=org_id)
+                .values_list('name', flat=True)
+            )
+            unknown = [t for t in cleaned if t.lower() not in allowed]
+            if unknown:
+                raise serializers.ValidationError(
+                    'Unknown tag(s): ' + ', '.join(unknown) + '. '
+                    'Only tags defined by an administrator can be used.'
+                )
+        return cleaned
+
+    def validate_organisation(self, value):
+        # Prevent cross-tenant writes: the user must be an active member of the
+        # organisation a template is created in or moved to.
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and not CustomerUser.objects.filter(
+            user=user, organisation=value, is_active=True,
+        ).exists():
+            raise serializers.ValidationError(
+                'You are not a member of this organisation.'
+            )
+        return value
 
 
 class QuickReplyTemplateHistorySerializer(serializers.ModelSerializer):
@@ -347,6 +384,19 @@ class QuickReplyTemplateHistorySerializer(serializers.ModelSerializer):
             return None
         full = obj.edited_by.get_full_name()
         return full if full.strip() else obj.edited_by.email
+
+
+class TemplateTagSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TemplateTag
+        fields = ['id', 'organisation', 'name', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def validate_name(self, value):
+        cleaned = value.strip().lower()
+        if not cleaned:
+            raise serializers.ValidationError('Tag name cannot be blank.')
+        return cleaned
 
 
 class TicketFormFieldSerializer(serializers.ModelSerializer):

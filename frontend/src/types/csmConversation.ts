@@ -128,6 +128,7 @@ export interface UpdateConversationPayload {
 
 export interface QuickReplyTemplate {
   id: number;
+  slug: string;
   organisation: number;
   team: number | null;
   title: string;
@@ -160,6 +161,13 @@ export interface QuickReplyTemplateHistory {
   content: string;
   rich_body: object | null;
   tags: string[];
+}
+
+export interface TemplateTag {
+  id: number;
+  organisation: number;
+  name: string;
+  created_at: string;
 }
 
 // WebSocket event types
