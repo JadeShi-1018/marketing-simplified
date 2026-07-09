@@ -213,6 +213,22 @@ def build_miro_generation_context_from_run(*, session: Any, workflow_run: Any) -
     )
 
 
+def serialize_miro_generation_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON-safe copy of the Miro generation context for Celery."""
+    if not isinstance(context, dict):
+        raise ValueError("Miro generation context must be a dictionary")
+    return json.loads(json.dumps(context, default=str))
+
+
+def deserialize_miro_generation_context(payload: Any) -> dict[str, Any] | None:
+    """Rehydrate a Miro generation context from a Celery payload."""
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise ValueError("Miro generation context payload must be a dictionary")
+    return serialize_miro_generation_context(payload)
+
+
 def _extract_snapshot_candidate(payload: Any) -> dict[str, Any]:
     if isinstance(payload, dict):
         if "viewport" in payload or "items" in payload:
@@ -516,4 +532,3 @@ def call_gemini_miro_generator(
     snapshot = _sanitize_snapshot_numbers(snapshot)
     snapshot = normalize_miro_snapshot_layout(snapshot)
     return validate_miro_snapshot(snapshot)
-

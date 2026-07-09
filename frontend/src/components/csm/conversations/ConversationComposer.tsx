@@ -18,7 +18,7 @@ interface ConversationComposerProps {
 // ---------------------------------------------------------------------------
 // TemplatePicker
 // ---------------------------------------------------------------------------
-function TemplatePicker({
+export function TemplatePicker({
   organisationId,
   onSelect,
   onClose,
@@ -176,19 +176,37 @@ export function ConversationComposer({
   const [showTemplates, setShowTemplates] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
   const imageInputRef = React.useRef<HTMLInputElement>(null);
+  const handleSendRef = React.useRef<() => void>(() => {});
   const addMessage = useCsmConversationStore((s) => s.addMessage);
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0] ?? null;
+  // Shared validation used by both the file picker and drag-and-drop. Mirrors
+  // the backend limits (image only, < 5MB) so the user gets immediate feedback.
+  const acceptImageFile = useCallback((file: File | null | undefined) => {
     if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setImageError('Only image files can be attached.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setImageError('Image must be under 5MB.');
+      return;
+    }
+    setImageError(null);
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
+  }, []);
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    acceptImageFile(e.target.files?.[0] ?? null);
   };
 
   const clearImage = () => {
     setImageFile(null);
     setImagePreview(null);
+    setImageError(null);
     if (imageInputRef.current) imageInputRef.current.value = '';
   };
 
@@ -199,6 +217,19 @@ export function ConversationComposer({
     ],
     immediatelyRender: false,
     editorProps: {
+      // Enter sends; Shift+Enter inserts a newline. Handling it here (and
+      // returning true) stops ProseMirror from also inserting a paragraph
+      // break, which previously got sent as a trailing blank line. Enter is
+      // ignored while an IME composition is active (e.g. confirming a CJK
+      // candidate) so it doesn't send mid-typing.
+      handleKeyDown(_view, event) {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+          event.preventDefault();
+          handleSendRef.current();
+          return true;
+        }
+        return false;
+      },
       attributes: {
         class: 'outline-none text-sm text-gray-900 min-h-[24px] max-h-36 overflow-y-auto prose prose-sm max-w-none [&_p]:my-0',
       },
@@ -207,20 +238,6 @@ export function ConversationComposer({
       onTyping?.(!editor.isEmpty);
     },
   });
-
-  // Handle Enter key to send
-  useEffect(() => {
-    if (!editor) return;
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        handleSend();
-      }
-    };
-    editor.view.dom.addEventListener('keydown', handleKeyDown);
-    return () => editor.view.dom.removeEventListener('keydown', handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, sending, conversationId]);
 
   const handleSend = useCallback(async () => {
     if (!editor) return;
@@ -247,6 +264,12 @@ export function ConversationComposer({
     }
   }, [editor, sending, conversationId, addMessage, onTyping, imageFile]);
 
+  // Keep the editor's keydown handler pointing at the latest handleSend so the
+  // Enter-to-send shortcut never calls a stale closure (e.g. wrong conversation).
+  useEffect(() => {
+    handleSendRef.current = handleSend;
+  }, [handleSend]);
+
   const handleInsertTemplate = useCallback((template: QuickReplyTemplate) => {
     if (!editor) return;
     if (template.rich_body) {
@@ -260,7 +283,30 @@ export function ConversationComposer({
   }, [editor]);
 
   return (
-    <div className="border-t border-gray-200 bg-white px-4 py-3">
+    <div
+      className="relative border-t border-gray-200 bg-white px-4 py-3"
+      onDragOver={(e) => { e.preventDefault(); if (!isDraggingImage) setIsDraggingImage(true); }}
+      onDragLeave={(e) => {
+        // Ignore dragleave that fires when crossing into a child element.
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setIsDraggingImage(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDraggingImage(false);
+        acceptImageFile(e.dataTransfer.files?.[0]);
+      }}
+    >
+      {/* Drag-and-drop overlay */}
+      {isDraggingImage && (
+        <div className="absolute inset-0 z-20 m-2 flex items-center justify-center rounded-xl border-2 border-dashed border-blue-300 bg-blue-50/90 pointer-events-none">
+          <span className="flex items-center gap-2 text-sm font-medium text-blue-600">
+            <ImagePlus size={16} />
+            Drop image to attach
+          </span>
+        </div>
+      )}
+
       {/* Template picker panel */}
       {showTemplates && organisationId && (
         <TemplatePicker
@@ -360,6 +406,13 @@ export function ConversationComposer({
                 <X size={10} />
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Image attach error */}
+        {imageError && (
+          <div className="px-3 pb-2">
+            <p className="text-xs text-red-500">{imageError}</p>
           </div>
         )}
 

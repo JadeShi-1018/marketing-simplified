@@ -1,13 +1,23 @@
 // Chat state management with Zustand
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ChatState, Chat, Message } from '@/types/chat';
+import type { ChatState, Chat, Message, PendingAttachment } from '@/types/chat';
 import { getUnreadCount } from './api/chatApi';
 
 // Session-scoped set of message IDs the current user has deleted.
 // Not persisted — only lives until page refresh, but that's enough to
 // filter stale search results within the same browsing session.
 export const deletedMessageIds = new Set<number>();
+
+const revokeAttachmentPreview = (attachment: PendingAttachment | undefined) => {
+  if (attachment?.preview) {
+    URL.revokeObjectURL(attachment.preview);
+  }
+};
+
+const revokeAttachmentPreviews = (attachments: PendingAttachment[] | undefined) => {
+  attachments?.forEach(revokeAttachmentPreview);
+};
 
 const resolveChatProjectId = (chat: Chat): number | string | null => {
   const rawProjectId = chat.project_id ?? chat.project;
@@ -77,6 +87,7 @@ export const useChatStore = create<ChatState>()(
       currentChatId: null,      // For Messages page
       widgetChatId: null,       // For Chat Widget (independent)
       messages: {},
+      pendingAttachmentsByChat: {},
       unreadCounts: {},
       capturedUnreadCounts: {}, // Snapshot of unread_count at the moment each chat is opened
       typingUsersByChat: {},    // chatId -> userIds currently typing (ephemeral, not persisted)
@@ -426,6 +437,66 @@ export const useChatStore = create<ChatState>()(
             newMessages[chatId] = newMessages[chatId].filter(msg => msg.id !== messageId);
           });
           return { messages: newMessages };
+        });
+      },
+
+      addPendingAttachments: (chatId: number, attachments: PendingAttachment[]) => {
+        if (attachments.length === 0) return;
+        set((state) => ({
+          pendingAttachmentsByChat: {
+            ...state.pendingAttachmentsByChat,
+            [chatId]: [...(state.pendingAttachmentsByChat[chatId] ?? []), ...attachments],
+          },
+        }));
+      },
+
+      updatePendingAttachment: (chatId: number, attachmentId: string, updates: Partial<PendingAttachment>) => {
+        set((state) => {
+          const attachments = state.pendingAttachmentsByChat[chatId];
+          if (!attachments?.some((attachment) => attachment.id === attachmentId)) return state;
+          return {
+            pendingAttachmentsByChat: {
+              ...state.pendingAttachmentsByChat,
+              [chatId]: attachments.map((attachment) =>
+                attachment.id === attachmentId ? { ...attachment, ...updates } : attachment,
+              ),
+            },
+          };
+        });
+      },
+
+      removePendingAttachment: (chatId: number, attachmentId: string) => {
+        set((state) => {
+          const attachments = state.pendingAttachmentsByChat[chatId];
+          if (!attachments) return state;
+
+          const attachmentToRemove = attachments.find((attachment) => attachment.id === attachmentId);
+          const nextAttachments = attachments.filter((attachment) => attachment.id !== attachmentId);
+          if (nextAttachments.length === attachments.length) return state;
+
+          revokeAttachmentPreview(attachmentToRemove);
+
+          const nextPendingAttachmentsByChat = { ...state.pendingAttachmentsByChat };
+          if (nextAttachments.length === 0) {
+            delete nextPendingAttachmentsByChat[chatId];
+          } else {
+            nextPendingAttachmentsByChat[chatId] = nextAttachments;
+          }
+
+          return { pendingAttachmentsByChat: nextPendingAttachmentsByChat };
+        });
+      },
+
+      clearPendingAttachments: (chatId: number) => {
+        set((state) => {
+          const attachments = state.pendingAttachmentsByChat[chatId];
+          if (!attachments?.length) return state;
+
+          revokeAttachmentPreviews(attachments);
+
+          const nextPendingAttachmentsByChat = { ...state.pendingAttachmentsByChat };
+          delete nextPendingAttachmentsByChat[chatId];
+          return { pendingAttachmentsByChat: nextPendingAttachmentsByChat };
         });
       },
 
@@ -787,9 +858,11 @@ export const useChatStore = create<ChatState>()(
       // This prevents the "preserve local 0" logic in setChatsForProject from
       // hiding unread counts that arrived while the user was logged out.
       clearUserState: () => {
+        revokeAttachmentPreviews(Object.values(get().pendingAttachmentsByChat).flat());
         set({
           chatsByProject: {},
           messages: {},
+          pendingAttachmentsByChat: {},
           unreadCounts: {},
           capturedUnreadCounts: {},
           globalUnreadCount: 0,
