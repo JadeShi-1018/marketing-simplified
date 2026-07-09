@@ -497,22 +497,31 @@ class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             cursor.execute('SET search_path TO public')
 
         try:
-            with connection.cursor() as cursor:
-                # Delete NotificationPreference from slack_integration
-                cursor.execute(
-                    'DELETE FROM slack_integration_notificationpreference WHERE project_id = %s',
-                    [project_id]
-                )
-                # Delete GoogleCalendar connections that reference this project's calendars
-                if calendar_ids:
+            # Use transaction.atomic() (savepoint) so that if either DELETE
+            # fails with a SQL error the savepoint is rolled back cleanly and
+            # the outer transaction stays healthy.  The bare except+pass
+            # pattern without a savepoint leaves the connection in an aborted-
+            # transaction state, causing every subsequent cursor.execute() in
+            # the same request (including the finally SET search_path below)
+            # to raise InFailedSqlTransaction.
+            with transaction.atomic():
+                with connection.cursor() as cursor:
+                    # Delete NotificationPreference from slack_integration
                     cursor.execute(
-                        f'DELETE FROM google_calendar_integration_googlecalendarconnection WHERE import_calendar_id IN ({",".join(["%s"] * len(calendar_ids))})',
-                        calendar_ids
+                        'DELETE FROM slack_integration_notificationpreference WHERE project_id = %s',
+                        [project_id]
                     )
+                    # Delete GoogleCalendar connections that reference this project's calendars
+                    if calendar_ids:
+                        cursor.execute(
+                            f'DELETE FROM google_calendar_integration_googlecalendarconnection WHERE import_calendar_id IN ({",".join(["%s"] * len(calendar_ids))})',
+                            calendar_ids
+                        )
         except Exception:
             pass
         finally:
-            # Restore tenant schema
+            # Restore tenant schema – the outer transaction is clean because any
+            # SQL error above was contained within a savepoint.
             with connection.cursor() as cursor:
                 cursor.execute(f'SET search_path TO {original_path}')
 

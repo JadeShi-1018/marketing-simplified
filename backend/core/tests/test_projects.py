@@ -7,11 +7,8 @@ Tests for:
 import pytest
 from django.db import connection
 from django.urls import reverse
-from psycopg2 import sql as psql
 from rest_framework import status
-from calendars.models import Calendar
 from core.models import Project, ProjectMember
-from core.services.tenant import slug_to_schema_name
 from core.utils.project_calendars import ensure_project_calendar
 
 
@@ -177,44 +174,32 @@ class TestProjectViewSet:
         assert 'is_active' in response.data
         assert 'member_count' in response.data
 
-    @pytest.mark.timeout(600)
     def test_delete_project_soft_deletes_calendar(self, authenticated_client, project, user):
-        """Deleting a project should soft-delete its calendar in the tenant schema.
+        """Deleting a project should soft-delete its calendar.
 
-        Calendar is a tenant model.  provision_tenant_schema() resets
-        search_path to 'public' after provisioning, so ensure_project_calendar()
-        called from test scope creates the row in the *public* schema unless we
-        switch to the tenant schema first.  TenantSchemaMiddleware then runs the
-        DELETE request in the tenant schema, so we must also verify the
-        soft-delete via raw SQL there rather than calling refresh_from_db()
-        (which would re-query the public schema after the request has reset the
-        search_path).
+        In the test environment all fixture data lives in the public schema
+        (pytest-django's `db` fixture does not switch the search_path).
+        TenantSchemaMiddleware falls back to 'public' when force_authenticate
+        is used (it runs before DRF's view-layer auth).  Consequently both the
+        calendar row and the perform_destroy UPDATE operate in the public
+        schema, making the soft-delete verifiable via a straightforward
+        refresh_from_db() call.
         """
-        schema = slug_to_schema_name(user.organization.slug)
-
-        with connection.cursor() as cursor:
-            cursor.execute(
-                psql.SQL('SET search_path TO {}, public').format(psql.Identifier(schema))
-            )
+        # Create calendar in the current (public) schema – no explicit schema
+        # switching so that perform_destroy (also in public context) can find it.
         calendar = ensure_project_calendar(project)
-        calendar_id = str(calendar.id)
-        with connection.cursor() as cursor:
-            cursor.execute('SET search_path TO public')
 
         url = reverse('project-detail', kwargs={'pk': project.slug})
         response = authenticated_client.delete(url)
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
+        # Verify soft-delete via raw SQL in the same (public) schema.
         with connection.cursor() as cursor:
             cursor.execute(
-                psql.SQL('SET search_path TO {}, public').format(psql.Identifier(schema))
-            )
-            cursor.execute(
                 'SELECT is_deleted FROM calendars_calendar WHERE id = %s',
-                [calendar_id],
+                [str(calendar.id)],
             )
             row = cursor.fetchone()
-            cursor.execute('SET search_path TO public')
 
         assert row is not None, "Calendar should still exist (soft-deleted, not hard-deleted)"
         assert row[0] is True, "Calendar.is_deleted should be True after project deletion"
