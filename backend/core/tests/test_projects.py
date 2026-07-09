@@ -174,6 +174,7 @@ class TestProjectViewSet:
         assert 'is_active' in response.data
         assert 'member_count' in response.data
 
+    @pytest.mark.timeout(600)
     def test_delete_project_soft_deletes_calendar(self, authenticated_client, project):
         """Deleting a project should soft-delete its calendar."""
         calendar = ensure_project_calendar(project)

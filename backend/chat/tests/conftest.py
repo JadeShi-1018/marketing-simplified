@@ -10,22 +10,40 @@ from chat.models import Chat, ChatParticipant, ChatType
 
 @pytest.fixture()
 def transactional_db(request, django_db_setup, django_db_blocker):
-    """Override transactional_db to flush with CASCADE.
+    """Override transactional_db to flush with tenant schema cleanup.
 
     Tests in this package may create Organization objects which trigger
     provision_tenant_schema(), producing cross-schema FK constraints
-    (e.g. org_<slug>.core_project → public.core_customuser).  The default
-    Django flush uses plain TRUNCATE (no CASCADE) and fails with a FK
-    violation, leaving stale rows that corrupt every subsequent test.
+    (e.g. org_<slug>.core_project -> public.core_customuser). Django flush
+    command generates TRUNCATE for all tables in search_path=public, but
+    tenant tables only exist in org_* schemas, causing CommandError.
 
-    Overriding _fixture_teardown with allow_cascade=True makes PostgreSQL
-    cascade the TRUNCATE into the tenant schema automatically.
+    Fix: drop all org_* schemas first (removing cross-schema FK refs),
+    then run the standard flush on the public schema without cascade.
     """
     from django.test import TransactionTestCase
 
     class _CascadeTC(TransactionTestCase):
         def _fixture_teardown(self):
+            from django.db import connection
             from django.core.management import call_command
+
+            # Drop all tenant schemas first so cross-schema FK references
+            # (e.g. org_<slug>.core_project -> public.core_customuser) are
+            # removed before Django flush tries to TRUNCATE public tables.
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT schema_name FROM information_schema.schemata "
+                    "WHERE schema_name LIKE %(pat)s ESCAPE %(esc)s",
+                    {"pat": "org\_%%", "esc": "\\"},
+                )
+                schemas = [row[0] for row in cursor.fetchall()]
+            for schema in schemas:
+                safe = schema.replace('"', '""')
+                with connection.cursor() as cursor:
+                    cursor.execute(f'DROP SCHEMA IF EXISTS "{safe}" CASCADE')
+
+            # Standard flush for public-schema tables (no cascade needed)
             for db_name in self._databases_names(include_mirrors=False):
                 call_command(
                     'flush',
@@ -33,7 +51,7 @@ def transactional_db(request, django_db_setup, django_db_blocker):
                     interactive=False,
                     database=db_name,
                     reset_sequences=False,
-                    allow_cascade=True,
+                    allow_cascade=False,
                     inhibit_post_migrate=True,
                 )
 

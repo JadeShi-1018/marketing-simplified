@@ -368,6 +368,16 @@ class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
         if not organization:
             organization = self._auto_create_organization(user)
+            # provision_tenant_schema() resets search_path to 'public' in its
+            # finally block. Switch back to the new org's schema so that Project
+            # and ProjectMember are created in the correct tenant schema.
+            schema_name = slug_to_schema_name(organization.slug)
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL('SET search_path TO {}, public').format(
+                        sql.Identifier(schema_name)
+                    )
+                )
 
         project = serializer.save(
             organization=organization,
