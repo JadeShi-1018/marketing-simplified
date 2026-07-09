@@ -11,7 +11,9 @@ import {
   QuickReplyTemplateHistory,
   TemplateTag,
   Ticket,
+  AssignableAgent,
 } from '@/types/csmConversation';
+import { Queue } from '@/types/csm';
 
 const BASE = '/api/csm/conversations';
 
@@ -44,6 +46,16 @@ export default class CsmConversationAPI {
   static async claim(conversationId: number): Promise<Ticket> {
     const res = await api.post<Ticket>(`${BASE}/${conversationId}/claim/`);
     return res.data;
+  }
+
+  static async assignableAgents(conversationId: number): Promise<AssignableAgent[]> {
+    const res = await api.get<AssignableAgent[]>(`${BASE}/${conversationId}/assignable_agents/`);
+    return Array.isArray(res.data) ? res.data : [];
+  }
+
+  static async availableQueues(params?: { organisation?: number }): Promise<Queue[]> {
+    const res = await api.get(`${BASE}/available_queues/`, { params });
+    return unwrap<Queue>(res.data);
   }
 
   static async sendMessage(
