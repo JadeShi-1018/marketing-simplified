@@ -39,6 +39,7 @@ const mockedSendMessage = CsmConversationAPI.sendMessage as jest.Mock;
 function makeTemplate(overrides: Partial<QuickReplyTemplate>): QuickReplyTemplate {
   return {
     id: 1,
+    slug: 'greeting',
     organisation: 5,
     team: null,
     title: 'Greeting',
