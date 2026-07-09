@@ -12,7 +12,9 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import UserProfileSerializer, OrganizationTokenRefreshSerializer
+from .login_security import LoginSecurityService
 from .services import refresh_organization_access_token
+from .throttles import LoginIPThrottle, LoginUsernameThrottle
 from core.admin_utils import assign_org_admin
 from core.models import Team, Organization, Role
 from access_control.models import UserRole
@@ -165,6 +167,16 @@ class VerifyEmailView(APIView):
 
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
+    login_throttle_classes = [LoginIPThrottle, LoginUsernameThrottle]
+
+    def check_login_throttles(self, request, username):
+        identifiers = [
+            identifier
+            for throttle_class in self.login_throttle_classes
+            if (identifier := throttle_class().get_login_identifier(request, username)) is not None
+        ]
+        return LoginSecurityService.check_request_allowed(identifiers)
+
     def post(self, request):
         # Parse request data
         if hasattr(request, 'data'):
@@ -181,6 +193,11 @@ class LoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        login_identifiers = LoginSecurityService.build_identifiers(request, email)
+        security_response = self.check_login_throttles(request, email)
+        if security_response:
+            return Response(security_response.payload, status=security_response.status_code)
+
         # Check if user exists before authentication to provide specific error
         # message for unregistered emails.
         #
@@ -191,6 +208,9 @@ class LoginView(APIView):
         try:
             User.objects.get(email=email)
         except User.DoesNotExist:
+            security_response = LoginSecurityService.record_failed_login(login_identifiers)
+            if security_response:
+                return Response(security_response.payload, status=security_response.status_code)
             return Response(
                 {
                     'error': 'This email is not registered. Please sign up first.',
@@ -202,6 +222,9 @@ class LoginView(APIView):
         user = authenticate(request, username=email, password=password)
 
         if user is None:
+            security_response = LoginSecurityService.record_failed_login(login_identifiers)
+            if security_response:
+                return Response(security_response.payload, status=security_response.status_code)
             return Response(
                 {
                     'error': 'Invalid credentials',
@@ -249,6 +272,8 @@ class LoginView(APIView):
         # Add organization access token if user belongs to an organization
         if custom_access_token:
             response_data['organization_access_token'] = custom_access_token
+
+        LoginSecurityService.clear_successful_login(login_identifiers)
         
         return Response(response_data, status=status.HTTP_200_OK)
 

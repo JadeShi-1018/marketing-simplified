@@ -16,6 +16,13 @@ import toast from 'react-hot-toast';
 
 const SAVED_LOGIN_EMAIL_KEY = 'saved-login-email';
 
+type LoginSecurityNotice = {
+  message: string;
+  retryAfterSeconds?: number;
+  lockoutUntil?: string;
+  requiresCaptcha?: boolean;
+};
+
 function LoginPageContent() {
   const router = useRouter();
   const { login } = useAuth();
@@ -27,6 +34,7 @@ function LoginPageContent() {
   const [errors, setErrors] = useState<FormValidation>({});
   const [loading, setLoading] = useState<boolean>(false);
   const [showEmailVerificationHelp, setShowEmailVerificationHelp] = useState<boolean>(false);
+  const [securityNotice, setSecurityNotice] = useState<LoginSecurityNotice | null>(null);
 
   useEffect(() => {
     try {
@@ -68,6 +76,10 @@ function LoginPageContent() {
         [name]: ''
       }));
     }
+
+    if (securityNotice) {
+      setSecurityNotice(null);
+    }
     
     // Clear email verification help when user starts typing
     if (showEmailVerificationHelp) {
@@ -85,6 +97,7 @@ function LoginPageContent() {
     e.preventDefault();
     
     if (!validateForm()) return;
+    setSecurityNotice(null);
     setLoading(true);
 
     try {
@@ -115,6 +128,29 @@ function LoginPageContent() {
   const handleLoginError = (result: any) => {
     const { errorCode, statusCode } = result;
     const message = result.error;
+
+    if (errorCode === 'TOO_MANY_ATTEMPTS' || errorCode === 'LOGIN_LOCKED' || result.requires_captcha) {
+      const noticeMessage =
+        errorCode === 'LOGIN_LOCKED'
+          ? message || LOGIN_ERROR_MESSAGES.LOGIN_LOCKED
+          : message || LOGIN_ERROR_MESSAGES.TOO_MANY_ATTEMPTS;
+      setSecurityNotice({
+        message: noticeMessage,
+        retryAfterSeconds: result.retry_after_seconds,
+        lockoutUntil: result.lockout_until,
+        requiresCaptcha: result.requires_captcha,
+      });
+      toast.error(noticeMessage, {
+        duration: 5000,
+        position: 'top-center',
+      });
+      setFormData((prev: LoginRequest) => ({
+        ...prev,
+        password: '',
+      }));
+      setErrors({});
+      return;
+    }
 
     if (errorCode === 'EMAIL_NOT_VERIFIED' || message?.includes('not verified')) {
       setShowEmailVerificationHelp(true);
@@ -221,6 +257,33 @@ function LoginPageContent() {
           showEmailVerificationHelp={showEmailVerificationHelp}
           onDismissEmailVerification={() => setShowEmailVerificationHelp(false)}
         />
+
+        {securityNotice && (
+          <div
+            role="alert"
+            className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900"
+          >
+            <p className="font-medium">{securityNotice.message}</p>
+            {securityNotice.retryAfterSeconds !== undefined && (
+              <p className="mt-1 text-amber-800">
+                Try again in {securityNotice.retryAfterSeconds} seconds.
+              </p>
+            )}
+            {securityNotice.lockoutUntil && (
+              <p className="mt-1 text-amber-800">
+                Locked until {new Date(securityNotice.lockoutUntil).toLocaleString()}.
+              </p>
+            )}
+            {securityNotice.requiresCaptcha && (
+              <div
+                data-testid="captcha-placeholder"
+                className="mt-3 rounded-md border border-dashed border-amber-300 bg-white/70 px-3 py-2 text-amber-800"
+              >
+                {LOGIN_ERROR_MESSAGES.CAPTCHA_PLACEHOLDER}
+              </div>
+            )}
+          </div>
+        )}
 
         <AuthFields
           fields={[

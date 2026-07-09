@@ -40,7 +40,15 @@ interface AuthState {
   setHasHydrated: (hasHydrated: boolean) => void;
   
   // Authentication actions
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string; statusCode?: number; errorCode?: string }>;
+  login: (email: string, password: string) => Promise<{
+    success: boolean;
+    error?: string;
+    statusCode?: number;
+    errorCode?: string;
+    retry_after_seconds?: number;
+    requires_captcha?: boolean;
+    lockout_until?: string;
+  }>;
   logout: () => Promise<void>;
   getCurrentUser: () => Promise<{ success: boolean; error?: string; retryable?: boolean }>;
   getUserTeams: () => Promise<{ success: boolean; error?: string }>;
@@ -148,11 +156,22 @@ export const useAuthStore = create<AuthState>()(
           const errorData = error?.response?.data;
           const errorCode = errorData?.errorCode;
           const backendMessage = errorData?.error;
+          const retryAfterSeconds = errorData?.retry_after_seconds;
+          const requiresCaptcha = errorData?.requires_captcha;
+          const lockoutUntil = errorData?.lockout_until;
 
           let message: string = LOGIN_ERROR_MESSAGES.GENERIC;
 
           if (statusCode === 401) {
             message = LOGIN_ERROR_MESSAGES.INVALID_PASSWORD;
+          } else if (statusCode === 429) {
+            if (errorCode === 'LOGIN_LOCKED') {
+              message = backendMessage || LOGIN_ERROR_MESSAGES.LOGIN_LOCKED;
+            } else if (errorCode === 'TOO_MANY_ATTEMPTS') {
+              message = backendMessage || LOGIN_ERROR_MESSAGES.TOO_MANY_ATTEMPTS;
+            } else {
+              message = backendMessage || LOGIN_ERROR_MESSAGES.TOO_MANY_ATTEMPTS;
+            }
           } else if (statusCode === 403) {
             if (errorCode === 'EMAIL_NOT_VERIFIED' || backendMessage?.toLowerCase().includes('not verified')) {
               message = LOGIN_ERROR_MESSAGES.EMAIL_NOT_VERIFIED;
@@ -170,6 +189,9 @@ export const useAuthStore = create<AuthState>()(
             error: message,
             statusCode,
             errorCode,
+            retry_after_seconds: retryAfterSeconds,
+            requires_captcha: requiresCaptcha,
+            lockout_until: lockoutUntil,
           };
         }
       },

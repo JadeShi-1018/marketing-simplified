@@ -14,6 +14,12 @@ export const LOGIN_ERROR_MESSAGES = {
   EMAIL_NOT_VERIFIED: 'Email not verified. Please check your inbox.',
   /** Google OAuth user has not set password yet */
   PASSWORD_NOT_SET: 'Password not set. Please complete your password setup to continue.',
+  /** Login rate limit / brute-force protection */
+  TOO_MANY_ATTEMPTS: 'Too many login attempts. Please wait before trying again.',
+  /** Login temporarily locked after sustained failed attempts */
+  LOGIN_LOCKED: 'Login temporarily locked due to repeated failed attempts.',
+  /** Placeholder until a real CAPTCHA provider is integrated */
+  CAPTCHA_PLACEHOLDER: 'CAPTCHA verification will be required here.',
   /** Missing or invalid form fields */
   VALIDATION: 'Please check your input.',
   /** Server error (5xx) */

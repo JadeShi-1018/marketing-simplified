@@ -4,11 +4,13 @@ from unittest.mock import patch
 from types import SimpleNamespace
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
+from django.test import TestCase
 from core.models import Organization, Project, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatType
 from chat.serializers import ChatCreateSerializer
-from chat.services import ChatService, MessageService, OnlineStatusService
+from chat.services import ChatService, MessageService, OnlineStatusService, UnsupportedAttachmentMimeType, validate_attachment_mime_type
 pytestmark = pytest.mark.django_db
+
 User = get_user_model()
 
 class TestOnlineStatusService:
@@ -361,3 +363,38 @@ class TestMessageServiceIdempotentCreate:
         assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 1
         mock_notify_recipients.assert_not_called()
         mock_notify_ws.assert_not_called()
+
+
+class AttachmentMimeValidationTest(TestCase):
+    def test_allows_supported_mime_types(self):
+        allowed_types = [
+            "image/png",
+            "image/jpeg",
+            "image/svg+xml",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ]
+
+        for mime_type in allowed_types:
+            with self.subTest(mime_type=mime_type):
+                validate_attachment_mime_type(mime_type)
+
+    def test_rejects_unsupported_mime_types(self):
+        rejected_types = [
+            "video/mp4",
+            "audio/webm",
+            "text/plain",
+            "text/csv",
+            "application/x-msdownload",
+            "application/x-sh",
+            "application/zip",
+            "text/html",
+            "",
+        ]
+
+        for mime_type in rejected_types:
+            with self.subTest(mime_type=mime_type):
+                with self.assertRaises(UnsupportedAttachmentMimeType):
+                    validate_attachment_mime_type(mime_type)

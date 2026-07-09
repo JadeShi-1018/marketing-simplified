@@ -15,6 +15,38 @@ from core.models import ProjectMember
 User = get_user_model()
 logger = logging.getLogger(__name__)
 
+ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX = "image/"
+ALLOWED_ATTACHMENT_MIME_TYPES = frozenset({
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+})
+
+class UnsupportedAttachmentMimeType(ValueError):
+    """Raised when an uploaded attachment MIME type is not allowed."""
+
+
+def is_allowed_attachment_mime_type(mime_type: str) -> bool:
+    normalized_mime_type = (mime_type or "").strip().lower()
+    return (
+        normalized_mime_type.startswith(ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX)
+        or normalized_mime_type in ALLOWED_ATTACHMENT_MIME_TYPES
+    )
+
+
+def validate_attachment_mime_type(mime_type: str) -> None:
+    """
+    Raise UnsupportedAttachmentMimeType if MIME type is not allowed.
+    """
+    if not is_allowed_attachment_mime_type(mime_type):
+        raise UnsupportedAttachmentMimeType(
+            f'Unsupported MIME type: {mime_type or "<empty>"}'
+        )
+
 
 def extract_message_plain_text(rich_body) -> str:
     """Extract searchable plain text from a Tiptap JSON document."""
@@ -801,7 +833,6 @@ class ChatStarService:
             if s.position != idx:
                 s.position = idx
                 s.save(update_fields=['position', 'updated_at'])
-
 
 
 class MessageService:

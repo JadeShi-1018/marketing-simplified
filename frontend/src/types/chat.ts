@@ -83,6 +83,17 @@ export interface MessageAttachment {
   created_at: string;
 }
 
+export interface PendingAttachment {
+  /** Temporary client-side id. */
+  id: string;
+  file: File;
+  preview?: string;
+  progress: number;
+  uploading: boolean;
+  uploaded?: MessageAttachment;
+  error?: string;
+}
+
 export interface MissingForwardedAttachment {
   id: number;
   kind: 'audio' | 'video' | 'image' | 'document' | 'unknown';
@@ -366,6 +377,7 @@ export interface ChatState {
   widgetChatId: number | null;   // For Chat Widget (independent)
   messages: Record<number, Message[]>; // Keyed by chat_id
   outbox: OutboxEntry[];
+  pendingAttachmentsByChat: Record<number, PendingAttachment[]>; // Ephemeral upload outbox keyed by chat_id
   unreadCounts: Record<number, number>; // Keyed by chat_id
   capturedUnreadCounts: Record<number, number>; // Snapshot taken at the moment a chat is opened — used for the "New messages" divider
   globalUnreadCount: number; // Total unread across ALL projects
@@ -407,6 +419,10 @@ export interface ChatState {
     prependMessages: (chatId: number, messages: Message[]) => void;
   updateMessage: (messageId: number, updates: Partial<Message>) => void;
   removeMessage: (messageId: number) => void;
+  addPendingAttachments: (chatId: number, attachments: PendingAttachment[]) => void;
+  updatePendingAttachment: (chatId: number, attachmentId: string, updates: Partial<PendingAttachment>) => void;
+  removePendingAttachment: (chatId: number, attachmentId: string) => void;
+  clearPendingAttachments: (chatId: number) => void;
   applyReactionUpdate: (messageId: number, emoji: string, action: 'added' | 'removed', user: ReactionUser, currentUserId: number | null) => void;
   updateUserPresence: (userId: number, isOnline: boolean, version?: number | null) => void;
   setPresenceSnapshot: (users: Array<{ user_id: number; is_online: boolean; version?: number | null }>) => void;

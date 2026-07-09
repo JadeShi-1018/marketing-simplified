@@ -51,6 +51,14 @@ export function MiroGenerateCard({
         </span>
       )
     }
+    if (status === "retrying") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Continuing previous…
+        </span>
+      )
+    }
     if (status === "ready") {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600">
@@ -109,14 +117,19 @@ export function MiroGenerateCard({
         {status === "failed" && errorMessage ? (
           <p className="text-xs text-destructive line-clamp-3">{errorMessage}</p>
         ) : null}
+        {status === "retrying" ? (
+          <p className="text-xs text-muted-foreground">
+            Continuing previous Miro generation with the saved analysis context.
+          </p>
+        ) : null}
         {status === "ready" && boardHref ? (
           <Button size="sm" variant="outline" onClick={handleOpenBoard}>
             Open Miro Board
           </Button>
-        ) : status === "generating" ? (
+        ) : status === "generating" || status === "retrying" ? (
           <Button size="sm" variant="outline" disabled>
             <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            Generating Miro…
+            {status === "retrying" ? "Continuing previous..." : "Generating Miro…"}
           </Button>
         ) : status === "failed" ? (
           <Button size="sm" variant="outline" onClick={onGenerate} disabled={disabled}>
