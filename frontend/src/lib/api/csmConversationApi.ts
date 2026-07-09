@@ -66,9 +66,7 @@ export default class CsmConversationAPI {
       const form = new FormData();
       if (payload.content) form.append('content', payload.content);
       form.append('image', payload.image);
-      const res = await api.post<ConversationMessage>(`${BASE}/${conversationId}/messages/`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      const res = await api.post<ConversationMessage>(`${BASE}/${conversationId}/messages/`, form);
       return res.data;
     }
     const res = await api.post<ConversationMessage>(`${BASE}/${conversationId}/messages/`, payload);

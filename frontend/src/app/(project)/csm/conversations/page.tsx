@@ -26,6 +26,7 @@ function ConversationsPageContent() {
   // Queue selector state
   const [queues, setQueues] = useState<Queue[]>([]);
   const [selectedQueue, setSelectedQueue] = useState<number | null>(null);
+  const [queueLoadError, setQueueLoadError] = useState(false);
 
   const conversations = useCsmConversationStore((s) => s.conversations);
   const setConversations = useCsmConversationStore((s) => s.setConversations);
@@ -41,7 +42,8 @@ function ConversationsPageContent() {
     CsmConversationAPI.availableQueues().then((data) => {
       const list = Array.isArray(data) ? data : [];
       setQueues(list);
-    }).catch(() => {});
+      setQueueLoadError(false);
+    }).catch(() => setQueueLoadError(true));
   }, []);
 
   // Load conversation list — re-fetches when selectedQueue changes
@@ -69,6 +71,9 @@ function ConversationsPageContent() {
   }, [activeId, setMessages]);
 
   const activeConversation = conversations.find((c) => c.id === activeId) ?? null;
+  const selectedQueueName = selectedQueue
+    ? queues.find((q) => q.id === selectedQueue)?.name ?? null
+    : null;
   const messages = activeId ? (messagesByConversation[activeId] ?? []) : [];
   const typingUsers = activeId ? (typingByConversation[activeId] ?? []) : [];
 
@@ -103,6 +108,10 @@ function ConversationsPageContent() {
         {/* Queue selector — only shown on Conversations tab */}
         {leftTab === 'conversations' && (
           <div className="px-3 py-2 border-b border-gray-100 shrink-0">
+            <div className="mb-1.5 flex items-center justify-between text-[11px] text-gray-400">
+              <span>Assigned queues</span>
+              <span>{queueLoadError ? 'Unavailable' : `${queues.length} available`}</span>
+            </div>
             <select
               value={selectedQueue ?? ''}
               onChange={(e) => setSelectedQueue(e.target.value ? Number(e.target.value) : null)}
@@ -113,6 +122,16 @@ function ConversationsPageContent() {
                 <option key={q.id} value={q.id}>{q.name}</option>
               ))}
             </select>
+            {queueLoadError && (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-red-500">
+                Queue access could not be loaded. Conversation visibility may be limited.
+              </p>
+            )}
+            {!queueLoadError && queues.length === 0 && (
+              <p className="mt-1.5 text-[11px] leading-relaxed text-orange-500">
+                You are not assigned to any active queue. Ask an admin to assign one.
+              </p>
+            )}
           </div>
         )}
 
@@ -122,6 +141,9 @@ function ConversationsPageContent() {
               conversations={conversations}
               loading={loading}
               onClaimed={() => setTicketRefreshKey((k) => k + 1)}
+              selectedQueueName={selectedQueueName}
+              queueLoadError={queueLoadError}
+              hasAvailableQueues={queues.length > 0}
             />
           ) : (
             <MyTicketsPanel refreshKey={ticketRefreshKey} />
@@ -132,8 +154,13 @@ function ConversationsPageContent() {
       {/* MIDDLE: Conversation thread + composer */}
       <div className="flex flex-1 min-w-0 flex-col">
         {!activeConversation ? (
-          <div className="flex flex-1 items-center justify-center text-sm text-gray-400">
-            Select a conversation to begin
+          <div className="flex flex-1 items-center justify-center px-6 text-center">
+            <div>
+              <p className="text-sm font-medium text-gray-700">Select a conversation</p>
+              <p className="mt-1 text-xs text-gray-400">
+                Open an assigned conversation to view the thread, reply, create a ticket, or update tags and ownership.
+              </p>
+            </div>
           </div>
         ) : (
           <>

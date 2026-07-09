@@ -82,6 +82,20 @@ def _raise_drf_validation(exc):
     raise ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages)
 
 
+SUPPORTED_MESSAGE_IMAGE_TYPES = {
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+    'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
+}
+SUPPORTED_MESSAGE_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'}
+MAX_MESSAGE_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _is_supported_message_image(image):
+    content_type = (getattr(image, 'content_type', '') or '').lower()
+    extension = image.name.rsplit('.', 1)[-1].lower() if '.' in image.name else ''
+    return content_type in SUPPORTED_MESSAGE_IMAGE_TYPES or extension in SUPPORTED_MESSAGE_IMAGE_EXTENSIONS
+
+
 class QueueViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     # Slug-only lookups; numeric path segments return 404.
     """
@@ -549,10 +563,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         image = request.FILES.get('image')
         if image:
-            if not image.content_type.startswith('image/'):
-                return Response({'detail': 'File must be an image.'}, status=status.HTTP_400_BAD_REQUEST)
-            if image.size > 5 * 1024 * 1024:
-                return Response({'detail': 'Image must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not _is_supported_message_image(image):
+                return Response(
+                    {'detail': 'Only PNG, JPG, GIF, WebP, or HEIC images can be attached.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if image.size > MAX_MESSAGE_IMAGE_BYTES:
+                return Response({'detail': 'Image must be under 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
         msg = ConversationMessage.objects.create(
             conversation=conversation,
             sender_type='agent',

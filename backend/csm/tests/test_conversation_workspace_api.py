@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from rest_framework import status
 
@@ -43,6 +44,10 @@ def _create_ticket_url(conversation_id):
 
 def _detail_url(conversation_id):
     return reverse('conversation-detail', kwargs={'pk': conversation_id})
+
+
+def _portal_detail_url(conversation_id):
+    return reverse('portal-conversation-detail', kwargs={'pk': conversation_id})
 
 
 def _authenticate_queue_agent(api_client, user, queue):
@@ -133,6 +138,40 @@ def test_send_reply_persists_and_broadcasts_to_agent_and_customer(
     assert f'portal_conversation_{conversation.id}' in groups
 
 
+def test_send_reply_accepts_heic_attachment(
+    api_client, user, csm_queue, customer,
+):
+    _authenticate_queue_agent(api_client, user, csm_queue)
+    conversation = Conversation.objects.create(customer=customer, queue=csm_queue)
+    image = SimpleUploadedFile('6390.HEIC', b'heic-bytes', content_type='application/octet-stream')
+
+    response = api_client.post(
+        _messages_url(conversation.id),
+        {'content': '', 'image': image},
+        format='multipart',
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED, response.data
+    assert response.data['image_url']
+
+
+def test_send_reply_rejects_raw_attachment(
+    api_client, user, csm_queue, customer,
+):
+    _authenticate_queue_agent(api_client, user, csm_queue)
+    conversation = Conversation.objects.create(customer=customer, queue=csm_queue)
+    image = SimpleUploadedFile('photo.cr2', b'raw-bytes', content_type='image/x-canon-cr2')
+
+    response = api_client.post(
+        _messages_url(conversation.id),
+        {'content': '', 'image': image},
+        format='multipart',
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.data['detail'] == 'Only PNG, JPG, GIF, WebP, or HEIC images can be attached.'
+
+
 def test_create_ticket_links_conversation_and_sends_confirmation(
     api_client, user, project, csm_queue, customer,
 ):
@@ -176,3 +215,13 @@ def test_create_ticket_links_conversation_and_sends_confirmation(
         content='Your ticket is now open.',
     ).exists()
     assert f'portal_conversation_{conversation.id}' in groups
+
+    api_client.force_authenticate(user=customer.user)
+    portal_response = api_client.get(_portal_detail_url(conversation.id))
+    assert portal_response.status_code == status.HTTP_200_OK, portal_response.data
+    portal_messages = portal_response.data['messages']
+    assert any(
+        message['sender_type'] == 'system'
+        and message['content'] == 'Your ticket is now open.'
+        for message in portal_messages
+    )
