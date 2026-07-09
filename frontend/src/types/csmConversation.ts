@@ -121,6 +121,12 @@ export interface UpdateConversationPayload {
   tags?: string[];
 }
 
+export interface AssignableAgent {
+  id: number;
+  name: string;
+  email: string;
+}
+
 export interface QuickReplyTemplate {
   id: number;
   slug: string;

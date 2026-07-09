@@ -342,6 +342,31 @@ class ConversationViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
     pagination_class = ConversationPagination
 
+    def _accessible_queues(self):
+        user = self.request.user
+        qs = Queue.objects.filter(is_active=True)
+        if user.is_staff or user.is_superuser:
+            return qs
+
+        admin_org_ids = CustomerUser.objects.filter(
+            user=user,
+            is_active=True,
+            user_type__in=('supervisor', 'admin'),
+            organisation__isnull=False,
+        ).values_list('organisation_id', flat=True)
+        agent_queue_ids = QueueAgent.objects.filter(user=user).values_list('queue_id', flat=True)
+        profile_queue_ids = CustomerUser.objects.filter(
+            user=user,
+            is_active=True,
+            queue__isnull=False,
+        ).values_list('queue_id', flat=True)
+
+        return qs.filter(
+            Q(organisation_id__in=admin_org_ids)
+            | Q(id__in=agent_queue_ids)
+            | Q(id__in=profile_queue_ids)
+        ).distinct()
+
     def get_queryset(self):
         user = self.request.user
         base_qs = Conversation.objects.select_related('customer', 'queue', 'assigned_to__user')
@@ -350,18 +375,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
         if user.is_staff or user.is_superuser:
             qs = base_qs.all()
         else:
-            admin_org_ids = CustomerUser.objects.filter(
-                user=user, is_active=True, user_type__in=('supervisor', 'admin')
-            ).values_list('organisation_id', flat=True)
-
-            if admin_org_ids:
-                org_queue_ids = Queue.objects.filter(
-                    organisation_id__in=admin_org_ids,
-                ).values_list('id', flat=True)
-                qs = base_qs.filter(Q(queue_id__in=org_queue_ids) | Q(queue__isnull=True))
-            else:
-                agent_queue_ids = QueueAgent.objects.filter(user=user).values_list('queue_id', flat=True)
-                qs = base_qs.filter(Q(queue_id__in=agent_queue_ids) | Q(queue__isnull=True))
+            accessible_queue_ids = self._accessible_queues().values_list('id', flat=True)
+            qs = base_qs.filter(queue_id__in=accessible_queue_ids)
 
         # Optional queue filter from query params
         queue_id = self.request.query_params.get('queue')
@@ -381,6 +396,69 @@ class ConversationViewSet(viewsets.ModelViewSet):
         instance._prefetched_objects_cache = {}
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def available_queues(self, request):
+        """
+        GET /conversations/available_queues/
+        Queues the current agent can see/use in the conversation workspace.
+        """
+        qs = self._accessible_queues().select_related('organisation')
+        org_id = request.query_params.get('organisation')
+        if org_id:
+            qs = qs.filter(organisation_id=org_id)
+        return Response(QueueSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['get'])
+    def assignable_agents(self, request, pk=None):
+        """
+        GET /conversations/{id}/assignable_agents/
+        List active CSM users in the conversation's organisation that this
+        conversation can be reassigned to. Each entry's ``id`` is the CustomerUser
+        id used for ``assigned_to``. Visible to any agent who can see the
+        conversation (get_object enforces queue-based visibility).
+        """
+        conversation = self.get_object()
+        if not conversation.queue_id:
+            return Response([])
+
+        queue_agent_user_ids = set(
+            QueueAgent.objects.filter(queue=conversation.queue)
+            .values_list('user_id', flat=True)
+        )
+        qs = CustomerUser.objects.filter(
+            organisation_id=conversation.queue.organisation_id,
+            is_active=True,
+            user_type__in=('agent', 'supervisor', 'admin'),
+        ).select_related('user')
+
+        # A user may have multiple CustomerUser rows (one per queue). Keep one per
+        # person, preferring the profile scoped to this conversation's queue.
+        best = {}
+        for cu in qs:
+            if (
+                cu.user_type == 'agent'
+                and cu.queue_id != conversation.queue_id
+                and cu.user_id not in queue_agent_user_ids
+            ):
+                continue
+            current = best.get(cu.user_id)
+            if current is None or (
+                cu.queue_id == conversation.queue_id
+                and current.queue_id != conversation.queue_id
+            ):
+                best[cu.user_id] = cu
+
+        agents = []
+        for cu in best.values():
+            full = cu.user.get_full_name()
+            agents.append({
+                'id': cu.id,
+                'name': full if full.strip() else cu.user.email,
+                'email': cu.user.email,
+            })
+        agents.sort(key=lambda a: a['name'].lower())
+        return Response(agents)
 
     @action(detail=True, methods=['post'])
     def claim(self, request, pk=None):
@@ -534,6 +612,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 {'detail': 'A queue must be selected to create a ticket.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if not self._accessible_queues().filter(id=queue_id).exists():
+            raise PermissionDenied('You cannot create a ticket in that queue.')
 
         ticket = Ticket.objects.create(
             queue_id=queue_id,

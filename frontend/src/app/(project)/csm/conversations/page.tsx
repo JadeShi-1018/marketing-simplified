@@ -6,7 +6,6 @@ import { Queue } from '@/types/csm';
 import { useCsmConversationStore } from '@/lib/csmConversationStore';
 import { useCsmConversationSocket } from '@/hooks/useCsmConversationSocket';
 import CsmConversationAPI from '@/lib/api/csmConversationApi';
-import CsmAPI from '@/lib/api/csmApi';
 import { ConversationList } from '@/components/csm/conversations/ConversationList';
 import { ConversationThread } from '@/components/csm/conversations/ConversationThread';
 import { ConversationComposer } from '@/components/csm/conversations/ConversationComposer';
@@ -39,7 +38,7 @@ function ConversationsPageContent() {
 
   // Load available queues once
   useEffect(() => {
-    CsmAPI.getQueues().then((data) => {
+    CsmConversationAPI.availableQueues().then((data) => {
       const list = Array.isArray(data) ? data : [];
       setQueues(list);
     }).catch(() => {});

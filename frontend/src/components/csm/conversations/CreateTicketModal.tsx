@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import { CustomerProfile } from '@/types/csmConversation';
 import CsmConversationAPI from '@/lib/api/csmConversationApi';
 import { useCsmConversationStore } from '@/lib/csmConversationStore';
-import api from '@/lib/api';
 
 interface Queue {
   id: number;
@@ -52,9 +51,8 @@ export function CreateTicketModal({
 
   // Fetch available queues
   useEffect(() => {
-    api.get('/api/csm/queues/')
-      .then((res) => {
-        const data: Queue[] = Array.isArray(res.data) ? res.data : (res.data?.results ?? []);
+    CsmConversationAPI.availableQueues()
+      .then((data: Queue[]) => {
         setQueues(data);
         // Auto-select first queue if no default
         if (!selectedQueueId && data.length > 0) {
