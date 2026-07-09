@@ -69,8 +69,13 @@ def tenant_schema(organization):
 
 
 @pytest.fixture
-def team(organization):
-    """Create a test team"""
+def team(organization, tenant_schema):
+    """Create a test team in the tenant schema.
+
+    Team is a tenant model; creating it with search_path=public means
+    UserRole FK lookups that search org_<slug>.core_team find nothing.
+    Depending on tenant_schema sets the correct search_path first.
+    """
     return Team.objects.create(
         name="Test Team",
         organization=organization
@@ -78,8 +83,8 @@ def team(organization):
 
 
 @pytest.fixture
-def project(organization):
-    """Create a test project"""
+def project(organization, tenant_schema):
+    """Create a test project (in tenant schema so tenant search_path finds it)"""
     return Project.objects.create(
         name="Test Project",
         organization=organization
@@ -163,10 +168,11 @@ def role_permissions(role, permissions, tenant_schema):
 
 @pytest.fixture
 def user1(organization):
-    """Create test user 1"""
+    """Create test user 1 with a unique username to avoid parallel-worker conflicts"""
+    uid = uuid.uuid4().hex[:8]
     return User.objects.create_user(
-        username='user1',
-        email='user1@test.com',
+        username=f'user1_{uid}',
+        email=f'user1_{uid}@test.com',
         password='testpass123',
         organization=organization
     )
@@ -174,10 +180,11 @@ def user1(organization):
 
 @pytest.fixture
 def user2(organization):
-    """Create test user 2"""
+    """Create test user 2 with a unique username to avoid parallel-worker conflicts"""
+    uid = uuid.uuid4().hex[:8]
     return User.objects.create_user(
-        username='user2',
-        email='user2@test.com',
+        username=f'user2_{uid}',
+        email=f'user2_{uid}@test.com',
         password='testpass123',
         organization=organization
     )
@@ -185,10 +192,11 @@ def user2(organization):
 
 @pytest.fixture
 def user3(organization):
-    """Create test user 3"""
+    """Create test user 3 with a unique username to avoid parallel-worker conflicts"""
+    uid = uuid.uuid4().hex[:8]
     return User.objects.create_user(
-        username='user3',
-        email='user3@test.com',
+        username=f'user3_{uid}',
+        email=f'user3_{uid}@test.com',
         password='testpass123',
         organization=organization
     )
@@ -196,10 +204,11 @@ def user3(organization):
 
 @pytest.fixture
 def superuser(db):
-    """Create a superuser for testing"""
+    """Create a superuser with a unique username to avoid parallel-worker conflicts"""
+    uid = uuid.uuid4().hex[:8]
     return User.objects.create_superuser(
-        username='superuser',
-        email='superuser@test.com',
+        username=f'superuser_{uid}',
+        email=f'superuser_{uid}@test.com',
         password='testpass123'
     )
 
@@ -208,7 +217,7 @@ def superuser(db):
 def different_organization(db):
     """Create a different organization for cross-org testing"""
     return Organization.objects.create(
-        name="Different Organization",
+        name=f"Different Organization {uuid.uuid4().hex[:8]}",
         email_domain="different.com"
     )
 

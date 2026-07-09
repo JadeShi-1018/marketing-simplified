@@ -10,7 +10,7 @@ from chat.models import Chat, ChatParticipant, ChatType
 
 @pytest.fixture(autouse=True)
 def _drop_tenant_schemas_before_flush(request, db):
-    """Drop org_* schemas before pytest-django's transactional DB teardown.
+    """Drop org_* schemas created by THIS test before pytest-django's teardown.
 
     Tests marked @pytest.mark.django_db(transaction=True) that create
     Organization objects trigger provision_tenant_schema(), which creates an
@@ -18,17 +18,28 @@ def _drop_tenant_schemas_before_flush(request, db):
     public.core_organization.
 
     pytest-django's _django_db_helper creates its own PytestDjangoTestCase
-    (a subclass of TransactionTestCase) and calls _post_teardown() directly
-    — our transactional_db override is bypassed entirely.  That teardown
-    calls Django's default _fixture_teardown, which runs TRUNCATE with
-    allow_cascade=False.  The cross-schema FK from the tenant core_role table
-    to public.core_organization causes the TRUNCATE to fail.
+    and calls _post_teardown() directly — our transactional_db override is
+    bypassed.  That teardown runs TRUNCATE with allow_cascade=False.  The
+    cross-schema FK causes FeatureNotSupported.
 
-    Fix: this autouse fixture's teardown executes BEFORE _django_db_helper's
-    teardown (fixture teardown is reverse of setup order; this fixture depends
-    on `db` which depends on `_django_db_helper`).  Dropping the org_* schemas
-    removes the cross-schema FK references so the subsequent flush succeeds.
+    Fix: record existing schemas BEFORE the test, then in teardown only DROP
+    schemas that are NEW (created by this test).  Dropping only new schemas
+    avoids killing tenant data that other xdist workers are still using.
     """
+    from django.db import connection
+
+    def _current_schemas():
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT schema_name FROM information_schema.schemata "
+                "WHERE schema_name LIKE %(pat)s ESCAPE %(esc)s",
+                {"pat": "org\\_%%", "esc": "\\"},
+            )
+            return {row[0] for row in cursor.fetchall()}
+
+    # Snapshot schemas that existed before this test ran.
+    schemas_before = _current_schemas()
+
     yield
 
     # Only transactional tests commit real tenant data; skip for others.
@@ -36,17 +47,11 @@ def _drop_tenant_schemas_before_flush(request, db):
     if not (marker and marker.kwargs.get("transaction", False)):
         return
 
-    from django.db import connection
+    # Only drop schemas that were created by THIS test run.
+    schemas_after = _current_schemas()
+    new_schemas = schemas_after - schemas_before
 
-    with connection.cursor() as cursor:
-        cursor.execute(
-            "SELECT schema_name FROM information_schema.schemata "
-            "WHERE schema_name LIKE %(pat)s ESCAPE %(esc)s",
-            {"pat": "org\\_%%", "esc": "\\"},
-        )
-        schemas = [row[0] for row in cursor.fetchall()]
-
-    for schema in schemas:
+    for schema in new_schemas:
         safe = schema.replace('"', '""')
         with connection.cursor() as cursor:
             cursor.execute(f'DROP SCHEMA IF EXISTS "{safe}" CASCADE')

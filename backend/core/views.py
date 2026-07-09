@@ -531,9 +531,12 @@ class ProjectViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             with connection.cursor() as cursor:
                 # Delete child records first (bottom-up approach)
 
-                # Soft-delete calendars (set is_deleted=True instead of hard delete)
+                # Soft-delete calendars and null out project_id so that the
+                # subsequent hard-delete of core_project does not leave a
+                # dangling FK reference (mirrors on_delete=SET_NULL that
+                # Django ORM would normally apply but is bypassed here).
                 cursor.execute(
-                    'UPDATE calendars_calendar SET is_deleted = TRUE WHERE project_id = %s',
+                    'UPDATE calendars_calendar SET is_deleted = TRUE, project_id = NULL WHERE project_id = %s',
                     [project_id]
                 )
 
