@@ -872,7 +872,7 @@ def get_usage(request):
         )
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated, HasValidOrganizationToken])
+@permission_classes([IsAuthenticated])
 def quota_preview(request):
     """
     Return current-month token usage + plan quota for a project's organization.

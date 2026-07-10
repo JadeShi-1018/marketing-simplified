@@ -33,32 +33,63 @@ class WebSocketRetrospectiveUpdatesTest(TransactionTestCase):
     def setUp(self):
         """Set up test data"""
         import uuid
-        unique_name = f"WS Test Agency {uuid.uuid4().hex[:8]}"
+        # Use a single suffix per setUp so all related objects share a unique namespace,
+        # preventing IntegrityError on unique fields if a prior flush was incomplete.
+        self._suffix = uuid.uuid4().hex[:8]
+        unique_name = f"WS Test Agency {self._suffix}"
         self.organization = Organization.objects.create(
             name=unique_name,
-            email_domain="wstest.com"
+            email_domain=f"wstest_{self._suffix}.com"
         )
-        
+
         # Create users for group testing
         self.media_buyer = User.objects.create_user(
-            username="wsbuyer1",
-            email="wsbuyer@wstest.com",
+            username=f"wsbuyer_{self._suffix}",
+            email=f"wsbuyer_{self._suffix}@wstest.com",
             password="testpass123",
             organization=self.organization
         )
-        
+
         self.team_lead = User.objects.create_user(
-            username="wslead1",
-            email="wslead@wstest.com",
+            username=f"wslead_{self._suffix}",
+            email=f"wslead_{self._suffix}@wstest.com",
             password="testpass123",
             organization=self.organization
         )
-        
+
         # Create campaign
         self.campaign = Project.objects.create(
-            name="WebSocket Test Campaign",
+            name=f"WebSocket Test Campaign {self._suffix}",
             organization=self.organization
         )
+
+    def _fixture_teardown(self):
+        """Override teardown to fix two issues:
+
+        1. CASCADE on TRUNCATE: Django's default flush uses allow_cascade=False,
+           which causes a NotSupportedError on PostgreSQL when core_project
+           (or any other table) holds a FK pointing at core_customuser.
+           We pass allow_cascade=True WITHOUT reset_sequences so sequences are
+           NOT restarted (RESTART IDENTITY would reset PKs to 1 and conflict
+           with seed rows inserted by other tests in the same worker).
+
+        2. ContentType cache: after flushing, Django's in-memory ContentType
+           cache still holds stale IDs.  Subsequent TestCase-based tests that
+           call link_to_object() use those IDs, creating FK violations during
+           their own check_constraints teardown.
+        """
+        from django.core.management import call_command
+        from django.contrib.contenttypes.models import ContentType
+        call_command(
+            'flush',
+            verbosity=0,
+            interactive=False,
+            database=self._databases_names(include_mirrors=False)[0],
+            reset_sequences=False,
+            allow_cascade=True,
+            inhibit_post_migrate=True,
+        )
+        ContentType.objects.clear_cache()
     
     @database_sync_to_async
     def create_retrospective(self, **kwargs):
