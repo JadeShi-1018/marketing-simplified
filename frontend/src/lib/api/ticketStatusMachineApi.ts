@@ -1,6 +1,6 @@
 import api from '../api';
 
-// MED-215 — ticket status machine (statuses + transitions + auto-resolution rule).
+// Ticket status machine (statuses + transitions + auto-resolution rule).
 // All endpoints are project-scoped via ?project={id}.
 
 export interface TicketStatus {

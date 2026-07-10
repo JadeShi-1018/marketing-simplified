@@ -869,17 +869,17 @@ class TicketViewSet(viewsets.ModelViewSet):
         new_status = request.data.get('status')
         new_priority = request.data.get('priority')
 
-        # Enforce the state machine before persisting (AC #1, #4).
+        # Enforce the state machine before persisting.
         if new_status and new_status != ticket.status:
             try:
                 assert_transition_allowed(ticket, new_status)
             except DjangoValidationError as exc:
                 _raise_drf_validation(exc)
 
-        # pending_since is stamped/cleared centrally in Ticket.save() (MED-215).
-        # No customer notification on manual status change: MED-215 only requires
-        # notifying on *auto*-resolution (see tasks.py). Ticket and conversation
-        # lifecycles stay independent (MED-221).
+        # pending_since is stamped/cleared centrally in Ticket.save().
+        # No customer notification on manual status change: we only notify on
+        # *auto*-resolution (see tasks.py). Ticket and conversation lifecycles
+        # stay independent.
         response = super().partial_update(request, *args, **kwargs)
 
         # Recalculate SLA when priority changes, using now() so the countdown
@@ -906,7 +906,7 @@ class TicketViewSet(viewsets.ModelViewSet):
         ticket.status = 'closed'
         ticket.save(update_fields=['status'])
 
-        # No customer notification on close: MED-215 has no such requirement.
+        # No customer notification on close: closing has no such requirement.
         return Response(TicketSerializer(ticket).data)
 
 
@@ -1352,7 +1352,7 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-# --- MED-215: status machine admin config ---------------------------------
+# --- Status machine admin config ------------------------------------------
 
 class TicketStatusViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
     """CRUD for a project's ticket statuses (CSM-S02-03).
@@ -1451,7 +1451,7 @@ class StatusMachineView(ProjectScopedViewSetMixin, viewsets.ViewSet):
         return Response(data)
 
     def update(self, request, *args, **kwargs):
-        """Bulk-replace the permitted transitions (AC #4)."""
+        """Bulk-replace the permitted transitions."""
         from csm.services.status_machine import ensure_status_machine
         project_id = self.get_required_project_id()
         ensure_status_machine(project_id)

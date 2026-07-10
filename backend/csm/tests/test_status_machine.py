@@ -1,6 +1,6 @@
-"""MED-215 — Ticket status machine & lifecycle tests.
+"""Ticket status machine & lifecycle tests.
 
-Covers the five acceptance criteria:
+Covers the five behaviours:
   1. Only permitted transitions are allowed (agent cannot jump to unreachable state)
   2. Admin creates a custom status at a position; it becomes usable on tickets
   3. Auto-resolution moves a stale Pending ticket to Resolved + notifies customer
@@ -97,7 +97,7 @@ def test_insert_custom_status_shifts_order(project):
                        'pending_customer', 'resolved', 'closed']
 
 
-# --- AC #1: enforce permitted transitions via API -------------------------
+# --- enforce permitted transitions via API --------------------------------
 
 def test_patch_allowed_transition_succeeds(admin_client, ticket):
     resp = admin_client.patch(
@@ -123,7 +123,7 @@ def test_close_action_enforces_transition(admin_client, ticket):
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
 
-# --- AC #2: custom status usable on tickets via API -----------------------
+# --- custom status usable on tickets via API ------------------------------
 
 def test_create_custom_status_then_use_on_ticket(admin_client, project, ticket):
     url = reverse('ticket-status-list') + f'?project={project.id}'
@@ -144,7 +144,7 @@ def test_create_custom_status_then_use_on_ticket(admin_client, project, ticket):
     assert ticket.status == slug
 
 
-# --- AC #4: editing transitions is immediately enforced -------------------
+# --- editing transitions is immediately enforced --------------------------
 
 def test_replace_transitions_changes_enforcement(admin_client, project, ticket):
     url = reverse('ticket-status-machine') + f'?project={project.id}'
@@ -161,7 +161,7 @@ def test_replace_transitions_changes_enforcement(admin_client, project, ticket):
     assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
 
-# --- AC #5: ticket exposes current status + available next statuses -------
+# --- ticket exposes current status + available next statuses --------------
 
 def test_ticket_detail_lists_available_next_statuses(admin_client, ticket):
     resp = admin_client.get(_ticket_detail(ticket.id))
@@ -200,7 +200,7 @@ def test_delete_custom_status_in_use_requires_confirm(admin_client, project, tic
     assert ticket.status == 'in_progress'
 
 
-# --- AC #3: automatic resolution ------------------------------------------
+# --- automatic resolution -------------------------------------------------
 
 @pytest.fixture
 def pending_ticket(queue):
@@ -261,7 +261,7 @@ def test_auto_resolve_disabled_does_nothing(project, pending_ticket):
 
 
 # --- manual status changes must NOT notify the customer -------------------
-# MED-215 only requires a customer notification on *auto*-resolution. A manual
+# A customer notification is only sent on *auto*-resolution. A manual
 # resolve/close is a plain transition; these guard against a system message
 # creeping back in (it used to, and was removed).
 

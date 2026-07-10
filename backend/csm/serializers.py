@@ -289,7 +289,7 @@ class TicketSerializer(serializers.ModelSerializer):
         return status.color if status else None
 
     def get_available_next_statuses(self, obj):
-        """The valid next statuses for the agent UI (AC #5) — only reachable
+        """The valid next statuses for the agent UI — only reachable
         statuses, not all of them."""
         project_id = obj.queue.project_id if obj.queue_id else None
         if project_id is None:
@@ -624,7 +624,7 @@ class ReplaceChannelAssignmentsSerializer(serializers.Serializer):
     )
 
 
-# --- MED-215: status machine config ---------------------------------------
+# --- Status machine config ------------------------------------------------
 
 class TicketStatusSerializer(serializers.ModelSerializer):
     class Meta:

@@ -45,10 +45,10 @@ export interface Ticket {
   description: string;
   status: string;
   status_display: string;
-  // MED-215: current status's configured color (from the status machine, so
-  // custom statuses resolve correctly), null if no machine row.
+  // Current status's configured color (from the status machine, so custom
+  // statuses resolve correctly), null if no machine row.
   status_color: string | null;
-  // MED-215: valid next statuses for this ticket per the configured state machine (AC #5).
+  // Valid next statuses for this ticket per the configured state machine.
   available_next_statuses: { slug: string; name: string; color: string }[];
   priority: string;
   priority_display: string;

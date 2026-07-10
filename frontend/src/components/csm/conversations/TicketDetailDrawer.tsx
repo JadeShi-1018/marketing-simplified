@@ -56,9 +56,6 @@ export default function TicketDetailDrawer({
 
   if (!ticket) return null;
 
-  // Closing is just another status transition (allowed by the state machine):
-  // the ticket stays in the list and the customer is not notified. Archiving /
-  // close notifications are out of MED-215's scope.
   const handleStatusChange = async (newStatus: string) => {
     if (newStatus === ticket.status) return;
     setUpdating(true);
@@ -111,9 +108,6 @@ export default function TicketDetailDrawer({
           <h3 className="mb-2 text-base font-semibold text-gray-900">{ticket.title}</h3>
 
           <div className="divide-y divide-gray-100">
-            {/* Status — the single interactive status control (moved off the
-                card). Options are the current status plus only the transitions
-                the configured state machine permits (MED-215 AC #5). */}
             <Row label="Status">
               <div className="flex items-center gap-2">
                 {ticket.status_color && (
@@ -186,7 +180,6 @@ export default function TicketDetailDrawer({
               </div>
             )}
           </div>
-          {/* MED-220 ticket history timeline plugs in here later. */}
         </div>
       </CsmSettingsDrawerShell>
   );

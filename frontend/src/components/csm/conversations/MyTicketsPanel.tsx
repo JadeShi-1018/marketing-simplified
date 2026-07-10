@@ -37,7 +37,6 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
   const activeId = useCsmConversationStore((s) => s.activeConversationId);
   const conversations = useCsmConversationStore((s) => s.conversations);
 
-  // Tick every minute so SLA countdowns stay fresh
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
@@ -46,8 +45,6 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      // Sort by priority (Critical first) so the most urgent tickets appear at top.
-      // Closed tickets stay in the list (no archiving view yet — out of MED-215 scope).
       const data = await TicketAPI.myTickets('priority');
       setTickets(data);
     } catch {
@@ -66,8 +63,6 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [load]);
 
-  // Status changes now happen in the detail drawer; the panel just keeps its
-  // list row in sync with what the drawer reports.
   const handleTicketUpdated = (updated: Ticket) => {
     setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
     setDetailTicket((cur) => (cur && cur.id === updated.id ? updated : cur));
@@ -133,9 +128,8 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
                       : 'cursor-default'
                   } ${isActive ? 'bg-blue-50/60 border-gray-200' : 'bg-white'}`}
                 >
-                  {/* Row 1: title + open-detail button. Clicking the card still
-                      switches to the conversation; the button opens the ticket
-                      detail drawer (where status is changed). */}
+                  {/* Clicking the card switches to the conversation; the button
+                      opens the ticket detail drawer (where status is changed). */}
                   <div className="flex items-start gap-1.5">
                     <div className="flex flex-col min-w-0 flex-1">
                       <p className={`text-xs font-semibold truncate leading-snug ${isActive ? 'text-blue-800' : 'text-gray-800'}`}>
@@ -155,7 +149,6 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
                     </button>
                   </div>
 
-                  {/* Row 2: priority · SLA */}
                   <div className="flex items-center gap-1 min-w-0">
                     <span className={`text-[11px] font-medium shrink-0 ${PRIORITY_TEXT_COLOR[ticket.priority] ?? 'text-gray-400'}`}>
                       {PRIORITY_LABELS[ticket.priority as keyof typeof PRIORITY_LABELS] ?? ticket.priority}
@@ -164,8 +157,8 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
                     <SlaCountdown ticket={ticket} now={now} />
                   </div>
 
-                  {/* Row 3: current status, read-only. The interactive control
-                      lives in the detail drawer now. */}
+                  {/* Current status, read-only. The interactive control lives
+                      in the detail drawer. */}
                   <div className="flex items-center justify-end gap-1.5">
                     {ticket.status_color && (
                       <span

@@ -161,7 +161,7 @@ class CsmNotification(TimeStampedModel):
 
 
 class Ticket(TimeStampedModel):
-    # Built-in statuses (MED-215). The per-project status machine
+    # Built-in statuses. The per-project status machine
     # (TicketStatus / TicketStatusTransition) is the source of truth for
     # transitions and custom statuses; these choices give the five built-ins a
     # display label. Custom statuses are stored as slugs not listed here —
@@ -200,7 +200,7 @@ class Ticket(TimeStampedModel):
     first_response_due = models.DateTimeField(null=True, blank=True)
     resolution_due = models.DateTimeField(null=True, blank=True)
 
-    # MED-215: timestamp the ticket last entered "Pending Customer Response".
+    # Timestamp the ticket last entered "Pending Customer Response".
     # Drives the auto-resolution rule (resolve after N days with no customer reply).
     pending_since = models.DateTimeField(null=True, blank=True)
 
@@ -234,7 +234,7 @@ class Ticket(TimeStampedModel):
         return f"[{self.get_status_display()}] {self.title}"
 
     def save(self, *args, **kwargs):
-        # MED-215: keep the pending-clock in sync on every write path (create,
+        # Keep the pending-clock in sync on every write path (create,
         # PATCH, task, future callers) so the auto-resolution rule always has a
         # start time. Stamp it when entering Pending Customer Response, clear it
         # on leaving.
@@ -799,7 +799,7 @@ class CSMInvitation(TimeStampedModel):
         return f"Invitation to {self.email} ({'accepted' if self.accepted else 'pending'})"
 
 
-# --- MED-215: Ticket status machine & lifecycle ---------------------------
+# --- Ticket status machine & lifecycle ------------------------------------
 
 class TicketStatus(TimeStampedModel):
     """A ticket workflow status, project-scoped (one machine per project).

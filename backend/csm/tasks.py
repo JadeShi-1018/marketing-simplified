@@ -1,4 +1,3 @@
-"""MED-215 — periodic ticket lifecycle tasks."""
 from celery import shared_task
 
 from csm.models import ConversationMessage
@@ -22,8 +21,8 @@ def auto_resolve_pending_tickets():
         ticket.save(update_fields=['status', 'pending_since'])
 
         # Notify the customer via the linked conversation, mirroring the manual
-        # resolve flow. The conversation's own status (MED-221) is left
-        # untouched — ticket and conversation lifecycles are independent.
+        # resolve flow. The conversation's own status is left untouched —
+        # ticket and conversation lifecycles are independent.
         # Tickets with no conversation are resolved silently.
         if ticket.conversation_id:
             ConversationMessage.objects.create(

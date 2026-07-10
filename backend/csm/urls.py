@@ -33,7 +33,7 @@ urlpatterns = [
     # Standard routes
     path('', include(router.urls)),
 
-    # MED-215 status machine: whole-machine GET + transition-set PUT + auto-resolve PATCH.
+    # Status machine: whole-machine GET + transition-set PUT + auto-resolve PATCH.
     # Operates per-project (?project=), so it is not a pk-detail resource.
     path(
         'ticket-status-machine/',
