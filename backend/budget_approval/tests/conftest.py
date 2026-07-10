@@ -83,8 +83,8 @@ def team(organization, tenant_schema):
 
 
 @pytest.fixture
-def project(organization, tenant_schema):
-    """Create a test project (in tenant schema so tenant search_path finds it)"""
+def project(organization):
+    """Create a test project"""
     return Project.objects.create(
         name="Test Project",
         organization=organization

@@ -184,26 +184,23 @@ def test_approve_report_no_permission_returns_403(auth_client, retro):
 
 
 @pytest.mark.django_db
-def test_approve_report_service_error_returns_400(retro):
+def test_approve_report_service_error_returns_400(auth_client, retro):
     """User with approve_report perm but service raises → 400."""
-    uid = uuid.uuid4().hex[:8]
-    approver = User.objects.create_user(
-        username=f"approver_{uid}",
-        email=f"approver_{uid}@test.com",
-        password="testpass123",
-    )
-    client = APIClient()
-    client.force_authenticate(user=approver)
+    # Set report_url so ReportApprovalSerializer passes its existence check.
+    retro.report_url = "http://example.com/report.pdf"
+    retro.save(update_fields=["report_url"])
 
     url = reverse("retrospective:retrospective-approve-report", args=[retro.id])
+    # Patch has_perm at the class level so request.user inside the view
+    # also returns True (instance-level patching does not affect DRF's user obj).
     with (
-        patch.object(approver, "has_perm", return_value=True),
+        patch.object(User, "has_perm", return_value=True),
         patch(
             "retrospective.views.RetrospectiveService.approve_report",
             side_effect=Exception("approve failed"),
         ),
     ):
-        response = client.post(
+        response = auth_client.post(
             url, data={"retrospective_id": str(retro.id)}, format="json"
         )
     assert response.status_code == status.HTTP_400_BAD_REQUEST

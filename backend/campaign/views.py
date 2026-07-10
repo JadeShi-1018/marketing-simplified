@@ -94,20 +94,25 @@ class CampaignViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             ).values_list('project_id', flat=True)
         )
         
+        # Check project filter BEFORE early-return so an inaccessible project
+        # raises 403 even when the user has no other memberships.
+        project_param = self.request.query_params.get('project')
+        resolved_pid = None
+        if project_param:
+            resolved_pid = resolve_project_pk(project_param)
+            if resolved_pid is None or resolved_pid not in accessible_project_ids:
+                raise PermissionDenied('You do not have access to this project.')
+
         if not accessible_project_ids:
             return Campaign.objects.none()
-        
+
         queryset = Campaign.objects.filter(
             project_id__in=accessible_project_ids,
             is_deleted=False
         ).select_related('project', 'owner', 'creator', 'assignee')
-        
+
         # Apply filters
-        project_id = self.request.query_params.get('project')
-        if project_id:
-            resolved_pid = resolve_project_pk(project_id)
-            if resolved_pid is None or resolved_pid not in accessible_project_ids:
-                raise PermissionDenied('You do not have access to this project.')
+        if resolved_pid:
             queryset = queryset.filter(project_id=resolved_pid)
         
         status_filter = self.request.query_params.get('status')
@@ -632,7 +637,7 @@ class PerformanceSnapshotViewSet(viewsets.ModelViewSet):
         
         serializer.save(campaign=campaign)
     
-    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    @action(detail=True, methods=['post'], url_path='screenshot', parser_classes=[MultiPartParser, FormParser])
     def upload_screenshot(self, request, campaign_id=None, id=None):
         """Upload screenshot for a performance snapshot"""
         snapshot = self.get_object()

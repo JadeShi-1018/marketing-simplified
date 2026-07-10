@@ -268,9 +268,10 @@ def test_snapshot_upload_screenshot_no_file_returns_400(auth_client, campaign_wi
     snapshot = PerformanceSnapshot.objects.create(
         campaign=campaign_with_member,
         snapshot_by=campaign_with_member.owner,
-        milestone_type=PerformanceSnapshot.MilestoneType.TESTING_START,
+        milestone_type=PerformanceSnapshot.MilestoneType.CUSTOM,
         metric_type=PerformanceSnapshot.MetricType.CTR,
-        value="0.05",
+        metric_value="0.05",
+        spend="0.00",
     )
     url = (
         f"/api/campaigns/{campaign_with_member.id}"
