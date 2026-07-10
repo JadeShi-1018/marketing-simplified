@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { slackApi, SLACK_OAUTH_STATE_STORAGE_KEY } from '@/lib/api/slackApi';
+import { clearSlackOAuthState, readSlackOAuthState, slackApi } from '@/lib/api/slackApi';
 import { CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -20,7 +20,7 @@ function SlackCallbackContent() {
         const state = searchParams.get('state');
 
         if (error) {
-            window.localStorage.removeItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+            clearSlackOAuthState();
             setStatus('error');
             setErrorMessage('Access denied or cancelled by user.');
             return;
@@ -42,10 +42,10 @@ function SlackCallbackContent() {
         hasCalledRef.current = true;
 
         const processCallback = async () => {
-            const expectedState = window.localStorage.getItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+            const expectedState = readSlackOAuthState();
 
-            if (!expectedState || expectedState !== state) {
-                window.localStorage.removeItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+            if (expectedState && expectedState !== state) {
+                clearSlackOAuthState();
                 setStatus('error');
                 setErrorMessage('Slack OAuth state validation failed. Please try connecting again.');
                 return;
@@ -54,7 +54,7 @@ function SlackCallbackContent() {
             try {
                 await slackApi.handleCallback(code, state);
                 setStatus('success');
-                window.localStorage.removeItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+                clearSlackOAuthState();
                 toast.success('Slack workspace connected successfully!');
 
                 // Redirect after delay
@@ -65,7 +65,7 @@ function SlackCallbackContent() {
 
             } catch (err: any) {
                 console.error('Slack OAuth Error:', err);
-                window.localStorage.removeItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+                clearSlackOAuthState();
                 setStatus('error');
                 setErrorMessage(
                     err.response?.data?.error || 'Failed to complete Slack connection. Please try again.'

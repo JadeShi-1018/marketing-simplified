@@ -20,6 +20,7 @@ from core.models import Team, Organization, Role
 from access_control.models import UserRole
 from stripe_meta.permissions import generate_organization_access_token
 from django.conf import settings
+from django.core import signing
 from django.db import transaction
 from google_auth_oauthlib.flow import Flow  # For OAuth start (generating auth URL)
 from requests_oauthlib import OAuth2Session  # For OAuth callback (token exchange)
@@ -40,6 +41,67 @@ User = get_user_model()
 
 # OAuth Clock Tolerance Configuration
 OAUTH_CLOCK_TOLERANCE_SECONDS = 10  # 10 seconds tolerance for JWT validation
+GOOGLE_OAUTH_STATE_SALT = "google-oauth-state"
+GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS = 600
+
+
+def build_google_oauth_state():
+    return signing.dumps(
+        {
+            "provider": "google",
+            "nonce": secrets.token_urlsafe(16),
+        },
+        salt=GOOGLE_OAUTH_STATE_SALT,
+    )
+
+
+def validate_google_oauth_state(request, state):
+    session_state = request.session.get("google_oauth_state")
+    if session_state and secrets.compare_digest(session_state, state or ""):
+        return None
+
+    if not state:
+        return Response(
+            {
+                "error": "Missing Google OAuth state.",
+                "errorCode": "MISSING_OAUTH_STATE",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        payload = signing.loads(
+            state,
+            salt=GOOGLE_OAUTH_STATE_SALT,
+            max_age=GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS,
+        )
+    except signing.SignatureExpired:
+        return Response(
+            {
+                "error": "Google OAuth state has expired. Please try signing in again.",
+                "errorCode": "OAUTH_STATE_EXPIRED",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except signing.BadSignature:
+        return Response(
+            {
+                "error": "Invalid Google OAuth state.",
+                "errorCode": "INVALID_OAUTH_STATE",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if payload.get("provider") != "google":
+        return Response(
+            {
+                "error": "Invalid Google OAuth state.",
+                "errorCode": "INVALID_OAUTH_STATE",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return None
 
 @method_decorator(csrf_exempt, name='dispatch')
 class RegisterView(APIView):
@@ -434,11 +496,14 @@ class GoogleOAuthStartView(APIView):
             
             flow.redirect_uri = settings.GOOGLE_OAUTH_REDIRECT_URI
             
+            state_token = build_google_oauth_state()
+
             # Generate authorization URL
             authorization_url, state = flow.authorization_url(
                 access_type='offline',
                 include_granted_scopes='true',
-                prompt='consent'
+                prompt='consent',
+                state=state_token,
             )
             
             # Store state in session for verification in callback
@@ -495,6 +560,10 @@ class GoogleOAuthCallbackView(APIView):
                 return Response({
                     'error': 'Missing authorization code'
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            state_error = validate_google_oauth_state(request, request.GET.get('state'))
+            if state_error is not None:
+                return state_error
             
             # Create OAuth2Session with clock tolerance configuration
             # This is the core fix: configure session with leeway for JWT validation
