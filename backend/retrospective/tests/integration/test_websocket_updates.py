@@ -64,7 +64,7 @@ class WebSocketRetrospectiveUpdatesTest(TransactionTestCase):
         )
 
     def _fixture_teardown(self):
-        """Override teardown to fix two issues:
+        """Override teardown to fix three issues:
 
         1. CASCADE on TRUNCATE: Django's default flush uses allow_cascade=False,
            which causes a NotSupportedError on PostgreSQL when core_project
@@ -73,10 +73,17 @@ class WebSocketRetrospectiveUpdatesTest(TransactionTestCase):
            NOT restarted (RESTART IDENTITY would reset PKs to 1 and conflict
            with seed rows inserted by other tests in the same worker).
 
-        2. ContentType cache: after flushing, Django's in-memory ContentType
-           cache still holds stale IDs.  Subsequent TestCase-based tests that
-           call link_to_object() use those IDs, creating FK violations during
-           their own check_constraints teardown.
+        2. inhibit_post_migrate=False (Django's own default): after flushing,
+           post_migrate signals must run to repopulate django_content_type and
+           auth_permission.  Without this, TestCase tests that run after us on
+           the same xdist worker find auth_permission rows referencing deleted
+           ContentType IDs, causing ForeignKeyViolation in check_constraints().
+           The approve_report custom permission is also gone, causing those tests
+           to fail in the test body itself.
+
+        3. ContentType cache: after flushing, Django's in-memory ContentType
+           cache still holds stale IDs.  Clearing it forces subsequent tests to
+           re-query the freshly repopulated django_content_type table.
         """
         from django.core.management import call_command
         from django.contrib.contenttypes.models import ContentType
@@ -87,7 +94,7 @@ class WebSocketRetrospectiveUpdatesTest(TransactionTestCase):
             database=self._databases_names(include_mirrors=False)[0],
             reset_sequences=False,
             allow_cascade=True,
-            inhibit_post_migrate=True,
+            inhibit_post_migrate=False,
         )
         ContentType.objects.clear_cache()
     
