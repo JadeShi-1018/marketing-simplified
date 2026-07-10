@@ -21,7 +21,7 @@ import {
     SlackConnectionStatus,
     NotificationPreference,
     SlackChannel,
-    SLACK_OAUTH_STATE_STORAGE_KEY,
+    persistSlackOAuthState,
     SlackRequestContext,
 } from '@/lib/api/slackApi';
 import {
@@ -176,7 +176,7 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
     const handleConnect = async () => {
         try {
             const { url, state } = await slackApi.initOAuth(slackContext);
-            window.localStorage.setItem(SLACK_OAUTH_STATE_STORAGE_KEY, state);
+            persistSlackOAuthState(state);
             window.location.href = url;
         } catch (error) {
             console.error('Failed to init OAuth:', error);
