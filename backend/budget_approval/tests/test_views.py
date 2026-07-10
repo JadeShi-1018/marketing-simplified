@@ -289,8 +289,12 @@ class TestBudgetEscalationView:
         }
         
         url = reverse('budget-escalation')
-        response = api_client.post(url, data, format='json', HTTP_X_INTERNAL_TOKEN='test-token')
-        
+        response = api_client.post(
+            url, data, format='json',
+            HTTP_X_INTERNAL_TOKEN='test-token',
+            HTTP_X_ORGANIZATION_SLUG=user1.organization.slug,
+        )
+
         assert response.status_code == status.HTTP_200_OK
     
     def test_escalation_webhook_invalid_request(self, api_client, monkeypatch):

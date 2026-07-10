@@ -29,10 +29,21 @@ class TenantAwareTransactionTestCase(TransactionTestCase):
     public tables (e.g. org_xxx.core_project → public.core_customuser).
     Overriding with allow_cascade=True makes PostgreSQL cascade the TRUNCATE
     to tenant schema tables automatically.
+
+    inhibit_post_migrate=False (Django's own default): after flushing,
+    post_migrate signals must run to repopulate django_content_type and
+    auth_permission.  Without this, TestCase tests that run after us on
+    the same xdist worker find auth_permission rows referencing deleted
+    ContentType IDs (ForeignKeyViolation in check_constraints) and
+    task_task.content_type_id references that no longer exist.
+
+    ContentType cache must be cleared after flush so subsequent tests
+    re-query the freshly repopulated django_content_type table.
     """
 
     def _fixture_teardown(self):
         from django.core.management import call_command
+        from django.contrib.contenttypes.models import ContentType
         for db_name in self._databases_names(include_mirrors=False):
             call_command(
                 'flush',
@@ -41,8 +52,9 @@ class TenantAwareTransactionTestCase(TransactionTestCase):
                 database=db_name,
                 reset_sequences=False,
                 allow_cascade=True,
-                inhibit_post_migrate=True,
+                inhibit_post_migrate=False,
             )
+        ContentType.objects.clear_cache()
 
 
 def _build_ws_application():
