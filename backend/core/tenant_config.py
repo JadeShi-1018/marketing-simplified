@@ -66,6 +66,15 @@ def get_tenant_models():  # noqa: C901 — long but intentionally explicit
     )
 
     # ------------------------------------------------------------------
+    # budget_approval (depends on Task, Project, AdChannel, Role)
+    # ------------------------------------------------------------------
+    from budget_approval.models import (
+        BudgetPool,
+        BudgetEscalationRule,
+        BudgetRequest,
+    )
+
+    # ------------------------------------------------------------------
     # campaign
     # ------------------------------------------------------------------
     from campaign.models import (
@@ -258,6 +267,10 @@ def get_tenant_models():  # noqa: C901 — long but intentionally explicit
         TaskRelation,
         TaskHierarchy,
         TaskFieldHistory,
+        # budget_approval (BudgetPool depends on Project + AdChannel + Task)
+        BudgetPool,
+        BudgetEscalationRule,       # depends on BudgetPool + Role
+        BudgetRequest,              # depends on BudgetPool + Task + AdChannel
         # campaign (base + non-cross-linking)
         Campaign,
         CampaignStatusHistory,
