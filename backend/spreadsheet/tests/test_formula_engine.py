@@ -323,3 +323,21 @@ class FormulaEngineTest(TestCase):
         self.assertEqual(cell_c5.computed_type, ComputedCellType.ERROR)
         self.assertEqual(cell_c5.error_code, '#N/A')
 
+    def test_divide_by_zero_does_not_stop_other_formulas(self):
+        operations = [
+            {'operation': 'set', 'row': 1, 'column': 1, 'raw_input': '10'},
+            {'operation': 'set', 'row': 1, 'column': 2, 'raw_input': '0'},
+            {'operation': 'set', 'row': 1, 'column': 3, 'raw_input': '=B2/C2'},
+            {'operation': 'set', 'row': 1, 'column': 4, 'raw_input': '=B2+5'},
+        ]
+
+        CellService.batch_update_cells(self.sheet, operations, auto_expand=True)
+
+        error_cell = Cell.objects.get(sheet=self.sheet, row=self.row2, column=self.col_d)
+        self.assertEqual(error_cell.computed_type, ComputedCellType.ERROR)
+        self.assertEqual(error_cell.error_code, '#DIV/0!')
+
+        normal_cell = Cell.objects.get(sheet=self.sheet, row=self.row2, column__position=4)
+        self.assertEqual(normal_cell.computed_type, ComputedCellType.NUMBER)
+        self.assertEqual(normal_cell.computed_number, Decimal('15'))
+        self.assertIsNone(normal_cell.error_code)
