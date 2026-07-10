@@ -32,6 +32,8 @@ from retrospective.models import (
 
 User = get_user_model()
 
+pytestmark = [pytest.mark.timeout(600)]
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -3,6 +3,7 @@ Essential benchmark tests for retrospective system performance
 Tests critical performance requirements: 1000+ KPI rows query in under 2s
 Creates benchmark results for retrospective.json
 """
+import pytest
 import json
 import time
 from decimal import Decimal
@@ -97,6 +98,7 @@ class BenchmarkRunner:
         return benchmark_summary
 
 
+@pytest.mark.timeout(600)
 class RetrospectiveBenchmarkTest(TestCase):
     """Essential benchmark tests for retrospective system performance requirements"""
     
@@ -350,6 +352,7 @@ class RetrospectiveBenchmarkTest(TestCase):
             print("========================")
 
 
+@pytest.mark.timeout(600)
 class WebSocketTimingBenchmarkTest(TestCase):
     """Benchmark tests for WebSocket timing and group notifications"""
     

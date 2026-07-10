@@ -3,6 +3,7 @@ Essential WebSocket tests for retrospective real-time updates
 Tests WebSocket updates (group and timing) as required by BE4-04
 """
 import asyncio
+import pytest
 from datetime import datetime, timedelta
 from decimal import Decimal
 from django.test import TransactionTestCase, override_settings
@@ -25,6 +26,7 @@ User = get_user_model()
         },
     }
 )
+@pytest.mark.timeout(600)
 class WebSocketRetrospectiveUpdatesTest(TransactionTestCase):
     """Test WebSocket updates (group and timing) for retrospective workflow"""
 

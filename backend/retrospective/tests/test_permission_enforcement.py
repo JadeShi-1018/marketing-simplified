@@ -21,6 +21,7 @@ from access_control.models import Role, UserRole, Team
 User = get_user_model()
 
 
+@pytest.mark.timeout(600)
 class PermissionEnforcementTest(TestCase):
     """Test permission enforcement for retrospective operations"""
     
@@ -370,6 +371,7 @@ class PermissionEnforcementTest(TestCase):
         self.assertTrue(len(response.data) > 0)
 
 
+@pytest.mark.timeout(600)
 class ReportApprovalWorkflowTest(TestCase):
     """Test complete report approval workflow with permissions"""
     

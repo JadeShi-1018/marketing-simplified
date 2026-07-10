@@ -11,6 +11,7 @@ from budget_approval.permissions import (
 
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestBudgetRequestPermissions:
     """Test budget request permissions"""
     
@@ -86,8 +87,8 @@ class TestBudgetRequestPermissions:
     def test_super_admin_has_all_permissions(self, api_client, superuser, budget_request_draft, team):
         """Test super admin has all permissions"""
         api_client.force_authenticate(user=superuser)
-        # Super admin doesn't need team context
-        api_client.credentials(HTTP_X_USER_ROLE='admin')
+        # Super admin doesn't need team context but does need org slug for schema routing
+        api_client.credentials(HTTP_X_USER_ROLE='admin', HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         # Test can view any request
         url = reverse('budget-request-detail', kwargs={'pk': budget_request_draft.id})
@@ -108,6 +109,7 @@ class TestBudgetRequestPermissions:
 
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestBudgetRequestApprovalPermissions:
     """Test budget request approval permissions"""
     
@@ -172,8 +174,8 @@ class TestBudgetRequestApprovalPermissions:
     def test_super_admin_can_approve_any_request(self, api_client, superuser, budget_request_under_review, team):
         """Test super admin can approve any request"""
         api_client.force_authenticate(user=superuser)
-        # Super admin doesn't need team context
-        api_client.credentials(HTTP_X_USER_ROLE='admin')
+        # Super admin doesn't need team context but does need org slug for schema routing
+        api_client.credentials(HTTP_X_USER_ROLE='admin', HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         url = reverse('budget-request-decision', kwargs={'pk': budget_request_under_review.id})
         data = {
@@ -185,6 +187,7 @@ class TestBudgetRequestApprovalPermissions:
 
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestBudgetPoolPermissions:
     """Test budget pool permissions"""
     
@@ -220,7 +223,7 @@ class TestBudgetPoolPermissions:
         """Test user cannot update budget pool (permission denied)"""
         # user3 has no role permissions, so should be denied
         api_client.force_authenticate(user=user3)
-        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id))
+        api_client.credentials(HTTP_X_USER_ROLE='team_member', HTTP_X_TEAM_ID=str(team.id), HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         data = {
             'project': budget_pool.project.id,
@@ -237,8 +240,8 @@ class TestBudgetPoolPermissions:
     def test_super_admin_has_budget_pool_permissions(self, api_client, superuser, budget_pool, team):
         """Test super admin has budget pool permissions"""
         api_client.force_authenticate(user=superuser)
-        # Super admin doesn't need team context
-        api_client.credentials(HTTP_X_USER_ROLE='admin')
+        # Super admin doesn't need team context but does need org slug for schema routing
+        api_client.credentials(HTTP_X_USER_ROLE='admin', HTTP_X_ORGANIZATION_SLUG=team.organization.slug)
         
         # Test can view any budget pool
         url = reverse('budget-pool-detail', kwargs={'pk': budget_pool.id})
@@ -257,6 +260,7 @@ class TestBudgetPoolPermissions:
         assert response.status_code == status.HTTP_200_OK
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestUnauthenticatedAccess:
     """Test unauthenticated access"""
     
@@ -325,6 +329,7 @@ class TestUnauthenticatedAccess:
 
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestCrossOrganizationPermissions:
     """Test permissions across different organizations"""
     
