@@ -21,93 +21,92 @@ from access_control.models import Role, UserRole, Team
 User = get_user_model()
 
 
+@pytest.mark.timeout(600)
 class PermissionEnforcementTest(TestCase):
     """Test permission enforcement for retrospective operations"""
-    
-    def setUp(self):
-        """Set up test data with different user roles"""
-        self.organization = Organization.objects.create(
+
+    @classmethod
+    def setUpTestData(cls):
+        """Create shared test data once per class (avoids repeated tenant schema DDL)."""
+        cls.organization = Organization.objects.create(
             name='Permission Test Org',
             email_domain='permission.com'
         )
-        
-        self.team = Team.objects.create(
+        cls.team = Team.objects.create(
             name='Test Team',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        self.campaign = Project.objects.create(
+        cls.campaign = Project.objects.create(
             name='Permission Campaign',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        # Create users with different roles
-        self.data_analyst = User.objects.create_user(
+        cls.data_analyst = User.objects.create_user(
             username='analyst',
             email='analyst@permission.com',
             password='testpass123',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        self.team_lead = User.objects.create_user(
+        cls.team_lead = User.objects.create_user(
             username='teamlead',
             email='tl@permission.com',
             password='testpass123',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        self.org_admin = User.objects.create_user(
+        cls.org_admin = User.objects.create_user(
             username='orgadmin',
             email='admin@permission.com',
             password='testpass123',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        self.unauthorized_user = User.objects.create_user(
+        cls.unauthorized_user = User.objects.create_user(
             username='unauthorized',
             email='unauth@permission.com',
             password='testpass123',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        # Create roles
-        self.analyst_role = Role.objects.create(
+        cls.analyst_role = Role.objects.create(
             name='Data Analyst',
-            organization=self.organization,
+            organization=cls.organization,
             level=3
         )
-        
-        self.tl_role = Role.objects.create(
+        cls.tl_role = Role.objects.create(
             name='Team Lead',
-            organization=self.organization,
+            organization=cls.organization,
             level=7
         )
-        
-        self.admin_role = Role.objects.create(
+        cls.admin_role = Role.objects.create(
             name='Org Admin',
-            organization=self.organization,
+            organization=cls.organization,
             level=10
         )
-        
-        # Assign roles to users
         UserRole.objects.create(
-            user=self.data_analyst,
-            role=self.analyst_role,
-            team=self.team
+            user=cls.data_analyst,
+            role=cls.analyst_role,
+            team=cls.team
         )
-        
         UserRole.objects.create(
-            user=self.team_lead,
-            role=self.tl_role,
-            team=self.team
+            user=cls.team_lead,
+            role=cls.tl_role,
+            team=cls.team
         )
-        
         UserRole.objects.create(
-            user=self.org_admin,
-            role=self.admin_role,
-            team=self.team
+            user=cls.org_admin,
+            role=cls.admin_role,
+            team=cls.team
         )
-        
+
+    def setUp(self):
+        """Refresh shared objects each test to clear any stale permission/state caches."""
+        self.organization = Organization.objects.get(pk=self.__class__.organization.pk)
+        self.team = Team.objects.get(pk=self.__class__.team.pk)
+        self.campaign = Project.objects.get(pk=self.__class__.campaign.pk)
+        self.data_analyst = User.objects.get(pk=self.__class__.data_analyst.pk)
+        self.team_lead = User.objects.get(pk=self.__class__.team_lead.pk)
+        self.org_admin = User.objects.get(pk=self.__class__.org_admin.pk)
+        self.unauthorized_user = User.objects.get(pk=self.__class__.unauthorized_user.pk)
+        self.analyst_role = Role.objects.get(pk=self.__class__.analyst_role.pk)
+        self.tl_role = Role.objects.get(pk=self.__class__.tl_role.pk)
+        self.admin_role = Role.objects.get(pk=self.__class__.admin_role.pk)
         self.client = APIClient()
 
     def _retrospective_payload(self):
@@ -370,43 +369,47 @@ class PermissionEnforcementTest(TestCase):
         self.assertTrue(len(response.data) > 0)
 
 
+@pytest.mark.timeout(600)
 class ReportApprovalWorkflowTest(TestCase):
     """Test complete report approval workflow with permissions"""
-    
-    def setUp(self):
-        self.organization = Organization.objects.create(
+
+    @classmethod
+    def setUpTestData(cls):
+        """Create shared test data once per class (avoids repeated tenant schema DDL)."""
+        cls.organization = Organization.objects.create(
             name='Approval Test Org',
             email_domain='approval.com'
         )
-        
-        self.campaign = Project.objects.create(
+        cls.campaign = Project.objects.create(
             name='Approval Campaign',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        self.analyst = User.objects.create_user(
+        cls.analyst = User.objects.create_user(
             username='analyst2',
             email='analyst2@approval.com',
             password='testpass123',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        self.approver = User.objects.create_user(
+        cls.approver = User.objects.create_user(
             username='approver',
             email='approver@approval.com',
             password='testpass123',
-            organization=self.organization
+            organization=cls.organization
         )
-        
-        # Add approve permission to approver
         content_type = ContentType.objects.get_for_model(RetrospectiveTask)
         permission, _ = Permission.objects.get_or_create(
             codename='approve_report',
             name='Can approve retrospective reports',
             content_type=content_type
         )
-        self.approver.user_permissions.add(permission)
-        
+        cls.approver.user_permissions.add(permission)
+
+    def setUp(self):
+        """Refresh shared objects each test to clear any stale permission/state caches."""
+        self.organization = Organization.objects.get(pk=self.__class__.organization.pk)
+        self.campaign = Project.objects.get(pk=self.__class__.campaign.pk)
+        self.analyst = User.objects.get(pk=self.__class__.analyst.pk)
+        self.approver = User.objects.get(pk=self.__class__.approver.pk)
         self.client = APIClient()
 
     def _retrospective_payload(self):

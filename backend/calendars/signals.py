@@ -112,7 +112,10 @@ def generate_calendar_events_for_task(sender, instance, created, **kwargs):
     start date input. planned_start_date was considered but is not wired to the
     frontend, so start_date is the correct field to use here.
     """
-    organization = getattr(instance.project, 'organization', None)
+    try:
+        organization = getattr(instance.project, 'organization', None)
+    except Exception:
+        return
     if not organization:
         return
 

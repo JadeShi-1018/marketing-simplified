@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
+  Check,
   Mail,
   ShieldCheck,
   Sparkles,
@@ -17,7 +18,9 @@ import {
   ProjectAPI,
   ProjectData,
 } from '@/lib/api/projectApi';
+import { OrganizationAPI } from '@/lib/api/organizationApi';
 import { useOnboarding } from '@/contexts/OnboardingContext';
+import { useAuthStore } from '@/lib/authStore';
 import { useRouter } from 'next/navigation';
 
 type WizardStep = {
@@ -44,6 +47,11 @@ const defaultKpis = {
 
 const steps: WizardStep[] = [
   {
+    id: 'organization',
+    title: 'Create Your Organization',
+    description: 'Create your own organization or join an existing one to start your first project.',
+  },
+  {
     id: 'projectName',
     title: 'Name Your Project',
     description: 'Create your first project to unlock the dashboard.',
@@ -61,6 +69,20 @@ const steps: WizardStep[] = [
 ];
 
 type WizardState = {
+  // Organization related state
+  organizationMode: 'create' | 'join';
+  organizationName: string;
+  organizationSlug: string;
+  selectedOrganization: {
+    id: number;
+    name: string;
+    slug: string;
+    member_count?: number;
+  } | null;
+  // Tracks the org action already committed to the backend so Back can undo it
+  committedOrg: { id: number; action: 'create' | 'join' } | null;
+
+  // Original state
   projectName: string;
   mediaWorkTypes: string[];
   inviteEmails: string[];
@@ -68,6 +90,14 @@ type WizardState = {
 };
 
 const initialState: WizardState = {
+  // Organization defaults
+  organizationMode: 'create',
+  organizationName: '',
+  organizationSlug: '',
+  selectedOrganization: null,
+  committedOrg: null,
+
+  // Original defaults
   projectName: '',
   mediaWorkTypes: [],
   inviteEmails: [],
@@ -82,11 +112,15 @@ type OnboardingWizardProps = {
 const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
   const { markCompleted, fetchError, refreshProjects } = useOnboarding();
   const router = useRouter();
+  const currentUserId = useAuthStore((s) => s.user?.id);
   const [state, setState] = useState<WizardState>(initialState);
   const [currentStep, setCurrentStep] = useState(0);
   const [stepError, setStepError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [validatingSlug, setValidatingSlug] = useState(false);
+  const [undoing, setUndoing] = useState(false);
+  const slugInputRef = useRef<HTMLInputElement>(null);
 
   const progress = useMemo(
     () => Math.round(((currentStep + 1) / steps.length) * 100),
@@ -139,8 +173,99 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
     });
   };
 
+  // Organization API handlers
+  const handleCreateOrganization = async (name: string) => {
+    try {
+      const response = await OrganizationAPI.createOrganization({ name });
+      updateState({
+        selectedOrganization: {
+          id: response.organization.id,
+          name: response.organization.name,
+          slug: response.organization.slug,
+          member_count: response.organization.member_count,
+        },
+        committedOrg: { id: response.organization.id, action: 'create' },
+      });
+      toast.success(`Organization "${response.organization.name}" created successfully!`);
+      return true;
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || 'Failed to create organization';
+      setStepError(message);
+      toast.error(message);
+      return false;
+    }
+  };
+
+  const handleValidateSlug = async (slug: string) => {
+    if (!slug.trim()) {
+      setStepError('Please enter your organization code.');
+      return;
+    }
+
+    setValidatingSlug(true);
+    setStepError(null);
+
+    try {
+      const response = await OrganizationAPI.validateSlug(slug.trim());
+      if (response.exists && response.organization) {
+        updateState({ selectedOrganization: response.organization });
+        toast.success(`Found organization: ${response.organization.name}`);
+        slugInputRef.current?.blur();
+      } else {
+        setStepError('Organization not found. Please check the code and try again.');
+        updateState({ selectedOrganization: null });
+      }
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || 'Failed to validate organization code';
+      setStepError(message);
+      updateState({ selectedOrganization: null });
+    } finally {
+      setValidatingSlug(false);
+    }
+  };
+
+  const handleJoinOrganization = async (slug: string) => {
+    try {
+      const response = await OrganizationAPI.joinOrganization({ slug });
+      updateState({
+        selectedOrganization: {
+          id: response.organization.id,
+          name: response.organization.name,
+          slug: response.organization.slug,
+          member_count: response.organization.member_count,
+        },
+        committedOrg: { id: response.organization.id, action: 'join' },
+      });
+      toast.success(`Successfully joined "${response.organization.name}"!`);
+      return true;
+    } catch (error: any) {
+      const message = error?.response?.data?.error || error?.message || 'Failed to join organization';
+      setStepError(message);
+      toast.error(message);
+      return false;
+    }
+  };
+
   const validateStep = (stepIndex: number) => {
     switch (steps[stepIndex].id) {
+      case 'organization':
+        if (state.organizationMode === 'create') {
+          if (!state.organizationName.trim()) {
+            setStepError('Organization name is required.');
+            return false;
+          }
+        } else {
+          // Join mode
+          if (!state.organizationSlug.trim()) {
+            setStepError('Organization code is required.');
+            return false;
+          }
+          if (!state.selectedOrganization) {
+            setStepError('Please validate the organization code first.');
+            return false;
+          }
+        }
+        return true;
       case 'projectName':
         if (!state.projectName.trim()) {
           setStepError('Project name is required.');
@@ -158,14 +283,63 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (!validateStep(currentStep)) return;
+
+    // Handle organization step with async API call
+    if (steps[currentStep].id === 'organization') {
+      setSubmitting(true);
+      let success = false;
+
+      if (state.organizationMode === 'create') {
+        success = await handleCreateOrganization(state.organizationName.trim());
+      } else {
+        success = await handleJoinOrganization(state.organizationSlug.trim());
+      }
+
+      setSubmitting(false);
+
+      if (!success) return; // Don't proceed if API call failed
+    }
+
     setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1));
   };
 
-  const handleBack = () => {
+  const handleBack = async () => {
     setSubmitError(null);
     setStepError(null);
+
+    // Going back from step 1 (projectName) to step 0 (organization) —
+    // undo the org action that was already committed to the backend.
+    if (currentStep === 1 && state.committedOrg) {
+      const { id, action } = state.committedOrg;
+      setUndoing(true);
+      try {
+        if (action === 'create') {
+          // force=true bypasses the last-org check for new users
+          await OrganizationAPI.deleteOrganization(id, true);
+        } else {
+          // Remove self from the joined org
+          if (currentUserId) {
+            await OrganizationAPI.removeMember(id, Number(currentUserId));
+          }
+        }
+        // Reset org-related state so the user starts fresh on step 0
+        updateState({
+          committedOrg: null,
+          selectedOrganization: null,
+          organizationName: '',
+          organizationSlug: '',
+        });
+      } catch {
+        // Undo failed — still let the user go back; they can tidy up manually
+        toast.error('Could not undo the previous action. You can remove the organization manually.');
+        updateState({ committedOrg: null, selectedOrganization: null });
+      } finally {
+        setUndoing(false);
+      }
+    }
+
     setCurrentStep((prev) => Math.max(prev - 1, 0));
   };
 
@@ -194,11 +368,11 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
       }
 
       markCompleted(project);
-      // Refresh projects in store and navigate to the main workspace
-      refreshProjects().finally(() => {
-        router.push('/overview');
-      });
       toast.success('Onboarding complete. Project created!');
+
+      // Navigate immediately since markCompleted already set the active project
+      // We'll let the main app refresh projects on mount
+      router.push('/overview');
     } catch (error: any) {
       const message = error?.response?.data?.error || error?.message || 'Failed to finish onboarding';
       setSubmitError(message);
@@ -235,6 +409,93 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
 
   const renderStepContent = () => {
     switch (steps[currentStep].id) {
+      case 'organization':
+        return (
+          <div className="space-y-4">
+            {state.organizationMode === 'create' ? (
+              <>
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-gray-700">Organization name</label>
+                  <input
+                    type="text"
+                    value={state.organizationName}
+                    onChange={(e) => updateState({ organizationName: e.target.value })}
+                    placeholder="e.g. Acme Corporation"
+                    className="w-full rounded-lg border border-gray-200 px-3 py-2 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 focus:outline-none transition"
+                    disabled={submitting}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateState({ organizationMode: 'join', organizationName: '' })}
+                  className="text-sm text-[#3CCED7] hover:text-[#0F172A] hover:underline transition"
+                  disabled={submitting}
+                >
+                  Want to join an existing organization?
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <label className="block text-sm font-medium text-gray-700">Organization code</label>
+                  <div className="flex gap-2">
+                    <input
+                      ref={slugInputRef}
+                      type="text"
+                      value={state.organizationSlug}
+                      onChange={(e) => {
+                        updateState({ organizationSlug: e.target.value, selectedOrganization: null });
+                        setStepError(null);
+                      }}
+                      onFocus={() => {
+                        if (state.selectedOrganization) {
+                          updateState({ selectedOrganization: null });
+                        }
+                      }}
+                      placeholder="e.g. acme-corp"
+                      className="flex-1 rounded-lg border border-gray-200 px-3 py-2 focus:border-[#3CCED7] focus:ring-2 focus:ring-[#3CCED7]/20 focus:outline-none transition"
+                      disabled={validatingSlug || submitting}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleValidateSlug(state.organizationSlug)}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gradient-to-br from-[#3CCED7] to-[#A6E661] text-white font-medium hover:opacity-90 transition disabled:opacity-60"
+                      disabled={!state.organizationSlug.trim() || validatingSlug || submitting}
+                    >
+                      {validatingSlug ? (
+                        'Validating...'
+                      ) : state.selectedOrganization ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          Validated
+                        </>
+                      ) : (
+                        'Validate'
+                      )}
+                    </button>
+                  </div>
+                  {state.selectedOrganization && (
+                    <div className="rounded-lg border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-4 py-3 text-sm">
+                      <div className="font-semibold text-gray-900">{state.selectedOrganization.name}</div>
+                      <div className="text-gray-600">Organization code: {state.selectedOrganization.slug}</div>
+                      {state.selectedOrganization.member_count !== undefined && (
+                        <div className="text-gray-600">{state.selectedOrganization.member_count} members</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => updateState({ organizationMode: 'create', organizationSlug: '', selectedOrganization: null })}
+                  className="text-sm text-[#3CCED7] hover:text-[#0F172A] hover:underline transition"
+                  disabled={submitting}
+                >
+                  Don&apos;t have a code? Create your own organization
+                </button>
+              </>
+            )}
+          </div>
+        );
       case 'projectName':
         return (
           <div className="space-y-3">
@@ -401,11 +662,11 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
               <button
                 type="button"
                 onClick={handleBack}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-100"
-                disabled={submitting}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 rounded-lg border border-gray-200 hover:bg-gray-100 disabled:opacity-60"
+                disabled={submitting || undoing}
               >
                 <ArrowLeft className="w-4 h-4" />
-                Back
+                {undoing ? 'Undoing…' : 'Back'}
               </button>
             )}
 
@@ -414,7 +675,7 @@ const OnboardingWizard: React.FC<OnboardingWizardProps> = ({ onExit }) => {
                 type="button"
                 onClick={handleNext}
                 className="inline-flex items-center gap-2 px-5 py-2 text-sm font-semibold text-white bg-gradient-to-br from-[#3CCED7] to-[#A6E661] rounded-lg hover:opacity-90 disabled:opacity-70"
-                disabled={submitting}
+                disabled={submitting || undoing}
               >
                 Next
                 <ArrowRight className="w-4 h-4" />

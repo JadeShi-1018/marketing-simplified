@@ -525,6 +525,7 @@ def call_gemini_miro_generator(
         temperature=0.5,
         max_output_tokens=4096,
         response_mime_type='application/json',
+        call_purpose='miro_generation',
     )
     outputs = _json.loads(result['text'])
     snapshot = _extract_snapshot_candidate(outputs)

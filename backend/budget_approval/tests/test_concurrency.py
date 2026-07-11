@@ -1,13 +1,15 @@
 import pytest
 import threading
 import time
+import uuid
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import connection, transaction
 from budget_approval.models import BudgetRequestStatus, BudgetRequest, BudgetPool
 from budget_approval.services import BudgetRequestService
 from core.models import AdChannel
+from core.services.tenant import slug_to_schema_name
 from task.models import Task
 
 
@@ -19,9 +21,18 @@ class TestConcurrentSubmissions:
     def submit_request(user_id, task_id, amount, budget_pool_id, approver_id, ad_channel_id, results, errors):
         """Helper function to submit a budget request"""
         try:
+            # Each spawned thread gets a fresh DB connection whose search_path defaults to
+            # 'public'. Test fixtures that depend on tenant_schema create objects in the
+            # org schema (task, budget_pool, ad_channel). Set the correct search_path
+            # before entering the transaction so those objects are visible.
+            User = get_user_model()
+            _user = User.objects.get(id=user_id)  # User lives in public schema
+            _schema = slug_to_schema_name(_user.organization.slug)
+            with connection.cursor() as _cur:
+                _cur.execute(f'SET search_path TO {_schema}, public')
+
             with transaction.atomic():
                 # Re-fetch objects in the thread context to avoid database connection issues
-                User = get_user_model()
                 user = User.objects.get(id=user_id)
                 task = Task.objects.get(id=task_id)
                 budget_pool = BudgetPool.objects.get(id=budget_pool_id)
@@ -67,25 +78,26 @@ class TestConcurrentSubmissions:
         # This test demonstrates that all the requests can be created successfully, but only one request can be submitted successfully
         # due to concurrency control using select_for_update(nowait=True)
         
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a second task for user2
         task2 = Task.objects.create(
             summary="Test Task 2",
             type="budget",
             project=task.project
         )
-        
+
         results = []
         errors = []
-        
+
         # Create two threads for concurrent submissions
         thread1 = threading.Thread(
             target=TestConcurrentSubmissions.submit_request,
@@ -127,25 +139,26 @@ class TestConcurrentSubmissions:
         # This test demonstrates that all the requests can be created successfully, but only one request can be submitted successfully
         # due to concurrency control using select_for_update(nowait=True)
 
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a second task for user2
         task2 = Task.objects.create(
             summary="Test Task 2",
             type="budget",
             project=task.project
         )
-        
+
         results = []
         errors = []
-        
+
         # Create two threads for concurrent submissions that exceed pool
         thread1 = threading.Thread(
             target=TestConcurrentSubmissions.submit_request,
@@ -187,15 +200,16 @@ class TestConcurrentSubmissions:
     def test_concurrent_approvals_same_request(self, user1, task, budget_pool, ad_channel):
         """Test concurrent approvals of the same request - simulate user double-making the decision due to network lag"""
         
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a budget request
         budget_request = BudgetRequestService.create_budget_request({
             'task': task,
@@ -222,9 +236,14 @@ class TestConcurrentSubmissions:
         def approve_request(approver_id, is_approved, request_id):
             """Helper function to approve a budget request"""
             try:
+                User = get_user_model()
+                _user = User.objects.get(id=approver_id)  # User lives in public schema
+                _schema = slug_to_schema_name(_user.organization.slug)
+                with connection.cursor() as _cur:
+                    _cur.execute(f'SET search_path TO {_schema}, public')
+
                 with transaction.atomic():
                     # Re-fetch objects in the thread context
-                    User = get_user_model()
                     approver = User.objects.get(id=approver_id)
                     current_request = BudgetRequest.objects.get(id=request_id)
                     
@@ -279,15 +298,16 @@ class TestConcurrentSubmissions:
 
     def test_concurrent_lock_operations(self, user1, task, budget_pool, ad_channel):
         """Test concurrent lock operations on the same request - simulating user double-clicking due to network lag"""
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a budget request
         budget_request = BudgetRequestService.create_budget_request({
             'task': task,
@@ -319,10 +339,14 @@ class TestConcurrentSubmissions:
         # Now test concurrent lock operations (simulating user double-clicking the lock button)
         results = []
         errors = []
+        _org_schema = slug_to_schema_name(user1.organization.slug)
 
         def lock_request():
             """Helper function to lock a budget request"""
             try:
+                with connection.cursor() as _cur:
+                    _cur.execute(f'SET search_path TO {_org_schema}, public')
+
                 with transaction.atomic():
                     # Re-fetch the request in the thread context
                     current_request = BudgetRequest.objects.get(id=budget_request.id)

@@ -21,29 +21,30 @@ User = get_user_model()
 
 class BaseIntegrationTestCase(APITestCase):
     """Base test case for integration testing with common setup"""
-    
+
     def setUp(self):
         """Set up common test data"""
-        # Create test users
+        # Create test users (class-specific prefix to avoid conflicts with other
+        # test files/classes when databases are shared across pytest-xdist workers).
         self.owner = User.objects.create_user(
-            email='owner@example.com',
-            username='owner',
+            email='owner.integ@example.com',
+            username='ownerinteg',
             password='testpass123'
         )
         self.reviewer = User.objects.create_user(
-            email='reviewer@example.com',
-            username='reviewer',
+            email='reviewer.integ@example.com',
+            username='reviewerinteg',
             password='testpass123'
         )
         self.approver = User.objects.create_user(
-            email='approver@example.com',
-            username='approver',
+            email='approver.integ@example.com',
+            username='approverinteg',
             password='testpass123'
         )
-        
-        # Create test organization and team
+
+        # Create test organization and team (unique name for this test module)
         self.organization = Organization.objects.create(
-            name="Test Organization"
+            name="AssetIntegration Org"
         )
         self.team = Team.objects.create(
             organization=self.organization,
@@ -53,9 +54,15 @@ class BaseIntegrationTestCase(APITestCase):
         # Create project and task (core models)
         self.project = Project.objects.create(name="Integration Test Project", organization=self.organization)
         self.task = Task.objects.create(summary="Integration Test Task", type="asset", project=self.project)
-        
-        # Authenticate as owner by default
+
+        # Authenticate as owner by default. All objects are created in the public
+        # schema (provision_tenant_schema resets search_path to public after
+        # provisioning), so we do NOT pass HTTP_X_ORGANIZATION_SLUG — the
+        # middleware must also use the public schema for HTTP requests.
         self.client.force_authenticate(user=self.owner)
+
+    def tearDown(self):
+        super().tearDown()
     
     def create_test_file(self, filename='test_file.txt', content='Test content for integration testing'):
         """Helper method to create a test file"""

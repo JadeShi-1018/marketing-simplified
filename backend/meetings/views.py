@@ -14,7 +14,7 @@ from django.db.models.deletion import ProtectedError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
-from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -163,7 +163,7 @@ class MeetingViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
     def get_project(self) -> Project:
         project_id = self.kwargs.get("project_id")
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
         _ensure_project_membership(self.request.user, project)
         return project
 
@@ -1241,7 +1241,7 @@ class MeetingAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         project_id = self.kwargs.get('project_id')
 
         # Verify project membership
-        project = get_object_or_404(Project, **resolve_lookup_kwargs(project_id, 'id'))
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
         _ensure_project_membership(self.request.user, project)
 
         # Get meeting and verify it belongs to project

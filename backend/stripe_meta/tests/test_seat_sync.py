@@ -8,12 +8,15 @@ import stripe
 from datetime import timedelta
 from unittest.mock import patch, Mock
 
+from django.db import connection
 from django.test import TestCase
 from django.utils import timezone
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
+
+from core.services.tenant import slug_to_schema_name
 
 from core.models import Organization, Role
 from access_control.models import UserRole
@@ -37,6 +40,14 @@ class SeatSyncTestBase(TestCase):
         Plan.objects.all().delete()
 
         self.org = Organization.objects.create(name='Seat Sync Org', slug='seat-sync-org')
+
+        # access_control_userrole lives only in the tenant schema.
+        # provision_tenant_schema() resets search_path to public when it
+        # finishes, so we must re-set it before writing tenant-only models.
+        _schema = slug_to_schema_name(self.org.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
+
         self.user = User.objects.create_user(
             email='admin@test.com', username='adminuser', password='testpass',
         )
@@ -79,6 +90,11 @@ class SeatSyncTestBase(TestCase):
         self.org_token = generate_organization_access_token(self.user)
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
+
+    def tearDown(self):
+        super().tearDown()
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
 
     def _switch_post(self, plan_id):
         return self.client.post(
@@ -381,6 +397,14 @@ class FreeSeatCapTest(TestCase):
             self.free_plan.save(update_fields=['included_seats'])
 
         self.org = Organization.objects.create(name='Free Org', slug='free-org-seatcap')
+
+        # access_control_userrole lives only in the tenant schema.
+        # provision_tenant_schema() resets search_path to public when it
+        # finishes, so we must re-set it before writing tenant-only models.
+        _schema = slug_to_schema_name(self.org.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
+
         # Signal has fired: sentinel subscription created with seat_count=1 (model default).
         # Guard: if signal silently failed (e.g. plan lookup race), create sentinel manually.
         self.sentinel, _ = Subscription.objects.get_or_create(
@@ -413,6 +437,11 @@ class FreeSeatCapTest(TestCase):
         self.org_token = generate_organization_access_token(self.admin)
         self.client = APIClient()
         self.client.force_authenticate(user=self.admin)
+
+    def tearDown(self):
+        super().tearDown()
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
 
     def test_free_org_invite_second_member_blocked(self):
         """

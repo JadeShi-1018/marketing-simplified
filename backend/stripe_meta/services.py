@@ -3,7 +3,7 @@ from datetime import datetime, timezone as datetime_timezone
 
 import stripe
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Sum
 from django.utils import timezone
 
 from core.models import CustomUser
@@ -11,6 +11,55 @@ from stripe_meta.exceptions import QuotaError
 from stripe_meta.models import UsageMonthly, Subscription
 
 logger = logging.getLogger(__name__)
+
+
+# Human-readable labels for each call_purpose
+_PURPOSE_LABELS = {
+    'data_analysis':       'Data Analysis',
+    'column_detection':    'Column Detection',
+    'criteria_generation': 'Criteria Generation',
+    'miro_generation':     'Miro Generation',
+    'follow_up_chat':      'Follow-up Chat',
+    'calendar_suggestion': 'Calendar Suggestion',
+    'other':               'Other',
+}
+
+
+def get_usage_breakdown(organization, year_month: str) -> list[dict]:
+    """
+    Return per-purpose aggregated token usage for the given org/month.
+
+    Each item: { purpose, label, normalized_tokens, total_cost_cents }
+    Sorted by normalized_tokens descending so the top consumers appear first.
+    Items with 0 tokens are omitted.
+    """
+    from stripe_meta.models import LLMCallLog  # noqa: PLC0415
+
+    rows = (
+        LLMCallLog.objects
+        .filter(
+            organization=organization,
+            created_at__startswith=year_month,
+            success=True,
+        )
+        .values('call_purpose')
+        .annotate(
+            total_normalized=Sum('normalized_tokens'),
+            total_cost=Sum('total_cost_cents'),
+        )
+        .order_by('-total_normalized')
+    )
+
+    return [
+        {
+            'purpose': row['call_purpose'],
+            'label': _PURPOSE_LABELS.get(row['call_purpose'], row['call_purpose']),
+            'normalized_tokens': row['total_normalized'] or 0,
+            'total_cost_cents': row['total_cost'] or 0,
+        }
+        for row in rows
+        if (row['total_normalized'] or 0) > 0
+    ]
 
 
 class InvoiceHistoryError(Exception):
@@ -149,6 +198,43 @@ def commit_quota(organization, actual_tokens: int, reserved_tokens: int, year_mo
             tokens_reserved=F('tokens_reserved') - reserved_tokens,
             tokens_used=F('tokens_used') + actual_tokens,
             overage_tokens=F('overage_tokens') + overage_delta,
+        )
+
+    # Emit org activity events for token milestones (outside the lock, best-effort)
+    if quota:
+        _emit_token_milestone_events(organization, before_used, new_used, quota, overage_delta, ym)
+
+
+def _emit_token_milestone_events(organization, before_used, new_used, quota, overage_delta, ym):
+    """Check whether this commit crossed a quota threshold and emit activity events."""
+    try:
+        from core.services.organization_activity import log_org_activity  # noqa: PLC0415
+    except ImportError:
+        return
+
+    pct_before = before_used / quota * 100
+    pct_after = new_used / quota * 100
+
+    for threshold in (80, 100):
+        if pct_before < threshold <= pct_after:
+            if threshold == 100:
+                log_org_activity(
+                    organization,
+                    'token_quota_exceeded',
+                    metadata={'year_month': ym, 'threshold': threshold, 'quota': quota},
+                )
+            else:
+                log_org_activity(
+                    organization,
+                    'token_quota_warning',
+                    metadata={'year_month': ym, 'threshold': threshold, 'quota': quota},
+                )
+
+    if overage_delta > 0 and before_used <= quota:
+        log_org_activity(
+            organization,
+            'token_overage_started',
+            metadata={'year_month': ym, 'threshold': 100, 'quota': quota, 'overage_tokens': overage_delta},
         )
 
 

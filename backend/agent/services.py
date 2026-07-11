@@ -372,6 +372,7 @@ def _call_gemini_analysis(
         temperature=0.3,
         max_output_tokens=4096,
         response_mime_type='application/json',
+        call_purpose='data_analysis',
     )
     return json.loads(result['text'])
 
@@ -444,6 +445,7 @@ def _call_gemini_calendar_from_analysis(
             temperature=0.3,
             max_output_tokens=4096,
             response_mime_type='application/json',
+            call_purpose='calendar_suggestion',
         )
         raw = json.loads(result['text'])
     logger.info("Calling Gemini for calendar events user_id=%s", user_id)
@@ -720,6 +722,7 @@ def _call_gemini_chat(
                 temperature=0.5,
                 max_output_tokens=4096,
                 response_mime_type='application/json',
+                call_purpose='follow_up_chat',
             )
             parsed = json.loads(result['text'])
     except Exception as e:

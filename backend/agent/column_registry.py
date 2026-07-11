@@ -597,6 +597,7 @@ def _try_llm_fallback(headers: list, sample_rows: list = None, agent_session=Non
             temperature=0.2,
             max_output_tokens=2048,
             response_mime_type='application/json',
+            call_purpose='column_detection',
         )
         parsed = json.loads(result['text'])
         return _parse_llm_response(headers, parsed)

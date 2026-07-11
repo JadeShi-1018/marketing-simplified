@@ -4,6 +4,7 @@ from freezegun import freeze_time
 from budget_approval.models import BudgetRequestStatus
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestBudgetRequestFSM:
     """Test BudgetRequest FSM transitions"""
     

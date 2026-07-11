@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 from decimal import Decimal
+from unittest.mock import patch
 
 from core.models import Organization, Project, ProjectMember
 from campaign.models import (
@@ -172,7 +173,8 @@ class CampaignViewSetCRUDTestCase(CampaignViewSetBaseTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['status'], 'PLANNING')
     
-    def test_create_campaign(self):
+    @patch('campaign.views.CampaignTaskIntegrationService.on_campaign_created')
+    def test_create_campaign(self, mock_on_campaign_created):
         """Test creating a campaign"""
         url = '/api/campaigns/'
         data = {

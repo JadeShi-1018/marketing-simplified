@@ -45,23 +45,45 @@ class ProjectWorkspaceDashboardTest(TestCase):
             name="Project Beta", organization=self.org, owner=self.user
         )
 
+        # Purge any committed data left over from a previous run's TransactionTestCase
+        # tests.  When --keepdb is used across runs, sequence resets (RESTART IDENTITY)
+        # in those tests mean our freshly created project pks can collide with project
+        # pks from committed historical rows, causing the view to return stale task /
+        # decision / spreadsheet rows alongside (or instead of) the rows we just made.
+        Task.objects.filter(project__in=[self.project, self.other_project]).delete()
+        Decision.objects.filter(project__in=[self.project, self.other_project]).delete()
+        Spreadsheet.objects.filter(project__in=[self.project, self.other_project]).delete()
+
+        # Ensure the test user has no organization so TenantSchemaMiddleware
+        # keeps search_path on the public schema for all view queries.
+        # The middleware checks current_organization_id first, then organization_id.
+        self.user.organization = None
+        self.user.current_organization = None
+        self.user.save(update_fields=["organization", "current_organization"])
+
         # Auth client
         self.client = APIClient()
         self.client.force_authenticate(user=self.user)
 
-        self.url = f"/api/dashboard/workspace/?project_id={self.project.slug}"
+        # Use numeric pk so resolve_project_pk returns the int directly
+        # (no slug DB lookup that would be sensitive to search_path changes).
+        self.url = f"/api/dashboard/workspace/?project_id={self.project.pk}"
 
     # ── helpers ────────────────────────────────────────────────────────────
 
     def _make_task(self, project, status=Task.Status.SUBMITTED, due_date=None):
-        return Task.objects.create(
+        # FSMField with protected=True cannot be set directly via objects.create().
+        # Create with default DRAFT, then bypass the FSM via QuerySet.update().
+        task = Task.objects.create(
             summary="Test Task",
             project=project,
             owner=self.user,
             type="execution",
-            status=status,
             due_date=due_date,
         )
+        if status != Task.Status.DRAFT:
+            Task.objects.filter(pk=task.pk).update(status=status)
+        return task
 
     def _make_decision(self, project, dec_status=Decision.Status.COMMITTED):
         return Decision.objects.create(
@@ -360,10 +382,11 @@ class ProjectWorkspaceDashboardTest(TestCase):
             project=project,
             owner=self.user,
             type="execution",
-            status=status,
             content_type=ContentType.objects.get_for_model(DecisionModel),
             object_id=str(decision.id),
         )
+        if status != Task.Status.DRAFT:
+            Task.objects.filter(pk=task.pk).update(status=status)
         return task
 
     def test_decision_linked_tasks_shown_first(self):
