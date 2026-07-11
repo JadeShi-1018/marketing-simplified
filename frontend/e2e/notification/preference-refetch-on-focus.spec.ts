@@ -26,6 +26,6 @@ test('Preference update syncs when one UI changed in another session', async ({ 
   // Examine Toggle UI reflects server state within 5s of focus
   await expect(pageB.getByRole('switch').first()).toHaveAttribute('aria-checked', stateA, {timeout: 5000});
 
-  contextA.close();
-  contextB.close();
+  await contextA.close();
+  await contextB.close();
 });
