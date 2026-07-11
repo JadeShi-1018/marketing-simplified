@@ -1,6 +1,7 @@
 import pytest
 import threading
 import time
+import uuid
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
@@ -67,25 +68,26 @@ class TestConcurrentSubmissions:
         # This test demonstrates that all the requests can be created successfully, but only one request can be submitted successfully
         # due to concurrency control using select_for_update(nowait=True)
         
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a second task for user2
         task2 = Task.objects.create(
             summary="Test Task 2",
             type="budget",
             project=task.project
         )
-        
+
         results = []
         errors = []
-        
+
         # Create two threads for concurrent submissions
         thread1 = threading.Thread(
             target=TestConcurrentSubmissions.submit_request,
@@ -127,25 +129,26 @@ class TestConcurrentSubmissions:
         # This test demonstrates that all the requests can be created successfully, but only one request can be submitted successfully
         # due to concurrency control using select_for_update(nowait=True)
 
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a second task for user2
         task2 = Task.objects.create(
             summary="Test Task 2",
             type="budget",
             project=task.project
         )
-        
+
         results = []
         errors = []
-        
+
         # Create two threads for concurrent submissions that exceed pool
         thread1 = threading.Thread(
             target=TestConcurrentSubmissions.submit_request,
@@ -187,15 +190,16 @@ class TestConcurrentSubmissions:
     def test_concurrent_approvals_same_request(self, user1, task, budget_pool, ad_channel):
         """Test concurrent approvals of the same request - simulate user double-making the decision due to network lag"""
         
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a budget request
         budget_request = BudgetRequestService.create_budget_request({
             'task': task,
@@ -279,15 +283,16 @@ class TestConcurrentSubmissions:
 
     def test_concurrent_lock_operations(self, user1, task, budget_pool, ad_channel):
         """Test concurrent lock operations on the same request - simulating user double-clicking due to network lag"""
-        # Create an approver user
+        # Create an approver user with a unique username to avoid parallel-worker conflicts
         User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
         approver = User.objects.create_user(
-            username='approver',
-            email='approver@test.com',
+            username=f'approver_{uid}',
+            email=f'approver_{uid}@test.com',
             password='testpass123',
             organization=user1.organization
         )
-        
+
         # Create a budget request
         budget_request = BudgetRequestService.create_budget_request({
             'task': task,
