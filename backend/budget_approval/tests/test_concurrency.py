@@ -5,10 +5,11 @@ import uuid
 from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import connection, transaction
 from budget_approval.models import BudgetRequestStatus, BudgetRequest, BudgetPool
 from budget_approval.services import BudgetRequestService
 from core.models import AdChannel
+from core.services.tenant import slug_to_schema_name
 from task.models import Task
 
 
@@ -20,9 +21,18 @@ class TestConcurrentSubmissions:
     def submit_request(user_id, task_id, amount, budget_pool_id, approver_id, ad_channel_id, results, errors):
         """Helper function to submit a budget request"""
         try:
+            # Each spawned thread gets a fresh DB connection whose search_path defaults to
+            # 'public'. Test fixtures that depend on tenant_schema create objects in the
+            # org schema (task, budget_pool, ad_channel). Set the correct search_path
+            # before entering the transaction so those objects are visible.
+            User = get_user_model()
+            _user = User.objects.get(id=user_id)  # User lives in public schema
+            _schema = slug_to_schema_name(_user.organization.slug)
+            with connection.cursor() as _cur:
+                _cur.execute(f'SET search_path TO {_schema}, public')
+
             with transaction.atomic():
                 # Re-fetch objects in the thread context to avoid database connection issues
-                User = get_user_model()
                 user = User.objects.get(id=user_id)
                 task = Task.objects.get(id=task_id)
                 budget_pool = BudgetPool.objects.get(id=budget_pool_id)
@@ -226,9 +236,14 @@ class TestConcurrentSubmissions:
         def approve_request(approver_id, is_approved, request_id):
             """Helper function to approve a budget request"""
             try:
+                User = get_user_model()
+                _user = User.objects.get(id=approver_id)  # User lives in public schema
+                _schema = slug_to_schema_name(_user.organization.slug)
+                with connection.cursor() as _cur:
+                    _cur.execute(f'SET search_path TO {_schema}, public')
+
                 with transaction.atomic():
                     # Re-fetch objects in the thread context
-                    User = get_user_model()
                     approver = User.objects.get(id=approver_id)
                     current_request = BudgetRequest.objects.get(id=request_id)
                     
@@ -324,10 +339,14 @@ class TestConcurrentSubmissions:
         # Now test concurrent lock operations (simulating user double-clicking the lock button)
         results = []
         errors = []
+        _org_schema = slug_to_schema_name(user1.organization.slug)
 
         def lock_request():
             """Helper function to lock a budget request"""
             try:
+                with connection.cursor() as _cur:
+                    _cur.execute(f'SET search_path TO {_org_schema}, public')
+
                 with transaction.atomic():
                     # Re-fetch the request in the thread context
                     current_request = BudgetRequest.objects.get(id=budget_request.id)
