@@ -106,18 +106,25 @@ class RegisterViewTests(APITestCase):
         self.assertIn("message", response.data)
 
     def test_new_org_creator_gets_organization_admin_role(self):
-        """Registering without organization_id creates a new org and grants Organization Admin."""
+        """Registering without organization_id does not auto-create an org.
+
+        The multi-org flow requires users to create or join an organization
+        separately after registration.  No admin role should be assigned at
+        registration time.
+        """
         response = self.client.post(self.register_url, self.valid_data)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         user = User.objects.get(email=self.valid_data['email'])
+        # No organization is auto-created; user starts with no org.
+        self.assertIsNone(user.organization)
+        # No admin role is granted at registration time (assigned later when
+        # the user creates an org via the dedicated org-creation endpoint).
         is_admin = UserRole.objects.filter(
             user=user,
             role__name='Organization Admin',
-            role__level=2,
-            role__organization=user.organization,
         ).exists()
-        self.assertTrue(is_admin, "Org creator must have Organization Admin role")
+        self.assertFalse(is_admin, "No admin role should be assigned at registration")
 
     def test_joining_existing_org_does_not_grant_admin(self):
         """Registering with organization_id (joining existing org) must NOT grant admin."""

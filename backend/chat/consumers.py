@@ -10,7 +10,12 @@ from django.utils import timezone
 from django.core.cache import cache
 from .models import Chat, ChatParticipant, Message, MessageStatus
 from .services import ChatService, OnlineStatusService, MessageService
-from .tasks import build_realtime_message_payload, finalize_presence_offline, finalize_presence_offline_now
+from .tasks import (
+    build_realtime_message_payload,
+    finalize_presence_offline,
+    finalize_presence_offline_now,
+    get_offline_broadcast_params,
+)
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -111,10 +116,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             countdown=OnlineStatusService.OFFLINE_GRACE_SECONDS,
                         )
                     else:
-                        await sync_to_async(
-                            finalize_presence_offline_now,
+                        # Use get_offline_broadcast_params (sync DB/cache work) then
+                        # broadcast_presence_update (native async) to avoid the nested
+                        # sync_to_async → async_to_sync pattern that deadlocks when
+                        # InMemoryChannelLayer asyncio queues are accessed from a
+                        # worker thread while the test event loop is still running.
+                        version, recipient_ids = await sync_to_async(
+                            get_offline_broadcast_params,
                             thread_sensitive=False,
                         )(self.user.id, offline_token)
+                        if version is not None and recipient_ids:
+                            await self.broadcast_presence_update(
+                                is_online=False,
+                                recipient_ids=recipient_ids,
+                                version=version,
+                            )
             else:
                 logger.info(f"[WebSocket] User {self.user_id} disconnected (code: {close_code})")
     

@@ -57,16 +57,19 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
     (
       rawProjects: any,
       pendingInviteCount: number,
-      options?: { preferLatestActive?: boolean }
+      options?: { preferLatestActive?: boolean; skipOnboardingDecision?: boolean }
     ) => {
       const list = normalizeProjects(rawProjects);
       setProjects(list);
 
       if (list.length === 0) {
-        // A user with no projects but a pending invitation should land on
-        // /select-project (banner surfaces the invite) instead of being
-        // forced into the onboarding wizard.
-        setNeedsOnboarding(pendingInviteCount === 0);
+        // When skipOnboardingDecision is true, the caller (refreshProjects) has
+        // already set needsOnboarding from the dedicated onboarding-status API.
+        // We only fall back to the old pending-invite heuristic if the caller
+        // didn't supply an authoritative answer.
+        if (!options?.skipOnboardingDecision) {
+          setNeedsOnboarding(pendingInviteCount === 0);
+        }
         setActiveProject(null);
         return;
       }
@@ -81,7 +84,9 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
         : backendActive || latestActive || list[0];
 
       setActiveProject(nextActive);
-      setNeedsOnboarding(false);
+      if (!options?.skipOnboardingDecision) {
+        setNeedsOnboarding(false);
+      }
     },
     [setActiveProject, setNeedsOnboarding, setProjects]
   );
@@ -101,16 +106,25 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
     const activeProjectIdAtRequestStart = useProjectStore.getState().activeProject?.id ?? null;
 
     try {
-      const [projectList, invitations] = await Promise.all([
+      const [onboardingStatus, projectList, invitations] = await Promise.all([
+        ProjectAPI.getOnboardingStatus(),
         ProjectAPI.getProjects(),
         ProjectAPI.getMyPendingInvitations().catch(() => []),
       ]);
       if (requestId !== refreshRequestIdRef.current) return;
 
+      // Onboarding is driven by org membership, not by the project list.
+      // A user in an org but with no projects yet (e.g. waiting for a project
+      // invite) should NOT be pushed into the onboarding wizard.
+      setNeedsOnboarding(onboardingStatus.needs_onboarding);
+
       const pendingCount = Array.isArray(invitations) ? invitations.length : 0;
       const latestActiveProjectId = useProjectStore.getState().activeProject?.id ?? null;
       evaluateProjects(projectList, pendingCount, {
         preferLatestActive: latestActiveProjectId !== activeProjectIdAtRequestStart,
+        // When user has an org but no projects, don't trigger onboarding
+        // (evaluateProjects would set needsOnboarding=true for empty lists without this)
+        skipOnboardingDecision: true,
       });
       setFetchError(null);
       setError(null);
@@ -120,8 +134,8 @@ export const OnboardingProvider = ({ children }: { children: React.ReactNode }) 
       const message = error?.response?.data?.error || 'Failed to load projects';
       setFetchError(message);
       setError(message);
-      // If we cannot determine project membership, keep the UI blocked
-      setNeedsOnboarding(true);
+      // On error, don't block the UI with onboarding unless we know for sure
+      // there's no org — leave needsOnboarding as its current value.
     } finally {
       if (requestId !== refreshRequestIdRef.current) return;
 

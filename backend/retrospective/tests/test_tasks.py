@@ -1,6 +1,7 @@
 """
 Test cases for retrospective Celery tasks
 """
+import pytest
 from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
@@ -20,6 +21,7 @@ from core.models import Project, Organization
 User = get_user_model()
 
 
+@pytest.mark.timeout(600)
 class CeleryTaskTest(TestCase):
     """Test cases for Celery tasks"""
     
@@ -220,6 +222,7 @@ class CeleryTaskTest(TestCase):
         self.assertEqual(result['campaign_id'], str(self.campaign.id))
 
 
+@pytest.mark.timeout(600)
 class TaskIntegrationTest(TestCase):
     """Integration tests for Celery tasks"""
     

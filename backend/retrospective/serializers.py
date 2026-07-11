@@ -254,15 +254,6 @@ class InsightGenerationSerializer(serializers.Serializer):
     """Serializer for insight generation request"""
     retrospective_id = serializers.CharField()
     regenerate = serializers.BooleanField(default=False)
-    
-    def validate_retrospective_id(self, value):
-        """Validate retrospective exists"""
-        try:
-            from .models import RetrospectiveTask
-            RetrospectiveTask.objects.get(id=value)
-        except RetrospectiveTask.DoesNotExist:
-            raise serializers.ValidationError("Retrospective not found")
-        return value
 
 
 class ReportGenerationSerializer(serializers.Serializer):

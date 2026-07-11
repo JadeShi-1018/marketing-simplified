@@ -20,6 +20,7 @@ class Command(BaseCommand):
             'mailchimp.Campaign',
             'klaviyo.EmailDraft',
             'notion_editor.Draft',
+            'csm.QuickReplyTemplate',
         ]
         
         for model_path in target_models:

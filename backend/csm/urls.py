@@ -4,12 +4,14 @@ from .views import (
     QueueViewSet, QueueAgentViewSet,
     QueueTeamViewSet, CustomerUserViewSet,
     CsmNotificationViewSet, ConversationViewSet,
-    QuickReplyTemplateViewSet, TicketViewSet,
+    QuickReplyTemplateViewSet, TemplateTagViewSet, TicketViewSet,
     TicketFormViewSet,
     SupportProjectViewSet,
     CsmWorkTypeViewSet,
     SupportChannelViewSet,
     SLAPolicyViewSet,
+    TicketStatusViewSet,
+    StatusMachineView,
 )
 
 router = DefaultRouter()
@@ -18,16 +20,31 @@ router.register(r'customer-users', CustomerUserViewSet, basename='customer-user'
 router.register(r'notifications', CsmNotificationViewSet, basename='csm-notification')
 router.register(r'conversations', ConversationViewSet, basename='conversation')
 router.register(r'templates', QuickReplyTemplateViewSet, basename='quick-reply-template')
+router.register(r'template-tags', TemplateTagViewSet, basename='template-tag')
 router.register(r'tickets', TicketViewSet, basename='ticket')
 router.register(r'ticket-forms', TicketFormViewSet, basename='ticket-form')
 router.register(r'support-projects', SupportProjectViewSet, basename='support-project')
 router.register(r'work-types', CsmWorkTypeViewSet, basename='csm-work-type')
 router.register(r'support-channels', SupportChannelViewSet, basename='support-channel')
 router.register(r'sla-policy', SLAPolicyViewSet, basename='sla-policy')
+router.register(r'ticket-statuses', TicketStatusViewSet, basename='ticket-status')
 
 urlpatterns = [
     # Standard routes
     path('', include(router.urls)),
+
+    # Status machine: whole-machine GET + transition-set PUT + auto-resolve PATCH.
+    # Operates per-project (?project=), so it is not a pk-detail resource.
+    path(
+        'ticket-status-machine/',
+        StatusMachineView.as_view({'get': 'list', 'put': 'update'}),
+        name='ticket-status-machine',
+    ),
+    path(
+        'ticket-status-machine/auto-resolve/',
+        StatusMachineView.as_view({'patch': 'auto_resolve'}),
+        name='ticket-status-machine-auto-resolve',
+    ),
 
     # Project-scoped routes
     path(

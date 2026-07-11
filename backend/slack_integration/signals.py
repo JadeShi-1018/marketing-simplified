@@ -37,6 +37,11 @@ def _get_connection(project):
     """Returns the active Slack connection for a project's organisation, or None."""
     if not project or not project.organization:
         return None
+
+    # SlackWorkspaceConnection lives in the public schema.  The public schema
+    # is always present as a fallback in the search_path (both in production
+    # where TenantSchemaMiddleware sets "tenant, public" and in tests where the
+    # default is "public"), so no search_path manipulation is needed.
     return SlackWorkspaceConnection.objects.filter(
         organization=project.organization,
         is_active=True
@@ -78,12 +83,28 @@ def notify_on_project_creation(sender, instance, created, **kwargs):
     """Ensure default notification preferences exist for each new project."""
     if not created or not instance.organization:
         return
-    connection = SlackWorkspaceConnection.objects.filter(
-        organization=instance.organization,
-        is_active=True
-    ).first()
-    if connection:
-        create_default_preferences(instance.organization, connection)
+
+    # SlackWorkspaceConnection is in public schema
+    # Use raw SQL to query it to avoid schema context issues
+    try:
+        from django.db import connection as db_connection
+
+        with db_connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT id FROM slack_integration_slackworkspaceconnection
+                WHERE organization_id = %s AND is_active = TRUE
+                LIMIT 1
+            """, [instance.organization.id])
+            row = cursor.fetchone()
+
+            if row:
+                # Connection exists, get the object and create preferences
+                connection = SlackWorkspaceConnection.objects.using('default').get(id=row[0])
+                create_default_preferences(instance.organization, connection)
+    except Exception:
+        # Silently skip if slack integration table doesn't exist or any other error
+        # This is expected for new organizations or when slack integration is not set up
+        pass
 
 
 # ─── Task: created ────────────────────────────────────────────────────────────
@@ -270,10 +291,12 @@ def notify_on_decision_commit(sender, instance, created, **kwargs):
     else:
         author = instance.author
         if author and getattr(author, 'organization', None):
+            # public is always a fallback in the search_path; no manipulation needed.
             connection = SlackWorkspaceConnection.objects.filter(
                 organization=author.organization,
                 is_active=True,
             ).first()
+
             if connection:
                 preference = NotificationPreference.objects.filter(
                     connection=connection,

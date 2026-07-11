@@ -372,6 +372,7 @@ def _call_gemini_analysis(
         temperature=0.3,
         max_output_tokens=4096,
         response_mime_type='application/json',
+        call_purpose='data_analysis',
     )
     return json.loads(result['text'])
 
@@ -444,6 +445,7 @@ def _call_gemini_calendar_from_analysis(
             temperature=0.3,
             max_output_tokens=4096,
             response_mime_type='application/json',
+            call_purpose='calendar_suggestion',
         )
         raw = json.loads(result['text'])
     logger.info("Calling Gemini for calendar events user_id=%s", user_id)
@@ -720,6 +722,7 @@ def _call_gemini_chat(
                 temperature=0.5,
                 max_output_tokens=4096,
                 response_mime_type='application/json',
+                call_purpose='follow_up_chat',
             )
             parsed = json.loads(result['text'])
     except Exception as e:
@@ -733,7 +736,7 @@ def _call_gemini_chat(
     raise RuntimeError("Gemini chat returned unexpected output format")
 
 
-def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
+def _generate_miro_board_for_workflow_run(orchestrator, workflow_run, context_payload=None):
     """Generate Miro snapshot (Gemini) and persist the board.
 
     Legacy ``generate_miro`` is an explicit user action — clicking Generate Miro
@@ -743,16 +746,28 @@ def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
     from .miro_generation import (
         build_miro_generation_context_from_run,
         call_gemini_miro_generator,
+        deserialize_miro_generation_context,
+        serialize_miro_generation_context,
     )
     from .miro_board_service import create_board_from_snapshot
     from .models import AgentPendingExternalApproval
 
     snapshot = workflow_run.miro_snapshot
     if not snapshot:
-        context = build_miro_generation_context_from_run(
-            session=orchestrator.session,
-            workflow_run=workflow_run,
-        )
+        try:
+            context = deserialize_miro_generation_context(context_payload)
+        except ValueError:
+            logger.warning(
+                "Invalid Miro generation context payload for workflow_run=%s; rebuilding from run",
+                getattr(workflow_run, "id", workflow_run),
+            )
+            context = None
+        if context is None:
+            context = build_miro_generation_context_from_run(
+                session=orchestrator.session,
+                workflow_run=workflow_run,
+            )
+            context = serialize_miro_generation_context(context)
         snapshot = call_gemini_miro_generator(
             context,
             user_id=str(orchestrator.user.id),
@@ -780,14 +795,27 @@ def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
 
 def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
     """Queue Miro generation so task creation can return immediately."""
+    from .miro_generation import (
+        build_miro_generation_context_from_run,
+        serialize_miro_generation_context,
+    )
     from .tasks import generate_miro_board_for_workflow_run_task
+
+    context = build_miro_generation_context_from_run(
+        session=orchestrator.session,
+        workflow_run=workflow_run,
+    )
+    context_payload = serialize_miro_generation_context(context)
 
     logger.info(
         "Queueing background Miro generation for workflow_run=%s session=%s",
         workflow_run.id,
         orchestrator.session.id,
     )
-    generate_miro_board_for_workflow_run_task.delay(str(workflow_run.id))
+    generate_miro_board_for_workflow_run_task.delay(
+        str(workflow_run.id),
+        context_payload=context_payload,
+    )
 
 
 def _get_or_create_bot_private_chat(bot, target_user, project):

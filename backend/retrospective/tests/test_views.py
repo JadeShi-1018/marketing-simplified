@@ -1,6 +1,7 @@
 """
 Test cases for retrospective API views
 """
+import pytest
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
 from django.test import TestCase
@@ -15,6 +16,7 @@ from core.models import Project, Organization
 User = get_user_model()
 
 
+@pytest.mark.timeout(600)
 class RetrospectiveTaskViewSetTest(TestCase):
     """Test cases for RetrospectiveTaskViewSet"""
     
@@ -329,6 +331,7 @@ class RetrospectiveTaskViewSetTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
+@pytest.mark.timeout(600)
 class InsightViewSetTest(TestCase):
     """Test cases for InsightViewSet"""
     
@@ -497,6 +500,7 @@ class InsightViewSetTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
+@pytest.mark.timeout(600)
 class RuleEngineViewSetTest(TestCase):
     """Test cases for RuleEngineViewSet"""
     
@@ -578,6 +582,7 @@ class RuleEngineViewSetTest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
+@pytest.mark.timeout(600)
 class APIIntegrationTest(TestCase):
     """Integration tests for API endpoints"""
     

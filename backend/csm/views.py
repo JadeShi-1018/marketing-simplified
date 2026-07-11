@@ -4,7 +4,7 @@ from rest_framework.filters import SearchFilter
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count, Q, Case, When, IntegerField, Value
 from django.utils import timezone
@@ -20,6 +20,7 @@ from core.slug_mixins import SlugLookupViewSetMixin
 from .models import (
     Queue, QueueAgent, QueueTeam, CustomerUser, Ticket, CsmNotification,
     Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory,
+    TemplateTag,
     TicketForm, TicketFormAssignment, SupportProject, CsmWorkType,
     SupportChannel, SLAPolicy, SLAPriorityTarget,
 )
@@ -30,6 +31,7 @@ from .serializers import (
     ConversationSerializer, ConversationDetailSerializer,
     ConversationMessageSerializer, TicketSerializer,
     QuickReplyTemplateSerializer, QuickReplyTemplateHistorySerializer,
+    TemplateTagSerializer,
     TicketFormListSerializer,
     TicketFormDetailSerializer,
     TicketFormCreateSerializer,
@@ -44,6 +46,14 @@ from .serializers import (
     SupportChannelDetailSerializer,
     SupportChannelCreateUpdateSerializer,
     ReplaceChannelAssignmentsSerializer,
+    TicketStatusSerializer,
+    TicketStatusCreateSerializer,
+    TicketAutoResolveConfigSerializer,
+    StatusMachineSerializer,
+    ReplaceTransitionsSerializer,
+)
+from .models import (
+    TicketStatus, TicketStatusTransition, TicketAutoResolveConfig,
 )
 from .services import (
     ensure_system_fields,
@@ -614,15 +624,15 @@ class CsmNotificationViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(CsmNotificationSerializer(notification).data)
 
 
-class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
+class QuickReplyTemplateViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     CRUD for quick-reply templates scoped to a CSM organisation.
 
     - GET    /templates/?organisation={id}   list active templates
     - POST   /templates/                     create
-    - GET    /templates/{id}/                retrieve
-    - PATCH  /templates/{id}/               update
-    - DELETE /templates/{id}/               delete (hard delete, or set is_active=False)
+    - GET    /templates/{slug}/                retrieve
+    - PATCH  /templates/{slug}/               update
+    - DELETE /templates/{slug}/               delete (soft-delete via is_active=False)
 
     Agents can list/read; only supervisors/admins can create/update/delete.
     """
@@ -648,16 +658,12 @@ class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
             all_org_ids = set(list(accessible_org_ids) + list(agent_org_ids))
             qs = qs.filter(organisation_id__in=all_org_ids)
 
-        # Team scoping: show templates with no team, OR where the user belongs to the team
-        # Two-step: Django doesn't support chaining two FK levels in a single filter argument
-        customer_user_ids = CustomerUser.objects.filter(
-            user=self.request.user, is_active=True,
-        ).values_list('id', flat=True)
-        user_queue_ids = QueueAgent.objects.filter(
-            user_id__in=customer_user_ids,
-        ).values_list('queue_id', flat=True)
-        user_team_ids = QueueTeam.objects.filter(
-            queue_id__in=user_queue_ids,
+        # Team scoping: show workspace-wide templates (no team) OR templates whose
+        # team the user belongs to. In CSM a user's team membership is recorded on
+        # CustomerUser.team (core.TeamMember is not populated for CSM agents), so
+        # that is the source of truth here.
+        user_team_ids = CustomerUser.objects.filter(
+            user=self.request.user, is_active=True, team__isnull=False,
         ).values_list('team_id', flat=True)
         qs = qs.filter(Q(team__isnull=True) | Q(team_id__in=list(user_team_ids)))
 
@@ -703,6 +709,57 @@ class QuickReplyTemplateViewSet(viewsets.ModelViewSet):
         qs = template.history.select_related('edited_by').order_by('-edited_at')
         serializer = QuickReplyTemplateHistorySerializer(qs, many=True)
         return Response(serializer.data)
+
+
+class TemplateTagViewSet(viewsets.ModelViewSet):
+    """
+    Admin-managed tag vocabulary for quick-reply templates.
+
+    - GET    /template-tags/?organisation={id}   list tags (any org member)
+    - POST   /template-tags/                     create  (admin/supervisor only)
+    - DELETE /template-tags/{id}/                delete  (admin/supervisor only)
+
+    Tags are manageable by administrators only; agents may list them so they
+    can apply them when authoring templates.
+    """
+    serializer_class = TemplateTagSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+
+    def _user_manages_org(self, user, organisation_id):
+        """True if user is an active admin/supervisor of the given org."""
+        if not organisation_id:
+            return False
+        return CustomerUser.objects.filter(
+            user=user, is_active=True,
+            organisation_id=organisation_id,
+            user_type__in=('supervisor', 'admin'),
+        ).exists()
+
+    def get_queryset(self):
+        qs = TemplateTag.objects.all()
+        org_id = self.request.query_params.get('organisation')
+        if org_id:
+            qs = qs.filter(organisation_id=org_id)
+        else:
+            # Limit to orgs the user belongs to
+            accessible_org_ids = CustomerUser.objects.filter(
+                user=self.request.user, is_active=True,
+            ).values_list('organisation_id', flat=True)
+            qs = qs.filter(organisation_id__in=list(accessible_org_ids))
+        return qs
+
+    def perform_create(self, serializer):
+        org = serializer.validated_data.get('organisation')
+        org_id = org.id if org else None
+        if not self._user_manages_org(self.request.user, org_id):
+            raise PermissionDenied('Only organisation admins/supervisors may manage template tags.')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self._user_manages_org(self.request.user, instance.organisation_id):
+            raise PermissionDenied('Only organisation admins/supervisors may manage template tags.')
+        instance.delete()
 
 
 class TicketViewSet(viewsets.ModelViewSet):
@@ -789,38 +846,41 @@ class TicketViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def claim(self, request, pk=None):
         """Assign ticket to current user and set status to in_progress."""
+        from csm.services.status_machine import assert_transition_allowed
         ticket = self.get_object()
         ticket.assigned_to = request.user
-        if ticket.status == 'todo':
+        update_fields = ['assigned_to']
+        if ticket.status != 'in_progress':
+            try:
+                assert_transition_allowed(ticket, 'in_progress')
+            except DjangoValidationError as exc:
+                _raise_drf_validation(exc)
             ticket.status = 'in_progress'
-        ticket.save(update_fields=['assigned_to', 'status'])
+            update_fields.append('status')
+        ticket.save(update_fields=update_fields)
         return Response(TicketSerializer(ticket).data)
 
     def partial_update(self, request, *args, **kwargs):
-        """Override PATCH to sync SLA on priority change and broadcast status changes."""
+        """Override PATCH to enforce the state machine and sync SLA on priority change."""
         from csm.services.sla import recalculate_ticket_sla
+        from csm.services.status_machine import assert_transition_allowed
         ticket = self.get_object()
-        old_status = ticket.status
         old_priority = ticket.priority
         new_status = request.data.get('status')
         new_priority = request.data.get('priority')
 
-        response = super().partial_update(request, *args, **kwargs)
+        # Enforce the state machine before persisting.
+        if new_status and new_status != ticket.status:
+            try:
+                assert_transition_allowed(ticket, new_status)
+            except DjangoValidationError as exc:
+                _raise_drf_validation(exc)
 
-        # Conversation sync on status change
-        if new_status and old_status != new_status and ticket.conversation_id:
-            if new_status == 'resolved':
-                msg = ConversationMessage.objects.create(
-                    conversation_id=ticket.conversation_id,
-                    sender_type='system',
-                    content=f'Ticket #{ticket.id} has been marked as resolved.',
-                )
-                channel_layer = get_channel_layer()
-                async_to_sync(channel_layer.group_send)(
-                    f'csm_conversation_{ticket.conversation_id}',
-                    {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
-                )
-                Conversation.objects.filter(id=ticket.conversation_id).update(status='resolved')
+        # pending_since is stamped/cleared centrally in Ticket.save().
+        # No customer notification on manual status change: we only notify on
+        # *auto*-resolution (see tasks.py). Ticket and conversation lifecycles
+        # stay independent.
+        response = super().partial_update(request, *args, **kwargs)
 
         # Recalculate SLA when priority changes, using now() so the countdown
         # restarts from the moment of the change rather than ticket creation.
@@ -836,24 +896,17 @@ class TicketViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
         """Close a ticket."""
+        from csm.services.status_machine import assert_transition_allowed
         ticket = self.get_object()
+        if ticket.status != 'closed':
+            try:
+                assert_transition_allowed(ticket, 'closed')
+            except DjangoValidationError as exc:
+                _raise_drf_validation(exc)
         ticket.status = 'closed'
         ticket.save(update_fields=['status'])
 
-        # If linked to a conversation, post a system message and sync status
-        if ticket.conversation_id:
-            Conversation.objects.filter(id=ticket.conversation_id).update(status='closed')
-            msg = ConversationMessage.objects.create(
-                conversation_id=ticket.conversation_id,
-                sender_type='system',
-                content=f'Ticket #{ticket.id} has been closed.',
-            )
-            channel_layer = get_channel_layer()
-            async_to_sync(channel_layer.group_send)(
-                f'csm_conversation_{ticket.conversation_id}',
-                {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
-            )
-
+        # No customer notification on close: closing has no such requirement.
         return Response(TicketSerializer(ticket).data)
 
 
@@ -1296,4 +1349,141 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         if open_tickets:
             Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
 
+        return Response(serializer.data)
+
+
+# --- Status machine admin config ------------------------------------------
+
+class TicketStatusViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """CRUD for a project's ticket statuses (CSM-S02-03).
+
+    - GET    /ticket-statuses/?project={id}   list (seeds built-ins on first read)
+    - POST   /ticket-statuses/?project={id}   create custom status at a position
+    - PATCH  /ticket-statuses/{id}/           rename / recolour / (de)activate
+    - DELETE /ticket-statuses/{id}/           delete custom status (see below)
+
+    Built-in statuses cannot be deleted. Deleting a status still in use on
+    tickets requires ?confirm=true (the UI warns first).
+    """
+    serializer_class = TicketStatusSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        from csm.services.status_machine import ensure_status_machine
+        if self.action == 'list':
+            project_id = self.get_required_project_id()
+            ensure_status_machine(project_id)
+            return TicketStatus.objects.filter(project_id=project_id)
+        return TicketStatus.objects.filter(
+            project_id__in=self._accessible_project_ids(),
+        )
+
+    def create(self, request, *args, **kwargs):
+        from csm.services.status_machine import insert_custom_status
+        project_id = self.get_required_project_id()
+        serializer = TicketStatusCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            instance = insert_custom_status(
+                project_id=project_id,
+                name=data['name'],
+                color=data.get('color'),
+                position=data.get('position', 0),
+            )
+        except DjangoValidationError as exc:
+            _raise_drf_validation(exc)
+        return Response(
+            TicketStatusSerializer(instance).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        from csm.services.status_machine import tickets_using_status
+        instance = self.get_object()
+        if instance.is_builtin:
+            raise ValidationError(
+                {'detail': 'Built-in statuses cannot be deleted.'}
+            )
+        in_use = tickets_using_status(instance.project_id, instance.slug).count()
+        confirmed = request.query_params.get('confirm') in ('1', 'true', 'True')
+        if in_use and not confirmed:
+            raise ValidationError({
+                'detail': (
+                    f'{in_use} ticket(s) currently use this status. '
+                    'Retry with ?confirm=true to delete anyway.'
+                ),
+                'tickets_in_use': in_use,
+            })
+        # Reassign any tickets still on this status to 'in_progress' (a built-in
+        # that can't be deleted) so they aren't stranded on a slug that no longer
+        # exists — matches what the delete warning promises.
+        tickets_using_status(instance.project_id, instance.slug).update(status='in_progress')
+        # Drop transitions referencing the deleted slug so the machine stays clean.
+        TicketStatusTransition.objects.filter(
+            Q(project_id=instance.project_id),
+            Q(from_status=instance.slug) | Q(to_status=instance.slug),
+        ).delete()
+        instance.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class StatusMachineView(ProjectScopedViewSetMixin, viewsets.ViewSet):
+    """The whole status machine for a project, for the matrix-style admin UI.
+
+    - GET  /ticket-status-machine/?project={id}   statuses + transitions + auto-resolve
+    - PUT  /ticket-status-machine/?project={id}   replace transition set
+    - PATCH/ticket-status-machine/auto-resolve/   update the auto-resolution rule
+    """
+    permission_classes = [IsAuthenticated, IsProjectMember]
+
+    def list(self, request):
+        from csm.services.status_machine import (
+            get_statuses, get_transitions, get_auto_resolve_config,
+        )
+        project_id = self.get_required_project_id()
+        data = StatusMachineSerializer({
+            'statuses': get_statuses(project_id).filter(is_active=True),
+            'transitions': get_transitions(project_id),
+            'auto_resolve': get_auto_resolve_config(project_id),
+        }).data
+        return Response(data)
+
+    def update(self, request, *args, **kwargs):
+        """Bulk-replace the permitted transitions."""
+        from csm.services.status_machine import ensure_status_machine
+        project_id = self.get_required_project_id()
+        ensure_status_machine(project_id)
+        serializer = ReplaceTransitionsSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        valid_slugs = set(
+            TicketStatus.objects.filter(project_id=project_id)
+            .values_list('slug', flat=True)
+        )
+        edges = []
+        for edge in serializer.validated_data['transitions']:
+            frm, to = edge.get('from_status'), edge.get('to_status')
+            if frm not in valid_slugs or to not in valid_slugs:
+                raise ValidationError(
+                    {'transitions': f'Unknown status in transition {frm} -> {to}.'}
+                )
+            edges.append((frm, to))
+        TicketStatusTransition.objects.filter(project_id=project_id).delete()
+        TicketStatusTransition.objects.bulk_create([
+            TicketStatusTransition(project_id=project_id, from_status=f, to_status=t)
+            for f, t in set(edges)
+        ])
+        return self.list(request)
+
+    @action(detail=False, methods=['patch'], url_path='auto-resolve')
+    def auto_resolve(self, request):
+        from csm.services.status_machine import get_auto_resolve_config
+        project_id = self.get_required_project_id()
+        config = get_auto_resolve_config(project_id)
+        serializer = TicketAutoResolveConfigSerializer(
+            config, data=request.data, partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response(serializer.data)
