@@ -27,6 +27,7 @@ function ConversationsPageContent() {
   const [queues, setQueues] = useState<Queue[]>([]);
   const [selectedQueue, setSelectedQueue] = useState<number | null>(null);
   const [queueLoadError, setQueueLoadError] = useState(false);
+  const setSelectedQueueId = useCsmConversationStore((s) => s.setSelectedQueueId);
 
   const conversations = useCsmConversationStore((s) => s.conversations);
   const setConversations = useCsmConversationStore((s) => s.setConversations);
@@ -46,6 +47,12 @@ function ConversationsPageContent() {
     }).catch(() => setQueueLoadError(true));
   }, []);
 
+  // Sync selectedQueue into the zustand store so the WS hook can use it for
+  // client-side queue filtering of new_conversation events.
+  useEffect(() => {
+    setSelectedQueueId(selectedQueue);
+  }, [selectedQueue, setSelectedQueueId]);
+
   // Load conversation list — re-fetches when selectedQueue changes
   const loadConversations = useCallback(() => {
     setLoading(true);
@@ -64,10 +71,15 @@ function ConversationsPageContent() {
       setDetail(null);
       return;
     }
+    // Clear stale detail immediately so the UI doesn't mix old/new data.
+    setDetail(null);
+    let cancelled = false;
     CsmConversationAPI.get(activeId).then((data) => {
+      if (cancelled) return;
       setDetail(data);
       setMessages(activeId, data.messages);
     });
+    return () => { cancelled = true; };
   }, [activeId, setMessages]);
 
   const activeConversation = conversations.find((c) => c.id === activeId) ?? null;
@@ -184,6 +196,7 @@ function ConversationsPageContent() {
             <ConversationThread messages={messages} typingUserIds={typingUsers} />
             {activeConversation.ticket ? (
               <ConversationComposer
+                key={activeId}
                 conversationId={activeId!}
                 organisationId={activeConversation.queue_organisation_id}
                 onTyping={sendTyping}
@@ -235,9 +248,14 @@ function ConversationsPageContent() {
           onCreated={() => {
             setTicketRefreshKey((k) => k + 1);
             loadConversations();
-            CsmConversationAPI.get(activeId).then((data) => {
+            // Capture the current activeId so we don't overwrite detail if the
+            // agent switched to a different conversation while the request was
+            // in flight.
+            const currentId = activeId;
+            CsmConversationAPI.get(currentId).then((data) => {
+              if (useCsmConversationStore.getState().activeConversationId !== currentId) return;
               setDetail(data);
-              setMessages(activeId, data.messages);
+              setMessages(currentId, data.messages);
             });
           }}
         />

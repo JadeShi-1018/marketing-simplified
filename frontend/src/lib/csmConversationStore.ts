@@ -8,6 +8,7 @@ interface TypingState {
 interface CsmConversationState {
   conversations: Conversation[];
   activeConversationId: number | null;
+  selectedQueueId: number | null;
   messagesByConversation: Record<number, ConversationMessage[]>;
   typingByConversation: TypingState;
 
@@ -15,6 +16,7 @@ interface CsmConversationState {
   setConversations: (conversations: Conversation[]) => void;
   updateConversation: (updated: Conversation) => void;
   setActiveConversation: (id: number | null) => void;
+  setSelectedQueueId: (id: number | null) => void;
   setMessages: (conversationId: number, messages: ConversationMessage[]) => void;
   addMessage: (conversationId: number, message: ConversationMessage) => void;
   setTyping: (conversationId: number, userId: number, isTyping: boolean) => void;
@@ -23,6 +25,7 @@ interface CsmConversationState {
 export const useCsmConversationStore = create<CsmConversationState>((set) => ({
   conversations: [],
   activeConversationId: null,
+  selectedQueueId: null,
   messagesByConversation: {},
   typingByConversation: {},
 
@@ -36,6 +39,8 @@ export const useCsmConversationStore = create<CsmConversationState>((set) => ({
     })),
 
   setActiveConversation: (id) => set({ activeConversationId: id }),
+
+  setSelectedQueueId: (id) => set({ selectedQueueId: id }),
 
   setMessages: (conversationId, messages) =>
     set((state) => ({
