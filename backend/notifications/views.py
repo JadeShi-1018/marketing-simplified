@@ -287,6 +287,8 @@ def _dispatch_response(notification, action, user):
 
     if et == NotificationEventType.PROJECT_INVITE:
         _handle_project_invite(notification, action, user)
+    elif et == NotificationEventType.ORG_INVITE:
+        _handle_org_invite(notification, action, user)
     elif et == NotificationEventType.MEETING_PARTICIPANT_ADDED:
         _handle_meeting_participant(notification, action, user)
     elif et in (NotificationEventType.TASK_ASSIGNED, NotificationEventType.TASK_OWNER_CHANGED):
@@ -341,6 +343,51 @@ def _handle_project_invite(notification, action, user):
             inv.accepted = True
             inv.accepted_at = tz.now()
             inv.save(update_fields=["accepted", "accepted_at"])
+
+
+def _handle_org_invite(notification, action, user):
+    """
+    Accept → create/activate OrganizationMembership; update invitation use count.
+    Reject → deactivate the OrganizationInvitation.
+    """
+    from django.db import transaction  # noqa: PLC0415
+    from core.models import Organization, OrganizationMembership, OrganizationInvitation  # noqa: PLC0415
+
+    invitation_id = notification.metadata.get("invitation_id")
+    org_id = notification.related_object_id
+    role = notification.metadata.get("role", "member")
+
+    if action == "reject":
+        if invitation_id:
+            OrganizationInvitation.objects.filter(pk=invitation_id, is_active=True).update(
+                is_active=False
+            )
+        return
+
+    if action != "accept":
+        return
+
+    try:
+        org = Organization.objects.get(pk=org_id)
+    except Organization.DoesNotExist:
+        logger.warning("Organization %s not found for org_invite response", org_id)
+        return
+
+    with transaction.atomic():
+        OrganizationMembership.objects.update_or_create(
+            user=user,
+            organization=org,
+            defaults={"role": role, "is_active": True},
+        )
+        if invitation_id:
+            try:
+                inv = OrganizationInvitation.objects.get(pk=invitation_id)
+                inv.use_count = (inv.use_count or 0) + 1
+                if inv.max_uses > 0 and inv.use_count >= inv.max_uses:
+                    inv.is_active = False
+                inv.save(update_fields=["use_count", "is_active"])
+            except OrganizationInvitation.DoesNotExist:
+                pass
 
 
 def _handle_meeting_participant(notification, action, user):

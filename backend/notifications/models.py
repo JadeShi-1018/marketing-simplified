@@ -51,6 +51,8 @@ class NotificationEventType(models.TextChoices):
     BUDGET_APPROVAL_RESULT = "budget_approval_result", "Budget approval result"
     BUDGET_POOL_LOW = "budget_pool_low", "Budget pool insufficient"
     BUDGET_ESCALATION = "budget_escalation", "Budget escalation"
+    # Organization
+    ORG_INVITE = "org_invite", "Organization invitation"
     # Automation & system
     WORKFLOW_NODE = "workflow_node", "Workflow node update"
     ACCOUNT_PERMISSION = "account_permission", "Account permission changed"
@@ -91,6 +93,7 @@ def default_notification_preferences() -> dict:
             "chat_new_session": r(),
             "message_reminder": r(),
             "project_invite": r(),
+            "org_invite": r(),
             "calendar_reminders": r(),
             "doc_asset_updates": r(),
         },

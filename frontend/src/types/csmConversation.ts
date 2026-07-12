@@ -45,6 +45,11 @@ export interface Ticket {
   description: string;
   status: string;
   status_display: string;
+  // Current status's configured color (from the status machine, so custom
+  // statuses resolve correctly), null if no machine row.
+  status_color: string | null;
+  // Valid next statuses for this ticket per the configured state machine.
+  available_next_statuses: { slug: string; name: string; color: string }[];
   priority: string;
   priority_display: string;
   assigned_to: number | null;

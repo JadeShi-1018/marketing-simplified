@@ -197,7 +197,7 @@ def bulk_update_tasks(*, user, task_ids, updates):
     with transaction.atomic():
         locked_tasks = {
             task.id: task
-            for task in Task.objects.select_for_update().filter(id__in=task_ids)
+            for task in Task.objects.select_for_update().select_related("project").filter(id__in=task_ids)
         }
         for task_id in task_ids:
             task = locked_tasks[task_id]

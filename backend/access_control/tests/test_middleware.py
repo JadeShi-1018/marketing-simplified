@@ -1,9 +1,11 @@
+from django.db import connection
 from django.test import TestCase, RequestFactory, override_settings
 from django.contrib.auth import get_user_model
 from django.http import HttpResponse
 from django.utils import timezone
 from datetime import timedelta
 from access_control.middleware.authorization import AuthorizationMiddleware
+from core.services.tenant import slug_to_schema_name
 import access_control.tests.test_urls as test_urls
 from access_control.tests.test_urls import dummy_view
 
@@ -14,8 +16,13 @@ class AuthorizationMiddlewareTest(TestCase):
         from core.models import Organization, Role, Permission
         from access_control.models import RolePermission, UserRole
 
-        # 1 org
+        # 1 org — provision_tenant_schema() resets search_path to public after
+        # creating the schema, so re-set it here before writing to tenant-only
+        # tables (RolePermission, UserRole).
         cls.org = Organization.objects.create(name="TestOrg")
+        _schema = slug_to_schema_name(cls.org.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
 
         # 5 permissions
         cls.perm_view_asset, _ = Permission.objects.get_or_create(module="ASSET", action="VIEW")
@@ -43,8 +50,21 @@ class AuthorizationMiddlewareTest(TestCase):
         cls.factory = RequestFactory()
         cls.middleware = AuthorizationMiddleware()
 
-        # inject test urls
-        # set_urlconf(test_urls) # Note: pass module name, not module object!
+        # Reset to public schema after tenant-model setup
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
+
+    def setUp(self):
+        # Each test must run with the org schema in the search path so that
+        # AuthorizationMiddleware.process_view() can query UserRole / RolePermission.
+        _schema = slug_to_schema_name(self.org.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
+
+    def tearDown(self):
+        super().tearDown()
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
 
     def test_allows_asset_view(self):
         req = self.factory.get('/api/assets/list/')

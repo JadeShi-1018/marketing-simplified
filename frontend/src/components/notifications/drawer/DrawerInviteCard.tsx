@@ -5,6 +5,7 @@ import {
   Check,
   X,
   Loader2,
+  Building2,
   Calendar,
   CheckSquare,
   Briefcase,
@@ -21,6 +22,7 @@ import DrawerSectionDivider from "./DrawerSectionDivider";
 const INVITE_EVENT_TYPES = new Set([
   "project_invite",
   "meeting_participant_added",
+  "org_invite",
 ]);
 
 export function isInviteNotification(notification: NotificationItem): boolean {
@@ -48,12 +50,15 @@ interface InviteConfig {
 function getInviteConfig(notification: NotificationItem): InviteConfig {
   const { event_type, metadata, title } = notification;
   const subject =
+    (metadata?.organization_name as string) ||
     (metadata?.project_name as string) ||
     (metadata?.meeting_title as string) ||
     (metadata?.task_title as string) ||
     title;
 
   switch (event_type) {
+    case "org_invite":
+      return { Icon: Building2, typeLabel: "Organization Invitation", subjectLabel: subject };
     case "project_invite":
       return { Icon: Briefcase, typeLabel: "Project Invitation", subjectLabel: subject };
     case "meeting_participant_added":

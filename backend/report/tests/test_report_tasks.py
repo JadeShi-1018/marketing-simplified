@@ -79,6 +79,7 @@ def authenticated_client(api_client, user):
 
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestReportTaskAPI:
     def test_create_report_task_with_only_task_defaults_optional_fields(
         self, authenticated_client, task
@@ -165,6 +166,7 @@ class TestReportTaskAPI:
 
 
 @pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestReportKeyActionAPI:
     def test_list_key_actions_empty(self, authenticated_client, task):
         report_task = ReportTask.objects.create(

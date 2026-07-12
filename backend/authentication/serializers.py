@@ -52,39 +52,35 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_roles(self, obj):
         """
-        Get user roles with improved logic for users without organization
-        """
-        # Strategy 1: If user has an organization, get roles for that organization
-        try:
-            if obj.organization:
-                user_roles = UserRole.objects.filter(
-                    user=obj, 
-                    role__organization=obj.organization
-                ).select_related('role')
-                print(f"Found {user_roles.count()} roles for user {obj.email}")
+        Get user roles with improved logic for users without organization.
 
-            else:
-            # Strategy 2: If user has no organization, try multiple approaches
-            
-                # First, try to get roles with organization_id = NULL (global roles)
-                user_roles = UserRole.objects.filter(
-                    user=obj, 
-                    role__organization=None
-                ).select_related('role')
-            
-                # If no global roles found, try to get any roles assigned to this user
-                # regardless of organization (fallback for existing data)
-                if not user_roles.exists():
-                    user_roles = UserRole.objects.filter(user=obj).select_related('role')
-                
-                    # Log this situation for debugging
-                    if user_roles.exists():
-                        print(f"Warning: User {obj.email} has no organization but has roles from other organizations")
-        
-            return [ur.role.name for ur in user_roles]    
+        Uses transaction.atomic() (savepoint) so that a ProgrammingError from
+        querying a tenant-only table while search_path=public only rolls back
+        the savepoint, leaving the outer request transaction intact.
+        """
+        from django.db import transaction
+        try:
+            with transaction.atomic():
+                if obj.organization:
+                    # Strategy 1: user has an org — query roles scoped to that org.
+                    user_roles = UserRole.objects.filter(
+                        user=obj,
+                        role__organization=obj.organization
+                    ).select_related('role')
+                    return [ur.role.name for ur in user_roles]
+                else:
+                    # Strategy 2: no org — try global (null-org) roles first,
+                    # then fall back to any assigned role.
+                    user_roles = UserRole.objects.filter(
+                        user=obj,
+                        role__organization=None
+                    ).select_related('role')
+                    if not user_roles.exists():
+                        user_roles = UserRole.objects.filter(user=obj).select_related('role')
+                    return [ur.role.name for ur in user_roles]
         except Exception as e:
             print(f"Error in get_roles: {e}")
-            return [] 
+            return []
 
     def get_avatar(self, obj):
         """Return avatar URL if avatar exists"""

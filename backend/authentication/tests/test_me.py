@@ -1,8 +1,10 @@
 from django.urls import reverse
+from django.db import connection
 from rest_framework.test import APITestCase
 from rest_framework import status
 from django.contrib.auth import get_user_model
 from core.models import Organization, Role
+from core.services.tenant import slug_to_schema_name
 from access_control.models import UserRole
 from rest_framework_simplejwt.tokens import RefreshToken
 
@@ -12,13 +14,14 @@ class MeViewTests(APITestCase):
 
     def setUp(self):
         self.me_url = reverse('me')
-        
-        # Create organization
+
+        # Create organization (triggers provision_tenant_schema which resets
+        # search_path to public after provisioning the org schema).
         self.organization = Organization.objects.create(
             name="Test Organization",
             email_domain="test.com"
         )
-        
+
         # Create user
         self.user = User.objects.create_user(
             email="testuser@test.com",
@@ -28,17 +31,23 @@ class MeViewTests(APITestCase):
             is_active=True,
             organization=self.organization
         )
-        
-        # Create role
-        self.role = Role.objects.create(
-            name="Media Buyer",
-            organization=self.organization,
-            level=30
-        )
-        
-        # Assign role to user
-        UserRole.objects.create(user=self.user, role=self.role)
-        
+
+        # Role and UserRole are tenant-scoped; access_control migrations are
+        # stubs (no public DDL). Must create them in the org schema.
+        _schema = slug_to_schema_name(self.organization.slug)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO %s, public', [_schema])
+            self.role = Role.objects.create(
+                name="Media Buyer",
+                organization=self.organization,
+                level=30
+            )
+            UserRole.objects.create(user=self.user, role=self.role)
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO public')
+
         # Generate token
         refresh = RefreshToken.for_user(self.user)
         self.access_token = str(refresh.access_token)
@@ -98,15 +107,20 @@ class MeViewTests(APITestCase):
 
     def test_user_with_multiple_roles(self):
         """Test user with multiple roles"""
-        # Create additional role
-        admin_role = Role.objects.create(
-            name="Admin",
-            organization=self.organization,
-            level=10
-        )
-        
-        # Assign additional role
-        UserRole.objects.create(user=self.user, role=admin_role)
+        # Role and UserRole are tenant-scoped; create in org schema.
+        _schema = slug_to_schema_name(self.organization.slug)
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO %s, public', [_schema])
+            admin_role = Role.objects.create(
+                name="Admin",
+                organization=self.organization,
+                level=10
+            )
+            UserRole.objects.create(user=self.user, role=admin_role)
+        finally:
+            with connection.cursor() as cursor:
+                cursor.execute('SET search_path TO public')
         
         self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {self.access_token}')
         response = self.client.get(self.me_url)

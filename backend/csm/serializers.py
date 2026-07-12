@@ -6,6 +6,7 @@ from .models import (
     TicketForm, TicketFormField, TicketFormAssignment,
     SupportProject, CsmWorkType, SupportChannel,
     SLAPolicy, SLAPriorityTarget,
+    TicketStatus, TicketStatusTransition, TicketAutoResolveConfig,
 )
 
 
@@ -314,20 +315,69 @@ class ConversationDetailSerializer(ConversationSerializer):
 class TicketSerializer(serializers.ModelSerializer):
     assigned_to_name = serializers.SerializerMethodField()
     queue_name = serializers.CharField(source='queue.name', read_only=True, default=None)
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    # Plain CharField (not the model's ChoiceField) so custom status slugs are
+    # accepted on write. required=False keeps the model default ('todo') on
+    # create. Transition legality is enforced in the view, not here.
+    status = serializers.CharField(required=False)
+    # Resolved from the per-project status machine, not the model's
+    # STATUS_CHOICES, so custom statuses show their configured name/color rather
+    # than a raw slug.
+    status_display = serializers.SerializerMethodField()
+    status_color = serializers.SerializerMethodField()
     priority_display = serializers.CharField(source='get_priority_display', read_only=True)
     sla = serializers.SerializerMethodField()
+    available_next_statuses = serializers.SerializerMethodField()
 
     class Meta:
         model = Ticket
         fields = [
             'id', 'queue', 'queue_name', 'title', 'description',
-            'status', 'status_display', 'priority', 'priority_display',
+            'status', 'status_display', 'status_color', 'priority', 'priority_display',
             'assigned_to', 'assigned_to_name', 'customer_email',
             'conversation', 'created_at',
             'first_response_due', 'resolution_due', 'sla',
+            'available_next_statuses',
         ]
         read_only_fields = ['id', 'created_at', 'first_response_due', 'resolution_due']
+
+    def _resolve_status(self, obj):
+        """The ticket's current TicketStatus row, cached per (project, slug) in
+        the serializer context so a list response resolves each distinct status
+        once instead of once per ticket (shared by status_display + color)."""
+        project_id = obj.queue.project_id if obj.queue_id else None
+        cache = self.context.setdefault('_ticket_status_cache', {})
+        key = (project_id, obj.status)
+        if key not in cache:
+            from csm.services.status_machine import get_status
+            cache[key] = get_status(project_id, obj.status)
+        return cache[key]
+
+    def get_status_display(self, obj):
+        status = self._resolve_status(obj)
+        # Fall back to the model's label (built-ins) if the machine has no row.
+        return status.name if status else obj.get_status_display()
+
+    def get_status_color(self, obj):
+        status = self._resolve_status(obj)
+        return status.color if status else None
+
+    def get_available_next_statuses(self, obj):
+        """The valid next statuses for the agent UI — only reachable
+        statuses, not all of them."""
+        project_id = obj.queue.project_id if obj.queue_id else None
+        if project_id is None:
+            return []
+        # Cached per (project, from_status) in context: every ticket on the same
+        # status shares one computation across a list response (avoids N+1).
+        cache = self.context.setdefault('_next_status_cache', {})
+        key = (project_id, obj.status)
+        if key not in cache:
+            from csm.services.status_machine import get_next_statuses
+            cache[key] = [
+                {'slug': s.slug, 'name': s.name, 'color': s.color}
+                for s in get_next_statuses(project_id, obj.status)
+            ]
+        return cache[key]
 
     def get_assigned_to_name(self, obj):
         if not obj.assigned_to:
@@ -645,5 +695,50 @@ class ReplaceChannelAssignmentsSerializer(serializers.Serializer):
     experience_group_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         required=False,
+        default=list,
+    )
+
+
+# --- Status machine config ------------------------------------------------
+
+class TicketStatusSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketStatus
+        fields = ['id', 'slug', 'name', 'color', 'order', 'is_builtin', 'is_active']
+        # order is managed by insert_custom_status (position shifting); editing it
+        # directly would desync the sequence, so it is read-only here.
+        read_only_fields = ['id', 'slug', 'order', 'is_builtin']
+
+
+class TicketStatusCreateSerializer(serializers.Serializer):
+    """Create a custom status and place it at `position` in the sequence."""
+    name = serializers.CharField(max_length=100)
+    color = serializers.CharField(max_length=20, required=False, default='#94a3b8')
+    position = serializers.IntegerField(min_value=0, required=False, default=0)
+
+
+class TicketStatusTransitionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketStatusTransition
+        fields = ['from_status', 'to_status']
+
+
+class TicketAutoResolveConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketAutoResolveConfig
+        fields = ['enabled', 'days_until_resolve', 'notification_message']
+
+
+class StatusMachineSerializer(serializers.Serializer):
+    """Read-only bundle of a project's whole status machine for the admin UI."""
+    statuses = TicketStatusSerializer(many=True, read_only=True)
+    transitions = TicketStatusTransitionSerializer(many=True, read_only=True)
+    auto_resolve = TicketAutoResolveConfigSerializer(read_only=True)
+
+
+class ReplaceTransitionsSerializer(serializers.Serializer):
+    """Bulk-replace the permitted transition set (the matrix the admin edits)."""
+    transitions = serializers.ListField(
+        child=serializers.DictField(child=serializers.CharField()),
         default=list,
     )

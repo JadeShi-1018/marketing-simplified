@@ -230,6 +230,13 @@ function LoginPageContent() {
       }
 
       if (data.authorization_url) {
+        if (data.state) {
+          try {
+            window.sessionStorage.setItem('google_oauth_state', data.state);
+          } catch {
+            // The signed state in the callback URL remains the source of truth.
+          }
+        }
         // Redirect to Google OAuth page
         window.location.href = data.authorization_url;
       } else {

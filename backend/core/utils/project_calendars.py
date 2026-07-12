@@ -22,6 +22,7 @@ def map_project_role_to_calendar_permission(role: str | None) -> str:
 
 def ensure_project_calendar(project):
     from calendars.models import Calendar
+    from django.core.exceptions import ValidationError
 
     defaults = {
         "organization": project.organization,
@@ -32,7 +33,21 @@ def ensure_project_calendar(project):
         "timezone": "UTC",
         "is_primary": False,
     }
-    calendar, created = Calendar.objects.get_or_create(project=project, defaults=defaults)
+
+    try:
+        calendar, created = Calendar.objects.get_or_create(project=project, defaults=defaults)
+    except ValidationError:
+        # Handle case where unique constraints don't exist in tenant schema
+        # Try to get existing calendar first
+        calendar = Calendar.objects.filter(project=project).first()
+        if calendar:
+            created = False
+        else:
+            # Create without validation
+            calendar = Calendar(project=project, **defaults)
+            calendar.save(validate=False)
+            created = True
+
     if created:
         return calendar
 
@@ -44,7 +59,7 @@ def ensure_project_calendar(project):
         calendar.owner = project.owner
         changed_fields.append("owner")
     if changed_fields:
-        calendar.save(update_fields=changed_fields + ["updated_at"])
+        calendar.save(update_fields=changed_fields + ["updated_at"], validate=False)
     return calendar
 
 
