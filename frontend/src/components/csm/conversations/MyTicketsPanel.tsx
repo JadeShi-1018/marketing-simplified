@@ -235,6 +235,11 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
                       {ticket.queue_name && (
                         <span className="text-[10px] text-gray-400 truncate">{ticket.queue_name}</span>
                       )}
+                      {ticket.conversation != null && (
+                        <span className="text-[10px] text-blue-400 truncate">
+                          Conversation #{ticket.conversation}
+                        </span>
+                      )}
                     </div>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 mt-0.5 ${STATUS_COLORS[ticket.status] ?? 'bg-gray-100 text-gray-500'}`}>
                       {ticket.status_display}

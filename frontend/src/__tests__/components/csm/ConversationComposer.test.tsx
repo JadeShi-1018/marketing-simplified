@@ -125,6 +125,13 @@ describe('ConversationComposer — quick reply template insertion', () => {
     mockedSendMessage.mockResolvedValue({ id: 999, content: 'Hello there, edited', rich_body: null });
     await openTemplatePicker();
 
+    // After insertion, the editor contains the template text. The component
+    // calls editor.getText() inside handleInsertTemplate to update
+    // hasReplyContent. Make the mock reflect this.
+    mockEditor.commands.insertContent.mockImplementation(() => {
+      mockEditor.getText.mockReturnValue('Hello there');
+    });
+
     fireEvent.click(screen.getByText('Greeting').closest('button')!);
     expect(mockedSendMessage).not.toHaveBeenCalled();
 

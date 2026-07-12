@@ -383,7 +383,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        base_qs = Conversation.objects.select_related('customer', 'queue', 'assigned_to__user')
+        base_qs = Conversation.objects.select_related('customer', 'queue', 'assigned_to__user').prefetch_related('tickets')
 
         # Permission-based filtering
         if user.is_staff or user.is_superuser:
@@ -396,6 +396,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
         queue_id = self.request.query_params.get('queue')
         if queue_id:
             qs = qs.filter(queue_id=queue_id)
+
+        # Status filter — defaults to active+pending for the agent inbox
+        status = self.request.query_params.get('status')
+        if status:
+            qs = qs.filter(status=status)
+        elif self.action == 'list':
+            qs = qs.filter(status__in=['active', 'pending'])
 
         return qs
 
@@ -637,6 +644,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
             title=title,
             description=description,
             priority=priority,
+            status='in_progress',
+            assigned_to=request.user,
             customer_email=customer.email if customer else '',
             conversation=conversation,
         )
@@ -644,6 +653,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
         recalculate_ticket_sla(ticket)
         if ticket.first_response_due is not None or ticket.resolution_due is not None:
             ticket.save(update_fields=['first_response_due', 'resolution_due'])
+
+        # Ensure the conversation is active (mirrors the claim flow).
+        if conversation.status in ('pending',):
+            Conversation.objects.filter(id=conversation.id).update(status='active')
+            conversation.refresh_from_db()
 
         # Post a system message in the conversation thread
         system_msg = ConversationMessage.objects.create(
