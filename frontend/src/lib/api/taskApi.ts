@@ -302,3 +302,32 @@ export const TaskAPI = {
     date_to?: string;
   }) => api.get('/api/tasks/status-report/', { params }),
 };
+
+export const TASK_HIERARCHY_CYCLE_CODE = 'task_hierarchy_cycle';
+
+type TaskHierarchyErrorBody = {
+  detail?: string;
+  code?: string;
+  error?: string;
+};
+
+/** Map move/add-subtask hierarchy failures; 422 + code indicate a cycle (MED-235). */
+export function parseTaskHierarchyApiError(error: unknown): {
+  message: string;
+  isHierarchyCycle: boolean;
+} {
+  const response = (error as { response?: { status?: number; data?: TaskHierarchyErrorBody } })
+    .response;
+  const data = response?.data;
+  const isHierarchyCycle =
+    response?.status === 422 || data?.code === TASK_HIERARCHY_CYCLE_CODE;
+  const message =
+    (typeof data === 'string' ? data : undefined) ||
+    data?.detail ||
+    data?.error ||
+    (response?.status === 404
+      ? 'Parent move API is unavailable. Restart the backend service and try again.'
+      : undefined) ||
+    'Failed to update parent task.';
+  return { message, isHierarchyCycle };
+}

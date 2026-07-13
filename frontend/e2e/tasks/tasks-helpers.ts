@@ -280,6 +280,61 @@ export async function createDraftTaskViaApi(
   return { id: body.id as number, slug: body.slug as string };
 }
 
+export async function linkSubtaskViaApi(
+  page: Page,
+  parentSlug: string,
+  childTaskId: number,
+): Promise<void> {
+  const token = await getAuthToken(page);
+  if (!token) throw new Error('No auth token found for subtask link');
+
+  const origin = new URL(page.url()).origin;
+  const response = await page.request.post(`${origin}/api/tasks/${parentSlug}/subtasks/`, {
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    data: { child_task_id: childTaskId },
+  });
+
+  if (!response.ok()) {
+    throw new Error(`Failed to link subtask (${response.status()}): ${await response.text()}`);
+  }
+}
+
+export async function moveSubtaskViaApi(
+  page: Page,
+  newParentSlug: string,
+  childSlug: string,
+  oldParentId: number,
+): Promise<{ status: number; body: Record<string, unknown> | null }> {
+  const token = await getAuthToken(page);
+  if (!token) throw new Error('No auth token found for subtask move');
+
+  const origin = new URL(page.url()).origin;
+  const response = await page.request.post(
+    `${origin}/api/tasks/${newParentSlug}/subtasks/${childSlug}/move/`,
+    {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      data: { old_parent_id: oldParentId },
+    },
+  );
+
+  const text = await response.text();
+  let body: Record<string, unknown> | null = null;
+  if (text) {
+    try {
+      body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      body = { raw: text };
+    }
+  }
+
+  return { status: response.status(), body };
+}
+
+export async function openTaskDetailPage(page: Page, taskSlug: string): Promise<void> {
+  await page.goto(`/tasks/${encodeURIComponent(taskSlug)}`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 15_000 });
+}
+
 export async function ensureTaskListReadyWithRows(
   page: Page,
   projectId: number,
