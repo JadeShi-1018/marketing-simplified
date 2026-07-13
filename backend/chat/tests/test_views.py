@@ -98,6 +98,32 @@ class TestChatAPI:
         assert response.data['id'] == chat.id
         assert len(response.data['participants']) == 2
 
+    def test_detail_routes_accept_legacy_numeric_id(self):
+        """Path lookups must resolve a legacy numeric chat id, not only the slug.
+
+        SMP-539 made lookups slug-only, but the chat frontend still addresses
+        every detail route by numeric ``chat.id`` (store/hooks are id-keyed), so
+        retrieve / pins / mark_as_read must keep working when given the numeric id.
+        """
+        chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=chat, user=self.user1, is_active=True)
+        ChatParticipant.objects.create(chat=chat, user=self.user2, is_active=True)
+
+        retrieve = self.client.get(reverse('chat-detail', kwargs={'slug': chat.id}))
+        assert retrieve.status_code == status.HTTP_200_OK
+        assert retrieve.data['id'] == chat.id
+
+        pins = self.client.get(reverse('chat-list-pins', kwargs={'slug': chat.id}))
+        assert pins.status_code == status.HTTP_200_OK
+
+        mark_read = self.client.post(reverse('chat-mark-as-read', kwargs={'slug': chat.id}))
+        assert mark_read.status_code == status.HTTP_200_OK
+
+    def test_unknown_numeric_id_still_returns_404(self):
+        """A numeric id with no matching chat must 404 (not 500 or a wrong match)."""
+        response = self.client.get(reverse('chat-detail', kwargs={'slug': 999999}))
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
     def test_retrieve_chat_excludes_inactive_participants(self):
         """Chat details should not return removed participants."""
         chat = Chat.objects.create(project=self.project, type=ChatType.GROUP, name='Test Group')

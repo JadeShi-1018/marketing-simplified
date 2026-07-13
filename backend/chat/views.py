@@ -54,7 +54,7 @@ from .services import (
 )
 from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
 from core.models import ProjectMember
-from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin
+from core.slug_mixins import resolve_lookup_kwargs, resolve_project_pk, SlugLookupViewSetMixin
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,26 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     
     permission_classes = [IsAuthenticated]
     lookup_field = 'slug'
+
+    def get_object(self):
+        """Resolve a chat by slug (the public contract) or a legacy numeric id.
+
+        SMP-539 switched path-segment lookups to slug-only (see
+        ``SlugLookupViewSetMixin``), but the chat frontend still keys its store,
+        hooks and every detail-route call by the numeric chat id, so those ids
+        must keep resolving here or actions like ``pins`` / ``mark_as_read`` 404.
+        Mirrors ``resolve_project_pk``'s convention: a purely numeric segment is
+        a legacy pk, anything else is a slug (or UUID) via ``resolve_lookup_kwargs``.
+        """
+        lookup_value = str(self.kwargs[self.lookup_field])
+        queryset = self.filter_queryset(self.get_queryset())
+        if lookup_value.isdigit():
+            filter_kwargs = {'pk': int(lookup_value)}
+        else:
+            filter_kwargs = resolve_lookup_kwargs(lookup_value, self.lookup_field)
+        obj = get_object_or_404(queryset, **filter_kwargs)
+        self.check_object_permissions(self.request, obj)
+        return obj
 
     def _get_active_participant(self, chat, user):
         return ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
