@@ -20,6 +20,9 @@ from .tasks import (
 User = get_user_model()
 logger = logging.getLogger(__name__)
 TYPING_THROTTLE_SECONDS = 1
+# Upper bound on the outbox digest a client may send in one frame, so a
+# malicious/buggy client can't force an oversized DB IN query or WS frame.
+MAX_OUTBOX_DIGEST_IDS = 500
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -171,6 +174,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not isinstance(client_message_ids, list):
             await self.send_error('client_message_ids must be a list')
             return
+        # Bound the payload and coerce entries to strings before the DB IN query
+        # so an oversized or wrongly-typed list can't cause an expensive query.
+        client_message_ids = [str(cid) for cid in client_message_ids[:MAX_OUTBOX_DIGEST_IDS]]
 
         try:
             committed = await database_sync_to_async(

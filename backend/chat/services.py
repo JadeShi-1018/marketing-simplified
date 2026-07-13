@@ -1057,8 +1057,14 @@ class MessageService:
                     client_message_id=client_message_id,
                 )
             return message, True
-        except IntegrityError:
-            message = cls._get_message_by_client_key(sender, client_message_id)
+        except IntegrityError as exc:
+            # Only treat this as an idempotency hit if a message with this key
+            # actually exists. Otherwise the IntegrityError came from a different
+            # constraint (FK, NOT NULL, ...) and must not be masked as dedupe.
+            try:
+                message = cls._get_message_by_client_key(sender, client_message_id)
+            except Message.DoesNotExist:
+                raise exc
             cls._assert_message_matches_request(message, sender, chat)
             return message, False
 

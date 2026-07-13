@@ -364,6 +364,28 @@ class TestMessageServiceIdempotentCreate:
         mock_notify_recipients.assert_not_called()
         mock_notify_ws.assert_not_called()
 
+    def test_non_dedupe_integrity_error_is_reraised(self):
+        """A non-dedupe IntegrityError (a different constraint) must propagate,
+        not be silently swallowed as a dedupe hit when no message with the key exists."""
+        from django.db import IntegrityError
+        from chat.models import Message
+        from chat.services import MessageService
+
+        client_message_id = 'genuine-db-error-001'
+        # No existing message with this key, so the except-branch lookup misses;
+        # the original IntegrityError must surface instead of a masked DoesNotExist.
+        with patch.object(Message.objects, 'create', side_effect=IntegrityError('some other constraint')):
+            with pytest.raises(IntegrityError):
+                MessageService.create_message_with_attachments(
+                    sender=self.sender,
+                    chat=self.chat,
+                    content='Retry',
+                    client_message_id=client_message_id,
+                )
+        assert not Message.objects.filter(
+            sender=self.sender, client_message_id=client_message_id
+        ).exists()
+
 
 class AttachmentMimeValidationTest(TestCase):
     def test_allows_supported_mime_types(self):

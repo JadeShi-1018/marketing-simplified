@@ -91,6 +91,22 @@ describe('chatStore outbox', () => {
     expect(useChatStore.getState().messages[3]?.[0]?.attachments).toHaveLength(1);
   });
 
+  it('flushOutbox retries entries stuck in "sending" after a refresh (dedupe-safe)', async () => {
+    // A page refresh mid-send leaves the persisted entry in "sending"; it must
+    // still be retried on reconnect (server dedupe prevents duplicates).
+    useChatStore
+      .getState()
+      .enqueueOutbox(makeOutboxEntry({ clientMessageId: 'client-msg-stuck', status: 'sending' }));
+    (sendMessage as jest.Mock).mockResolvedValue(makeMessage({ id: 77 }));
+
+    await useChatStore.getState().flushOutbox();
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ client_message_id: 'client-msg-stuck' }),
+    );
+    expect(useChatStore.getState().outbox).toHaveLength(0);
+  });
+
   it('merges attachments when addMessage receives a fuller payload for an existing id', () => {
     const sparse = makeMessage({ id: 10, attachments: [] });
     const full = makeMessage({

@@ -483,9 +483,11 @@ export const useChatStore = create<ChatState>()(
 
       retryOutboxEntry: async (clientMessageId: string) => {
         const entry = get().outbox.find((item) => item.clientMessageId === clientMessageId);
-        if (!entry || entry.status === 'sending') {
+        if (!entry) {
           return;
         }
+        // Entries left in 'sending' after a refresh/crash must stay retryable;
+        // server-side client_message_id dedupe makes a redundant resend safe.
         get().markOutboxSending(clientMessageId);
         try {
           const message = await sendMessage({
@@ -508,7 +510,7 @@ export const useChatStore = create<ChatState>()(
       flushOutbox: async () => {
         const pendingIds = get()
           .outbox
-          .filter((entry) => entry.status === 'pending' || entry.status === 'failed')
+          .filter((entry) => entry.status === 'pending' || entry.status === 'sending' || entry.status === 'failed')
           .map((entry) => entry.clientMessageId);
         for (const clientMessageId of pendingIds) {
           await get().retryOutboxEntry(clientMessageId);
