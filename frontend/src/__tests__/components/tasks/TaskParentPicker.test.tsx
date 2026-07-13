@@ -9,7 +9,7 @@ import type { TaskData } from '@/types/task';
 
 jest.mock('@/lib/api/taskApi', () => ({
   TaskAPI: {
-    getTasks: jest.fn(),
+    getAllTasks: jest.fn(),
     getTask: jest.fn(),
     moveSubtask: jest.fn(),
   },
@@ -17,7 +17,7 @@ jest.mock('@/lib/api/taskApi', () => ({
   TASK_HIERARCHY_CYCLE_CODE: 'task_hierarchy_cycle',
 }));
 
-const mockedGetTasks = TaskAPI.getTasks as jest.Mock;
+const mockedGetAllTasks = TaskAPI.getAllTasks as jest.Mock;
 const mockedGetTask = TaskAPI.getTask as jest.Mock;
 
 const parentA: TaskData = {
@@ -73,9 +73,7 @@ describe('parent candidate helpers', () => {
 describe('TaskParentPicker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedGetTasks.mockResolvedValue({
-      data: { results: [parentA] },
-    });
+    mockedGetAllTasks.mockResolvedValue([parentA]);
     mockedGetTask.mockResolvedValue({
       data: parentA,
     });
@@ -101,9 +99,9 @@ describe('TaskParentPicker', () => {
     );
 
     await waitFor(() => {
-      expect(mockedGetTasks).toHaveBeenCalledWith({
+      expect(mockedGetAllTasks).toHaveBeenCalledWith({
         project_id: 1,
-        include_subtasks: true,
+        has_parent: false,
       });
     });
   });
@@ -112,7 +110,7 @@ describe('TaskParentPicker', () => {
     render(<TaskParentPicker task={subtask} onUpdated={jest.fn()} />);
 
     await waitFor(() => {
-      expect(mockedGetTasks).toHaveBeenCalled();
+      expect(mockedGetAllTasks).toHaveBeenCalled();
     });
 
     expect(mockedGetTask).not.toHaveBeenCalledWith(9);

@@ -106,17 +106,12 @@ export default function TaskParentPicker({
     try {
       const fromApi: TaskData[] = [];
 
-      const response = await TaskAPI.getTasks({
+      const rows = await TaskAPI.getAllTasks({
         project_id: projectId,
-        include_subtasks: true,
+        has_parent: false,
       });
-      const rows: TaskData[] = response.data?.results ?? response.data ?? [];
       for (const row of rows) {
-        if (
-          row.id == null ||
-          String(row.id) === String(taskId) ||
-          row.is_subtask
-        ) {
+        if (row.id == null || String(row.id) === String(taskId)) {
           continue;
         }
         fromApi.push(row);
