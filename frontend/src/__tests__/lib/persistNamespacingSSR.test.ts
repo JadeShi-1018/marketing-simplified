@@ -8,14 +8,12 @@
 
 it('importing authStore in Node (no window) does not throw', () => {
   expect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('@/lib/authStore');
   }).not.toThrow();
 });
 
 it('importing projectStore in Node (no window) does not throw', () => {
   expect(() => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     require('@/lib/projectStore');
   }).not.toThrow();
 });
