@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, FolderKanban, ListOrdered, Radio, Settings, Shield } from 'lucide-react';
+import { ClipboardList, FolderKanban, ListOrdered, Radio, Settings, Shield, Workflow } from 'lucide-react';
 
 const ACTIVE_COLOR = 'text-[#3CCED7]';
 const ACTIVE_BAR = 'bg-[#3CCED7]';
@@ -47,6 +47,7 @@ export default function CsmSettingsSidebar() {
   const workTypes = '/admin/csm/settings/work-types';
   const assignments = '/admin/csm/settings/assignments';
   const slaPolicy = '/admin/csm/settings/sla';
+  const ticketStatuses = '/admin/csm/settings/ticket-statuses';
 
   return (
     <aside className="hidden w-[240px] shrink-0 flex-col border-r border-gray-200 bg-white sm:flex">
@@ -89,6 +90,12 @@ export default function CsmSettingsSidebar() {
           label="SLA Policy"
           icon={<Shield className="h-4 w-4" aria-hidden />}
           isActive={pathname === '/admin/csm/settings/sla'}
+        />
+        <NavLink
+          href={ticketStatuses}
+          label="Ticket Statuses"
+          icon={<Workflow className="h-4 w-4" aria-hidden />}
+          isActive={pathname === '/admin/csm/settings/ticket-statuses'}
         />
       </nav>
     </aside>

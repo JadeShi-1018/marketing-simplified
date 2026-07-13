@@ -9,6 +9,7 @@ import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { notificationsApi } from "@/lib/api/notificationsApi";
 import type { NotificationPreferencesData, PrefRow } from "@/types/notifications";
 import { useAuthStore } from "@/lib/authStore";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 
 type SectionId =
   | "collaboration_assets"
@@ -181,6 +182,8 @@ function PreferencesContent() {
     if (!isAuthenticated) return;
     load();
   }, [hasHydrated, initialized, isAuthenticated, load]);
+
+  useRefetchOnFocus(hasHydrated, initialized, isAuthenticated, load);
 
   const patchChannel = async (
     section: SectionId,

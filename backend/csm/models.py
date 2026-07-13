@@ -161,9 +161,15 @@ class CsmNotification(TimeStampedModel):
 
 
 class Ticket(TimeStampedModel):
+    # Built-in statuses. The per-project status machine
+    # (TicketStatus / TicketStatusTransition) is the source of truth for
+    # transitions and custom statuses; these choices give the five built-ins a
+    # display label. Custom statuses are stored as slugs not listed here —
+    # get_status_display() falls back to the raw slug for those.
     STATUS_CHOICES = [
         ('todo', 'To Do'),
         ('in_progress', 'In Progress'),
+        ('pending_customer', 'Pending Customer Response'),
         ('resolved', 'Resolved'),
         ('closed', 'Closed'),
     ]
@@ -178,7 +184,7 @@ class Ticket(TimeStampedModel):
     queue = models.ForeignKey(Queue, on_delete=models.CASCADE, related_name='tickets')
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='todo')
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='todo')
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
     assigned_to = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
@@ -193,6 +199,10 @@ class Ticket(TimeStampedModel):
     )
     first_response_due = models.DateTimeField(null=True, blank=True)
     resolution_due = models.DateTimeField(null=True, blank=True)
+
+    # Timestamp the ticket last entered "Pending Customer Response".
+    # Drives the auto-resolution rule (resolve after N days with no customer reply).
+    pending_since = models.DateTimeField(null=True, blank=True)
 
     # --- CSM-S01-07: form submission context ---
     form = models.ForeignKey(
@@ -222,6 +232,21 @@ class Ticket(TimeStampedModel):
 
     def __str__(self):
         return f"[{self.get_status_display()}] {self.title}"
+
+    def save(self, *args, **kwargs):
+        # Keep the pending-clock in sync on every write path (create,
+        # PATCH, task, future callers) so the auto-resolution rule always has a
+        # start time. Stamp it when entering Pending Customer Response, clear it
+        # on leaving.
+        if self.status == 'pending_customer':
+            if self.pending_since is None:
+                self.pending_since = timezone.now()
+        elif self.pending_since is not None:
+            self.pending_since = None
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None and 'status' in update_fields and 'pending_since' not in update_fields:
+            kwargs['update_fields'] = [*update_fields, 'pending_since']
+        super().save(*args, **kwargs)
 
 
 class Conversation(TimeStampedModel):
@@ -772,3 +797,80 @@ class CSMInvitation(TimeStampedModel):
 
     def __str__(self):
         return f"Invitation to {self.email} ({'accepted' if self.accepted else 'pending'})"
+
+
+# --- Ticket status machine & lifecycle ------------------------------------
+
+class TicketStatus(TimeStampedModel):
+    """A ticket workflow status, project-scoped (one machine per project).
+
+    The five built-ins (is_builtin=True) are seeded per project; admins add
+    custom statuses and place them anywhere in the sequence via `order`.
+    `slug` is what Ticket.status stores.
+    """
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='ticket_statuses',
+    )
+    slug = models.CharField(max_length=50)
+    name = models.CharField(max_length=100)
+    color = models.CharField(max_length=20, default='#94a3b8')
+    order = models.PositiveIntegerField(default=0)
+    is_builtin = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+        verbose_name_plural = 'ticket statuses'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'slug'],
+                name='csm_ticketstatus_unique_slug_per_project',
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.slug})"
+
+
+class TicketStatusTransition(TimeStampedModel):
+    """A permitted edge (from_status -> to_status) in a project's status machine.
+
+    Presence of a row = the transition is allowed. Absence = blocked.
+    Statuses are referenced by slug so custom statuses need no schema change.
+    """
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='ticket_status_transitions',
+    )
+    from_status = models.CharField(max_length=50)
+    to_status = models.CharField(max_length=50)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'from_status', 'to_status'],
+                name='csm_ticketstatustransition_unique',
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.from_status} -> {self.to_status}"
+
+
+class TicketAutoResolveConfig(TimeStampedModel):
+    """Per-project rule: auto-move tickets left in Pending Customer Response for
+    `days_until_resolve` days with no customer reply to Resolved, notifying them."""
+    project = models.OneToOneField(
+        Project, on_delete=models.CASCADE, related_name='ticket_auto_resolve_config',
+    )
+    enabled = models.BooleanField(default=False)
+    days_until_resolve = models.PositiveIntegerField(default=2)
+    notification_message = models.TextField(
+        default=(
+            'This ticket has been automatically resolved as we did not hear '
+            'back from you. Please reply if you still need help and we will '
+            'reopen it.'
+        ),
+    )
+
+    def __str__(self):
+        return f"AutoResolveConfig(project={self.project_id}, enabled={self.enabled})"

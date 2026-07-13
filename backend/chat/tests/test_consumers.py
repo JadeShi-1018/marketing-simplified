@@ -3,10 +3,10 @@ import logging
 import json
 import pytest
 from contextlib import suppress
+from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
 from channels.routing import URLRouter
 from channels.layers import channel_layers
-from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -34,20 +34,15 @@ async def _disconnect_communicators(*communicators):
     await asyncio.sleep(0)
 
 def _reset_channel_layers():
+    # Just evict the cached layer instances so the next test gets a fresh one
+    # bound to its own event loop.  Calling async_to_sync(layer.close)() from
+    # a sync fixture that runs inside (or just after) an asyncio event loop can
+    # deadlock because InMemoryChannelLayer's asyncio.Queue objects are bound to
+    # the loop that created them.  Clearing the registry is sufficient — Python
+    # GC reclaims the old layer and its queues once all references are dropped.
     cache = getattr(channel_layers, '_layers', None)
-    if not isinstance(cache, dict):
-        return
-    for layer in list(cache.values()):
-        close_fn = getattr(layer, 'close', None)
-        if callable(close_fn):
-            try:
-                async_to_sync(close_fn)()
-            except Exception:
-                try:
-                    close_fn()
-                except Exception:
-                    pass
-    cache.clear()
+    if isinstance(cache, dict):
+        cache.clear()
 
 @pytest.fixture(autouse=True)
 def reset_channel_layer_cache(settings):
@@ -57,7 +52,12 @@ def reset_channel_layer_cache(settings):
     OnlineStatusService.OFFLINE_GRACE_SECONDS = 0
     _reset_channel_layers()
     cache.clear()
-    yield
+    # Force all OnlineStatusService Redis calls to raise NotImplementedError so
+    # they fall back to the LocMemCache set above.  This prevents tests from
+    # hitting a real Redis server (or failing when Redis is unavailable) and
+    # eliminates cross-worker data contamination when pytest-xdist is active.
+    with patch('chat.services.get_redis_connection', side_effect=NotImplementedError):
+        yield
     OnlineStatusService.OFFLINE_GRACE_SECONDS = old_grace_seconds
     cache.clear()
     _reset_channel_layers()

@@ -1,9 +1,11 @@
+from django.db import connection
 from django.test import TestCase, RequestFactory, override_settings
 from django.contrib.auth import get_user_model
 from django.http import HttpResponse
 from django.utils import timezone
 from datetime import timedelta
 from core.models import Organization, Role, Permission
+from core.services.tenant import slug_to_schema_name
 from access_control.models import RolePermission, UserRole
 import access_control.tests.test_urls as test_urls
 from access_control.tests.test_urls import dummy_view
@@ -17,12 +19,13 @@ from access_control.middleware.authorization import AuthorizationMiddleware
 class AuthorizationMiddlewareTest(TestCase):
     @classmethod
     def setUpTestData(cls):
-        # Inject our test URLs
-        # set_urlconf(test_urls) # Note: pass module name, not module object!
-        
-
-        # 1 organization
-        cls.org = Organization.objects.create(name="TestOrg")
+        # 1 organization — provision_tenant_schema() resets search_path to
+        # public after creating the schema, so re-set it here before writing
+        # to tenant-only tables (RolePermission, UserRole).
+        cls.org = Organization.objects.create(name="AuthMiddlewareOrg")
+        _schema = slug_to_schema_name(cls.org.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
 
         # 5 permissions
         cls.perm_view_asset, _ = Permission.objects.get_or_create(module="ASSET", action="VIEW")
@@ -60,6 +63,21 @@ class AuthorizationMiddlewareTest(TestCase):
 
         cls.factory = RequestFactory()
         cls.middleware = AuthorizationMiddleware()
+
+    def setUp(self):
+        # SET search_path is connection-level, not transactional.  Django's
+        # TestCase rolls back each test via a savepoint, which does NOT reset
+        # search_path.  Re-apply here so test methods that create UserRole
+        # objects (or that call AuthorizationMiddleware which queries tenant
+        # tables) see the correct schema.
+        _schema = slug_to_schema_name(self.org.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {_schema}, public')
+
+    def tearDown(self):
+        super().tearDown()
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
 
     def test_expired_role_denied(self):
         req = self.factory.get('/api/assets/list/')
@@ -121,7 +139,7 @@ class TeamPermissionDecoratorTest(TestCase):
     @classmethod
     def setUpTestData(cls):
         User = get_user_model()
-        cls.org = Organization.objects.create(name="TestOrg")
+        cls.org = Organization.objects.create(name="TeamPermDecorOrg")
         # Create users
         cls.org_admin = User.objects.create_user(username="orgadmin", email="orgadmin@test.com", password="pw", is_superuser=True)
         cls.team_leader = User.objects.create_user(username="leader", email="leader@test.com", password="pw")

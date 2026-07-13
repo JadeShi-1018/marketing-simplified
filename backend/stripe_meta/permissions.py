@@ -97,31 +97,41 @@ class HasValidOrganizationToken(BasePermission):
         # Check if user is authenticated
         if not request.user.is_authenticated:
             return False
-        
+
         # Check for organization access token in specific header
         org_token = request.META.get('HTTP_X_ORGANIZATION_TOKEN')
+
+        # If no token provided, allow access for authenticated users with an organization
+        # This handles new organizations during onboarding
         if not org_token:
+            # Use current_organization for multi-org support
+            org = getattr(request.user, 'current_organization', None) or getattr(request.user, 'organization', None)
+            if org:
+                request.organization = org
+                return True
             return False
-            
-        # Decode and validate the organization token
+
+        # If token is provided, validate it fully
         payload = decode_organization_access_token(org_token)
         if not payload:
             return False
-        
+
         # Validate that the token's user_id matches the authenticated user's ID
         if request.user.id != payload['user_id']:
             return False
-            
+
         # Validate that the token's organization_slug matches the user's organization
-        if not request.user.organization:
+        # Use current_organization for multi-org support
+        org = getattr(request.user, 'current_organization', None) or getattr(request.user, 'organization', None)
+        if not org:
             return False
-            
-        if request.user.organization.slug != payload['organization_slug']:
+
+        if org.slug != payload['organization_slug']:
             return False
-            
+
         # Store organization info in request for use in views
-        request.organization = request.user.organization
-        
+        request.organization = org
+
         return True
 
 

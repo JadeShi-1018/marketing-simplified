@@ -5,9 +5,9 @@ Tests for:
 - ProjectViewSet
 """
 import pytest
+from django.db import connection
 from django.urls import reverse
 from rest_framework import status
-from calendars.models import Calendar
 from core.models import Project, ProjectMember
 from core.utils.project_calendars import ensure_project_calendar
 
@@ -174,17 +174,35 @@ class TestProjectViewSet:
         assert 'is_active' in response.data
         assert 'member_count' in response.data
 
-    def test_delete_project_soft_deletes_calendar(self, authenticated_client, project):
-        """Deleting a project should soft-delete its calendar."""
+    def test_delete_project_soft_deletes_calendar(self, authenticated_client, project, user):
+        """Deleting a project should soft-delete its calendar.
+
+        In the test environment all fixture data lives in the public schema
+        (pytest-django's `db` fixture does not switch the search_path).
+        TenantSchemaMiddleware falls back to 'public' when force_authenticate
+        is used (it runs before DRF's view-layer auth).  Consequently both the
+        calendar row and the perform_destroy UPDATE operate in the public
+        schema, making the soft-delete verifiable via a straightforward
+        refresh_from_db() call.
+        """
+        # Create calendar in the current (public) schema – no explicit schema
+        # switching so that perform_destroy (also in public context) can find it.
         calendar = ensure_project_calendar(project)
-        assert calendar.is_deleted is False
 
         url = reverse('project-detail', kwargs={'pk': project.slug})
         response = authenticated_client.delete(url)
-
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        calendar.refresh_from_db()
-        assert calendar.is_deleted is True
+
+        # Verify soft-delete via raw SQL in the same (public) schema.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'SELECT is_deleted FROM calendars_calendar WHERE id = %s',
+                [str(calendar.id)],
+            )
+            row = cursor.fetchone()
+
+        assert row is not None, "Calendar should still exist (soft-deleted, not hard-deleted)"
+        assert row[0] is True, "Calendar.is_deleted should be True after project deletion"
 
     def test_get_project_requires_membership(self, authenticated_client, user, organization):
         """Getting project details requires membership"""

@@ -1,7 +1,7 @@
 from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
 
-from core.models import ProjectMember
+from core.models import Project, ProjectMember
 
 
 class CheckProjectAccessMiddleware(MiddlewareMixin):
@@ -35,10 +35,29 @@ class CheckProjectAccessMiddleware(MiddlewareMixin):
         if not requires_project:
             return None
 
-        if user.active_project:
+        # If the request carries an explicit project_id, the view will resolve it
+        # and enforce access control itself — no need to block here.
+        if request.GET.get('project_id'):
+            return None
+
+        # Check whether the user has an active project or any project membership.
+        # Run under the search_path already set by TenantSchemaMiddleware so that
+        # ProjectMember (tenant schema) queries work correctly.  Do NOT switch to
+        # 'public' here: ProjectMember lives in the tenant schema, not in public,
+        # so querying it with search_path=public always returns empty and causes
+        # false 403s for users with memberships.
+        try:
+            active_project = user.active_project
+        except Project.DoesNotExist:
+            # active_project_id is stale (project deleted, db_constraint=False
+            # means no DB-level cascade). Treat as no active project.
+            active_project = None
+
+        if active_project:
             return None
 
         has_membership = ProjectMember.objects.filter(user=user, is_active=True).exists()
+
         if not has_membership:
             return JsonResponse(
                 {

@@ -364,4 +364,15 @@ export const ProjectAPI = {
       .delete(`/api/core/projects/${projectId}/invitations/${invitationId}/reject/`)
       .then((response) => response.data);
   },
+
+  /**
+   * Returns the user's onboarding status based on org membership.
+   * `needs_onboarding` is true ONLY when the user has no organization at all.
+   * Being in an org without projects is NOT considered needing onboarding.
+   */
+  getOnboardingStatus: (): Promise<{ needs_onboarding: boolean; has_org: boolean; has_project: boolean }> => {
+    return api
+      .get('/api/core/onboarding-status/')
+      .then((response) => response.data);
+  },
 };

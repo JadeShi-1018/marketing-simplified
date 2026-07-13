@@ -20,7 +20,9 @@ from core.models import Team, Organization, Role
 from access_control.models import UserRole
 from stripe_meta.permissions import generate_organization_access_token
 from django.conf import settings
-from django.db import transaction
+from django.core import signing
+from django.db import transaction, connection
+from core.services.tenant import slug_to_schema_name
 from google_auth_oauthlib.flow import Flow  # For OAuth start (generating auth URL)
 from requests_oauthlib import OAuth2Session  # For OAuth callback (token exchange)
 from django.core.mail import send_mail
@@ -40,6 +42,67 @@ User = get_user_model()
 
 # OAuth Clock Tolerance Configuration
 OAUTH_CLOCK_TOLERANCE_SECONDS = 10  # 10 seconds tolerance for JWT validation
+GOOGLE_OAUTH_STATE_SALT = "google-oauth-state"
+GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS = 600
+
+
+def build_google_oauth_state():
+    return signing.dumps(
+        {
+            "provider": "google",
+            "nonce": secrets.token_urlsafe(16),
+        },
+        salt=GOOGLE_OAUTH_STATE_SALT,
+    )
+
+
+def validate_google_oauth_state(request, state):
+    session_state = request.session.get("google_oauth_state")
+    if session_state and secrets.compare_digest(session_state, state or ""):
+        return None
+
+    if not state:
+        return Response(
+            {
+                "error": "Missing Google OAuth state.",
+                "errorCode": "MISSING_OAUTH_STATE",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        payload = signing.loads(
+            state,
+            salt=GOOGLE_OAUTH_STATE_SALT,
+            max_age=GOOGLE_OAUTH_STATE_MAX_AGE_SECONDS,
+        )
+    except signing.SignatureExpired:
+        return Response(
+            {
+                "error": "Google OAuth state has expired. Please try signing in again.",
+                "errorCode": "OAUTH_STATE_EXPIRED",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except signing.BadSignature:
+        return Response(
+            {
+                "error": "Invalid Google OAuth state.",
+                "errorCode": "INVALID_OAUTH_STATE",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if payload.get("provider") != "google":
+        return Response(
+            {
+                "error": "Invalid Google OAuth state.",
+                "errorCode": "INVALID_OAUTH_STATE",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    return None
 
 @method_decorator(csrf_exempt, name='dispatch')
 class RegisterView(APIView):
@@ -70,49 +133,63 @@ class RegisterView(APIView):
                 "details": list(e.messages)
             }, status=400)
 
-        # If org is provided, check that it exists; otherwise create/find by email domain
+        # MULTI-ORG: Users must create or join an organization during onboarding
+        # No longer auto-create organization during registration
         organization = None
         if organization_id:
             try:
                 organization = Organization.objects.get(id=organization_id)
             except Organization.DoesNotExist:
                 return Response({"error": "Organization not found"}, status=400)
-        else:
-            base_name = f"{username}'s Organisation"
-            name = base_name
-            suffix = 1
-            while Organization.objects.filter(name=name).exists():
-                suffix += 1
-                name = f"{base_name} {suffix}"
-            domain = email.split("@")[-1].lower() if "@" in email else None
-            organization = Organization.objects.create(name=name, email_domain=domain)
 
         print(f"[DEBUG] Creating user with is_verified=True")
         user = User.objects.create_user(
             username=username,
             email=email,
             password=password,
-            organization=organization
+            organization=organization,  # Legacy field - will be None for new users
+            current_organization=organization  # New field - will be None for new users
         )
         print(f"[DEBUG] User created with is_verified={user.is_verified}")
-        
+
         # Set user flags for email/password registration
         user.is_verified = True
         user.password_set = True  # Explicitly mark password as set (for consistency with Google OAuth flow)
         user.save()
-        
-        # Assign default role (Media Buyer) if organization is provided
-        if organization:
-            default_role, _ = Role.objects.get_or_create(
-                organization=organization,
-                name="Media Buyer",
-                defaults={"level": 30}
-            )
-            UserRole.objects.get_or_create(user=user, role=default_role)
 
-            # Org creator (no organization_id supplied) gets Organization Admin
-            if not organization_id:
-                assign_org_admin(user, organization)
+        # If joining existing organization via organization_id, set up membership and roles
+        if organization:
+            # Joining existing organization - create membership with member role
+            from core.models import OrganizationMembership
+            OrganizationMembership.objects.get_or_create(
+                user=user,
+                organization=organization,
+                defaults={
+                    'role': 'member',
+                    'is_active': True,
+                }
+            )
+
+            # Assign default Media Buyer role in tenant schema
+            from django.db import connection
+            from core.services.tenant import slug_to_schema_name
+            schema_name = slug_to_schema_name(organization.slug)
+
+            # Temporarily switch to tenant schema to create Role and UserRole
+            with connection.cursor() as cursor:
+                cursor.execute(f'SET search_path TO {schema_name}, public')
+
+            try:
+                default_role, _ = Role.objects.get_or_create(
+                    organization=organization,
+                    name="Media Buyer",
+                    defaults={"level": 30}
+                )
+                UserRole.objects.get_or_create(user=user, role=default_role)
+            finally:
+                # Reset to public schema
+                with connection.cursor() as cursor:
+                    cursor.execute('SET search_path TO public')
 
             # Create CustomerOrganisation + admin CustomerUser so CSM features work
             from customer.models import CustomerOrganisation
@@ -351,26 +428,35 @@ class SsoCallbackView(APIView):
                     # Create new user with hash-based username
                     import hashlib
                     username = f"user_{hashlib.md5(email.encode()).hexdigest()[:8]}"
-                    
+
                     user = User.objects.create(
                         email=email,
                         username=username,
-                        organization=organization,
+                        organization=organization,  # Legacy field
+                        current_organization=organization,  # New multi-org field
                         is_verified=True,
                         is_active=True
                     )
                     user.set_unusable_password()
                     user.save()
                 
-                # Get or create default role
-                default_role, _ = Role.objects.get_or_create(
-                    organization=organization,
-                    name="Media Buyer",
-                    defaults={"level": 30}
-                )
-                
-                # Assign role to user (get_or_create to avoid duplicates)
-                UserRole.objects.get_or_create(user=user, role=default_role)
+                # Assign role to user — both Role and UserRole must be resolved
+                # inside the tenant schema context so the FK in the tenant
+                # schema's access_control_userrole resolves to the tenant's
+                # core_role table (not the public one).
+                _schema = slug_to_schema_name(organization.slug)
+                with connection.cursor() as _cur:
+                    _cur.execute(f'SET search_path TO {_schema}, public')
+                try:
+                    default_role, _ = Role.objects.get_or_create(
+                        organization=organization,
+                        name="Media Buyer",
+                        defaults={"level": 30}
+                    )
+                    UserRole.objects.get_or_create(user=user, role=default_role)
+                finally:
+                    with connection.cursor() as _cur:
+                        _cur.execute('SET search_path TO public')
                 
                 # Generate JWT tokens
                 refresh = RefreshToken.for_user(user)
@@ -434,11 +520,14 @@ class GoogleOAuthStartView(APIView):
             
             flow.redirect_uri = settings.GOOGLE_OAUTH_REDIRECT_URI
             
+            state_token = build_google_oauth_state()
+
             # Generate authorization URL
             authorization_url, state = flow.authorization_url(
                 access_type='offline',
                 include_granted_scopes='true',
-                prompt='consent'
+                prompt='consent',
+                state=state_token,
             )
             
             # Store state in session for verification in callback
@@ -495,6 +584,10 @@ class GoogleOAuthCallbackView(APIView):
                 return Response({
                     'error': 'Missing authorization code'
                 }, status=status.HTTP_400_BAD_REQUEST)
+
+            state_error = validate_google_oauth_state(request, request.GET.get('state'))
+            if state_error is not None:
+                return state_error
             
             # Create OAuth2Session with clock tolerance configuration
             # This is the core fix: configure session with leeway for JWT validation
@@ -738,7 +831,7 @@ class GoogleOAuthCallbackView(APIView):
                         is_verified=True,  # Google verified the email
                         is_active=True
                     )
-                    
+
                     # Set unusable password (will be set during password setup)
                     user.set_unusable_password()
 
@@ -747,40 +840,13 @@ class GoogleOAuthCallbackView(APIView):
                     user.verification_token = temp_token
 
                     # Auto-create Organization + CSM records
-                    from core.models import Organization
-                    base_name = f"{username}'s Organisation"
-                    org_name = base_name
-                    suffix = 1
-                    while Organization.objects.filter(name=org_name).exists():
-                        suffix += 1
-                        org_name = f"{base_name} {suffix}"
-                    domain = email.split('@')[-1].lower() if '@' in email else None
-                    organization = Organization.objects.create(name=org_name, email_domain=domain)
-
-                    user.organization = organization
-
-                    from customer.models import CustomerOrganisation
-                    from csm.models import CustomerUser
-                    cust_org, _ = CustomerOrganisation.objects.get_or_create(
-                        organization=organization,
-                        defaults={'name': organization.name},
-                    )
-                    CustomerUser.objects.get_or_create(
-                        user=user,
-                        organisation=cust_org,
-                        defaults={
-                            'user_type': 'admin',
-                            'is_active': True,
-                            'is_creator': True,
-                        },
-                    )
-
+                    # MULTI-ORG: No longer auto-create organization for Google OAuth users
+                    # Users must create or join an organization during onboarding
+                    user.organization = None  # Legacy field
+                    user.current_organization = None  # New multi-org field
                     user.save()
 
-                    # Org creator gets Organization Admin so billing endpoints work
-                    assign_org_admin(user, organization)
-
-                    print(f"[GOOGLE OAUTH] New user created: {email}, username: {username}")
+                    print(f"[GOOGLE OAUTH] New user created: {email}, username: {username} (no organization)")
 
                     # HTTP redirect to frontend set-password page
                     redirect_url = f"{settings.FRONTEND_URL}/set-password?token={temp_token}"

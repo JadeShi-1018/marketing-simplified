@@ -120,6 +120,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.tenant_schema.TenantSchemaMiddleware',
     'core.middleware.project_access.CheckProjectAccessMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -184,9 +185,8 @@ DATABASES = {
         'PASSWORD': config('POSTGRES_PASSWORD', default='cocofly4321'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('POSTGRES_PORT', default='5432'),
-        'OPTIONS': {
-            'options': '-c search_path=public'
-        },
+        # REMOVED: 'OPTIONS': {'options': '-c search_path=public'}
+        # TenantSchemaMiddleware dynamically sets search_path per request
         'TEST': {
             'NAME': 'test_mediajira_db',
         }
@@ -321,7 +321,8 @@ SESSION_SAVE_EVERY_REQUEST = True
 # Django REST Framework settings
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        # Use tenant-aware JWT authentication to handle multi-tenant schema switching
+        'core.authentication.TenantAwareJWTAuthentication',
         'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication',
     ],
@@ -481,6 +482,12 @@ CELERY_BEAT_SCHEDULE = {
     'agent-cleanup-old-trigger-logs': {
         'task': 'agent.tasks.cleanup_old_trigger_logs',
         'schedule': crontab(hour=2, minute=0),
+        'options': {'timezone': 'UTC'},
+    },
+    # CSM: auto-resolve tickets stuck in Pending Customer Response
+    'csm-auto-resolve-pending-tickets': {
+        'task': 'csm.tasks.auto_resolve_pending_tickets',
+        'schedule': crontab(hour=1, minute=30),  # daily 01:30 UTC
         'options': {'timezone': 'UTC'},
     },
 }
