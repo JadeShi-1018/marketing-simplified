@@ -55,15 +55,25 @@ class BudgetRequestPermission(permissions.BasePermission):
         # Get team_id if user has team
         team_id = request.headers.get('x-team-id') if user_has_team(request.user) else None
         
-        # Get organization from the object
+        # Get organization from the object, falling back to request.user.organization
+        # when FK traversal fails due to multi-tenant schema context.
         organization = None
         if hasattr(obj, 'organization'):
             organization = obj.organization
-        elif hasattr(obj, 'project') and hasattr(obj.project, 'organization'):
-            organization = obj.project.organization
-        elif hasattr(obj, 'budget_pool') and hasattr(obj.budget_pool, 'project') and hasattr(obj.budget_pool.project, 'organization'):
-            organization = obj.budget_pool.project.organization
-        
+        elif hasattr(obj, 'project'):
+            try:
+                organization = obj.project.organization
+            except Exception:
+                pass
+        elif hasattr(obj, 'budget_pool'):
+            try:
+                organization = obj.budget_pool.project.organization
+            except Exception:
+                pass
+
+        if organization is None:
+            organization = getattr(request.user, 'organization', None)
+
         # Check RBAC permissions based on action type or HTTP method
         action = getattr(view, 'action', None)
         is_get_request = request.method == 'GET'
@@ -138,11 +148,18 @@ class ApprovalPermission(permissions.BasePermission):
         # Get team_id if user has team
         team_id = request.headers.get('x-team-id') if user_has_team(request.user) else None
         
-        # Get organization from the object
+        # Get organization from the object, falling back to request.user.organization
+        # when FK traversal fails due to multi-tenant schema context.
         organization = None
-        if hasattr(obj, 'budget_pool') and hasattr(obj.budget_pool, 'project') and hasattr(obj.budget_pool.project, 'organization'):
-            organization = obj.budget_pool.project.organization
-        
+        if hasattr(obj, 'budget_pool'):
+            try:
+                organization = obj.budget_pool.project.organization
+            except Exception:
+                pass
+
+        if organization is None:
+            organization = getattr(request.user, 'organization', None)
+
         # Check if the user has approval permission with organization check
         return has_rbac_permission(request.user, 'BUDGET_REQUEST', 'APPROVE', organization, team_id)
 
@@ -205,10 +222,17 @@ class BudgetPoolPermission(permissions.BasePermission):
         # Get team_id if user has team
         team_id = request.headers.get('x-team-id') if user_has_team(request.user) else None
 
-        # Get organization from the object
+        # Get organization from the object, falling back to request.user.organization
+        # when FK traversal fails due to multi-tenant schema context.
         organization = None
-        if hasattr(obj, 'project') and hasattr(obj.project, 'organization'):
-            organization = obj.project.organization
+        if hasattr(obj, 'project'):
+            try:
+                organization = obj.project.organization
+            except Exception:
+                pass
+
+        if organization is None:
+            organization = getattr(request.user, 'organization', None)
 
         # If no organization configured, fall back to authenticated-only access
         if organization is None:

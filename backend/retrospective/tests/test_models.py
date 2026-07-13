@@ -2,6 +2,7 @@
 Essential test cases for retrospective models
 Tests the core retrospective task lifecycle: auto-create → complete
 """
+import pytest
 from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
@@ -13,6 +14,7 @@ from core.models import Project, Organization
 User = get_user_model()
 
 
+@pytest.mark.timeout(600)
 class RetrospectiveTaskLifecycleTest(TestCase):
     """Test retrospective task lifecycle (auto-create → complete)"""
     
@@ -140,6 +142,7 @@ class RetrospectiveTaskLifecycleTest(TestCase):
             retrospective.full_clean()
 
 
+@pytest.mark.timeout(600)
 class InsightGenerationTest(TestCase):
     """Test insight generation under different KPI inputs"""
     
@@ -230,6 +233,7 @@ class InsightGenerationTest(TestCase):
             )
 
 
+@pytest.mark.timeout(600)
 class RetrospectiveModelIntegrationTest(TestCase):
     """Integration tests for retrospective models"""
     

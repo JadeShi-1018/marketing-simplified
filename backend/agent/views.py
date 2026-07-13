@@ -81,7 +81,10 @@ def _get_user_project(request):
             return project
         except Project.DoesNotExist:
             return None
-    return getattr(request.user, 'active_project', None)
+    try:
+        return request.user.active_project
+    except Project.DoesNotExist:
+        return None
 
 
 class AgentSessionViewSet(EnglishResponseMixin, viewsets.ModelViewSet):

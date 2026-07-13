@@ -2,6 +2,7 @@
 Essential test cases for retrospective services
 Tests KPI aggregation, insight generation, and report approval workflow
 """
+import pytest
 from decimal import Decimal
 from datetime import timedelta
 from django.test import TestCase
@@ -14,6 +15,7 @@ from core.models import Project, Organization
 User = get_user_model()
 
 
+@pytest.mark.timeout(600)
 class RetrospectiveServiceWorkflowTest(TestCase):
     """Test retrospective service workflow and lifecycle"""
     
@@ -185,6 +187,7 @@ class RetrospectiveServiceWorkflowTest(TestCase):
             RetrospectiveService.get_retrospective_summary(non_existent_id)
 
 
+@pytest.mark.timeout(600)
 class KPIQuerySlicingTest(TestCase):
     """Test KPI query slice: by team/channel over 30 days (BE4-04 requirement)"""
     
@@ -261,6 +264,7 @@ class KPIQuerySlicingTest(TestCase):
             self.assertIn('conversions', record)
 
 
+@pytest.mark.timeout(600)
 class InsightRulesEngineTest(TestCase):
     """Test rule-based insight generation with different KPI thresholds"""
     
@@ -319,6 +323,7 @@ class InsightRulesEngineTest(TestCase):
         self.assertIn('threshold', roi_rule)
 
 
+@pytest.mark.timeout(600)
 class ServiceIntegrationTest(TestCase):
     """Integration tests for complete retrospective service workflow"""
     

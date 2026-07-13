@@ -98,11 +98,27 @@ class UsageMonthly(models.Model):
 
 class LLMCallLog(models.Model):
     """One row per LLM call — used for cost accounting and fair-use alerting."""
+
+    class CallPurpose(models.TextChoices):
+        DATA_ANALYSIS       = 'data_analysis',       'Data Analysis'
+        COLUMN_DETECTION    = 'column_detection',    'Column Detection'
+        CRITERIA_GENERATION = 'criteria_generation', 'Criteria Generation'
+        MIRO_GENERATION     = 'miro_generation',     'Miro Generation'
+        FOLLOW_UP_CHAT      = 'follow_up_chat',      'Follow-up Chat'
+        CALENDAR_SUGGESTION = 'calendar_suggestion', 'Calendar Suggestion'
+        OTHER               = 'other',               'Other'
+
     organization = models.ForeignKey('core.Organization', on_delete=models.CASCADE)
     agent_session = models.ForeignKey('agent.AgentSession', null=True, on_delete=models.SET_NULL)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL)
     provider = models.CharField(max_length=20)    # 'anthropic' or 'gemini'
     model_name = models.CharField(max_length=80)
+    call_purpose = models.CharField(
+        max_length=30,
+        choices=CallPurpose.choices,
+        default=CallPurpose.OTHER,
+        db_index=True,
+    )
     input_tokens = models.IntegerField()
     output_tokens = models.IntegerField()
     normalized_tokens = models.BigIntegerField()  # after per-model multiplier, used for quota

@@ -13,24 +13,25 @@ User = get_user_model()
 
 class AssetSubmitAPITest(APITestCase):
     """Test Asset submit for review endpoint"""
-    
+
     def setUp(self):
-        # Create test users
+        # Create test users — use class-specific email prefix to avoid conflicts
+        # with other test classes when databases are shared across workers.
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email='user1.submit@example.com',
+            username='user1submit',
             password='testpass123'
         )
-        
+
         self.user2 = User.objects.create_user(
-            email='user2@example.com',
-            username='user2',
+            email='user2.submit@example.com',
+            username='user2submit',
             password='testpass123'
         )
-        
-        # Create test organization and team
+
+        # Create test organization and team (unique name per class)
         self.organization = Organization.objects.create(
-            name="Test Organization"
+            name="AssetSubmit Org"
         )
         self.team = Team.objects.create(
             organization=self.organization,
@@ -40,7 +41,7 @@ class AssetSubmitAPITest(APITestCase):
         # Create project and task
         self.project = Project.objects.create(name="Test Project", organization=self.organization)
         self.task = Task.objects.create(summary="Test Task", type="asset", project=self.project)
-        
+
         # Create test asset
         self.asset = Asset.objects.create(
             task=self.task,
@@ -49,17 +50,19 @@ class AssetSubmitAPITest(APITestCase):
             status=Asset.NOT_SUBMITTED,
             tags=['test']
         )
-        
-        # Authenticate as user1
+
         self.client.force_authenticate(user=self.user1)
-    
+
+    def tearDown(self):
+        super().tearDown()
+
     def create_finalized_version(self, asset=None, version_number=1, uploaded_by=None):
         """Helper method to create a finalized version for testing"""
         if asset is None:
             asset = self.asset
         if uploaded_by is None:
             uploaded_by = self.user1
-            
+
         version = AssetVersion.objects.create(
             asset=asset,
             version_number=version_number,
@@ -73,7 +76,7 @@ class AssetSubmitAPITest(APITestCase):
         version.finalize(finalized_by=uploaded_by)
         version.save()
         return version
-    
+
     def test_submit_asset_for_review(self):
         """Test submitting asset for review"""
         # Create a finalized version first (required for submission)
@@ -260,25 +263,25 @@ class AssetSubmitAPITest(APITestCase):
 
 class AssetReviewAPITest(APITestCase):
     """Test Asset Review endpoints"""
-    
+
     def setUp(self):
         super().setUp()
-        # Create test users
+        # Create test users (class-specific names to avoid cross-class conflicts)
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email='user1.review@example.com',
+            username='user1review',
             password='testpass123'
         )
-        
+
         self.user2 = User.objects.create_user(
-            email='user2@example.com',
-            username='user2',
+            email='user2.review@example.com',
+            username='user2review',
             password='testpass123'
         )
-        
-        # Create test organization and team
+
+        # Create test organization and team (unique name per class)
         self.organization = Organization.objects.create(
-            name="Test Organization"
+            name="AssetReview Org"
         )
         self.team = Team.objects.create(
             organization=self.organization,
@@ -288,7 +291,7 @@ class AssetReviewAPITest(APITestCase):
         # Create project and task
         self.project = Project.objects.create(name="Test Project", organization=self.organization)
         self.task = Task.objects.create(summary="Test Task", type="asset", project=self.project)
-        
+
         # Create test asset
         self.asset = Asset.objects.create(
             task=self.task,
@@ -297,17 +300,19 @@ class AssetReviewAPITest(APITestCase):
             status=Asset.PENDING_REVIEW,
             tags=['test']
         )
-        
-        # Authenticate as user1
+
         self.client.force_authenticate(user=self.user1)
-    
+
+    def tearDown(self):
+        super().tearDown()
+
     def create_finalized_version(self, asset=None, version_number=1, uploaded_by=None):
         """Helper method to create a finalized version for testing"""
         if asset is None:
             asset = self.asset
         if uploaded_by is None:
             uploaded_by = self.user1
-            
+
         version = AssetVersion.objects.create(
             asset=asset,
             version_number=version_number,
@@ -321,7 +326,7 @@ class AssetReviewAPITest(APITestCase):
         version.finalize(finalized_by=uploaded_by)
         version.save()
         return version
-    
+
     def test_start_review(self):
         """Test starting review"""
         # Create a finalized version first
@@ -711,25 +716,25 @@ class AssetReviewAPITest(APITestCase):
 
 class AssetWorkflowEndToEndTest(APITestCase):
     """Test complete asset workflow end-to-end"""
-    
+
     def setUp(self):
         super().setUp()
-        # Create test users
+        # Create test users (class-specific names to avoid cross-class conflicts)
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email='user1.e2e@example.com',
+            username='user1e2e',
             password='testpass123'
         )
-        
+
         self.user2 = User.objects.create_user(
-            email='user2@example.com',
-            username='user2',
+            email='user2.e2e@example.com',
+            username='user2e2e',
             password='testpass123'
         )
-        
-        # Create test organization and team
+
+        # Create test organization and team (unique name per class)
         self.organization = Organization.objects.create(
-            name="Test Organization"
+            name="AssetE2E Org"
         )
         self.team = Team.objects.create(
             organization=self.organization,
@@ -739,7 +744,7 @@ class AssetWorkflowEndToEndTest(APITestCase):
         # Create project and task
         self.project = Project.objects.create(name="Test Project", organization=self.organization)
         self.task = Task.objects.create(summary="Test Task", type="asset", project=self.project)
-        
+
         # Create test asset
         self.asset = Asset.objects.create(
             task=self.task,
@@ -748,17 +753,19 @@ class AssetWorkflowEndToEndTest(APITestCase):
             status=Asset.NOT_SUBMITTED,
             tags=['test']
         )
-        
-        # Authenticate as user1
+
         self.client.force_authenticate(user=self.user1)
-    
+
+    def tearDown(self):
+        super().tearDown()
+
     def create_finalized_version(self, asset=None, version_number=1, uploaded_by=None):
         """Helper method to create a finalized version for testing"""
         if asset is None:
             asset = self.asset
         if uploaded_by is None:
             uploaded_by = self.user1
-            
+
         version = AssetVersion.objects.create(
             asset=asset,
             version_number=version_number,
@@ -772,7 +779,7 @@ class AssetWorkflowEndToEndTest(APITestCase):
         version.finalize(finalized_by=uploaded_by)
         version.save()
         return version
-    
+
     def test_complete_workflow_approval_path(self):
         """Test complete workflow: NotSubmitted -> PendingReview -> UnderReview -> Approved -> Archived"""
         # Create a finalized version for the asset first using proper workflow
@@ -1096,25 +1103,25 @@ class AssetWorkflowEndToEndTest(APITestCase):
 
 class AssetStateTransitionLoggingTest(APITestCase):
     """Test that all state transitions are properly logged"""
-    
+
     def setUp(self):
         super().setUp()
-        # Create test users
+        # Create test users (class-specific names to avoid cross-class conflicts)
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email='user1.log@example.com',
+            username='user1log',
             password='testpass123'
         )
-        
+
         self.user2 = User.objects.create_user(
-            email='user2@example.com',
-            username='user2',
+            email='user2.log@example.com',
+            username='user2log',
             password='testpass123'
         )
-        
-        # Create test organization and team
+
+        # Create test organization and team (unique name per class)
         self.organization = Organization.objects.create(
-            name="Test Organization"
+            name="AssetLog Org"
         )
         self.team = Team.objects.create(
             organization=self.organization,
@@ -1124,7 +1131,7 @@ class AssetStateTransitionLoggingTest(APITestCase):
         # Create project and task
         self.project = Project.objects.create(name="Test Project", organization=self.organization)
         self.task = Task.objects.create(summary="Test Task", type="asset", project=self.project)
-        
+
         # Create test asset
         self.asset = Asset.objects.create(
             task=self.task,
@@ -1133,17 +1140,19 @@ class AssetStateTransitionLoggingTest(APITestCase):
             status=Asset.NOT_SUBMITTED,
             tags=['test']
         )
-        
-        # Authenticate as user1
+
         self.client.force_authenticate(user=self.user1)
-    
+
+    def tearDown(self):
+        super().tearDown()
+
     def create_finalized_version(self, asset=None, version_number=1, uploaded_by=None):
         """Helper method to create a finalized version for testing"""
         if asset is None:
             asset = self.asset
         if uploaded_by is None:
             uploaded_by = self.user1
-            
+
         version = AssetVersion.objects.create(
             asset=asset,
             version_number=version_number,
@@ -1157,7 +1166,7 @@ class AssetStateTransitionLoggingTest(APITestCase):
         version.finalize(finalized_by=uploaded_by)
         version.save()
         return version
-    
+
     def test_transition_logging_completeness(self):
         """Test that all transitions create proper log entries"""
         # Create a finalized version for the asset first using proper workflow

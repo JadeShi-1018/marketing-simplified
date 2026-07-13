@@ -75,12 +75,22 @@ def get_user_active_project(user):
     Return the user's active project, falling back to the first active membership.
     """
 
-    if user.active_project:
+    # active_project uses db_constraint=False (cross-schema FK), so Django cannot
+    # cascade SET_NULL via the DB — the id can become stale.  Catch DoesNotExist here
+    # so every caller gets None instead of an unhandled 500.
+    try:
+        active = user.active_project
+    except Project.DoesNotExist:
+        user.active_project = None
+        user.save(update_fields=['active_project'])
+        active = None
+
+    if active:
         has_active_membership = ProjectMember.objects.filter(
-            user=user, project=user.active_project, is_active=True
+            user=user, project=active, is_active=True
         ).exists()
         if has_active_membership:
-            return user.active_project
+            return active
 
     membership = (
         ProjectMember.objects.filter(user=user, is_active=True)

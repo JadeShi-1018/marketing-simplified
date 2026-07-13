@@ -157,8 +157,15 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         )
         
         # Use user.active_project directly to avoid side effects from get_user_active_project
-        # which automatically sets active_project if it's None
-        active_project = user.active_project
+        # which automatically sets active_project if it's None.
+        # Guard against stale active_project_id pointing to a deleted project — Django's FK
+        # accessor raises DoesNotExist (not returning None) in that case.
+        try:
+            active_project = user.active_project
+        except Project.DoesNotExist:
+            active_project = None
+            user.active_project = None
+            user.save(update_fields=['active_project'])
         # Verify that active_project is still accessible (user still has membership)
         if active_project:
             if active_project.id not in accessible_project_ids:
@@ -415,7 +422,10 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 raise PermissionDenied('You do not have access to this project.')
             return pid
 
-        active = getattr(user, 'active_project', None)
+        try:
+            active = user.active_project
+        except Project.DoesNotExist:
+            active = None
         if not active or active.id not in accessible_ids:
             return None
         return active.id
@@ -521,7 +531,10 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
             project_ids = [pid]
         else:
-            active = getattr(user, 'active_project', None)
+            try:
+                active = user.active_project
+            except Project.DoesNotExist:
+                active = None
             project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
 
         if not project_ids:
@@ -626,7 +639,10 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
             project_ids = [pid]
         else:
-            active = getattr(user, 'active_project', None)
+            try:
+                active = user.active_project
+            except Project.DoesNotExist:
+                active = None
             project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
 
         if not project_ids:
@@ -665,7 +681,10 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
             project_ids = [pid]
         else:
-            active = getattr(user, 'active_project', None)
+            try:
+                active = user.active_project
+            except Project.DoesNotExist:
+                active = None
             project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
 
         if not project_ids:

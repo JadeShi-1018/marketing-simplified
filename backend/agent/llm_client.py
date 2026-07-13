@@ -36,6 +36,7 @@ def call_llm(
     max_output_tokens: int = 4096,
     temperature: float = 0.3,
     response_mime_type: str | None = None,
+    call_purpose: str = 'other',
 ) -> dict[str, Any]:
     """
     Unified LLM call.
@@ -100,6 +101,7 @@ def call_llm(
             user=getattr(agent_session, 'user', None),
             provider=provider,
             model_name=model,
+            call_purpose=call_purpose,
             input_tokens=actual_input,
             output_tokens=actual_output,
             normalized_tokens=actual_normalized,
@@ -122,6 +124,7 @@ def call_llm(
             user=getattr(agent_session, 'user', None),
             provider=provider,
             model_name=model,
+            call_purpose=call_purpose,
             input_tokens=0,
             output_tokens=0,
             normalized_tokens=0,

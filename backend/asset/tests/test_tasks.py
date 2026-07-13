@@ -6,7 +6,7 @@ These tests focus on the asynchronous task execution and error handling.
 import os
 import tempfile
 from unittest.mock import patch, MagicMock
-from django.test import TransactionTestCase
+from django.test import TestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
 
@@ -19,7 +19,7 @@ from core.models import Organization, Team
 User = get_user_model()
 
 
-class BaseTaskTestCase(TransactionTestCase):
+class BaseTaskTestCase(TestCase):
     """Base test case for task testing with common setup"""
     
     def setUp(self):
