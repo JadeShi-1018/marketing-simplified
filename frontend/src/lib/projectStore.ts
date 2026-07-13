@@ -112,9 +112,41 @@ export const useProjectStore = create<ProjectState>()(
         }),
     }),
     {
-      name: 'project-storage',
+      name: 'project-storage-v1',
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
+        // One-time migration from old key. Idempotent: skipped if new key already
+        // exists. Old key is left in place; follow-up cleanup ticket removes it.
+        if (typeof window === 'undefined') return;
+        // Guard: skip if new key already has real project data.
+        try {
+          const newRaw = window.localStorage.getItem('project-storage-v1');
+          if (newRaw) {
+            const newParsed = JSON.parse(newRaw);
+            const s = newParsed?.state;
+            if (
+              s?.activeProject !== undefined ||
+              (s?.activeProjectIds?.length ?? 0) > 0 ||
+              (s?.completedProjectIds?.length ?? 0) > 0 ||
+              (s?.inactiveProjectIds?.length ?? 0) > 0
+            ) return;
+          }
+        } catch { /* malformed new key — fall through to migration */ }
+        try {
+          const raw = window.localStorage.getItem('project-storage');
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          const old = parsed?.state;
+          if (!old) return;
+          useProjectStore.setState({
+            activeProject: old.activeProject ?? null,
+            activeProjectIds: old.activeProjectIds ?? [],
+            inactiveProjectIds: old.inactiveProjectIds ?? [],
+            completedProjectIds: old.completedProjectIds ?? [],
+          });
+        } catch (e) {
+          console.warn('[projectStore migration] Failed to migrate legacy persist key:', e);
+        }
       },
       partialize: (state) => ({
         activeProject: state.activeProject,
