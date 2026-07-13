@@ -19,7 +19,15 @@ from django.utils import timezone
 from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, ApprovalChain, TaskPin
 from task.serializers import TaskSerializer, TaskListSerializer, TaskLinkSerializer, ApprovalRecordSerializer, TaskApprovalSerializer, TaskForwardSerializer, TaskCommentSerializer, TaskAttachmentSerializer, SubtaskAddSerializer, TaskRelationAddSerializer, TaskBulkActionSerializer, TaskFieldHistorySerializer
 from task.signals import set_current_user
-from task.services import bulk_update_tasks, user_can_edit_task
+from task.services import (
+    bulk_update_tasks,
+    user_can_edit_task,
+    add_subtask_to_parent,
+    reassign_subtask_parent,
+    TaskHierarchyCycleError,
+    HIERARCHY_CYCLE_ERROR_CODE,
+    hierarchy_cycle_error_message,
+)
 from task.gantt_service import build_gantt_payload, resolve_sprint_label_from_tasks
 from task import intelligence as intel
 from django.utils import timezone
@@ -53,6 +61,16 @@ def _debug_log(session_id, location, message, data=None, hypothesis_id=None):
         except Exception:
             continue
 # endregion
+
+
+def _hierarchy_cycle_response():
+    return Response(
+        {
+            'detail': hierarchy_cycle_error_message(),
+            'code': HIERARCHY_CYCLE_ERROR_CODE,
+        },
+        status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )
 
 
 class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
@@ -1759,13 +1777,6 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         
         elif request.method == 'POST':
             # Add a subtask
-            # Check if parent task is itself a subtask - subtasks cannot have subtasks
-            if parent_task.is_subtask:
-                return Response(
-                    {'error': 'A subtask cannot have subtasks. Only 1 level of nesting is allowed.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
             serializer = SubtaskAddSerializer(data=request.data)
             if not serializer.is_valid():
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -1783,9 +1794,11 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 raise PermissionDenied('You do not have access to this task.')
             
             try:
-                parent_task.add_subtask(child_task)
+                add_subtask_to_parent(parent_task=parent_task, child_task=child_task)
                 child_serializer = TaskSerializer(child_task, context={'request': request})
                 return Response(child_serializer.data, status=status.HTTP_201_CREATED)
+            except TaskHierarchyCycleError:
+                return _hierarchy_cycle_response()
             except ValidationError as e:
                 return Response(
                     {'error': str(e)},
@@ -1823,11 +1836,27 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         old_parent = get_object_or_404(Task, pk=old_parent_id)
         child_task = get_object_or_404(Task, **resolve_lookup_kwargs(subtask_id))
 
-        # remove old relationship
-        TaskHierarchy.objects.filter(parent_task=old_parent, child_task=child_task).delete()
+        has_membership = ProjectMember.objects.filter(
+            user=request.user,
+            project=child_task.project,
+            is_active=True,
+        ).exists()
+        if not has_membership:
+            raise PermissionDenied('You do not have access to this task.')
 
-        # add new relationship (uses model validation)
-        new_parent.add_subtask(child_task)
+        try:
+            reassign_subtask_parent(
+                child_task=child_task,
+                new_parent=new_parent,
+                old_parent=old_parent,
+            )
+        except TaskHierarchyCycleError:
+            return _hierarchy_cycle_response()
+        except ValidationError as e:
+            error_message = str(e)
+            if error_message == 'Subtask relationship not found.':
+                return Response({'error': error_message}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'error': error_message}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({'success': True}, status=status.HTTP_200_OK)
     
