@@ -198,9 +198,7 @@ export default function DashboardLayout({
       setMeetingsLoading(false);
       return;
     }
-    // Meetings detail routes are slug-only (SMP-539); prefer the project slug and
-    // fall back to the numeric id, matching the app-wide `slug ?? id` convention.
-    const projectId = activeProject?.slug ?? activeProject?.id;
+    const projectId = activeProject?.id;
     if (!hasProjectStoreHydrated) {
       setMeetingsLoading(true);
       return;
@@ -230,7 +228,7 @@ export default function DashboardLayout({
     return () => {
       cancelled = true;
     };
-  }, [activeProject?.slug, activeProject?.id, hasProjectStoreHydrated, useExplicit]);
+  }, [activeProject?.id, hasProjectStoreHydrated, useExplicit]);
 
   const meetingsForPanel = useExplicit ? upcomingMeetings! : autoMeetings;
   const toggleMeetingsPanel = () => {
