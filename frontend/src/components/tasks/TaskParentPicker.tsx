@@ -36,6 +36,27 @@ function parentFromRelationship(task: TaskData): TaskData | null {
   };
 }
 
+export function mergeParentCandidates(...groups: TaskData[][]): TaskData[] {
+  const byId = new Map<number, TaskData>();
+  for (const group of groups) {
+    for (const row of group) {
+      if (row.id != null && !byId.has(row.id)) {
+        byId.set(row.id, row);
+      }
+    }
+  }
+  return Array.from(byId.values());
+}
+
+export function rememberParent(
+  parents: TaskData[],
+  parent: TaskData | null | undefined,
+): TaskData[] {
+  if (parent?.id == null) return parents;
+  if (parents.some((row) => row.id === parent.id)) return parents;
+  return [...parents, parent];
+}
+
 export default function TaskParentPicker({
   task,
   readOnly = false,
@@ -52,6 +73,11 @@ export default function TaskParentPicker({
     const seed = parentFromRelationship(task);
     return seed ? [seed] : [];
   });
+  /** Previously selected parents stay selectable after reassign (e.g. switch back). */
+  const [retainedParents, setRetainedParents] = useState<TaskData[]>(() => {
+    const seed = parentFromRelationship(task);
+    return seed ? [seed] : [];
+  });
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [saving, setSaving] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
@@ -61,7 +87,14 @@ export default function TaskParentPicker({
     setInlineError(null);
     const seed = parentFromRelationship(task);
     setCandidates(seed ? [seed] : []);
+    if (seed) {
+      setRetainedParents((prev) => rememberParent(prev, seed));
+    }
   }, [taskId, currentParentId, task.parent_relationship]);
+
+  useEffect(() => {
+    setRetainedParents([]);
+  }, [taskId]);
 
   const loadCandidates = useCallback(async () => {
     if (!taskId) return;
@@ -71,7 +104,7 @@ export default function TaskParentPicker({
     const relationshipParent = parentFromRelationship(task);
     setLoadingCandidates(true);
     try {
-      const eligible: TaskData[] = relationshipParent ? [relationshipParent] : [];
+      const fromApi: TaskData[] = [];
 
       const response = await TaskAPI.getTasks({
         project_id: projectId,
@@ -86,10 +119,14 @@ export default function TaskParentPicker({
         ) {
           continue;
         }
-        if (!eligible.some((existing) => existing.id === row.id)) {
-          eligible.push(row);
-        }
+        fromApi.push(row);
       }
+
+      const eligible = mergeParentCandidates(
+        retainedParents,
+        relationshipParent ? [relationshipParent] : [],
+        fromApi,
+      );
 
       if (
         currentParentId != null &&
@@ -109,14 +146,27 @@ export default function TaskParentPicker({
         }
       }
 
-      setCandidates(eligible);
+      setCandidates(mergeParentCandidates(eligible));
     } catch {
       toast.error('Failed to load parent task options.');
-      setCandidates(relationshipParent ? [relationshipParent] : []);
+      setCandidates(
+        mergeParentCandidates(
+          retainedParents,
+          relationshipParent ? [relationshipParent] : [],
+        ),
+      );
     } finally {
       setLoadingCandidates(false);
     }
-  }, [taskId, task.project, task.project_id, task.parent_relationship, currentParentId, currentParentSlug]);
+  }, [
+    taskId,
+    task.project,
+    task.project_id,
+    task.parent_relationship,
+    currentParentId,
+    currentParentSlug,
+    retainedParents,
+  ]);
 
   useEffect(() => {
     void loadCandidates();
@@ -141,6 +191,8 @@ export default function TaskParentPicker({
       return;
     }
 
+    const oldParent = candidates.find((row) => row.id === currentParentId);
+
     setSaving(true);
     setInlineError(null);
     try {
@@ -149,6 +201,9 @@ export default function TaskParentPicker({
         task.slug ?? taskId,
         { old_parent_id: currentParentId },
       );
+      if (oldParent) {
+        setRetainedParents((prev) => rememberParent(prev, oldParent));
+      }
       setParentId(nextParentId);
       await onUpdated();
     } catch (error) {

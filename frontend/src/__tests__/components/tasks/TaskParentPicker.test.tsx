@@ -1,6 +1,9 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import TaskParentPicker from '@/components/tasks/TaskParentPicker';
+import TaskParentPicker, {
+  mergeParentCandidates,
+  rememberParent,
+} from '@/components/tasks/TaskParentPicker';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
 
@@ -17,6 +20,24 @@ jest.mock('@/lib/api/taskApi', () => ({
 const mockedGetTasks = TaskAPI.getTasks as jest.Mock;
 const mockedGetTask = TaskAPI.getTask as jest.Mock;
 
+const parentA: TaskData = {
+  id: 9,
+  slug: 'final-campaign-performance-summary',
+  project_id: 1,
+  type: 'asset',
+  summary: 'Final Campaign Performance Summary',
+  is_subtask: false,
+};
+
+const parentC: TaskData = {
+  id: 10,
+  slug: 'parent-c',
+  project_id: 1,
+  type: 'asset',
+  summary: 'Parent C',
+  is_subtask: false,
+};
+
 const subtask: TaskData = {
   id: 6,
   slug: 'weekly-performance-report-optimization-plan',
@@ -31,14 +52,23 @@ const subtask: TaskData = {
   }],
 };
 
-const parentA: TaskData = {
-  id: 9,
-  slug: 'final-campaign-performance-summary',
-  project_id: 1,
-  type: 'asset',
-  summary: 'Final Campaign Performance Summary',
-  is_subtask: false,
-};
+describe('parent candidate helpers', () => {
+  it('rememberParent keeps prior parents when adding a new one', () => {
+    const kept = rememberParent([parentA], parentC);
+    expect(kept).toHaveLength(2);
+    expect(kept.map((row) => row.id)).toEqual(expect.arrayContaining([9, 10]));
+  });
+
+  it('mergeParentCandidates dedupes by task id', () => {
+    const merged = mergeParentCandidates(
+      [parentA],
+      [{ ...parentA, summary: 'Duplicate label' }],
+      [parentC],
+    );
+    expect(merged).toHaveLength(2);
+    expect(merged.find((row) => row.id === 9)?.summary).toBe('Final Campaign Performance Summary');
+  });
+});
 
 describe('TaskParentPicker', () => {
   beforeEach(() => {
