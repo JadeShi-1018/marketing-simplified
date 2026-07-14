@@ -102,7 +102,7 @@ export interface TaskData {
 }
 
 export interface TaskParentRelationshipEntry {
-  parent_task_id: number;
+  parent_task_id: number | string;
   parent_task_slug?: string;
   parent_task_summary?: string;
 }
