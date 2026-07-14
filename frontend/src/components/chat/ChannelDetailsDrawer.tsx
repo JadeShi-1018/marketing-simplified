@@ -907,8 +907,8 @@ export default function ChannelDetailsDrawer({
   // after pin/unpin actions so this section updates immediately.
   useEffect(() => {
     setPinsLoaded(true);
-    listPins(chat.id).then(setPins).catch(() => {});
-  }, [chat.id, pinRefreshKey]);
+    listPins(chat.slug).then(setPins).catch(() => {});
+  }, [chat.id, chat.slug, pinRefreshKey]);
 
   // Fetch counts on mount so each section header shows its count even before
   // it's expanded. The onOpen loaders below become no-ops once *Loaded is true.
@@ -927,8 +927,8 @@ export default function ChannelDetailsDrawer({
   const loadPins = useCallback(() => {
     if (pinsLoaded) return;
     setPinsLoaded(true);
-    listPins(chat.id).then(setPins).catch(() => {});
-  }, [chat.id, pinsLoaded]);
+    listPins(chat.slug).then(setPins).catch(() => {});
+  }, [chat.id, chat.slug, pinsLoaded]);
 
   const loadFiles = useCallback(() => {
     if (filesLoaded) return;

@@ -1092,3 +1092,20 @@ export const useChatStore = create<ChatState>()(
     }
   )
 );
+
+/**
+ * Resolve a numeric chat id to its slug from the loaded chats.
+ *
+ * Chat detail routes are slug-only (SMP-539), but hooks that only hold a numeric
+ * chat id need the slug to address them. Returns undefined if the chat isn't loaded.
+ */
+export const getChatSlugById = (chatId: number | string): string | undefined => {
+  const { chatsByProject } = useChatStore.getState();
+  for (const chats of Object.values(chatsByProject)) {
+    const found = chats.find((chat) => chat.id === chatId);
+    if (found?.slug) {
+      return found.slug;
+    }
+  }
+  return undefined;
+};

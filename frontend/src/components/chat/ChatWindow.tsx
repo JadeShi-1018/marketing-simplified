@@ -118,14 +118,14 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setPinnedMessageIds(new Set());
     setSavedMessageIds(new Set());
     setPendingScheduledCount(0);
-    listPins(chat.id)
+    listPins(chat.slug)
       .then((pins) => setPinnedMessageIds(new Set(pins.map((p) => p.message.id))))
       .catch(() => {});
     listSavedMessages()
       .then((saved) => setSavedMessageIds(new Set(saved.map((s) => s.message.id))))
       .catch(() => {});
     refreshScheduledCount();
-  }, [chat.id, refreshScheduledCount]);
+  }, [chat.id, chat.slug, refreshScheduledCount]);
 
   const { forward, isForwarding } = useForwardMessages();
 

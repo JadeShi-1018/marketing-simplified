@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { useChatStore } from '@/lib/chatStore';
+import { useChatStore, getChatSlugById } from '@/lib/chatStore';
 import { useAuthStore } from '@/lib/authStore';
 import { getChat, getMessages, sendMessage, markChatAsRead } from '@/lib/api/chatApi';
 import type { Chat, Message, SendMessageRequest } from '@/types/chat';
@@ -178,9 +178,12 @@ export function useDrawerChat({
   // Mark chat as read
   const markAsRead = useCallback(async () => {
     if (!chatId) return;
+    // Chat detail routes are slug-only; resolve the numeric id to its slug.
+    const chatSlug = getChatSlugById(chatId);
+    if (!chatSlug) return;
 
     try {
-      await markChatAsRead(chatId);
+      await markChatAsRead(chatSlug);
     } catch (err: any) {
       console.error('Error marking chat as read:', err);
       // Don't show toast for read errors (not critical)
