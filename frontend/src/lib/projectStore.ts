@@ -29,34 +29,6 @@ interface ProjectState {
 
 const ACTIVE_PROJECT_COOKIE_NAME = 'active-project';
 const PROJECT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
-const isProjectData = (value: unknown): value is ProjectData => {
-  if (!value || typeof value !== 'object') return false;
-  const project = value as Partial<ProjectData>;
-  return project.id !== undefined && typeof project.name === 'string';
-};
-const readCookie = (name: string): string | null => {
-  if (typeof document === 'undefined') return null;
-
-  const encodedName = encodeURIComponent(name);
-  const cookie = document.cookie
-    .split(';')
-    .map((entry) => entry.trim())
-    .find((entry) => entry.startsWith(`${encodedName}=`));
-
-  if (!cookie) return null;
-  return cookie.slice(encodedName.length + 1);
-};
-const readActiveProjectCookie = (): ProjectData | null => {
-  const raw = readCookie(ACTIVE_PROJECT_COOKIE_NAME);
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(decodeURIComponent(raw));
-    return isProjectData(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-};
 const writeActiveProjectCookie = (project: ProjectData | null) => {
   if (typeof document === 'undefined') return;
 
