@@ -9,6 +9,23 @@ import {
 import ProjectStoreHydrator from '@/components/select-project/ProjectStoreHydrator';
 import type { ProjectData } from '@/lib/api/projectApi';
 
+function isValidActiveProject(value: unknown): value is ProjectData {
+  if (!value || typeof value !== 'object') return false;
+
+  const project = value as Record<string, unknown>;
+
+  const validId =
+    (typeof project.id === 'number' && Number.isFinite(project.id)) ||
+    (typeof project.id === 'string' && project.id.trim().length > 0);
+
+  return (
+    validId &&
+    typeof project.name === 'string' &&
+    project.name.trim().length > 0 &&
+    (project.slug === undefined || typeof project.slug === 'string')
+  );
+}
+
 export default async function ProjectLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies();
 
@@ -20,13 +37,14 @@ export default async function ProjectLayout({ children }: { children: React.Reac
 
   let initialActiveProject: ProjectData | null = null;
 
-  if (activeProjectCookie) {
-    try {
-      initialActiveProject = JSON.parse(decodeURIComponent(activeProjectCookie));
-    } catch {
-      initialActiveProject = null;
-    }
+if (activeProjectCookie) {
+  try {
+    const parsed: unknown = JSON.parse(activeProjectCookie);
+    initialActiveProject = isValidActiveProject(parsed) ? parsed : null;
+  } catch {
+    initialActiveProject = null;
   }
+}
 
   return (
     <ProjectStoreHydrator initialActiveProject={initialActiveProject}>

@@ -15,7 +15,7 @@ export default function ProjectStoreHydrator({
 }: ProjectStoreHydratorProps) {
   const initialized = useRef(false);
 
-  if (!initialized.current && initialActiveProject) {
+  if (!initialized.current) {
     useProjectStore.setState({
       activeProject: initialActiveProject,
       hasHydrated: true,
