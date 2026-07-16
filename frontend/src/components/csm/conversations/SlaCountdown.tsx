@@ -42,7 +42,13 @@ function useTicking(remaining: number | null, now: number, running: boolean): nu
   if (base.current === null || base.current.seconds !== remaining) {
     base.current = { seconds: remaining, atMs: now };
   }
-  if (!running) return base.current.seconds;
+  // While the clock is frozen we hold the snapshot still and keep the anchor at
+  // the current moment, so that when it resumes only time spent running counts
+  // down and the number doesn't lurch by the whole frozen gap.
+  if (!running) {
+    base.current.atMs = now;
+    return base.current.seconds;
+  }
   const elapsed = (now - base.current.atMs) / 1000;
   return Math.max(0, base.current.seconds - elapsed);
 }

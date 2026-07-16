@@ -56,7 +56,7 @@ def notify_sla_breaches():
         first_response_due__lt=now,
         first_responded_at__isnull=True,
         first_response_breach_notified=False,
-    ).exclude(status__in=[RESOLVED_STATUS, 'closed']).select_related('queue')
+    ).exclude(status__in=[RESOLVED_STATUS, 'closed']).select_related('queue', 'assigned_to')
     for ticket in first_response:
         if _policy_for_ticket(ticket) is None:
             continue
@@ -68,7 +68,7 @@ def notify_sla_breaches():
     resolution = Ticket.objects.filter(
         resolution_due__lt=now,
         resolution_breach_notified=False,
-    ).exclude(status__in=[RESOLVED_STATUS, 'closed', 'pending_customer']).select_related('queue')
+    ).exclude(status__in=[RESOLVED_STATUS, 'closed', 'pending_customer']).select_related('queue', 'assigned_to')
     for ticket in resolution:
         if _policy_for_ticket(ticket) is None:
             continue

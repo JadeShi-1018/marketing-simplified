@@ -729,6 +729,9 @@ class SLAPolicy(TimeStampedModel):
     class Meta:
         verbose_name = 'SLA Policy'
         verbose_name_plural = 'SLA Policies'
+        # A stable order so that picking a fallback policy with .first() (when a
+        # project has several and none is marked default) is deterministic.
+        ordering = ['id']
 
     def __str__(self):
         return f"SLA Policy — {self.project_id}"
