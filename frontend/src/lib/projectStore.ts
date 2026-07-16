@@ -27,6 +27,29 @@ interface ProjectState {
   clearProjects: () => void;
 }
 
+const ACTIVE_PROJECT_COOKIE_NAME = 'active-project';
+const PROJECT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+const writeActiveProjectCookie = (project: ProjectData | null) => {
+  if (typeof document === 'undefined') return;
+
+  if (!project) {
+    document.cookie = `${encodeURIComponent(ACTIVE_PROJECT_COOKIE_NAME)}=; Max-Age=0; Path=/; SameSite=Lax`;
+    return;
+  }
+
+  document.cookie = `${encodeURIComponent(ACTIVE_PROJECT_COOKIE_NAME)}=${encodeURIComponent(
+    JSON.stringify({
+      id: project.id,
+      slug: project.slug,
+      name: project.name,
+      organization: project.organization,
+      total_monthly_budget: project.total_monthly_budget,
+      is_active: project.is_active,
+    })
+  )}; Max-Age=${PROJECT_COOKIE_MAX_AGE_SECONDS}; Path=/; SameSite=Lax`;
+};
+
+
 export const useProjectStore = create<ProjectState>()(
   persist(
     (set) => ({
@@ -39,7 +62,8 @@ export const useProjectStore = create<ProjectState>()(
       loading: false,
       error: null,
       setProjects: (projects) => set({ projects }),
-      setActiveProject: (activeProject) =>
+      setActiveProject: (activeProject) => {
+        writeActiveProjectCookie(activeProject);
         set((state) => ({
           activeProject,
           activeProjectIds: activeProject?.id
@@ -48,7 +72,8 @@ export const useProjectStore = create<ProjectState>()(
           inactiveProjectIds: activeProject?.id
             ? state.inactiveProjectIds.filter((id) => id !== activeProject.id)
             : state.inactiveProjectIds,
-        })),
+        }));
+      },
       setActiveProjectIds: (ids) =>
         set((state) => {
           const resolvedIds = typeof ids === 'function' ? ids(state.activeProjectIds) : ids;
@@ -99,7 +124,8 @@ export const useProjectStore = create<ProjectState>()(
       setHasHydrated: (hasHydrated) => set({ hasHydrated }),
       setLoading: (loading) => set({ loading }),
       setError: (error) => set({ error }),
-      clearProjects: () =>
+      clearProjects: () => {
+        writeActiveProjectCookie(null);
         set({
           projects: [],
           activeProject: null,
@@ -109,7 +135,8 @@ export const useProjectStore = create<ProjectState>()(
           hasHydrated: true,
           loading: false,
           error: null,
-        }),
+        });
+      },
     }),
     {
       name: 'project-storage',

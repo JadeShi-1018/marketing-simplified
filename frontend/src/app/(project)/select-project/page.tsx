@@ -13,7 +13,6 @@ import ChatFAB from '@/components/global-chat/ChatFAB';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import Modal from '@/components/ui/Modal';
 import { useProjects } from '@/hooks/useProjects';
-import { useProjectStore } from '@/lib/projectStore';
 import { Id } from '@/types/common';
 import { ProjectAPI, type ProjectInvitationData } from '@/lib/api/projectApi';
 import { quickStartPathWithCreateProjectReturn } from '@/lib/quickStartReturn';
@@ -100,15 +99,13 @@ export default function SelectProjectPage() {
       });
   }, [projects, search]);
 
-  const storeSetActiveProject = useProjectStore((s) => s.setActiveProject);
-
   const handleSelect = async (id: Id) => {
-    const project = projects.find((p) => String(p.id) === String(id));
-    if (project) storeSetActiveProject(project);
     const didUpdate = await setActiveProject(id, false);
+
     if (didUpdate !== false) {
       setDefaultProjectId(id);
     }
+
     return didUpdate;
   };
 
