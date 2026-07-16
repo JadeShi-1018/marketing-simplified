@@ -93,6 +93,11 @@ export class TicketAPI {
     return TicketAPI.list({ assigned_to: 'me', ...(ordering ? { ordering } : {}) });
   }
 
+  static async get(id: number): Promise<Ticket> {
+    const res = await api.get<Ticket>(`/api/csm/tickets/${id}/`);
+    return res.data;
+  }
+
   static async claim(id: number): Promise<Ticket> {
     const res = await api.post<Ticket>(`/api/csm/tickets/${id}/claim/`);
     return res.data;

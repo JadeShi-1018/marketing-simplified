@@ -159,6 +159,7 @@ function ConversationsPageContent() {
                 conversationId={activeId!}
                 organisationId={activeConversation.queue_organisation_id}
                 onTyping={sendTyping}
+                onSent={() => setTicketRefreshKey((k) => k + 1)}
               />
             ) : (
               <div className="border-t border-gray-100 px-4 py-3 text-xs text-gray-400 text-center bg-gray-50">

@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Trash2 } from "lucide-react";
+import { Trash2, Building2 } from "lucide-react";
 import DashboardLayout from "@/components/dashboard/DashboardLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { useNotificationDrawer } from "@/components/notifications/NotificationDrawerProvider";
@@ -16,12 +16,19 @@ import {
 } from "@/lib/notificationsNavigation";
 import type { NotificationItem, NotificationTab } from "@/types/notifications";
 import { NOTIFICATION_EVENT } from "@/types/notifications";
+import CsmAPI from "@/lib/api/csmApi";
+import type { CsmNotification } from "@/types/csm";
 
-const TABS: { id: NotificationTab; label: string }[] = [
+// CSM notifications live in their own store and stay separate from the platform
+// feed, so the CSM tab is handled apart from the platform tabs below.
+type TabId = NotificationTab | "csm";
+
+const TABS: { id: TabId; label: string }[] = [
   { id: "all", label: "All" },
   { id: "unread", label: "Unread" },
   { id: "mentions", label: "Mentions" },
   { id: "deadlines", label: "Deadlines" },
+  { id: "csm", label: "CSM" },
 ];
 
 // Actor avatar component with brand gradient fallback
@@ -192,14 +199,39 @@ function NotificationCard({
   );
 }
 
+function CsmNotificationCard({ notification }: { notification: CsmNotification }) {
+  return (
+    <div
+      className={`overflow-hidden rounded-xl border p-4 flex gap-3 ${
+        notification.is_read
+          ? "bg-white border-gray-200"
+          : "bg-white border-blue-200 shadow-sm"
+      }`}
+    >
+      <Building2 className="h-5 w-5 shrink-0 text-indigo-500 mt-0.5" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-gray-900">{notification.title}</p>
+        {notification.message && (
+          <p className="text-sm text-gray-600 mt-0.5">{notification.message}</p>
+        )}
+        <p className="text-xs text-gray-400 mt-1">
+          {notification.sender_name || notification.sender_email || "System"} ·{" "}
+          {formatRelativeTime(notification.created_at)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function NotificationsContent() {
   const searchParams = useSearchParams();
   const fromRaw = searchParams.get(NOTIFICATIONS_FROM_PARAM);
   const { setUnreadCount: setGlobalUnreadCount, triggerRefresh, lastRefresh } =
     useNotificationStore();
 
-  const [tab, setTab] = useState<NotificationTab>("all");
+  const [tab, setTab] = useState<TabId>("all");
   const [items, setItems] = useState<NotificationItem[]>([]);
+  const [csmItems, setCsmItems] = useState<CsmNotification[]>([]);
   const [tabCounts, setTabCounts] = useState({
     all: 0,
     unread: 0,
@@ -213,18 +245,39 @@ function NotificationsContent() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await notificationsApi.list({ tab, page_size: 50 });
-      setItems(data.results);
-      setTabCounts(data.tab_counts);
-      setUnreadCount(data.unread_count);
-      // Sync global unread count for Header bell
-      setGlobalUnreadCount(data.unread_count);
+      // A user without CSM access just gets an empty CSM tab, so this failing
+      // must not stop the platform feed from loading.
+      const csm = await CsmAPI.getNotifications().catch(() => [] as CsmNotification[]);
+      setCsmItems(csm);
+      if (tab !== "csm") {
+        const { data } = await notificationsApi.list({ tab, page_size: 50 });
+        setItems(data.results);
+        setTabCounts(data.tab_counts);
+        setUnreadCount(data.unread_count);
+        // Sync global unread count for Header bell
+        setGlobalUnreadCount(data.unread_count);
+      }
     } catch {
       setItems([]);
     } finally {
       setLoading(false);
     }
   }, [tab, setGlobalUnreadCount]);
+
+  const tabCount = (id: TabId) => {
+    switch (id) {
+      case "all":
+        return tabCounts.all;
+      case "unread":
+        return tabCounts.unread;
+      case "mentions":
+        return tabCounts.mentions;
+      case "deadlines":
+        return tabCounts.deadlines;
+      case "csm":
+        return csmItems.length;
+    }
+  };
 
   useEffect(() => {
     load();
@@ -300,54 +353,53 @@ function NotificationsContent() {
                   : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
               }`}
             >
-              {t.label}{" "}
-              <span className="opacity-80">
-                (
-                {t.id === "all"
-                  ? tabCounts.all
-                  : t.id === "unread"
-                    ? tabCounts.unread
-                    : t.id === "mentions"
-                      ? tabCounts.mentions
-                      : tabCounts.deadlines}
-                )
-              </span>
+              {t.label} <span className="opacity-80">({tabCount(t.id)})</span>
             </button>
           ))}
         </div>
 
-        <div className="mt-4 flex items-center gap-4 py-2 border-b border-gray-200">
-          <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={toggleSelectAll}
-              className="rounded border-gray-300"
-            />
-            Select all
-          </label>
-          <button
-            type="button"
-            disabled={selected.size === 0}
-            onClick={markSelectedRead}
-            className="text-sm text-blue-600 hover:underline disabled:opacity-40 disabled:no-underline"
-          >
-            Mark selected as read
-          </button>
-          <button
-            type="button"
-            disabled={selected.size === 0}
-            onClick={deleteSelected}
-            className="text-sm text-red-600 hover:underline disabled:opacity-40 disabled:no-underline flex items-center gap-1"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            Delete selected
-          </button>
-        </div>
+        {tab !== "csm" && (
+          <div className="mt-4 flex items-center gap-4 py-2 border-b border-gray-200">
+            <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleSelectAll}
+                className="rounded border-gray-300"
+              />
+              Select all
+            </label>
+            <button
+              type="button"
+              disabled={selected.size === 0}
+              onClick={markSelectedRead}
+              className="text-sm text-blue-600 hover:underline disabled:opacity-40 disabled:no-underline"
+            >
+              Mark selected as read
+            </button>
+            <button
+              type="button"
+              disabled={selected.size === 0}
+              onClick={deleteSelected}
+              className="text-sm text-red-600 hover:underline disabled:opacity-40 disabled:no-underline flex items-center gap-1"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Delete selected
+            </button>
+          </div>
+        )}
 
         <div className="mt-4 space-y-2">
           {loading ? (
             <p className="text-gray-500 text-sm">Loading...</p>
+          ) : tab === "csm" ? (
+            csmItems.length === 0 ? (
+              <p className="text-gray-500 text-sm py-12 text-center">
+                No CSM notifications
+              </p>
+            ) : (
+              csmItems.map((n) => <CsmNotificationCard key={n.id} notification={n} />)
+            )
           ) : items.length === 0 ? (
             <p className="text-gray-500 text-sm py-12 text-center">
               No notifications

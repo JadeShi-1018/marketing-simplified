@@ -263,9 +263,11 @@ class TestSLAPolicyTicketSync:
         assert open_ticket.first_response_due is not None
         assert open_ticket.first_response_due != old_fr
 
-    def test_deactivating_policy_clears_open_ticket_sla(
+    def test_deactivating_policy_preserves_dues_but_reads_no_sla(
         self, csm_admin_client, sla_policy_with_targets, open_ticket
     ):
+        # Model B: deactivating is non-destructive. The stored deadlines stay on
+        # the ticket, but get_sla_status reads them as no-SLA while tracking is off.
         assert open_ticket.first_response_due is not None
         csm_admin_client.patch(
             _detail_url(sla_policy_with_targets.id),
@@ -273,30 +275,32 @@ class TestSLAPolicyTicketSync:
             format='json',
         )
         open_ticket.refresh_from_db()
-        assert open_ticket.first_response_due is None
-        assert open_ticket.resolution_due is None
-
-    def test_reactivating_policy_restores_open_ticket_sla(
-        self, csm_admin_client, sla_policy_with_targets, open_ticket
-    ):
-        # Deactivate first
-        sla_policy_with_targets.is_active = False
-        sla_policy_with_targets.save(update_fields=['is_active'])
-        open_ticket.first_response_due = None
-        open_ticket.resolution_due = None
-        open_ticket.save(update_fields=['first_response_due', 'resolution_due'])
-
-        # Reactivate via PATCH
-        csm_admin_client.patch(
-            _detail_url(sla_policy_with_targets.id),
-            {'is_active': True},
-            format='json',
-        )
-        open_ticket.refresh_from_db()
         assert open_ticket.first_response_due is not None
         assert open_ticket.resolution_due is not None
         status_data = get_sla_status(open_ticket)
-        assert status_data['first_response_breached'] is False
+        assert status_data['first_response_remaining_seconds'] is None
+        assert status_data['resolution_remaining_seconds'] is None
+        assert status_data['first_response_state'] is None
+
+    def test_reactivating_policy_resumes_same_dues(
+        self, csm_admin_client, sla_policy_with_targets, open_ticket
+    ):
+        original_fr = open_ticket.first_response_due
+        original_res = open_ticket.resolution_due
+
+        csm_admin_client.patch(
+            _detail_url(sla_policy_with_targets.id),
+            {'is_active': False}, format='json',
+        )
+        csm_admin_client.patch(
+            _detail_url(sla_policy_with_targets.id),
+            {'is_active': True}, format='json',
+        )
+        open_ticket.refresh_from_db()
+        # Anchor preserved across the off/on cycle — no restart-from-now.
+        assert open_ticket.first_response_due == original_fr
+        assert open_ticket.resolution_due == original_res
+        status_data = get_sla_status(open_ticket)
         assert status_data['first_response_remaining_seconds'] > 0
 
     def test_reactivate_with_target_change_does_not_mark_old_tickets_overdue(
@@ -317,7 +321,8 @@ class TestSLAPolicyTicketSync:
             format='json',
         )
         ticket.refresh_from_db()
-        assert ticket.first_response_due is None
+        # Model B: deactivating preserves the stored deadline.
+        assert ticket.first_response_due is not None
 
         csm_admin_client.patch(
             _detail_url(sla_policy_with_targets.id),
@@ -411,3 +416,47 @@ class TestSLAPolicyTicketSync:
         high_ticket.refresh_from_db()
         assert high_ticket.first_response_due == old_fr
         assert high_ticket.resolution_due == old_res
+
+
+# ---------------------------------------------------------------------------
+# Business Hours Calendar API
+# ---------------------------------------------------------------------------
+
+def _calendars_url(project_id):
+    return reverse('business-hours-calendar-list') + f'?project={project_id}'
+
+
+class TestBusinessHoursCalendarAPI:
+    def test_create_scopes_to_project(self, csm_admin_client, project):
+        resp = csm_admin_client.post(
+            _calendars_url(project.id),
+            {'name': 'Standard 9-5', 'timezone': 'Europe/London'},
+            format='json',
+        )
+        assert resp.status_code == status.HTTP_201_CREATED
+        assert resp.data['project'] == project.id
+        assert resp.data['name'] == 'Standard 9-5'
+        # Default schedule is seeded when none is supplied.
+        assert resp.data['schedule']['monday']['enabled'] is True
+
+    def test_list_returns_project_calendars(self, csm_admin_client, project):
+        from csm.models import BusinessHoursCalendar
+        BusinessHoursCalendar.objects.create(project=project, name='A')
+        BusinessHoursCalendar.objects.create(project=project, name='B')
+        resp = csm_admin_client.get(_calendars_url(project.id))
+        assert resp.status_code == status.HTTP_200_OK
+        names = {c['name'] for c in (resp.data if isinstance(resp.data, list) else resp.data['results'])}
+        assert names == {'A', 'B'}
+
+    def test_attach_calendar_to_policy(self, csm_admin_client, project, sla_policy_with_targets):
+        from csm.models import BusinessHoursCalendar
+        cal = BusinessHoursCalendar.objects.create(project=project, name='Cal')
+        resp = csm_admin_client.patch(
+            _detail_url(sla_policy_with_targets.id),
+            {'calendar': cal.id, 'pause_on_pending': False},
+            format='json',
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        sla_policy_with_targets.refresh_from_db()
+        assert sla_policy_with_targets.calendar_id == cal.id
+        assert sla_policy_with_targets.pause_on_pending is False

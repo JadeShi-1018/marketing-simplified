@@ -5,7 +5,7 @@ from .models import (
     TemplateTag,
     TicketForm, TicketFormField, TicketFormAssignment,
     SupportProject, CsmWorkType, SupportChannel,
-    SLAPolicy, SLAPriorityTarget,
+    SLAPolicy, SLAPriorityTarget, BusinessHoursCalendar,
     TicketStatus, TicketStatusTransition, TicketAutoResolveConfig,
 )
 
@@ -21,7 +21,7 @@ class QueueSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'slug', 'project', 'organisation', 'organisation_name',
             'name', 'description',
-            'tier', 'tier_display',
+            'tier', 'tier_display', 'sla_policy',
             'display_order', 'is_active', 'created_at',
         ]
         read_only_fields = ['id', 'slug', 'created_at']
@@ -504,6 +504,13 @@ class WorkTypeReorderSerializer(serializers.Serializer):
 # SLA Policy (MED-218)
 # ---------------------------------------------------------------------------
 
+class BusinessHoursCalendarSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BusinessHoursCalendar
+        fields = ['id', 'project', 'name', 'timezone', 'schedule', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'project', 'created_at', 'updated_at']
+
+
 class SLAPriorityTargetSerializer(serializers.ModelSerializer):
     class Meta:
         model = SLAPriorityTarget
@@ -517,7 +524,8 @@ class SLAPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = SLAPolicy
         fields = [
-            'id', 'project', 'name', 'is_active',
+            'id', 'project', 'name', 'is_active', 'is_default',
+            'calendar', 'pause_on_pending',
             'priority_targets', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'project', 'created_at', 'updated_at']

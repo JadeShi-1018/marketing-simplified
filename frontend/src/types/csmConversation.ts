@@ -64,10 +64,16 @@ export interface Ticket {
     resolution_due: string | null;
     first_response_breached: boolean;
     resolution_breached: boolean;
+    first_response_met: boolean;
+    clock_running: boolean;
     first_response_remaining_seconds: number | null;
     resolution_remaining_seconds: number | null;
+    first_response_state: SlaState | null;
+    resolution_state: SlaState | null;
   };
 }
+
+export type SlaState = 'ok' | 'amber' | 'breached';
 
 export interface TicketSummary {
   id: number;

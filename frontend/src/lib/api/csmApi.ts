@@ -5,6 +5,7 @@ import {
   CustomerUser, CreateCustomerUserData, UpdateCustomerUserData,
   CsmNotification, InviteUserData,
   SLAPolicy, UpdateSLAPolicyData,
+  BusinessHoursCalendar, SaveBusinessHoursCalendarData,
 } from '@/types/csm';
 
 const BASE = '/api/csm';
@@ -152,5 +153,28 @@ export class SLAPolicyAPI {
   static async replace(policyId: number, data: Required<Pick<UpdateSLAPolicyData, 'name' | 'is_active' | 'priority_targets'>>): Promise<SLAPolicy> {
     const res = await api.put<SLAPolicy>(`${BASE}/sla-policy/${policyId}/`, data);
     return res.data;
+  }
+}
+
+export class BusinessHoursCalendarAPI {
+  static async list(projectId: number): Promise<BusinessHoursCalendar[]> {
+    const res = await api.get(`${BASE}/business-hours-calendars/`, { params: { project: projectId } });
+    return unwrap<BusinessHoursCalendar>(res.data);
+  }
+
+  static async create(projectId: number, data: SaveBusinessHoursCalendarData): Promise<BusinessHoursCalendar> {
+    const res = await api.post<BusinessHoursCalendar>(
+      `${BASE}/business-hours-calendars/`, data, { params: { project: projectId } },
+    );
+    return res.data;
+  }
+
+  static async update(id: number, data: Partial<SaveBusinessHoursCalendarData>): Promise<BusinessHoursCalendar> {
+    const res = await api.patch<BusinessHoursCalendar>(`${BASE}/business-hours-calendars/${id}/`, data);
+    return res.data;
+  }
+
+  static async remove(id: number): Promise<void> {
+    await api.delete(`${BASE}/business-hours-calendars/${id}/`);
   }
 }
