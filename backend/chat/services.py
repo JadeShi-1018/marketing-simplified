@@ -13,6 +13,23 @@ from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment,
 from core.models import ProjectMember
 
 User = get_user_model()
+
+
+class _OutboxAckSerializerRequest:
+    """Minimal DRF-request stand-in for serializing messages inside a WebSocket
+    consumer, where no HTTP request exists.
+
+    MessageSerializer reads ``context['request'].user`` for per-user fields
+    (e.g. status, can_revoke) and calls ``request.build_absolute_uri`` for file
+    URLs. We expose the authenticated viewer and return URLs unchanged so the
+    client receives the same relative paths it already uses against its origin.
+    """
+
+    def __init__(self, user):
+        self.user = user
+
+    def build_absolute_uri(self, url):
+        return url
 logger = logging.getLogger(__name__)
 
 ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX = "image/"
@@ -984,23 +1001,61 @@ class MessageService:
     @classmethod
     def resolve_client_message_commits(
         cls,
-        sender_id: int,
+        viewer: User,
         client_message_ids: List[str],
     ) -> List[Dict[str, Any]]:
-        """Map client outbox ids to committed server message ids (DB lookup)."""
+        """Map client outbox ids to committed server messages (DB lookup).
+
+        Each entry embeds the fully-serialized message body so the reconnect
+        ``outbox_ack`` can hydrate the client's outbox in the single WS round
+        trip it already makes, instead of a follow-up REST fetch per id.
+        """
+        # Local import avoids a circular import (serializers import services).
+        from .serializers import MessageSerializer
+
         valid_ids = [client_message_id for client_message_id in client_message_ids if client_message_id]
         if not valid_ids:
             return []
-        rows = Message.objects.filter(
-            sender_id=sender_id,
-            client_message_id__in=valid_ids,
-        ).values('id', 'client_message_id')
+        # Mirror MessageViewSet._message_queryset so MessageSerializer's method
+        # fields (mentions, reactions, thread summary, ...) read prefetched data
+        # in bulk instead of issuing a query per message. Keep in sync with it.
+        thread_replies_for_summary = (
+            Message.objects
+            .select_related('sender')
+            .only(
+                'id', 'chat_id', 'parent_message_id', 'sender_id', 'created_at',
+                'sender__id', 'sender__username', 'sender__email', 'sender__avatar',
+            )
+            .order_by('created_at')
+        )
+        messages = (
+            Message.objects
+            .filter(sender_id=viewer.id, client_message_id__in=valid_ids)
+            .select_related(
+                'sender', 'chat', 'chat__project',
+                'reply_to', 'reply_to__sender', 'forwarded_from_message',
+            )
+            .prefetch_related(
+                'attachments',
+                'reply_to__attachments',
+                'mentions__mentioned_user',
+                'reactions__user',
+                'statuses',
+                Prefetch(
+                    'thread_replies',
+                    queryset=thread_replies_for_summary,
+                    to_attr='_thread_replies_for_summary',
+                ),
+            )
+        )
+        context = {'request': _OutboxAckSerializerRequest(viewer)}
         return [
             {
-                'client_message_id': row['client_message_id'],
-                'message_id': row['id'],
+                'client_message_id': message.client_message_id,
+                'message_id': message.id,
+                'message': MessageSerializer(message, context=context).data,
             }
-            for row in rows
+            for message in messages
         ]
 
     @classmethod

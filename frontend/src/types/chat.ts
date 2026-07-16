@@ -212,6 +212,9 @@ export interface OutboxEntry {
 export interface OutboxAckCommit {
   client_message_id: string;
   message_id: number;
+  // Embedded by the server so reconnect reconciliation needs no per-id REST
+  // fetch. Optional so an older/absent payload safely falls back to getMessage.
+  message?: Message | null;
 }
 
 // ==================== API Request/Response Types ====================
@@ -406,7 +409,7 @@ export interface ChatState {
   setWidgetView: (view: 'list' | 'chat') => void;
   
   setMessages: (chatId: number, messages: Message[]) => void;
-  addMessage: (chatId: number, message: Message, currentUserId?: number) => void;
+  addMessage: (chatId: number, message: Message, currentUserId?: number, replaceClientMessageId?: string) => void;
   enqueueOutbox: (entry: OutboxEntry) => void;
   markOutboxSending: (clientMessageId: string) => void;
   markOutboxSent: (clientMessageId: string, message: Message) => void;

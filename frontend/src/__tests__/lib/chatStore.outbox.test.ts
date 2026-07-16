@@ -163,4 +163,52 @@ describe('chatStore outbox', () => {
     expect(useChatStore.getState().outbox).toHaveLength(0);
     expect(useChatStore.getState().messages[3]?.[0]?.id).toBe(77);
   });
+
+  it('reconcileOutboxAck uses the embedded message without an extra fetch', async () => {
+    useChatStore.getState().enqueueOutbox(makeOutboxEntry());
+    const embedded = makeMessage({ id: 88 });
+
+    await useChatStore.getState().reconcileOutboxAck([
+      { client_message_id: 'client-msg-abc', message_id: 88, message: embedded },
+    ]);
+
+    // Solution 1: body came inline on the ack — no per-id REST fetch.
+    expect(getMessage).not.toHaveBeenCalled();
+    expect(useChatStore.getState().outbox).toHaveLength(0);
+    expect(useChatStore.getState().messages[3]?.[0]?.id).toBe(88);
+  });
+
+  it('markOutboxSent swaps the optimistic placeholder atomically without a gap', () => {
+    const chatId = 3;
+    // Seed the optimistic placeholder that a pending send would have rendered.
+    useChatStore.setState({
+      messages: {
+        [chatId]: [
+          makeMessage({ id: -1, client_message_id: 'client-msg-abc', content: 'optimistic' }),
+        ],
+      },
+    });
+    useChatStore.getState().enqueueOutbox(makeOutboxEntry());
+
+    // Capture the message-list length on every state transition that follows.
+    const lengths: number[] = [];
+    const unsubscribe = useChatStore.subscribe((state) => {
+      lengths.push(state.messages[chatId]?.length ?? 0);
+    });
+
+    const committed = makeMessage({ id: 77, client_message_id: 'client-msg-abc', content: 'committed' });
+    useChatStore.getState().markOutboxSent('client-msg-abc', committed);
+    unsubscribe();
+
+    // The list must never drop to zero mid-update: no disappear-then-reappear.
+    expect(lengths.length).toBeGreaterThan(0);
+    expect(lengths.every((len) => len >= 1)).toBe(true);
+
+    // Outbox cleared, optimistic replaced by the committed message exactly once.
+    expect(useChatStore.getState().outbox).toHaveLength(0);
+    const finalMessages = useChatStore.getState().messages[chatId] ?? [];
+    expect(finalMessages).toHaveLength(1);
+    expect(finalMessages[0].id).toBe(77);
+    expect(finalMessages[0].content).toBe('committed');
+  });
 });

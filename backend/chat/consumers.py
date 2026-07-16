@@ -181,7 +181,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         try:
             committed = await database_sync_to_async(
                 MessageService.resolve_client_message_commits,
-            )(self.user.id, client_message_ids)
+            )(self.user, client_message_ids)
             await self.send(text_data=json.dumps({
                 'type': 'outbox_ack',
                 'committed': committed,

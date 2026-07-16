@@ -249,6 +249,46 @@ class TestMessageServiceIdempotentCreate:
     @patch('agent.tasks.handle_chat_message_for_agent.delay')
     @patch('chat.tasks.notify_new_message.delay')
     @patch('chat.tasks.notify_message_recipients.delay')
+    def test_resolve_client_message_commits_does_not_query_per_message(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        mock_agent_route,
+        capture_on_commit_callbacks,
+        django_assert_max_num_queries,
+    ):
+        """Embedding message bodies in the ack must be prefetch-backed, not N+1.
+
+        A per-message serializer would issue several extra queries per row
+        (reactions, mentions, thread summary, ...). Prefetch keeps the count
+        bounded regardless of batch size, so 4 rows stay well under the ceiling.
+        """
+        from chat.services import MessageService
+
+        client_ids = []
+        with capture_on_commit_callbacks(execute=True):
+            for i in range(4):
+                cid = f'qcount-{i}'
+                MessageService.create_message_with_attachments(
+                    sender=self.sender,
+                    chat=self.chat,
+                    content=f'message {i}',
+                    client_message_id=cid,
+                )
+                client_ids.append(cid)
+
+        # Measured baseline: 14 queries for 4 rows (prefetch-backed). Without
+        # prefetch it would be ~32 (≈6 extra per row). 16 leaves small headroom
+        # while still catching a per-message regression.
+        with django_assert_max_num_queries(16):
+            result = MessageService.resolve_client_message_commits(self.sender, client_ids)
+
+        assert len(result) == 4
+        assert all(row['message']['id'] for row in result)
+
+    @patch('agent.tasks.handle_chat_message_for_agent.delay')
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
     def test_create_message_with_attachments_dedupes_by_client_message_id(
         self,
         mock_notify_recipients,

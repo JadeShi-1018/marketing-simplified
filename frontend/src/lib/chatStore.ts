@@ -344,12 +344,18 @@ export const useChatStore = create<ChatState>()(
         });
       },
 
-      addMessage: (chatId: number, message: Message, currentUserId?: number) => {
+      addMessage: (chatId: number, message: Message, currentUserId?: number, replaceClientMessageId?: string) => {
         // CRITICAL: Ensure chatId is always a number for consistent key access
         const numericChatId = Number(chatId);
-        
+
         set(state => {
-          const existingMessages = state.messages[numericChatId] || [];
+          const storedMessages = state.messages[numericChatId] || [];
+          // When confirming an optimistic send, drop its placeholder in the SAME
+          // reducer pass so the list goes straight from optimistic -> committed
+          // without an intermediate state where the message is momentarily absent.
+          const existingMessages = replaceClientMessageId
+            ? stripOptimisticOutboxMessages(storedMessages, replaceClientMessageId)
+            : storedMessages;
           const nextPresenceByUserId = presenceFromMessages(state.presenceByUserId, [message]);
 
           const existingIndex = existingMessages.findIndex(m => m.id === message.id);
@@ -461,17 +467,13 @@ export const useChatStore = create<ChatState>()(
 
       markOutboxSent: (clientMessageId: string, message: Message) => {
         const numericChatId = Number(message.chat_id ?? message.chat);
-        set((state) => {
-          const existingMessages = state.messages[numericChatId] || [];
-          return {
-            outbox: state.outbox.filter((entry) => entry.clientMessageId !== clientMessageId),
-            messages: {
-              ...state.messages,
-              [numericChatId]: stripOptimisticOutboxMessages(existingMessages, clientMessageId),
-            },
-          };
-        });
-        get().addMessage(numericChatId, message);
+        // Clear the outbox entry, then let addMessage swap the optimistic
+        // placeholder for the committed message in a single reducer pass. The
+        // message list never passes through a frame where the message is gone.
+        set((state) => ({
+          outbox: state.outbox.filter((entry) => entry.clientMessageId !== clientMessageId),
+        }));
+        get().addMessage(numericChatId, message, undefined, clientMessageId);
       },
 
       getOutboxDigest: () => {
@@ -527,7 +529,9 @@ export const useChatStore = create<ChatState>()(
             continue;
           }
           try {
-            const message = await getMessage(item.message_id);
+            // The server embeds the committed message in the ack, so the common
+            // path needs no HTTP. Fall back to a fetch only if it's absent.
+            const message = item.message ?? await getMessage(item.message_id);
             get().markOutboxSent(item.client_message_id, message);
           } catch (error) {
             console.error('Failed to hydrate outbox ack message:', error);

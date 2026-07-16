@@ -391,6 +391,11 @@ class TestChatConsumer:
             assert len(ack['committed']) == 1
             assert ack['committed'][0]['client_message_id'] == client_message_id
             assert ack['committed'][0]['message_id'] == message.id
+            # Solution 1: the ack embeds the fully-serialized message body so the
+            # client can hydrate its outbox without a follow-up REST fetch per id.
+            embedded = ack['committed'][0]['message']
+            assert embedded['id'] == message.id
+            assert embedded['content'] == 'Already committed'
         finally:
             await _disconnect_communicators(communicator)
 
