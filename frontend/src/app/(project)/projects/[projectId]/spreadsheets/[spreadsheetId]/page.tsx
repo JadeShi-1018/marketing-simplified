@@ -14,6 +14,8 @@ import CreateSheetModal from '@/components/spreadsheets/CreateSheetModal';
 import SpreadsheetGrid, { SpreadsheetGridHandle } from '@/components/spreadsheets/SpreadsheetGrid';
 import PatternAgentPanel from '@/components/spreadsheets/PatternAgentPanel';
 import { PivotEditorPanel } from '@/components/spreadsheets/PivotEditorPanel';
+import PresenceAvatars from '@/components/spreadsheets/presence/PresenceAvatars';
+import { useSheetPresenceBridge } from '@/components/spreadsheets/presence/useSheetPresenceBridge';
 import {
   PivotConfig,
   SourceColumn,
@@ -66,6 +68,7 @@ export default function SpreadsheetDetailPage() {
   const [spreadsheet, setSpreadsheet] = useState<SpreadsheetData | null>(null);
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<number | null>(null);
+  const { remoteUsers, onSelectionChange } = useSheetPresenceBridge(activeSheetId);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createSheetModalOpen, setCreateSheetModalOpen] = useState(false);
@@ -1302,8 +1305,8 @@ export default function SpreadsheetDetailPage() {
           {/* Header */}
           <div className="border-b border-gray-200 bg-white">
             <div className="max-w-7xl px-4 py-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <button
                     type="button"
                     onClick={() => router.push('/spreadsheets')}
@@ -1365,6 +1368,7 @@ export default function SpreadsheetDetailPage() {
                     )}
                   </div>
                 </div>
+                <PresenceAvatars users={remoteUsers} />
               </div>
             </div>
           </div>
@@ -1515,6 +1519,7 @@ export default function SpreadsheetDetailPage() {
                       spreadsheetName={spreadsheet?.name}
                       sheetName={activeSheet?.name}
                       frozenRowCount={activeSheet?.frozen_row_count ?? 0}
+                      onSelectionChange={onSelectionChange}
                       onFreezeHeaderChange={activeSheet ? ((val) => {
                         setSheets((prev) =>
                           prev.map((s) =>

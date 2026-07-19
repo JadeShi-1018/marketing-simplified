@@ -18,9 +18,27 @@ from .models import (
 )
 from .formula_engine import evaluate_formula, extract_references, reference_to_indexes, FormulaError
 from .formula_rewrite import rewrite_cells_for_operation
-from core.models import Project
+from core.models import Project, ProjectMember
 
 logger = logging.getLogger(__name__)
+
+
+def user_has_sheet_access(user_id: int, sheet_id: int) -> bool:
+    """Active project members may join the sheet WebSocket room."""
+    from spreadsheet.models import Sheet
+
+    sheet = (
+        Sheet.objects.filter(id=sheet_id, is_deleted=False, spreadsheet__is_deleted=False)
+        .select_related("spreadsheet")
+        .first()
+    )
+    if sheet is None:
+        return False
+    return ProjectMember.objects.filter(
+        user_id=user_id,
+        project_id=sheet.spreadsheet.project_id,
+        is_active=True,
+    ).exists()
 
 
 class CellBatchArgumentError(Exception):

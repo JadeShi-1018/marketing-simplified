@@ -21,6 +21,15 @@ import { adjustFormulaReferences, colLabelToIndex } from '@/lib/spreadsheet/form
 import { ApplyHighlightParams } from '@/types/patterns';
 import BrandSelect from '@/components/ui/BrandSelect';
 
+export type SpreadsheetSelectionChange = {
+  row: number;
+  col: number;
+  startRow: number;
+  endRow: number;
+  startCol: number;
+  endCol: number;
+} | null;
+
 interface SpreadsheetGridProps {
   spreadsheetId: number | string;
   sheetId: number;
@@ -31,6 +40,8 @@ interface SpreadsheetGridProps {
   frozenRowCount?: number;
   /** Called when freeze header is toggled; parent should update sheet state and pass new frozenRowCount. */
   onFreezeHeaderChange?: (frozenRowCount: number) => void;
+  /** Fired when local active cell / selection changes (for collab presence). */
+  onSelectionChange?: (selection: SpreadsheetSelectionChange) => void;
   onFormulaCommit?: (data: { row: number; col: number; formula: string }) => void;
   onInsertRowCommit?: (payload: { index: number; position: 'above' | 'below' }) => void;
   onInsertColumnCommit?: (payload: { index: number; position: 'left' | 'right' }) => void;
@@ -528,6 +539,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   frozenRowCount = 0,
   onFreezeHeaderChange,
   onOpenPivotBuilder,
+  onSelectionChange,
 }: SpreadsheetGridProps, ref) => {
   const isGridLoading = loading || sheetId <= 0;
   const [rowCount, setRowCount] = useState(DEFAULT_ROWS);
@@ -930,6 +942,23 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
     return null;
   }, [computeSelectionRange, activeCell]);
+
+  useEffect(() => {
+    if (!onSelectionChange) return;
+    if (!activeCell) {
+      onSelectionChange(null);
+      return;
+    }
+    const range = getEffectiveSelectionRange();
+    onSelectionChange({
+      row: activeCell.row,
+      col: activeCell.col,
+      startRow: range?.startRow ?? activeCell.row,
+      endRow: range?.endRow ?? activeCell.row,
+      startCol: range?.startCol ?? activeCell.col,
+      endCol: range?.endCol ?? activeCell.col,
+    });
+  }, [activeCell, anchorCell, focusCell, onSelectionChange, getEffectiveSelectionRange]);
 
   const isSingleCellSelection = useMemo(() => {
     if (!activeCell || !anchorCell || !focusCell) return false;

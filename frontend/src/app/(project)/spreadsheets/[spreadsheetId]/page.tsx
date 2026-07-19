@@ -65,6 +65,8 @@ import {
 import SpreadsheetDetailHeader from '@/components/spreadsheets/detail/SpreadsheetDetailHeader';
 import SheetTabBarBottom from '@/components/spreadsheets/detail/SheetTabBarBottom';
 import CreateSheetDialog from '@/components/spreadsheets/CreateSheetDialog';
+import PresenceAvatars from '@/components/spreadsheets/presence/PresenceAvatars';
+import { useSheetPresenceBridge } from '@/components/spreadsheets/presence/useSheetPresenceBridge';
 
 function getNextSheetName(existingSheets: SheetData[]): string {
   const re = /^sheet(\d+)$/i;
@@ -106,6 +108,7 @@ export default function SpreadsheetsV2DetailPage() {
   const [spreadsheet, setSpreadsheet] = useState<SpreadsheetData | null>(null);
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<number | null>(null);
+  const { remoteUsers, onSelectionChange } = useSheetPresenceBridge(activeSheetId);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
@@ -882,6 +885,7 @@ export default function SpreadsheetsV2DetailPage() {
             saving={renamingSpreadsheetSaving}
             onRename={handleRenameSpreadsheet}
             loading={loading}
+            presenceSlot={<PresenceAvatars users={remoteUsers} />}
           />
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-gray-100 sm:rounded-xl">
@@ -897,6 +901,7 @@ export default function SpreadsheetsV2DetailPage() {
                       spreadsheetName={spreadsheet?.name ?? undefined}
                       sheetName={activeSheet?.name}
                       frozenRowCount={activeSheet?.frozen_row_count ?? 0}
+                      onSelectionChange={onSelectionChange}
                       onFreezeHeaderChange={activeSheet ? ((val) => {
                         setSheets((prev) =>
                           prev.map((s) =>
