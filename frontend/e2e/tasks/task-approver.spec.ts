@@ -64,7 +64,7 @@ test.describe('Task approver assignment', () => {
     // chain and act as the approver in both tabs.
     const userId = await page.evaluate(() => {
       try {
-        return JSON.parse(localStorage.getItem('auth-storage') || '{}')?.state?.user?.id ?? null;
+        return JSON.parse(localStorage.getItem('auth-storage-v1') || '{}')?.state?.user?.id ?? null;
       } catch {
         return null;
       }

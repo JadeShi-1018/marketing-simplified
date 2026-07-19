@@ -67,7 +67,7 @@ export async function getActiveProjectId(page: Page): Promise<number | null> {
 async function getAuthToken(page: Page): Promise<string | null> {
   return page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('auth-storage');
+      const raw = localStorage.getItem('auth-storage-v1');
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       return parsed?.state?.token ?? null;

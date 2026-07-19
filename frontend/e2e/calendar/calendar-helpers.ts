@@ -20,7 +20,7 @@ type EnsureCalendarResult = {
   createdCalendarId: string | null;
 };
 
-const AUTH_STORAGE_KEY = 'auth-storage';
+const AUTH_STORAGE_KEY = 'auth-storage-v1';
 const AUTH_FILE = path.resolve(__dirname, '../.auth/user.json');
 
 function calendarViewTabs(page: Page): Locator {
