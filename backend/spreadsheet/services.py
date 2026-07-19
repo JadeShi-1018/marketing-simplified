@@ -41,6 +41,79 @@ def user_has_sheet_access(user_id: int, sheet_id: int) -> bool:
     ).exists()
 
 
+def sheet_room_group_name(sheet_id: int) -> str:
+    """Channel-layer group name for a sheet room (must match SheetConsumer)."""
+    return f"sheet_{sheet_id}"
+
+
+def _cell_broadcast_payload(cell: Cell) -> Dict[str, Any]:
+    """JSON-safe cell snapshot for the cells_updated broadcast.
+
+    Mirrors the subset of CellSerializer fields the grid applies via
+    applyCellsFromResponse. Decimals become strings (same as DRF output),
+    so the channel layer JSON encoder never sees a Decimal.
+    """
+    return {
+        'row_position': cell.row_position,
+        'column_position': cell.column_position,
+        'value_type': cell.value_type,
+        'string_value': cell.string_value,
+        'number_value': str(cell.number_value) if cell.number_value is not None else None,
+        'boolean_value': cell.boolean_value,
+        'formula_value': cell.formula_value,
+        'raw_input': cell.raw_input,
+        'computed_type': cell.computed_type,
+        'computed_number': str(cell.computed_number) if cell.computed_number is not None else None,
+        'computed_string': cell.computed_string,
+        'error_code': cell.error_code,
+        'is_deleted': cell.is_deleted,
+        'updated_at': cell.updated_at.isoformat() if cell.updated_at else None,
+    }
+
+
+def broadcast_cells_updated(
+    sheet_id: int,
+    cells: List[Cell],
+    origin_client_id: Optional[str] = None,
+    origin_user_id: Optional[int] = None,
+) -> None:
+    """Queue a cells_updated broadcast to the sheet room for after commit.
+
+    Registered via transaction.on_commit so subscribers never receive values
+    that are not yet durable (or that a rollback would revert). Commit order
+    therefore defines LWW order: the broadcast for the later commit is queued
+    later, and per-cell payloads always carry the post-write DB state.
+
+    Never raises: a broadcast failure must not fail the save that produced it.
+    """
+    if not cells:
+        return
+    payload_cells = [_cell_broadcast_payload(c) for c in cells]
+
+    def _send():
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            if channel_layer is None:
+                return
+            async_to_sync(channel_layer.group_send)(
+                sheet_room_group_name(sheet_id),
+                {
+                    'type': 'cells.updated',
+                    'sheet_id': sheet_id,
+                    'origin_client_id': origin_client_id,
+                    'origin_user_id': origin_user_id,
+                    'cells': payload_cells,
+                },
+            )
+        except Exception:
+            logger.exception('cells_updated broadcast failed for sheet_id=%s', sheet_id)
+
+    transaction.on_commit(_send)
+
+
 class CellBatchArgumentError(Exception):
     """Structured batch cell validation failure (maps to HTTP 400 in views)."""
 
@@ -1435,7 +1508,9 @@ class CellService:
         sheet: Sheet,
         operations: List[Dict[str, Any]],
         auto_expand: bool = True,
-        import_mode: bool = False
+        import_mode: bool = False,
+        origin_client_id: Optional[str] = None,
+        origin_user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Perform multiple cell operations (set or clear) in a single atomic transaction.
@@ -1984,6 +2059,17 @@ class CellService:
                 recompute_pivots_for_source_sheet(sheet)
             except Exception:
                 logger.exception("Pivot recompute after batch_update_cells failed for sheet_id=%s", sheet.id)
+
+        # Realtime collab: queue a cells_updated broadcast (delivered on commit).
+        # import_mode skips it: imports write thousands of cells per chunk and
+        # ImportFinalizeView triggers a full reload on completion anyway.
+        if not import_mode:
+            broadcast_cells_updated(
+                sheet_id=sheet.id,
+                cells=result['cells'],
+                origin_client_id=origin_client_id,
+                origin_user_id=origin_user_id,
+            )
 
         return result
 

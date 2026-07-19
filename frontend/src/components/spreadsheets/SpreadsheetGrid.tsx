@@ -42,6 +42,8 @@ interface SpreadsheetGridProps {
   onFreezeHeaderChange?: (frozenRowCount: number) => void;
   /** Fired when local active cell / selection changes (for collab presence). */
   onSelectionChange?: (selection: SpreadsheetSelectionChange) => void;
+  /** Collab WS client id of this tab; sent with cell saves so the server can suppress our own broadcast echo. */
+  collabClientId?: string;
   onFormulaCommit?: (data: { row: number; col: number; formula: string }) => void;
   onInsertRowCommit?: (payload: { index: number; position: 'above' | 'below' }) => void;
   onInsertColumnCommit?: (payload: { index: number; position: 'left' | 'right' }) => void;
@@ -75,6 +77,22 @@ export interface SpreadsheetGridHandle {
   deleteColumn: (position: number, count?: number) => Promise<void>;
   refresh: () => void;
   applyHighlightOperation: (payload: ApplyHighlightParams) => void;
+  /** Apply committed remote cell changes from a cells_updated broadcast (same shape as the batch REST response). */
+  applyRemoteCells: (
+    cells: Array<{
+      row_position: number;
+      column_position: number;
+      raw_input?: string | null;
+      string_value?: string | null;
+      number_value?: number | string | null;
+      boolean_value?: boolean | null;
+      formula_value?: string | null;
+      computed_type?: string | null;
+      computed_number?: number | string | null;
+      computed_string?: string | null;
+      error_code?: string | null;
+    }>
+  ) => void;
 }
 
 type CellKey = string; // Format: `${row}:${col}` (0-based indices)
@@ -540,6 +558,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   onFreezeHeaderChange,
   onOpenPivotBuilder,
   onSelectionChange,
+  collabClientId,
 }: SpreadsheetGridProps, ref) => {
   const isGridLoading = loading || sheetId <= 0;
   const [rowCount, setRowCount] = useState(DEFAULT_ROWS);
@@ -1349,7 +1368,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       column_position: number;
       raw_input?: string | null;
       string_value?: string | null;
-      number_value?: number | null;
+      number_value?: number | string | null;
       boolean_value?: boolean | null;
       formula_value?: string | null;
       computed_type?: string | null;
@@ -2043,7 +2062,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           spreadsheetId,
           sheetId,
           [operation],
-          true
+          true,
+          collabClientId ? { clientId: collabClientId } : undefined
         );
         applyCellsFromResponse(response.cells);
         setPendingOps((prev) => {
@@ -2084,6 +2104,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       recordFormulaCommit,
       getCellRawInput,
       onHeaderRenameCommit,
+      collabClientId,
     ]
   );
 
@@ -2236,7 +2257,13 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     });
 
     try {
-      const response = await SpreadsheetAPI.batchUpdateCells(spreadsheetId, sheetId, operations, true);
+      const response = await SpreadsheetAPI.batchUpdateCells(
+        spreadsheetId,
+        sheetId,
+        operations,
+        true,
+        collabClientId ? { clientId: collabClientId } : undefined
+      );
       setPendingOps(new Map()); // Clear queue on success
       applyCellsFromResponse(response.cells);
       if (Number.isFinite(minRow)) {
@@ -2255,7 +2282,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     } finally {
       setIsSaving(false);
     }
-  }, [pendingOps, spreadsheetId, sheetId, isSaving, loadCellRange, applyCellsFromResponse]);
+  }, [pendingOps, spreadsheetId, sheetId, isSaving, loadCellRange, applyCellsFromResponse, collabClientId]);
 
   // Debounce flush
   useEffect(() => {
@@ -3440,7 +3467,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         spreadsheetId,
         sheetId,
         operations,
-        true
+        true,
+        collabClientId ? { clientId: collabClientId } : undefined
       );
       applyCellsFromResponse(response.cells);
       if (onFillCommit && minRow != null && maxRow != null && minCol != null && maxCol != null) {
@@ -3466,7 +3494,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       setFillPreview(null);
       setIsFillSubmitting(false);
     }
-  }, [applyCellsFromResponse, fillPreview, getCellRawInput, isFillSubmitting, onFillCommit, sheetId, spreadsheetId]);
+  }, [applyCellsFromResponse, fillPreview, getCellRawInput, isFillSubmitting, onFillCommit, sheetId, spreadsheetId, collabClientId]);
 
   useEffect(() => {
     if (!isFilling) return;
@@ -5148,6 +5176,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       deleteColumn: (position: number, count: number = 1) => handleDeleteColumn(position, count),
       refresh: () => refreshSheet(),
       applyHighlightOperation: (payload: ApplyHighlightParams) => applyHighlightOperation(payload),
+      applyRemoteCells: (cells) => applyCellsFromResponse(cells),
     }),
     [
       submitFormulaBarValue,
@@ -5156,6 +5185,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       handleDeleteColumn,
       refreshSheet,
       applyHighlightOperation,
+      applyCellsFromResponse,
     ]
   );
 

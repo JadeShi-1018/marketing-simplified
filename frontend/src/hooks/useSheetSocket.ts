@@ -21,6 +21,29 @@ export type SheetCursorPayload = {
   is_active: boolean;
 };
 
+/** One committed cell from a cells_updated broadcast (same shape the batch REST response uses). */
+export type RemoteCellUpdate = {
+  row_position: number;
+  column_position: number;
+  value_type?: string;
+  string_value?: string | null;
+  number_value?: number | string | null;
+  boolean_value?: boolean | null;
+  formula_value?: string | null;
+  raw_input?: string | null;
+  computed_type?: string | null;
+  computed_number?: number | string | null;
+  computed_string?: string | null;
+  error_code?: string | null;
+  is_deleted?: boolean;
+  updated_at?: string | null;
+};
+
+type Options = {
+  /** Committed remote cell changes for this sheet (own echoes already filtered out). */
+  onCellsUpdated?: (cells: RemoteCellUpdate[]) => void;
+};
+
 type Api = {
   wsState: SheetWsState;
   closeCode: number | null;
@@ -38,7 +61,7 @@ function createClientId(): string {
   return `sheet_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
-export function useSheetSocket(sheetId: number | null | undefined): Api {
+export function useSheetSocket(sheetId: number | null | undefined, options?: Options): Api {
   const token = useAuthStore((s) => s.token);
   const rawLocalUserId = useAuthStore((s) => s.user?.id ?? null);
   const parsedLocalUserId = rawLocalUserId == null ? null : Number(rawLocalUserId);
@@ -49,6 +72,9 @@ export function useSheetSocket(sheetId: number | null | undefined): Api {
   const reconnectTimerRef = useRef<number | null>(null);
   const localUserIdRef = useRef(localUserId);
   localUserIdRef.current = localUserId;
+  // Ref so a new callback identity never tears down / reopens the socket effect.
+  const onCellsUpdatedRef = useRef<Options['onCellsUpdated']>(options?.onCellsUpdated);
+  onCellsUpdatedRef.current = options?.onCellsUpdated;
 
   const wsState = useSheetSocketStore((s) => s.wsState);
   const closeCode = useSheetSocketStore((s) => s.closeCode);
@@ -112,6 +138,13 @@ export function useSheetSocket(sheetId: number | null | undefined): Api {
               return;
             }
             s.applyCursor(message);
+          } else if (message.type === 'cells_updated') {
+            // Server already suppresses the origin tab's echo; this guard is belt-and-braces.
+            if (message.origin_client_id && message.origin_client_id === clientIdRef.current) {
+              return;
+            }
+            const cells = Array.isArray(message.cells) ? (message.cells as RemoteCellUpdate[]) : [];
+            if (cells.length > 0) onCellsUpdatedRef.current?.(cells);
           }
         } catch {
           /* ignore malformed frames */

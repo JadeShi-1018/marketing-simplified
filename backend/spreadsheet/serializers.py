@@ -381,6 +381,9 @@ class CellBatchUpdateSerializer(serializers.Serializer):
     import_id = serializers.CharField(required=False, allow_null=True, allow_blank=True, max_length=64)
     chunk_index = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     import_mode = serializers.BooleanField(default=False)
+    # Realtime collab: WebSocket client id of the tab that made this edit, echoed
+    # back in the cells_updated broadcast so the origin tab can drop its own echo.
+    client_id = serializers.CharField(required=False, allow_null=True, allow_blank=True, max_length=64)
 
     def validate_operations(self, value):
         """Validate operations array"""

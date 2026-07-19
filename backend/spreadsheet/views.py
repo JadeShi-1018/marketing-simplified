@@ -875,7 +875,9 @@ class CellBatchUpdateView(APIView):
                 sheet=sheet,
                 operations=serializer.validated_data['operations'],
                 auto_expand=serializer.validated_data.get('auto_expand', True),
-                import_mode=import_mode
+                import_mode=import_mode,
+                origin_client_id=serializer.validated_data.get('client_id') or None,
+                origin_user_id=getattr(request.user, 'id', None),
             )
         except CellBatchArgumentError as e:
             return Response(

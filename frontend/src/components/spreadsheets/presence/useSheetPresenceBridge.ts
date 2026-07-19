@@ -1,7 +1,11 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
-import { useSheetSocket, type SheetCursorPayload } from '@/hooks/useSheetSocket';
+import {
+  useSheetSocket,
+  type RemoteCellUpdate,
+  type SheetCursorPayload,
+} from '@/hooks/useSheetSocket';
 import type { SheetPresenceUser } from '@/lib/sheetSocketStore';
 
 export type SheetSelectionPayload = {
@@ -16,6 +20,13 @@ export type SheetSelectionPayload = {
 type Api = {
   remoteUsers: SheetPresenceUser[];
   onSelectionChange: (selection: SheetSelectionPayload) => void;
+  /** This tab's WS client id; pass to cell-save calls so the server can drop our echo. */
+  clientId: string;
+};
+
+type Options = {
+  /** Committed remote cell changes (own echoes filtered). */
+  onCellsUpdated?: (cells: RemoteCellUpdate[]) => void;
 };
 
 const CURSOR_THROTTLE_MS = 40;
@@ -23,8 +34,10 @@ const CURSOR_THROTTLE_MS = 40;
 /**
  * Connects the active sheet room and throttles selection → cursor_update broadcasts.
  */
-export function useSheetPresenceBridge(sheetId: number | null | undefined): Api {
-  const { remoteUsers, sendCursorUpdate } = useSheetSocket(sheetId);
+export function useSheetPresenceBridge(sheetId: number | null | undefined, options?: Options): Api {
+  const { remoteUsers, sendCursorUpdate, clientId } = useSheetSocket(sheetId, {
+    onCellsUpdated: options?.onCellsUpdated,
+  });
   const lastSentRef = useRef(0);
   const pendingRef = useRef<SheetCursorPayload | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -84,5 +97,5 @@ export function useSheetPresenceBridge(sheetId: number | null | undefined): Api 
     }
   };
 
-  return { remoteUsers, onSelectionChange };
+  return { remoteUsers, onSelectionChange, clientId };
 }

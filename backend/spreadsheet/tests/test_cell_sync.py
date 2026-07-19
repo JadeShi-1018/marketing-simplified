@@ -1,0 +1,269 @@
+"""Realtime cell sync (MED-293 Phase 3).
+
+Coverage is split deterministically in two halves instead of one cross-thread
+end-to-end test (InMemoryChannelLayer is not safe to feed from the on_commit
+worker thread, which would flake in CI):
+
+1. Service half: CellService.batch_update_cells queues cells_updated broadcasts
+   on commit, in commit order (= LWW order), with the post-write cell state.
+2. Consumer half: a cells.updated group event is relayed to peers and the
+   origin tab's echo (matched by client_id) is suppressed server-side.
+"""
+import asyncio
+import uuid
+from contextlib import suppress
+
+import pytest
+from channels.db import database_sync_to_async
+from channels.layers import channel_layers, get_channel_layer
+from channels.routing import URLRouter
+from channels.testing import WebsocketCommunicator
+from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from rest_framework_simplejwt.tokens import AccessToken
+
+from asset.middleware import JWTAuthMiddleware
+from core.models import Organization, Project, ProjectMember
+from spreadsheet.models import Cell, Sheet, Spreadsheet
+from spreadsheet.routing import websocket_urlpatterns
+from spreadsheet.services import CellService, sheet_room_group_name
+
+pytestmark = pytest.mark.django_db
+
+User = get_user_model()
+
+TEST_CHANNEL_LAYERS = {
+    "default": {"BACKEND": "channels.layers.InMemoryChannelLayer"},
+}
+TEST_CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "sheet-cell-sync-tests",
+    }
+}
+
+
+def _reset_channel_layers():
+    layer_cache = getattr(channel_layers, "_layers", None)
+    if isinstance(layer_cache, dict):
+        layer_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def sheet_ws_settings(settings):
+    settings.CHANNEL_LAYERS = TEST_CHANNEL_LAYERS
+    settings.CACHES = TEST_CACHES
+    _reset_channel_layers()
+    cache.clear()
+    yield
+    cache.clear()
+    _reset_channel_layers()
+
+
+def _uid() -> str:
+    return uuid.uuid4().hex[:8]
+
+
+def _create_user(username: str):
+    return User.objects.create_user(
+        username=username, email=f"{username}@example.com", password="testpass123"
+    )
+
+
+def _create_sheet(user):
+    org = Organization.objects.create(name=f"Org {_uid()}")
+    project = Project.objects.create(name=f"Project {_uid()}", organization=org, owner=user)
+    ProjectMember.objects.create(user=user, project=project, role="owner", is_active=True)
+    spreadsheet = Spreadsheet.objects.create(project=project, name=f"Book {_uid()}")
+    sheet = Sheet.objects.create(spreadsheet=spreadsheet, name="Sheet1", position=0)
+    return org, project, spreadsheet, sheet
+
+
+class _RecordingLayer:
+    """Minimal channel-layer stand-in that records group_send calls."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def group_send(self, group, message):
+        self.sent.append((group, message))
+
+
+async def _disconnect_communicators(*communicators):
+    for communicator in communicators:
+        if communicator is None:
+            continue
+        with suppress(Exception):
+            await communicator.disconnect(timeout=2)
+        with suppress(Exception):
+            communicator.stop(exceptions=False)
+    await asyncio.sleep(0)
+
+
+def _app():
+    return JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+
+
+@pytest.mark.django_db(transaction=True)
+class TestCellSyncService:
+    def test_conflict_two_writes_same_cell_last_write_wins(self, monkeypatch):
+        """Two writes to the same cell: DB state and broadcast order are LWW."""
+        layer = _RecordingLayer()
+        monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+        user = _create_user(f"u_{_uid()}")
+        _, _, _, sheet = _create_sheet(user)
+
+        CellService.batch_update_cells(
+            sheet=sheet,
+            operations=[{"operation": "set", "row": 0, "column": 0, "raw_input": "first"}],
+            origin_client_id="tab-a",
+            origin_user_id=user.id,
+        )
+        CellService.batch_update_cells(
+            sheet=sheet,
+            operations=[{"operation": "set", "row": 0, "column": 0, "raw_input": "second"}],
+            origin_client_id="tab-b",
+            origin_user_id=user.id,
+        )
+
+        cell = Cell.objects.get(
+            sheet=sheet, row__position=0, column__position=0, is_deleted=False
+        )
+        assert cell.raw_input == "second"
+
+        assert len(layer.sent) == 2
+        for group, message in layer.sent:
+            assert group == sheet_room_group_name(sheet.id)
+            assert message["type"] == "cells.updated"
+            assert message["sheet_id"] == sheet.id
+        first_msg = layer.sent[0][1]
+        second_msg = layer.sent[1][1]
+        assert first_msg["origin_client_id"] == "tab-a"
+        assert second_msg["origin_client_id"] == "tab-b"
+
+        def cell_00(message):
+            return next(
+                c
+                for c in message["cells"]
+                if c["row_position"] == 0 and c["column_position"] == 0
+            )
+
+        assert cell_00(first_msg)["raw_input"] == "first"
+        # The later commit broadcasts last and carries the winning value.
+        assert cell_00(second_msg)["raw_input"] == "second"
+
+    def test_formula_dependents_included_in_broadcast(self, monkeypatch):
+        """Editing a source cell broadcasts the recalculated dependent formula cell too."""
+        layer = _RecordingLayer()
+        monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+        user = _create_user(f"u_{_uid()}")
+        _, _, _, sheet = _create_sheet(user)
+
+        CellService.batch_update_cells(
+            sheet=sheet,
+            operations=[
+                {"operation": "set", "row": 0, "column": 0, "raw_input": "1"},
+                {"operation": "set", "row": 0, "column": 1, "raw_input": "=A1*10"},
+            ],
+        )
+        layer.sent.clear()
+
+        CellService.batch_update_cells(
+            sheet=sheet,
+            operations=[{"operation": "set", "row": 0, "column": 0, "raw_input": "5"}],
+        )
+
+        assert len(layer.sent) == 1
+        cells = layer.sent[0][1]["cells"]
+        positions = {(c["row_position"], c["column_position"]) for c in cells}
+        # Source cell and its dependent formula cell both broadcast.
+        assert (0, 0) in positions
+        assert (0, 1) in positions
+        dependent = next(
+            c for c in cells if (c["row_position"], c["column_position"]) == (0, 1)
+        )
+        assert dependent["computed_number"] is not None
+        assert float(dependent["computed_number"]) == 50.0
+
+    def test_import_mode_does_not_broadcast(self, monkeypatch):
+        layer = _RecordingLayer()
+        monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+        user = _create_user(f"u_{_uid()}")
+        _, _, _, sheet = _create_sheet(user)
+        # import targets must exist when auto_expand is skipped by import flows;
+        # keep auto_expand=True here so the single op stands alone.
+        CellService.batch_update_cells(
+            sheet=sheet,
+            operations=[{"operation": "set", "row": 0, "column": 0, "raw_input": "x"}],
+            import_mode=True,
+        )
+        assert layer.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestCellSyncConsumer:
+    async def test_cells_updated_relayed_to_peer_and_echo_suppressed(self):
+        user_a = await database_sync_to_async(_create_user)(f"a_{_uid()}")
+        _, project, _, sheet = await database_sync_to_async(_create_sheet)(user_a)
+        user_b = await database_sync_to_async(User.objects.create_user)(
+            username=f"b_{_uid()}", email=f"b_{_uid()}@example.com", password="testpass123"
+        )
+        await database_sync_to_async(ProjectMember.objects.create)(
+            user=user_b, project=project, role="member", is_active=True
+        )
+
+        token_a = str(AccessToken.for_user(user_a))
+        token_b = str(AccessToken.for_user(user_b))
+        comm_a = WebsocketCommunicator(
+            _app(), f"/ws/spreadsheets/sheets/{sheet.id}/?token={token_a}&client_id=ca"
+        )
+        comm_b = WebsocketCommunicator(
+            _app(), f"/ws/spreadsheets/sheets/{sheet.id}/?token={token_b}&client_id=cb"
+        )
+        try:
+            connected_a, _ = await comm_a.connect()
+            assert connected_a
+            await comm_a.receive_json_from(timeout=5)  # snapshot
+            connected_b, _ = await comm_b.connect()
+            assert connected_b
+            await comm_b.receive_json_from(timeout=5)  # snapshot
+            join = await comm_a.receive_json_from(timeout=5)  # b joins
+            assert join["type"] == "presence_join"
+
+            layer = get_channel_layer()
+            await layer.group_send(
+                sheet_room_group_name(sheet.id),
+                {
+                    "type": "cells.updated",
+                    "sheet_id": sheet.id,
+                    "origin_client_id": "ca",
+                    "origin_user_id": user_a.id,
+                    "cells": [
+                        {
+                            "row_position": 2,
+                            "column_position": 3,
+                            "raw_input": "hello",
+                            "computed_type": "STRING",
+                            "computed_string": "hello",
+                        }
+                    ],
+                },
+            )
+
+            # Peer receives the change-set.
+            msg_b = await comm_b.receive_json_from(timeout=5)
+            assert msg_b["type"] == "cells_updated"
+            assert msg_b["sheet_id"] == sheet.id
+            assert msg_b["origin_client_id"] == "ca"
+            assert msg_b["cells"][0]["row_position"] == 2
+            assert msg_b["cells"][0]["column_position"] == 3
+            assert msg_b["cells"][0]["raw_input"] == "hello"
+
+            # Origin tab (client_id == ca) gets no echo.
+            assert await comm_a.receive_nothing(timeout=0.5)
+        finally:
+            await _disconnect_communicators(comm_a, comm_b)

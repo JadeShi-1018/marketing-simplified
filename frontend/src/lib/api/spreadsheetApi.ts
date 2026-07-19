@@ -261,6 +261,8 @@ export const SpreadsheetAPI = {
       chunkIndex?: number;
       importMode?: boolean;
       signal?: AbortSignal;
+      /** Collab WS client id; echoed in the cells_updated broadcast so the origin tab can skip its own echo. */
+      clientId?: string;
     }
   ): Promise<{
     updated: number;
@@ -290,6 +292,7 @@ export const SpreadsheetAPI = {
     if (options?.importId != null) body.import_id = options.importId;
     if (options?.chunkIndex != null) body.chunk_index = options.chunkIndex;
     if (options?.importMode === true) body.import_mode = true;
+    if (options?.clientId) body.client_id = options.clientId;
 
     const config: { timeout: number; signal?: AbortSignal } = {
       timeout: SPREADSHEET_LONG_REQUEST_TIMEOUT_MS,

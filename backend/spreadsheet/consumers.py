@@ -44,7 +44,12 @@ def _optional_int_from_json(value, field_name: str):
 
 
 class SheetConsumer(AsyncWebsocketConsumer):
-    """Sheet-room WebSocket: join/leave, presence list, cursor broadcast (no cell sync yet)."""
+    """Sheet-room WebSocket: join/leave, presence list, cursor + committed cell broadcasts.
+
+    Cell edits are written over HTTP (CellBatchUpdateView -> CellService.batch_update_cells,
+    the single write path incl. formula recalc); the service queues a cells_updated
+    group broadcast on commit, which this consumer relays. LWW = DB commit order.
+    """
 
     async def connect(self):
         self.sheet_id = int(self.scope["url_route"]["kwargs"]["sheet_id"])
@@ -199,6 +204,28 @@ class SheetConsumer(AsyncWebsocketConsumer):
                     "user_id": event["user_id"],
                     "username": event["username"],
                     "client_id": event.get("client_id"),
+                }
+            )
+        )
+
+    async def cells_updated(self, event):
+        """Relay a committed cell change-set to this client.
+
+        Echo suppression is server-side: the tab that produced the edit already
+        applied the authoritative cells from its HTTP response, so its own
+        broadcast is dropped here (matched by client_id).
+        """
+        origin_client_id = event.get("origin_client_id")
+        if origin_client_id and origin_client_id == getattr(self, "client_id", None):
+            return
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "cells_updated",
+                    "sheet_id": event["sheet_id"],
+                    "origin_client_id": origin_client_id,
+                    "origin_user_id": event.get("origin_user_id"),
+                    "cells": event.get("cells") or [],
                 }
             )
         )

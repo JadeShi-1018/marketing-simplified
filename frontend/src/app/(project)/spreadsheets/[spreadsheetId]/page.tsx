@@ -108,7 +108,10 @@ export default function SpreadsheetsV2DetailPage() {
   const [spreadsheet, setSpreadsheet] = useState<SpreadsheetData | null>(null);
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<number | null>(null);
-  const { remoteUsers, onSelectionChange } = useSheetPresenceBridge(activeSheetId);
+  const { remoteUsers, onSelectionChange, clientId: collabClientId } = useSheetPresenceBridge(
+    activeSheetId,
+    { onCellsUpdated: (cells) => gridRef.current?.applyRemoteCells(cells) }
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
@@ -902,6 +905,7 @@ export default function SpreadsheetsV2DetailPage() {
                       sheetName={activeSheet?.name}
                       frozenRowCount={activeSheet?.frozen_row_count ?? 0}
                       onSelectionChange={onSelectionChange}
+                      collabClientId={collabClientId}
                       onFreezeHeaderChange={activeSheet ? ((val) => {
                         setSheets((prev) =>
                           prev.map((s) =>
