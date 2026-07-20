@@ -1,14 +1,13 @@
 import re
 import requests
 from django.conf import settings
-from django.core import signing
 from django.shortcuts import redirect
-from django.utils.crypto import get_random_string
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from decision.models import Decision
+from core.services.oauth_state import OAuthStateExpired, OAuthStateInvalid, create_oauth_state, validate_oauth_state
 from .models import GoogleDocsConnection
 from .serializers import (
     GoogleDocsConnectSerializer,
@@ -38,9 +37,10 @@ GOOGLE_DOCS_STATE_MAX_AGE_SECONDS = 600
 
 
 def _build_oauth_state(user) -> str:
-    return signing.dumps(
-        {"user_id": user.id, "nonce": get_random_string(16)},
-        salt=GOOGLE_DOCS_STATE_SALT,
+    return create_oauth_state(
+        flow=GOOGLE_DOCS_STATE_SALT,
+        payload={"user_id": user.id},
+        ttl_seconds=GOOGLE_DOCS_STATE_MAX_AGE_SECONDS,
     )
 
 
@@ -128,14 +128,14 @@ class GoogleDocsCallbackView(APIView):
             return redirect(f"{settings.FRONTEND_URL}/integrations?google_docs_error=missing_code")
 
         try:
-            payload = signing.loads(
+            payload = validate_oauth_state(
                 state,
-                salt=GOOGLE_DOCS_STATE_SALT,
-                max_age=GOOGLE_DOCS_STATE_MAX_AGE_SECONDS,
+                expected_flow=GOOGLE_DOCS_STATE_SALT,
+                ttl_seconds=GOOGLE_DOCS_STATE_MAX_AGE_SECONDS,
             )
-        except signing.SignatureExpired:
+        except OAuthStateExpired:
             return redirect(f"{settings.FRONTEND_URL}/integrations?google_docs_error=state_expired")
-        except signing.BadSignature:
+        except OAuthStateInvalid:
             return redirect(f"{settings.FRONTEND_URL}/integrations?google_docs_error=invalid_state")
 
         user_id = payload.get("user_id")

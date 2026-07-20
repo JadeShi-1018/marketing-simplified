@@ -6,7 +6,6 @@ from rest_framework.views import APIView
 import rest_framework.parsers
 import requests
 from django.conf import settings
-from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.shortcuts import get_object_or_404
 from django.shortcuts import redirect
@@ -20,6 +19,7 @@ import logging
 from django.core.files.uploadedfile import InMemoryUploadedFile, TemporaryUploadedFile, SimpleUploadedFile
 from django.core.files.base import ContentFile
 from utils.virus_scanner import perform_clamav_scan
+from core.services.oauth_state import OAuthStateExpired, OAuthStateInvalid, create_oauth_state, validate_oauth_state
 from .models import Draft, ContentBlock, BlockAction, DraftRevision, MediaFile, NotionConnection
 from .serializers import (
     DraftSerializer, DraftListSerializer, CreateDraftSerializer, UpdateDraftSerializer,
@@ -44,9 +44,10 @@ NOTION_STATE_MAX_AGE_SECONDS = 600
 
 
 def _build_notion_oauth_state(user) -> str:
-    return signing.dumps(
-        {"user_id": user.id, "ts": int(timezone.now().timestamp())},
-        salt=NOTION_STATE_SALT,
+    return create_oauth_state(
+        flow=NOTION_STATE_SALT,
+        payload={"user_id": user.id},
+        ttl_seconds=NOTION_STATE_MAX_AGE_SECONDS,
     )
 
 
@@ -149,14 +150,14 @@ class NotionCallbackView(APIView):
             return redirect(f"{settings.FRONTEND_URL}/integrations?notion_error=missing_code")
 
         try:
-            payload = signing.loads(
+            payload = validate_oauth_state(
                 state,
-                salt=NOTION_STATE_SALT,
-                max_age=NOTION_STATE_MAX_AGE_SECONDS,
+                expected_flow=NOTION_STATE_SALT,
+                ttl_seconds=NOTION_STATE_MAX_AGE_SECONDS,
             )
-        except signing.SignatureExpired:
+        except OAuthStateExpired:
             return redirect(f"{settings.FRONTEND_URL}/integrations?notion_error=state_expired")
-        except signing.BadSignature:
+        except OAuthStateInvalid:
             return redirect(f"{settings.FRONTEND_URL}/integrations?notion_error=invalid_state")
 
         user_id = payload.get("user_id")

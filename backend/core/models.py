@@ -1,7 +1,11 @@
+import uuid
+
 from django.db import models, transaction
 from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
+from django.conf import settings
+from django.utils import timezone
 from django.utils.text import slugify
 
 class TimeStampedModel(models.Model):
@@ -517,6 +521,45 @@ class ProjectInvitation(TimeStampedModel):
         return self.approved and not self.accepted and not self.is_expired()
 
 
+class DataExportRequest(TimeStampedModel):
+    """Tracks GDPR personal-data export jobs requested by a user."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
+        EXPIRED = "expired", "Expired"
+
+    class ExportFormat(models.TextChoices):
+        JSON = "json", "JSON"
+        CSV = "csv", "CSV"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        "core.CustomUser",
+        on_delete=models.CASCADE,
+        related_name="data_export_requests",
+    )
+    export_format = models.CharField(max_length=10, choices=ExportFormat.choices, default=ExportFormat.JSON)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    file = models.FileField(upload_to="privacy_exports/%Y/%m/%d/", blank=True, null=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    failure_reason = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["status", "expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"Data export {self.id} for {self.user_id} ({self.status})"
+
+
 class OrganizationMembership(TimeStampedModel):
     """
     Many-to-many relationship between users and organizations.
@@ -772,4 +815,3 @@ class OrganizationActivityEvent(models.Model):
 
     def __str__(self):
         return f"[{self.organization.name}] {self.event_type} at {self.created_at}"
-
