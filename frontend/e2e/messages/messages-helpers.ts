@@ -34,7 +34,7 @@ export async function seedAuthenticatedUser(
 ) {
 	await page.addInitScript((authUser) => {
 		window.localStorage.setItem(
-			'auth-storage',
+			'auth-storage-v1',
 			JSON.stringify({
 				state: {
 					token: 'e2e-access-token',

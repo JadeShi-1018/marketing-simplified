@@ -39,7 +39,9 @@ const api = axios.create({
 
 type RetriableRequestConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
-const AUTH_STORAGE_KEY = 'auth-storage';
+const AUTH_STORAGE_KEY = 'auth-storage-v1';
+/** Old key — read once for migration, never written. Removed by follow-up cleanup ticket. */
+export const LEGACY_AUTH_STORAGE_KEY = 'auth-storage';
 const AUTH_COOKIE_KEY = 'ms_auth';
 const AUTH_COOKIE_MAX_AGE_SECONDS = 4 * 24 * 60 * 60;
 
@@ -244,7 +246,6 @@ export const authPersistStorage = {
     if (canUseLocalStorage()) {
       try {
         window.localStorage.setItem(name, value);
-        return;
       } catch (error) {
         console.warn('Failed to write persisted auth item:', error);
       }
@@ -252,11 +253,12 @@ export const authPersistStorage = {
     if (canUseSessionStorage()) {
       try {
         window.sessionStorage.setItem(name, value);
-        return;
       } catch (error) {
         console.warn('Failed to write persisted auth session item:', error);
       }
     }
+    // Always write cookie (not just as localStorage fallback) so SSR requests
+    // have an up-to-date token without needing a separate persistAuthTokens call.
     if (name !== AUTH_STORAGE_KEY) return;
     try {
       writeAuthCookie(JSON.parse(value));

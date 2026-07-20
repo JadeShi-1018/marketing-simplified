@@ -11,7 +11,7 @@ test.describe('Task delete confirmation', () => {
   async function createTask(page: import('@playwright/test').Page): Promise<number> {
     const token: string | null = await page.evaluate(() => {
       try {
-        const raw = localStorage.getItem('auth-storage');
+        const raw = localStorage.getItem('auth-storage-v1');
         return raw ? (JSON.parse(raw) as any)?.state?.token ?? null : null;
       } catch { return null; }
     });

@@ -9,7 +9,7 @@ import {
 } from "./fixtures/list-user-data";
 
 /** Zustand persist key used by the frontend auth store (same as localStorage in the browser). */
-const AUTH_STORAGE_KEY = "auth-storage";
+const AUTH_STORAGE_KEY = "auth-storage-v1";
 
 /**
  * Written by `e2e/auth.setup.ts` after login.

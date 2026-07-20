@@ -25,7 +25,7 @@ export default function PortalLoginPage() {
   };
 
   const saveToken = (access: string, refresh: string, user: { id: number; email: string; full_name: string }) => {
-    // Store in the same auth-storage format as the existing app
+    // Store portal auth state under 'portal-auth' (separate from the app's 'auth-storage-v1')
     const authData = {
       state: {
         token: access,
