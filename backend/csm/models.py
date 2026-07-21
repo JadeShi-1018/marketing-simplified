@@ -45,6 +45,11 @@ class Queue(SluggedResourceModelMixin, TimeStampedModel):
     tier = models.CharField(max_length=4, choices=TIER_CHOICES, default='T1')
     display_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    sla_policy = models.ForeignKey(
+        'SLAPolicy', on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='queues',
+    )
 
     class Meta:
         unique_together = ('organisation', 'name')
@@ -125,6 +130,7 @@ class CustomerUser(TimeStampedModel):
 class CsmNotification(TimeStampedModel):
     NOTIFICATION_TYPES = [
         ('org_invitation', 'Organisation Invitation'),
+        ('sla_breach', 'SLA Breach'),
     ]
     ACTION_STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -200,6 +206,14 @@ class Ticket(TimeStampedModel):
     first_response_due = models.DateTimeField(null=True, blank=True)
     resolution_due = models.DateTimeField(null=True, blank=True)
 
+    # Set when an agent first replies. Stops the first-response countdown; a
+    # value after first_response_due means the target was missed.
+    first_responded_at = models.DateTimeField(null=True, blank=True)
+
+    # Guard against re-notifying every sweep once a breach has been announced.
+    first_response_breach_notified = models.BooleanField(default=False)
+    resolution_breach_notified = models.BooleanField(default=False)
+
     # Timestamp the ticket last entered "Pending Customer Response".
     # Drives the auto-resolution rule (resolve after N days with no customer reply).
     pending_since = models.DateTimeField(null=True, blank=True)
@@ -238,14 +252,23 @@ class Ticket(TimeStampedModel):
         # PATCH, task, future callers) so the auto-resolution rule always has a
         # start time. Stamp it when entering Pending Customer Response, clear it
         # on leaving.
+        touched = []
         if self.status == 'pending_customer':
             if self.pending_since is None:
                 self.pending_since = timezone.now()
+                touched.append('pending_since')
         elif self.pending_since is not None:
+            # Leaving Pending Customer Response resumes the SLA clock: credit
+            # back the time spent waiting on the customer before clearing.
+            from csm.services.sla import resume_sla_clock
+            resume_sla_clock(self)
             self.pending_since = None
+            touched += ['pending_since', 'first_response_due', 'resolution_due']
         update_fields = kwargs.get('update_fields')
-        if update_fields is not None and 'status' in update_fields and 'pending_since' not in update_fields:
-            kwargs['update_fields'] = [*update_fields, 'pending_since']
+        if update_fields is not None and 'status' in update_fields:
+            merged = list(update_fields)
+            merged += [f for f in touched if f not in merged]
+            kwargs['update_fields'] = merged
         super().save(*args, **kwargs)
 
 
@@ -654,19 +677,61 @@ class TicketAttachment(models.Model):
         return self.original_name or str(self.file)
 
 
-class SLAPolicy(TimeStampedModel):
-    """One SLA policy per project. Defines per-priority time targets."""
+class BusinessHoursCalendar(TimeStampedModel):
+    """Weekly working hours and timezone for an SLA countdown.
 
-    project = models.OneToOneField(
+    When a policy references a calendar, its countdowns advance only during
+    the open hours defined here, so nights and weekends do not consume the
+    target. A policy with no calendar counts elapsed wall-clock time instead.
+    ``schedule`` uses the same shape as SupportChannel.operating_hours.
+    """
+
+    project = models.ForeignKey(
         'core.Project', on_delete=models.CASCADE,
-        related_name='sla_policy',
+        related_name='business_hours_calendars',
+    )
+    name = models.CharField(max_length=200)
+    timezone = models.CharField(max_length=64, default='UTC')
+    schedule = models.JSONField(default=default_operating_hours)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class SLAPolicy(TimeStampedModel):
+    """An SLA policy defining per-priority time targets.
+
+    A project can hold several policies; a queue picks one (``Queue.sla_policy``).
+    A queue with no policy falls back to its project's default policy
+    (``is_default``), so every ticket resolves to some SLA rather than none.
+    """
+
+    project = models.ForeignKey(
+        'core.Project', on_delete=models.CASCADE,
+        related_name='sla_policies',
     )
     name = models.CharField(max_length=200, default='Default SLA Policy')
     is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(
+        default=False,
+        help_text='Fallback policy for queues in this project with no policy assigned.',
+    )
+    calendar = models.ForeignKey(
+        BusinessHoursCalendar, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='sla_policies',
+    )
+    pause_on_pending = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = 'SLA Policy'
         verbose_name_plural = 'SLA Policies'
+        # A stable order so that picking a fallback policy with .first() (when a
+        # project has several and none is marked default) is deterministic.
+        ordering = ['id']
 
     def __str__(self):
         return f"SLA Policy — {self.project_id}"
