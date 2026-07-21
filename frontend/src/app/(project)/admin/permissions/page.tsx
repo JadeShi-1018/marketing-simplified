@@ -13,10 +13,12 @@ import { usePermissionData } from '@/hooks/usePermissionData';
 import { usePermissionEditControl } from '@/hooks/usePermissionEditControl';
 import { SelectOption, PermissionEditLevel } from '@/types/permission';
 import { useOrganizationFilter } from '@/hooks/useOrganizationFilter';
+import { useBuildUrl } from '@/lib/buildUrl';
 
 const PermissionsPage: React.FC = () => {
   const router = useRouter();
-  
+  const buildUrl = useBuildUrl();
+
   // Use hook to manage permission data
   const {
     organizations,
@@ -207,13 +209,13 @@ const PermissionsPage: React.FC = () => {
       );
       if (shouldContinue) {
         handleSave().then(() => {
-          router.push('/admin/approvers');
+          router.push(buildUrl('/admin/approvers'));
         });
         return;
       }
     }
     
-    router.push('/admin/approvers');
+    router.push(buildUrl('/admin/approvers'));
   };
 
 

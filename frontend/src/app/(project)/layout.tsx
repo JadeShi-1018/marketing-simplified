@@ -1,5 +1,7 @@
+import { Suspense } from 'react';
 import { cookies } from 'next/headers';
 import { DashboardPanelPreferenceProvider } from '@/components/dashboard/DashboardPanelPreferenceContext';
+import LegacyPathRedirect from '@/components/LegacyPathRedirect';
 import {
   UPCOMING_MEETINGS_PANEL_STORAGE_KEY,
   normalizeUpcomingMeetingsPanelOpen,
@@ -15,6 +17,9 @@ export default async function ProjectLayout({ children }: { children: React.Reac
     <DashboardPanelPreferenceProvider
       initialUpcomingMeetingsPanelOpen={initialUpcomingMeetingsPanelOpen}
     >
+      <Suspense fallback={null}>
+        <LegacyPathRedirect />
+      </Suspense>
       {children}
     </DashboardPanelPreferenceProvider>
   );
