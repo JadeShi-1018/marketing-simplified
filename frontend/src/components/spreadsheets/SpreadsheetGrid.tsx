@@ -20,6 +20,7 @@ import {
 import { adjustFormulaReferences, colLabelToIndex } from '@/lib/spreadsheet/formulaFill';
 import { ApplyHighlightParams } from '@/types/patterns';
 import BrandSelect from '@/components/ui/BrandSelect';
+import type { SheetPresenceUser } from '@/lib/sheetSocketStore';
 
 export type SpreadsheetSelectionChange = {
   row: number;
@@ -44,6 +45,8 @@ interface SpreadsheetGridProps {
   onSelectionChange?: (selection: SpreadsheetSelectionChange) => void;
   /** Collab WS client id of this tab; sent with cell saves so the server can suppress our own broadcast echo. */
   collabClientId?: string;
+  /** Remote collaborators whose active cells/selections are rendered over the grid. */
+  remotePresenceUsers?: SheetPresenceUser[];
   onFormulaCommit?: (data: { row: number; col: number; formula: string }) => void;
   onInsertRowCommit?: (payload: { index: number; position: 'above' | 'below' }) => void;
   onInsertColumnCommit?: (payload: { index: number; position: 'left' | 'right' }) => void;
@@ -268,7 +271,10 @@ const OVERSCAN_ROWS = 20; // Render extra rows above/below viewport
 const OVERSCAN_COLUMNS = 6; // Render extra columns left/right of viewport
 const AUTO_GROW_ROWS = 50; // Batch add rows when expanding (deprecated - only used for import)
 const AUTO_GROW_COLUMNS = 50; // Batch add columns when expanding (deprecated - only used for import)
-const DEBOUNCE_MS = 500; // Debounce delay for batch writes
+// Keep the commit-to-broadcast path inside MED-293's <300 ms acceptance budget.
+// Synchronous multi-cell operations still batch into one React update before
+// this timer starts, while direct edits reach peers with ample network/DB headroom.
+const DEBOUNCE_MS = 50;
 const RESIZE_DEBOUNCE_MS = 500; // Debounce delay for resize API calls
 const MAX_ROWS = 100000; // Hard cap for grid size
 const MAX_COLUMNS = 702; // ZZZ (26 * 27) - hard cap for grid size
@@ -539,6 +545,47 @@ const parseTSV = (text: string): string[][] => {
   return rawRows.map((row) => row.split('\t'));
 };
 
+type RemoteCellPresence = {
+  selectionOwner: SheetPresenceUser | null;
+  cursors: SheetPresenceUser[];
+};
+
+function resolveRemoteCellPresence(
+  users: SheetPresenceUser[],
+  row: number,
+  col: number
+): RemoteCellPresence {
+  let selectionOwner: SheetPresenceUser | null = null;
+  const cursors: SheetPresenceUser[] = [];
+
+  for (const user of users) {
+    const cursor = user.cursor;
+    if (!cursor?.isActive) continue;
+
+    const activeRow = cursor.row;
+    const activeCol = cursor.col;
+    if (activeRow != null && activeCol != null && activeRow === row && activeCol === col) {
+      cursors.push(user);
+    }
+
+    const startRow = cursor.startRow ?? activeRow;
+    const endRow = cursor.endRow ?? activeRow;
+    const startCol = cursor.startCol ?? activeCol;
+    const endCol = cursor.endCol ?? activeCol;
+    if (startRow == null || endRow == null || startCol == null || endCol == null) continue;
+
+    const minRow = Math.min(startRow, endRow);
+    const maxRow = Math.max(startRow, endRow);
+    const minCol = Math.min(startCol, endCol);
+    const maxCol = Math.max(startCol, endCol);
+    if (row >= minRow && row <= maxRow && col >= minCol && col <= maxCol) {
+      selectionOwner = user;
+    }
+  }
+
+  return { selectionOwner, cursors };
+}
+
 const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(({
   spreadsheetId,
   sheetId,
@@ -559,6 +606,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   onOpenPivotBuilder,
   onSelectionChange,
   collabClientId,
+  remotePresenceUsers = [],
 }: SpreadsheetGridProps, ref) => {
   const isGridLoading = loading || sheetId <= 0;
   const [rowCount, setRowCount] = useState(DEFAULT_ROWS);
@@ -6344,6 +6392,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     const displayValue = isEditing ? editValue : getCellDisplayValue(row, col);
                     const highlightColor = getHighlightColor(row, col);
                     const hasHighlight = Boolean(highlightColor);
+                    const remotePresence = resolveRemoteCellPresence(remotePresenceUsers, row, col);
                     
                     // Determine cell styling based on selection state
                     let cellClassName = 'border border-gray-300 p-0 relative align-top';
@@ -6396,6 +6445,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                               }
                             : {}),
                           ...(!frozen && highlightColor ? { backgroundColor: highlightColor } : {}),
+                          ...(remotePresence.selectionOwner
+                            ? {
+                                backgroundImage: `linear-gradient(${remotePresence.selectionOwner.color}1f, ${remotePresence.selectionOwner.color}1f)`,
+                              }
+                            : {}),
                         }}
                         data-row={row}
                         data-col={col}
@@ -6433,6 +6487,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                             {displayValue}
                           </div>
                         )}
+                        {remotePresence.cursors.map((user) => (
+                          <div
+                            key={`${user.userId}:${user.clientId}`}
+                            data-testid="sheet-remote-cursor"
+                            data-user-id={user.userId}
+                            data-client-id={user.clientId}
+                            data-row={row}
+                            data-col={col}
+                            aria-label={`${user.username} cursor`}
+                            title={user.username}
+                            className="pointer-events-none absolute inset-0 z-[5]"
+                            style={{ boxShadow: `inset 0 0 0 2px ${user.color}` }}
+                          />
+                        ))}
                         {showFillHandle && (
                           <div
                             className="absolute bottom-0 right-0 h-2 w-2 bg-[#3CCED7] border border-white cursor-crosshair"
@@ -6548,6 +6616,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     const displayValue = isEditing ? editValue : getCellDisplayValue(row, col);
                     const highlightColor = getHighlightColor(row, col);
                     const hasHighlight = Boolean(highlightColor);
+                    const remotePresence = resolveRemoteCellPresence(remotePresenceUsers, row, col);
                     
                     // Determine cell styling based on selection state
                     let cellClassName = 'border border-gray-300 p-0 relative align-top';
@@ -6600,6 +6669,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                               }
                             : {}),
                           ...(!frozen && highlightColor ? { backgroundColor: highlightColor } : {}),
+                          ...(remotePresence.selectionOwner
+                            ? {
+                                backgroundImage: `linear-gradient(${remotePresence.selectionOwner.color}1f, ${remotePresence.selectionOwner.color}1f)`,
+                              }
+                            : {}),
                         }}
                         data-row={row}
                         data-col={col}
@@ -6637,6 +6711,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                             {displayValue}
                           </div>
                         )}
+                        {remotePresence.cursors.map((user) => (
+                          <div
+                            key={`${user.userId}:${user.clientId}`}
+                            data-testid="sheet-remote-cursor"
+                            data-user-id={user.userId}
+                            data-client-id={user.clientId}
+                            data-row={row}
+                            data-col={col}
+                            aria-label={`${user.username} cursor`}
+                            title={user.username}
+                            className="pointer-events-none absolute inset-0 z-[5]"
+                            style={{ boxShadow: `inset 0 0 0 2px ${user.color}` }}
+                          />
+                        ))}
                         {showFillHandle && (
                           <div
                             className="absolute bottom-0 right-0 h-2 w-2 bg-[#3CCED7] border border-white cursor-crosshair"

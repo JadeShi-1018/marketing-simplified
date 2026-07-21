@@ -60,12 +60,28 @@ from .serializers import (
     PivotConfigSerializer,
     PivotConfigCreateUpdateSerializer,
 )
-from .services import SpreadsheetService, SheetService, CellService, CellBatchArgumentError
+from .services import (
+    SpreadsheetService, SheetService, CellService, CellBatchArgumentError,
+    broadcast_sheet_refresh,
+)
 from .models import SheetStructureOperation
 from core.models import Project
 from .tasks import apply_pattern_job
 
 logger = logging.getLogger(__name__)
+
+# Header carrying the editing tab's collab WS client id (echo suppression).
+SHEET_CLIENT_ID_HEADER = 'X-Sheet-Client-Id'
+
+
+def _notify_sheet_refresh(request, sheet, reason: str) -> None:
+    """Broadcast sheet_refresh_required after a successful structure mutation."""
+    broadcast_sheet_refresh(
+        sheet_id=sheet.id,
+        reason=reason,
+        origin_client_id=(request.headers.get(SHEET_CLIENT_ID_HEADER) or '').strip() or None,
+        origin_user_id=getattr(request.user, 'id', None),
+    )
 
 
 class SpreadsheetListView(APIView):
@@ -441,6 +457,7 @@ class SheetResizeView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
         
+        _notify_sheet_refresh(request, sheet, 'resize')
         response_serializer = SheetResizeResponseSerializer(result)
         return Response(response_serializer.data)
 
@@ -467,6 +484,7 @@ class SheetSortView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'sort')
         return Response(result)
 
 
@@ -486,6 +504,7 @@ class SheetReorderView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'reorder')
         return Response({'status': 'ok'})
 
 
@@ -586,6 +605,7 @@ class SheetRowInsertView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'rows_inserted')
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -614,6 +634,7 @@ class SheetColumnInsertView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'columns_inserted')
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -642,6 +663,7 @@ class SheetRowDeleteView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'rows_deleted')
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -670,6 +692,7 @@ class SheetColumnDeleteView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'columns_deleted')
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -691,6 +714,7 @@ class SheetStructureOperationRevertView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'operation_reverted')
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -713,6 +737,7 @@ class SheetRowInsertByIdView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'rows_inserted')
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -735,6 +760,7 @@ class SheetColumnInsertByIdView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'columns_inserted')
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -757,6 +783,7 @@ class SheetRowDeleteByIdView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'rows_deleted')
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -779,6 +806,7 @@ class SheetColumnDeleteByIdView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'columns_deleted')
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -795,6 +823,7 @@ class SheetOperationRevertByIdView(APIView):
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
+        _notify_sheet_refresh(request, sheet, 'operation_reverted')
         return Response(result, status=status.HTTP_200_OK)
 
 
@@ -938,6 +967,9 @@ class ImportFinalizeView(APIView):
             recompute_pivots_for_source_sheet(sheet)
         except Exception:
             logger.exception("Import finalize pivot recompute failed for sheet_id=%s", sheet.id)
+        # Peers get one coarse refresh for the whole import (per-chunk broadcasts
+        # are suppressed by import_mode in batch_update_cells).
+        _notify_sheet_refresh(request, sheet, 'import_finalized')
         return Response({'status': 'ok'})
 
 

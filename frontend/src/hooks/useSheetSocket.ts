@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { buildWsUrl } from '@/lib/ws';
 import { useAuthStore } from '@/lib/authStore';
+import { setSheetCollabClientId } from '@/lib/api/spreadsheetApi';
 import {
   selectRemotePresenceUsers,
   useSheetSocketStore,
@@ -42,6 +43,12 @@ export type RemoteCellUpdate = {
 type Options = {
   /** Committed remote cell changes for this sheet (own echoes already filtered out). */
   onCellsUpdated?: (cells: RemoteCellUpdate[]) => void;
+  /**
+   * Sheet needs a full reload: a peer ran a structure op (insert/delete/sort/
+   * resize/revert), an import finished, or this socket just reconnected after
+   * dropping (missed broadcasts are not replayed — reason 'reconnected').
+   */
+  onRefreshRequired?: (reason: string) => void;
 };
 
 type Api = {
@@ -72,9 +79,11 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
   const reconnectTimerRef = useRef<number | null>(null);
   const localUserIdRef = useRef(localUserId);
   localUserIdRef.current = localUserId;
-  // Ref so a new callback identity never tears down / reopens the socket effect.
+  // Refs so new callback identities never tear down / reopen the socket effect.
   const onCellsUpdatedRef = useRef<Options['onCellsUpdated']>(options?.onCellsUpdated);
   onCellsUpdatedRef.current = options?.onCellsUpdated;
+  const onRefreshRequiredRef = useRef<Options['onRefreshRequired']>(options?.onRefreshRequired);
+  onRefreshRequiredRef.current = options?.onRefreshRequired;
 
   const wsState = useSheetSocketStore((s) => s.wsState);
   const closeCode = useSheetSocketStore((s) => s.closeCode);
@@ -92,7 +101,9 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
     }
 
     let stopped = false;
+    let hadConnection = false;
     const createdSockets: WebSocket[] = [];
+    setSheetCollabClientId(clientIdRef.current);
     useSheetSocketStore.getState().setSheetId(sheetId);
     useSheetSocketStore.getState().setWsState('connecting');
     useSheetSocketStore.getState().setCloseCode(null);
@@ -116,6 +127,12 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
         if (stopped) return;
         useSheetSocketStore.getState().setWsState('connected');
         useSheetSocketStore.getState().setCloseCode(null);
+        if (hadConnection) {
+          // Broadcasts sent while we were disconnected are gone (no replay);
+          // resync by reloading rather than trusting a stale grid.
+          onRefreshRequiredRef.current?.('reconnected');
+        }
+        hadConnection = true;
       };
 
       ws.onmessage = (event) => {
@@ -145,6 +162,13 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
             }
             const cells = Array.isArray(message.cells) ? (message.cells as RemoteCellUpdate[]) : [];
             if (cells.length > 0) onCellsUpdatedRef.current?.(cells);
+          } else if (message.type === 'sheet_refresh_required') {
+            if (message.origin_client_id && message.origin_client_id === clientIdRef.current) {
+              return;
+            }
+            onRefreshRequiredRef.current?.(
+              typeof message.reason === 'string' ? message.reason : 'unknown'
+            );
           }
         } catch {
           /* ignore malformed frames */
@@ -190,6 +214,7 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
         }
       });
       wsRef.current = null;
+      setSheetCollabClientId(null);
       useSheetSocketStore.getState().reset();
     };
   }, [sheetId, token]);

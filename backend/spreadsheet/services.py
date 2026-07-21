@@ -114,6 +114,49 @@ def broadcast_cells_updated(
     transaction.on_commit(_send)
 
 
+def broadcast_sheet_refresh(
+    sheet_id: int,
+    reason: str,
+    origin_client_id: Optional[str] = None,
+    origin_user_id: Optional[int] = None,
+) -> None:
+    """Queue a sheet_refresh_required broadcast to the sheet room (after commit).
+
+    Coarse-grained companion to broadcast_cells_updated: structure operations
+    (insert/delete rows or columns, sort, reorder, resize, revert) and import
+    finalize shift cell positions, so per-cell payloads from before the shift
+    would land in the wrong cells on stale peers. Instead of replaying each
+    operation client-side, subscribers invalidate their caches and reload.
+
+    Runs via transaction.on_commit: immediate under autocommit (the structure
+    services commit internally before their view calls this), deferred to the
+    commit point when a transaction is active. Never raises.
+    """
+
+    def _send():
+        try:
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            if channel_layer is None:
+                return
+            async_to_sync(channel_layer.group_send)(
+                sheet_room_group_name(sheet_id),
+                {
+                    'type': 'sheet.refresh_required',
+                    'sheet_id': sheet_id,
+                    'reason': reason,
+                    'origin_client_id': origin_client_id,
+                    'origin_user_id': origin_user_id,
+                },
+            )
+        except Exception:
+            logger.exception('sheet_refresh_required broadcast failed for sheet_id=%s', sheet_id)
+
+    transaction.on_commit(_send)
+
+
 class CellBatchArgumentError(Exception):
     """Structured batch cell validation failure (maps to HTTP 400 in views)."""
 

@@ -27,6 +27,8 @@ type Api = {
 type Options = {
   /** Committed remote cell changes (own echoes filtered). */
   onCellsUpdated?: (cells: RemoteCellUpdate[]) => void;
+  /** Peer structure op / import finished / reconnected: reload the sheet. */
+  onRefreshRequired?: (reason: string) => void;
 };
 
 const CURSOR_THROTTLE_MS = 40;
@@ -37,6 +39,7 @@ const CURSOR_THROTTLE_MS = 40;
 export function useSheetPresenceBridge(sheetId: number | null | undefined, options?: Options): Api {
   const { remoteUsers, sendCursorUpdate, clientId } = useSheetSocket(sheetId, {
     onCellsUpdated: options?.onCellsUpdated,
+    onRefreshRequired: options?.onRefreshRequired,
   });
   const lastSentRef = useRef(0);
   const pendingRef = useRef<SheetCursorPayload | null>(null);

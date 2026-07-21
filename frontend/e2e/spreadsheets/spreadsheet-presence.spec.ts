@@ -95,6 +95,15 @@ test.describe('Spreadsheet presence (two tabs)', () => {
       timeout: 15_000,
     });
 
+    // Cursor/selection presence is visible in the peer grid, not only in the
+    // header avatar tooltip.
+    await page.locator('td[data-row="2"][data-col="1"]').click();
+    await expect(
+      page2.locator(
+        '[data-testid="sheet-remote-cursor"][data-row="2"][data-col="1"]',
+      ),
+    ).toBeVisible({ timeout: 5_000 });
+
     await page2.close();
   });
 });

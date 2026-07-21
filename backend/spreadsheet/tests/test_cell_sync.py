@@ -22,11 +22,17 @@ from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from rest_framework_simplejwt.tokens import AccessToken
 
+from rest_framework.test import APIClient
+
 from asset.middleware import JWTAuthMiddleware
 from core.models import Organization, Project, ProjectMember
 from spreadsheet.models import Cell, Sheet, Spreadsheet
 from spreadsheet.routing import websocket_urlpatterns
-from spreadsheet.services import CellService, sheet_room_group_name
+from spreadsheet.services import (
+    CellService,
+    broadcast_sheet_refresh,
+    sheet_room_group_name,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -201,6 +207,56 @@ class TestCellSyncService:
             import_mode=True,
         )
         assert layer.sent == []
+
+
+@pytest.mark.django_db(transaction=True)
+class TestSheetRefreshBroadcast:
+    def test_structure_op_view_broadcasts_refresh_with_origin(self, monkeypatch):
+        """Insert-rows endpoint queues sheet_refresh_required carrying the
+        X-Sheet-Client-Id header value for server-side echo suppression."""
+        layer = _RecordingLayer()
+        monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+        user = _create_user(f"u_{_uid()}")
+        _, _, spreadsheet, sheet = _create_sheet(user)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        resp = client.post(
+            f"/api/spreadsheet/spreadsheets/{spreadsheet.slug}/sheets/{sheet.id}/rows/insert/",
+            {"position": 0, "count": 1},
+            format="json",
+            headers={"X-Sheet-Client-Id": "tab-a"},
+        )
+        assert resp.status_code == 201, resp.content
+
+        refresh_events = [
+            (g, m) for g, m in layer.sent if m["type"] == "sheet.refresh_required"
+        ]
+        assert len(refresh_events) == 1
+        group, message = refresh_events[0]
+        assert group == sheet_room_group_name(sheet.id)
+        assert message["reason"] == "rows_inserted"
+        assert message["origin_client_id"] == "tab-a"
+        assert message["origin_user_id"] == user.id
+
+    def test_broadcast_sheet_refresh_helper(self, monkeypatch):
+        layer = _RecordingLayer()
+        monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+        broadcast_sheet_refresh(sheet_id=123, reason="sort", origin_client_id=None)
+        assert layer.sent == [
+            (
+                sheet_room_group_name(123),
+                {
+                    "type": "sheet.refresh_required",
+                    "sheet_id": 123,
+                    "reason": "sort",
+                    "origin_client_id": None,
+                    "origin_user_id": None,
+                },
+            )
+        ]
 
 
 @pytest.mark.asyncio

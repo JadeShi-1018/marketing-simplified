@@ -14,6 +14,26 @@ import {
 /** Timeout for long-running spreadsheet requests (import batch, large range read). Default axios 10s is too short. */
 const SPREADSHEET_LONG_REQUEST_TIMEOUT_MS = 300000; // 5 minutes (safety net; optimized batch writes should finish in <5s)
 
+/**
+ * Collab WS client id of this tab (set by useSheetSocket while a sheet room is
+ * open). Attached as X-Sheet-Client-Id to every /api/spreadsheet/ request so
+ * the backend can suppress this tab's own broadcast echo — structure-op
+ * endpoints (insert/delete/sort/resize/revert/import-finalize) read it from
+ * the header, so it must ride on all mutations without per-call plumbing.
+ */
+let sheetCollabClientId: string | null = null;
+
+export function setSheetCollabClientId(clientId: string | null): void {
+  sheetCollabClientId = clientId;
+}
+
+api.interceptors.request.use((config) => {
+  if (sheetCollabClientId && config.url && config.url.startsWith('/api/spreadsheet/')) {
+    (config.headers as Record<string, unknown>)['X-Sheet-Client-Id'] = sheetCollabClientId;
+  }
+  return config;
+});
+
 export const SpreadsheetAPI = {
   // List spreadsheets for a project
   listSpreadsheets: async (

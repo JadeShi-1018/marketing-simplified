@@ -230,6 +230,27 @@ class SheetConsumer(AsyncWebsocketConsumer):
             )
         )
 
+    async def sheet_refresh_required(self, event):
+        """Structure op / import finished: tell peers to invalidate + reload.
+
+        Same echo rule as cells_updated: the origin tab already sees its own
+        result from its HTTP response, so its broadcast is dropped here.
+        """
+        origin_client_id = event.get("origin_client_id")
+        if origin_client_id and origin_client_id == getattr(self, "client_id", None):
+            return
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "sheet_refresh_required",
+                    "sheet_id": event["sheet_id"],
+                    "reason": event.get("reason"),
+                    "origin_client_id": origin_client_id,
+                    "origin_user_id": event.get("origin_user_id"),
+                }
+            )
+        )
+
     async def cursor_updated(self, event):
         await self.send(
             text_data=json.dumps(
