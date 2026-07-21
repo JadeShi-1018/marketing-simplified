@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, File, FileImage, FileText, FileVideo, Loader2, Play, Plus, Trash2, X, ZoomIn } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { TaskAPI } from '@/lib/api/taskApi';
+import { readPersistedAuthState } from '@/lib/api';
 import type { TaskAttachment } from '@/types/task';
 import AddAttachmentDialog from './AddAttachmentDialog';
 import ConfirmDialog from './ConfirmDialog';
@@ -86,8 +87,7 @@ export default function TaskAttachmentsBlock({
   const openPdfPreview = async (fileUrl: string) => {
     setPdfLoading(true);
     try {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem('auth-storage') : null;
-      const token = raw ? (JSON.parse(raw)?.state?.token ?? null) : null;
+      const token = readPersistedAuthState()?.state?.token ?? null;
       const res = await fetch(fileUrl, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
@@ -105,8 +105,7 @@ export default function TaskAttachmentsBlock({
   const openExcelPreview = async (fileUrl: string) => {
     setExcelLoading(true);
     try {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem('auth-storage') : null;
-      const token = raw ? (JSON.parse(raw)?.state?.token ?? null) : null;
+      const token = readPersistedAuthState()?.state?.token ?? null;
       const res = await fetch(fileUrl, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
@@ -128,8 +127,7 @@ export default function TaskAttachmentsBlock({
   const openTextPreview = async (fileUrl: string, filename: string) => {
     setTextLoading(true);
     try {
-      const raw = typeof window !== 'undefined' ? localStorage.getItem('auth-storage') : null;
-      const token = raw ? (JSON.parse(raw)?.state?.token ?? null) : null;
+      const token = readPersistedAuthState()?.state?.token ?? null;
       const res = await fetch(fileUrl, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });

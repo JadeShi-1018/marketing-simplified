@@ -21,7 +21,7 @@ import useAuth from '@/hooks/useAuth';
 import { useAuthStore } from '@/lib/authStore';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { authAPI } from '@/lib/api';
+import { authAPI, readPersistedAuthState } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { OrganizationAPI, OrgListItem } from '@/lib/api/organizationApi';
 
@@ -288,12 +288,8 @@ function ProfileContent() {
     if (deleteConfirmText !== 'DELETE MY ACCOUNT') return;
     setIsDeleting(true);
     try {
-      const authStorage = typeof window !== 'undefined' ? localStorage.getItem('auth-storage') : null;
-      let refreshToken = '';
-      if (authStorage) {
-        const parsed = JSON.parse(authStorage) as { state?: { refresh?: string } };
-        refreshToken = parsed.state?.refresh ?? '';
-      }
+      // Note: the persisted field is `refreshToken`, not `refresh` (fixed pre-existing typo)
+      const refreshToken = readPersistedAuthState()?.state?.refreshToken ?? '';
       await authAPI.deleteAccount(refreshToken);
       toast.success('Your account has been deleted.');
       await logout();

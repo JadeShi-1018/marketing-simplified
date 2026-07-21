@@ -6,7 +6,7 @@ import { navigateToTasksAndSelectProject } from './tasks-helpers';
 async function getToken(page: any): Promise<string | null> {
   return page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('auth-storage');
+      const raw = localStorage.getItem('auth-storage-v1');
       if (!raw) return null;
       return (JSON.parse(raw) as any)?.state?.token ?? null;
     } catch { return null; }
