@@ -5,19 +5,22 @@ import { Save, AlertCircle, CheckCircle, Loader2, RefreshCw, Copy, Download, Use
 import { useRouter } from 'next/navigation';
 
 // import components
-import Layout from '@/components/layout/Layout';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import FilterDropdown from '@/components/ui/FilterDropdown';
 import PermissionMatrix from '@/components/ui/PermissionMatrix';
+import ProjectPermissionMatrix from '@/components/admin/ProjectPermissionMatrix';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { usePermissionData } from '@/hooks/usePermissionData';
 import { usePermissionEditControl } from '@/hooks/usePermissionEditControl';
 import { SelectOption, PermissionEditLevel } from '@/types/permission';
 import { useOrganizationFilter } from '@/hooks/useOrganizationFilter';
 import { useBuildUrl } from '@/lib/buildUrl';
+import { useProjectStore } from '@/lib/projectStore';
 
 const PermissionsPage: React.FC = () => {
   const router = useRouter();
   const buildUrl = useBuildUrl();
+  const activeProject = useProjectStore((state) => state.activeProject);
 
   // Use hook to manage permission data
   const {
@@ -295,8 +298,8 @@ const PermissionsPage: React.FC = () => {
   const PageContent = () => {
     if (error) {
       return (
-        <Layout showPermissionRole={true}>
-          <div className="p-8">
+        <DashboardLayout hideRightPanel mainClassName="p-0">
+          <div className="p-6">
             <div className="bg-red-50 border border-red-200 rounded-lg p-6">
               <div className="flex items-center gap-3">
                 <AlertCircle className="h-6 w-6 text-red-600" />
@@ -317,13 +320,13 @@ const PermissionsPage: React.FC = () => {
               </button>
             </div>
           </div>
-        </Layout>
+        </DashboardLayout>
       );
     }
 
     return (
-      <Layout showPermissionRole={true}>
-        <div className="p-8">
+      <DashboardLayout hideRightPanel mainClassName="p-0">
+        <div className="p-6">
           {/* user permission level */}
           {userPermissionLevel && (
             <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-[#3CCED7]/30 rounded-lg">
@@ -413,6 +416,8 @@ const PermissionsPage: React.FC = () => {
               </div>
             </div>
           </div>
+
+          <ProjectPermissionMatrix projectId={activeProject?.id} />
 
           {/* access denied */}
           {userPermissionLevel === 'NONE' && (
@@ -561,7 +566,7 @@ const PermissionsPage: React.FC = () => {
             </div>
           )}
         </div>
-      </Layout>
+      </DashboardLayout>
     );
   };
    

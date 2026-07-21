@@ -487,7 +487,7 @@ export default function NotificationBell({ alerts = [] }: NotificationBellProps)
                           {n.sender_name || n.sender_email} &middot; {new Date(n.created_at).toLocaleDateString()}
                         </p>
 
-                        {n.action_status === 'pending' && (
+                        {n.notification_type === 'org_invitation' && n.action_status === 'pending' && (
                           <div className="flex gap-2 mt-2">
                             <button
                               onClick={() => handleCsmAccept(n.id)}

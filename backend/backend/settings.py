@@ -490,6 +490,12 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=1, minute=30),  # daily 01:30 UTC
         'options': {'timezone': 'UTC'},
     },
+    # CSM: alert on SLA breaches (first response / resolution)
+    'csm-notify-sla-breaches': {
+        'task': 'csm.tasks.notify_sla_breaches',
+        'schedule': crontab(minute='*/15'),
+        'options': {'timezone': 'UTC'},
+    },
 }
 
 # Shared secret for the platform-native cron endpoint that triggers the

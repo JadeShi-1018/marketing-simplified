@@ -267,6 +267,15 @@ docker compose -f docker-compose.dev.yml --env-file .env up --build -d
 > SonarQube, Elasticsearch, and Kibana are not active default services in `docker-compose.dev.yml`.
 > For optional setup details, see [DOCKER_README.md](DOCKER_README.md) and [ELK Setup Guide](devops/elk/kibana/ELK_SETUP.md).
 
+## Release SBOMs
+
+Each tagged release (`v*`) publishes CycloneDX SBOM files as GitHub Release assets:
+
+- `mediajira-backend-python-<tag>.cdx.json`
+- `mediajira-frontend-npm-<tag>.cdx.json`
+
+The same files are also available as workflow artifacts on the release tag run.
+
 ## 📊 Monitoring & Observability
 
 MediaJira includes monitoring and observability tools for local development and troubleshooting:

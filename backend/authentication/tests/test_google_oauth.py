@@ -314,18 +314,18 @@ class GoogleOAuthCallbackViewTest(TestCase):
         response = self.client.get('/auth/google/callback/?code=fake_code')
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()['errorCode'], 'MISSING_OAUTH_STATE')
+        self.assertEqual(response.json()['errorCode'], 'OAUTH_STATE_INVALID')
 
     def test_callback_rejects_invalid_state(self):
         """Test callback rejects tampered OAuth state."""
         response = self.client.get(self._callback_url(state='invalid-state'))
 
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(response.json()['errorCode'], 'INVALID_OAUTH_STATE')
+        self.assertEqual(response.json()['errorCode'], 'OAUTH_STATE_INVALID')
 
     @patch('authentication.views.OAuth2Session')
-    def test_callback_accepts_legacy_session_state_mode(self, mock_oauth_session):
-        """Test callback still accepts state stored in the Django session cookie."""
+    def test_callback_accepts_legacy_session_state_once_for_deploy_grace(self, mock_oauth_session):
+        """Test callback accepts and consumes one pre-deploy legacy session state."""
         session_state = 'legacy-session-state'
         self._set_session_state(session_state)
 
@@ -338,6 +338,7 @@ class GoogleOAuthCallbackViewTest(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('Authorization code expired or already used', response.json()['error'])
         mock_session_instance.fetch_token.assert_called_once()
+        self.assertNotIn('google_oauth_state', self.client.session)
 
     @patch('authentication.views.OAuth2Session')
     def test_callback_accepts_signed_query_state_without_session_cookie(self, mock_oauth_session):

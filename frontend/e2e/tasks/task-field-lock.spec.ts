@@ -24,7 +24,7 @@ test.describe('Task field lock after submit', () => {
 
     token = await page.evaluate(() => {
       try {
-        const raw = localStorage.getItem('auth-storage');
+        const raw = localStorage.getItem('auth-storage-v1');
         if (!raw) return null;
         return (JSON.parse(raw) as any)?.state?.token ?? null;
       } catch { return null; }

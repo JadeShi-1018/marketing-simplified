@@ -19,6 +19,9 @@ from core.views import (
     OnboardingStatusView,
     OrganizationDetailView,
     OrganizationMembersView,
+    PersonalDataExportDownloadView,
+    PersonalDataExportRequestDetailView,
+    PersonalDataExportRequestListCreateView,
     ProjectMemberViewSet,
     ProjectOnboardingView,
     ProjectViewSet,
@@ -78,6 +81,9 @@ urlpatterns = [
     path('invitations/accept-organization/', AcceptOrganizationInvitationView.as_view(), name='accept-org-invitation'),
 
     # Project Invitation endpoints
+    path('privacy/export-requests/', PersonalDataExportRequestListCreateView.as_view(), name='privacy-export-requests'),
+    path('privacy/export-requests/<uuid:export_id>/', PersonalDataExportRequestDetailView.as_view(), name='privacy-export-detail'),
+    path('privacy/export-requests/<uuid:export_id>/download/', PersonalDataExportDownloadView.as_view(), name='privacy-export-download'),
     path('invitations/accept/', AcceptInvitationView.as_view(), name='accept-invitation'),
     path('invitations/pending/', ListMyProjectInvitationsView.as_view(), name='list-my-project-invitations'),
     path('invitations/<int:invitation_id>/resend/', ResendInvitationView.as_view(), name='resend-invitation'),

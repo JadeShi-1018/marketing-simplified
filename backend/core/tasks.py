@@ -7,8 +7,11 @@ to migrate existing ciphertext to the current active key.
 import logging
 
 from celery import shared_task
+from django.utils import timezone
 
+from core.models import DataExportRequest
 from core.crypto import DecryptionError, decrypt_token, encrypt_token, needs_rotation
+from core.services.privacy_export import assemble_data_export_zip
 
 logger = logging.getLogger(__name__)
 
@@ -171,3 +174,25 @@ def reencrypt_secret_fields(self, batch_size: int = 500) -> dict:
         total_reencrypted, total_skipped, total_errors,
     )
     return summary
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=60)
+def assemble_personal_data_export(self, export_request_id):
+    try:
+        export_request = DataExportRequest.objects.select_related("user").get(pk=export_request_id)
+    except DataExportRequest.DoesNotExist:
+        logger.warning("Data export request %s does not exist", export_request_id)
+        return
+
+    export_request.status = DataExportRequest.Status.PROCESSING
+    export_request.save(update_fields=["status", "updated_at"])
+
+    try:
+        assemble_data_export_zip(export_request)
+    except Exception as exc:
+        logger.exception("Failed to assemble data export %s", export_request_id)
+        export_request.status = DataExportRequest.Status.FAILED
+        export_request.failure_reason = str(exc)
+        export_request.completed_at = timezone.now()
+        export_request.save(update_fields=["status", "failure_reason", "completed_at", "updated_at"])
+        raise self.retry(exc=exc)

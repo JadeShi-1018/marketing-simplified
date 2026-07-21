@@ -8,11 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 from django.contrib.auth import get_user_model
-from django.core import signing
 from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from core.services.oauth_state import create_oauth_state
 from google_docs_integration.models import GoogleDocsConnection
 
 User = get_user_model()
@@ -71,9 +71,10 @@ def unauth_client():
 
 
 def _build_state(user_id: int) -> str:
-    return signing.dumps(
-        {"user_id": user_id, "nonce": "test_nonce_1234"},
-        salt=GOOGLE_DOCS_STATE_SALT,
+    return create_oauth_state(
+        flow=GOOGLE_DOCS_STATE_SALT,
+        payload={"user_id": user_id},
+        ttl_seconds=600,
     )
 
 
@@ -169,7 +170,9 @@ class TestGoogleDocsCallbackView:
 
     def test_expired_state_redirects_error(self, unauth_client, user):
         state = _build_state(user.id)
-        with patch("google_docs_integration.views.signing.loads") as mock_loads:
+        with patch("core.services.oauth_state.signing.loads") as mock_loads:
+            from django.core import signing
+
             mock_loads.side_effect = signing.SignatureExpired("expired")
             response = unauth_client.get(CALLBACK_URL, {"code": "code123", "state": state})
         assert response.status_code == 302

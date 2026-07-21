@@ -1,6 +1,7 @@
 import logging
 
 from django.contrib.auth import get_user_model
+from django.http import FileResponse
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
@@ -9,7 +10,7 @@ from rest_framework import status, viewsets
 from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_pk_for, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -21,6 +22,7 @@ from core.admin_utils import (
     switch_organization,
 )
 from core.models import (
+    DataExportRequest,
     Organization,
     OrganizationInvitation,
     OrganizationInvitationUse,
@@ -58,6 +60,8 @@ from decision.serializers import DecisionEdgeSerializer, DecisionGraphNodeSerial
 from decision.services import decision_topic_label as default_decision_topic_label, normalize_decision_topic
 from core.services.project_initialization import ProjectInitializationService
 from core.services.organization_activity import log_org_activity
+from core.services.privacy_export import build_download_url, mark_expired_exports, verify_download_token
+from core.tasks import assemble_personal_data_export
 from core.utils.invitations import accept_invitation, create_project_invitation, send_invitation_email
 from core.utils.kpi_suggestions import get_kpi_suggestions
 from core.utils.project_calendars import (
@@ -68,6 +72,104 @@ from notifications.action_urls import overview_action_url
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+def _serialize_data_export_request(export_request, request=None):
+    download_url = build_download_url(export_request, request=request)
+    return {
+        "id": str(export_request.id),
+        "status": export_request.status,
+        "export_format": export_request.export_format,
+        "created_at": export_request.created_at,
+        "updated_at": export_request.updated_at,
+        "completed_at": export_request.completed_at,
+        "expires_at": export_request.expires_at,
+        "download_url": download_url,
+        "failure_reason": export_request.failure_reason,
+        "metadata": export_request.metadata,
+    }
+
+
+class PersonalDataExportRequestListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        mark_expired_exports()
+        exports = DataExportRequest.objects.filter(user=request.user)[:10]
+        return Response([_serialize_data_export_request(item, request=request) for item in exports])
+
+    def post(self, request):
+        mark_expired_exports()
+        export_format = str(request.data.get("export_format") or DataExportRequest.ExportFormat.JSON).lower()
+        if export_format not in DataExportRequest.ExportFormat.values:
+            return Response(
+                {
+                    "export_format": [
+                        f"Unsupported export format. Choose one of: {', '.join(DataExportRequest.ExportFormat.values)}."
+                    ]
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        active_export = (
+            DataExportRequest.objects.filter(
+                user=request.user,
+                status__in=[
+                    DataExportRequest.Status.PENDING,
+                    DataExportRequest.Status.PROCESSING,
+                    DataExportRequest.Status.READY,
+                ],
+            )
+            .order_by("-created_at")
+            .first()
+        )
+
+        if active_export and active_export.status == DataExportRequest.Status.READY:
+            if (
+                active_export.export_format == export_format
+                and active_export.expires_at
+                and active_export.expires_at > timezone.now()
+            ):
+                return Response(_serialize_data_export_request(active_export, request=request), status=status.HTTP_200_OK)
+
+        if active_export and active_export.status in [
+            DataExportRequest.Status.PENDING,
+            DataExportRequest.Status.PROCESSING,
+        ]:
+            return Response(_serialize_data_export_request(active_export, request=request), status=status.HTTP_202_ACCEPTED)
+
+        export_request = DataExportRequest.objects.create(user=request.user, export_format=export_format)
+        assemble_personal_data_export.delay(str(export_request.id))
+        return Response(_serialize_data_export_request(export_request, request=request), status=status.HTTP_202_ACCEPTED)
+
+
+class PersonalDataExportRequestDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, export_id):
+        mark_expired_exports()
+        export_request = get_object_or_404(DataExportRequest, pk=export_id, user=request.user)
+        return Response(_serialize_data_export_request(export_request, request=request))
+
+
+class PersonalDataExportDownloadView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, export_id):
+        mark_expired_exports()
+        export_request = get_object_or_404(DataExportRequest, pk=export_id)
+        token = request.query_params.get("token", "")
+        if (
+            export_request.status != DataExportRequest.Status.READY
+            or not export_request.file
+            or (export_request.expires_at and export_request.expires_at <= timezone.now())
+            or not verify_download_token(export_request, token)
+        ):
+            return Response({"detail": "This export link is invalid or expired."}, status=status.HTTP_403_FORBIDDEN)
+
+        response = FileResponse(export_request.file.open("rb"), as_attachment=True, filename=export_request.file.name.rsplit("/", 1)[-1])
+        response["Cache-Control"] = "private, no-store"
+        return response
 
 
 class CheckProjectMembershipView(APIView):

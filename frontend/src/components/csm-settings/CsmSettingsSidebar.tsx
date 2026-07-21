@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ClipboardList, FolderKanban, ListOrdered, Radio, Settings, Shield, Workflow } from 'lucide-react';
+import { CalendarClock, ClipboardList, FolderKanban, ListOrdered, Radio, Settings, Shield, Workflow } from 'lucide-react';
 import { useBuildUrl } from '@/lib/buildUrl';
 
 const ACTIVE_COLOR = 'text-[#3CCED7]';
@@ -49,6 +49,7 @@ export default function CsmSettingsSidebar() {
   const workTypes = buildUrl('/admin/csm/settings/work-types');
   const assignments = buildUrl('/admin/csm/settings/assignments');
   const slaPolicy = buildUrl('/admin/csm/settings/sla');
+  const businessHours = buildUrl('/admin/csm/settings/business-hours');
   const ticketStatuses = buildUrl('/admin/csm/settings/ticket-statuses');
 
   return (
@@ -92,6 +93,12 @@ export default function CsmSettingsSidebar() {
           label="SLA Policy"
           icon={<Shield className="h-4 w-4" aria-hidden />}
           isActive={pathname === '/admin/csm/settings/sla'}
+        />
+        <NavLink
+          href={businessHours}
+          label="Business Hours"
+          icon={<CalendarClock className="h-4 w-4" aria-hidden />}
+          isActive={pathname === '/admin/csm/settings/business-hours'}
         />
         <NavLink
           href={ticketStatuses}

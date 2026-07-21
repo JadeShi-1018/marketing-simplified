@@ -16,7 +16,6 @@ from urllib.parse import urlencode
 import requests
 from django.conf import settings
 from django.core.paginator import Paginator
-from django.core.signing import BadSignature, SignatureExpired
 from django.db.models import Q
 from django.shortcuts import redirect
 from rest_framework import status as drf_status
@@ -25,6 +24,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.models import Project, ProjectMember
+from core.services.oauth_state import OAuthStateExpired, OAuthStateInvalid
 
 from .access import (
     get_accessible_meta_ad_account_or_404,
@@ -149,9 +149,9 @@ class FacebookCallbackView(APIView):
 
         try:
             state_payload = services.unpack_oauth_state(raw_state)
-        except SignatureExpired:
+        except OAuthStateExpired:
             return redirect(f"{back}?facebook_error=state_expired")
-        except BadSignature:
+        except OAuthStateInvalid:
             return redirect(f"{back}?facebook_error=invalid_state")
 
         from django.contrib.auth import get_user_model

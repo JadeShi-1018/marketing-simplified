@@ -4,8 +4,8 @@ import {
   authPersistStorage,
   authAPI,
   clearPersistedAuthState,
-  persistAuthTokens,
   readPersistedAuthState,
+  LEGACY_AUTH_STORAGE_KEY,
 } from './api';
 import { User } from '../types/auth';
 import TeamAPI from './api/teamApi';
@@ -102,12 +102,6 @@ export const useAuthStore = create<AuthState>()(
             refreshToken: refresh,
             organizationAccessToken: organization_access_token || null,
             isAuthenticated: true,
-          });
-          persistAuthTokens({
-            token,
-            refreshToken: refresh,
-            organizationAccessToken: organization_access_token || null,
-            user,
           });
 
           // Get user teams after successful login
@@ -229,12 +223,6 @@ export const useAuthStore = create<AuthState>()(
             organizationAccessToken: persistedOrganizationToken,
             isAuthenticated: true,
           });
-          persistAuthTokens({
-            token: persistedToken,
-            refreshToken: persistedRefreshToken,
-            organizationAccessToken: persistedOrganizationToken,
-            user,
-          });
           return { success: true };
         } catch (error: any) {
           return {
@@ -272,7 +260,6 @@ export const useAuthStore = create<AuthState>()(
           const response = await authAPI.refreshOrganizationToken();
           const token = response.organization_access_token || null;
           set({ organizationAccessToken: token });
-          persistAuthTokens({ organizationAccessToken: token });
           return { success: true };
         } catch (error: any) {
           const message =
@@ -321,7 +308,6 @@ export const useAuthStore = create<AuthState>()(
                 token: refreshedToken,
                 isAuthenticated: Boolean(refreshedToken && (get().user || persistedUser)),
               });
-              persistAuthTokens({ token: refreshedToken, refreshToken, user: get().user ?? persistedUser });
             }
           }
 
@@ -337,7 +323,6 @@ export const useAuthStore = create<AuthState>()(
             if (refreshedToken) {
               token = refreshedToken;
               set({ token: refreshedToken });
-              persistAuthTokens({ token: refreshedToken, refreshToken, user: get().user ?? persistedUser });
               userResult = await get().getCurrentUser();
             }
           }
@@ -397,10 +382,42 @@ export const useAuthStore = create<AuthState>()(
       }
     }),
     {
-      name: 'auth-storage', // localStorage key
+      name: 'auth-storage-v1',
       storage: createJSONStorage(() => authPersistStorage),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
+        // One-time migration from old key. Idempotent: skipped if new key already
+        // has real data. Old key is left in place for multi-tab safety; the
+        // follow-up cleanup ticket will remove it.
+        if (typeof window === 'undefined') return;
+        // Guard: skip if new key already has real auth data.
+        // We cannot check key existence alone — Zustand writes the empty initial
+        // state to the new key before onRehydrateStorage fires.
+        try {
+          const newRaw = window.localStorage.getItem('auth-storage-v1');
+          if (newRaw) {
+            const newParsed = JSON.parse(newRaw);
+            if (newParsed?.state?.token || newParsed?.state?.user) return;
+          }
+        } catch { /* malformed new key — fall through to migration */ }
+        try {
+          const raw = window.localStorage.getItem(LEGACY_AUTH_STORAGE_KEY);
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          const old = parsed?.state;
+          if (!old) return;
+          useAuthStore.setState({
+            token: old.token ?? null,
+            refreshToken: old.refreshToken ?? null,
+            organizationAccessToken: old.organizationAccessToken ?? null,
+            user: old.user ?? null,
+            isAuthenticated: old.isAuthenticated ?? false,
+            userTeams: old.userTeams ?? [],
+            selectedTeamId: old.selectedTeamId ?? null,
+          });
+        } catch (e) {
+          console.warn('[authStore migration] Failed to migrate legacy persist key:', e);
+        }
       },
       partialize: (state) => ({
         // Only persist these fields to localStorage

@@ -54,7 +54,7 @@ test.describe('Task field history', () => {
 
     const token: string | null = await page.evaluate(() => {
       try {
-        const raw = localStorage.getItem('auth-storage');
+        const raw = localStorage.getItem('auth-storage-v1');
         if (!raw) return null;
         return (JSON.parse(raw) as any)?.state?.token ?? null;
       } catch { return null; }
@@ -106,7 +106,7 @@ test.describe('Task field history', () => {
     // Upload an attachment via API (simpler and more reliable than file dialog)
     const token: string | null = await page.evaluate(() => {
       try {
-        const raw = localStorage.getItem('auth-storage');
+        const raw = localStorage.getItem('auth-storage-v1');
         if (!raw) return null;
         return (JSON.parse(raw) as any)?.state?.token ?? null;
       } catch { return null; }
@@ -156,7 +156,7 @@ test.describe('Task field history', () => {
     // Update the task priority via API
     const token: string | null = await page.evaluate(() => {
       try {
-        const raw = localStorage.getItem('auth-storage');
+        const raw = localStorage.getItem('auth-storage-v1');
         if (!raw) return null;
         return (JSON.parse(raw) as any)?.state?.token ?? null;
       } catch { return null; }

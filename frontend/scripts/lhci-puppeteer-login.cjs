@@ -1,5 +1,5 @@
 /**
- * Lighthouse CI `puppeteerScript` — logs in via /login so Zustand persist populates `auth-storage`.
+ * Lighthouse CI `puppeteerScript` — logs in via /login so Zustand persist populates `auth-storage-v1`.
  * Runs before each audited URL; login runs once per `lhci` process (same browser as Lighthouse).
  *
  * This file is **browser-only** (Puppeteer). Shared env + base URL come from `lhci-lib.cjs`.
@@ -89,7 +89,7 @@ module.exports = async function lhciPuppeteerLogin(browser, _context) {
       await page.waitForFunction(
         () => {
           try {
-            const raw = localStorage.getItem('auth-storage');
+            const raw = localStorage.getItem('auth-storage-v1');
             if (!raw) return false;
             const parsed = JSON.parse(raw);
             return Boolean(parsed?.state?.token);
@@ -101,7 +101,7 @@ module.exports = async function lhciPuppeteerLogin(browser, _context) {
       );
     } catch {
       throw new Error(
-        'LHCI login did not produce auth-storage (check LHCI_AUTH_EMAIL / LHCI_AUTH_PASSWORD, API reachability, and email verification).'
+        'LHCI login did not produce auth-storage-v1 (check LHCI_AUTH_EMAIL / LHCI_AUTH_PASSWORD, API reachability, and email verification).'
       );
     }
 

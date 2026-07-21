@@ -22,7 +22,7 @@ from .models import (
     Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory,
     TemplateTag,
     TicketForm, TicketFormAssignment, SupportProject, CsmWorkType,
-    SupportChannel, SLAPolicy, SLAPriorityTarget,
+    SupportChannel, SLAPolicy, SLAPriorityTarget, BusinessHoursCalendar,
 )
 from .serializers import (
     QueueSerializer, QueueAgentSerializer,
@@ -42,6 +42,7 @@ from .serializers import (
     CsmWorkTypeSerializer,
     WorkTypeReorderSerializer,
     SLAPolicySerializer,
+    BusinessHoursCalendarSerializer,
     SupportChannelListSerializer,
     SupportChannelDetailSerializer,
     SupportChannelCreateUpdateSerializer,
@@ -592,6 +593,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
             content=request.data.get('content', ''),
             rich_body=request.data.get('rich_body') if not image else None,
             image=image,
+        )
+
+        # The agent's first reply meets the first-response SLA, stopping that leg
+        # of the countdown for any ticket on this conversation.
+        conversation.tickets.filter(first_responded_at__isnull=True).update(
+            first_responded_at=timezone.now(),
         )
 
         payload = ConversationMessageSerializer(msg, context={'request': request}).data
@@ -1465,10 +1472,17 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         """Return (or lazily create) the project's SLA policy."""
         project_id = self.get_required_project_id()
-        policy, created = SLAPolicy.objects.get_or_create(
-            project_id=project_id,
-            defaults={'name': 'Default SLA Policy'},
+        # Prefer the project's default policy; fall back to any existing one,
+        # else lazily create the default so the project always has a fallback.
+        policy = (
+            SLAPolicy.objects.filter(project_id=project_id, is_default=True).first()
+            or SLAPolicy.objects.filter(project_id=project_id).first()
         )
+        created = policy is None
+        if created:
+            policy = SLAPolicy.objects.create(
+                project_id=project_id, name='Default SLA Policy', is_default=True,
+            )
         if created or not policy.priority_targets.exists():
             existing_priorities = set(
                 policy.priority_targets.values_list('priority', flat=True)
@@ -1498,23 +1512,48 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         instance.refresh_from_db()
         policy_reactivated = not was_active and instance.is_active
 
-        from csm.services.sla import recalculate_ticket_sla_after_policy_change
-        project_id = instance.project_id
-        open_tickets = list(
-            Ticket.objects
-            .filter(queue__project_id=project_id, status__in=('todo', 'in_progress'))
-            .select_related('queue__project')
-        )
-        for ticket in open_tickets:
-            recalculate_ticket_sla_after_policy_change(
-                ticket,
-                old_targets_by_priority,
-                policy_reactivated=policy_reactivated,
+        # Deactivating leaves the stored due dates untouched: get_sla_status reads
+        # them as no-SLA while the policy is inactive, and they resume unchanged
+        # when it is switched back on. Only recompute while the policy is active
+        # (target edits, reactivation) — the anchor is preserved either way.
+        if instance.is_active:
+            from csm.services.sla import recalculate_ticket_sla_after_policy_change
+            project_id = instance.project_id
+            open_tickets = list(
+                Ticket.objects
+                .filter(queue__project_id=project_id, status__in=('todo', 'in_progress'))
+                .select_related('queue__project')
             )
-        if open_tickets:
-            Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
+            for ticket in open_tickets:
+                recalculate_ticket_sla_after_policy_change(
+                    ticket,
+                    old_targets_by_priority,
+                    policy_reactivated=policy_reactivated,
+                )
+            if open_tickets:
+                Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
 
         return Response(serializer.data)
+
+
+class BusinessHoursCalendarViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """Business-hours calendar CRUD.
+
+    List/create require ?project={id}. Deleting a calendar detaches it from any
+    policies (SET_NULL); those policies fall back to wall-clock countdowns.
+    """
+    serializer_class = BusinessHoursCalendarSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    http_method_names = ['get', 'post', 'patch', 'put', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        if self.action == 'list':
+            project_id = self.get_required_project_id()
+            return BusinessHoursCalendar.objects.filter(project_id=project_id)
+        return self.filter_by_accessible_projects(BusinessHoursCalendar.objects.all())
+
+    def perform_create(self, serializer):
+        serializer.save(project_id=self.get_required_project_id())
 
 
 # --- Status machine admin config ------------------------------------------
