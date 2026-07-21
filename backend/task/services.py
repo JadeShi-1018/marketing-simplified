@@ -23,6 +23,29 @@ def hierarchy_cycle_error_message():
     )
 
 
+def _lock_tasks_for_hierarchy_write(*tasks: Task) -> dict[int, Task]:
+    """
+    Row-lock Task rows involved in a hierarchy write, in ascending pk order.
+
+    Serializes concurrent add/move operations on the same task pair (e.g. 1→2
+    vs 2→1) so validation and insert happen against a consistent snapshot.
+    """
+    pks = sorted({t.pk for t in tasks if t.pk is not None})
+    if not pks:
+        raise ValidationError(
+            'Both tasks must be saved before creating a hierarchy relationship.'
+        )
+
+    locked_rows = Task.objects.select_for_update().filter(pk__in=pks).order_by('pk')
+    by_pk = {row.pk: row for row in locked_rows}
+
+    missing = set(pks) - set(by_pk.keys())
+    if missing:
+        raise ValidationError(f'Task(s) not found: {sorted(missing)}')
+
+    return by_pk
+
+
 def validate_parent_assignment(
     parent_task,
     child_task,
@@ -65,6 +88,9 @@ def validate_parent_assignment(
 @transaction.atomic
 def add_subtask_to_parent(*, parent_task, child_task):
     """Link child_task under parent_task after hierarchy validation."""
+    locked = _lock_tasks_for_hierarchy_write(parent_task, child_task)
+    parent_task = locked[parent_task.pk]
+    child_task = locked[child_task.pk]
     validate_parent_assignment(parent_task, child_task)
     parent_task.add_subtask(child_task)
     return child_task
@@ -73,6 +99,11 @@ def add_subtask_to_parent(*, parent_task, child_task):
 @transaction.atomic
 def reassign_subtask_parent(*, child_task, new_parent, old_parent):
     """Move child_task from old_parent to new_parent after hierarchy validation."""
+    locked = _lock_tasks_for_hierarchy_write(child_task, new_parent, old_parent)
+    child_task = locked[child_task.pk]
+    new_parent = locked[new_parent.pk]
+    old_parent = locked[old_parent.pk]
+
     if not TaskHierarchy.objects.filter(
         parent_task=old_parent,
         child_task=child_task,
