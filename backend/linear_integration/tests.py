@@ -13,6 +13,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from core.models import Organization, Project, ProjectMember
+from core.services.oauth_state import create_oauth_state
 from linear_integration.linear_graphql import LinearGraphQLError
 from linear_integration.models import LinearCredential
 from linear_integration.services import LinearTokenExchangeError
@@ -97,9 +98,10 @@ def unauth_client():
 
 def _build_state(user_id: int, code_verifier: str = "test_cv_abcdefghijklmnopqrstuvwxyz1234") -> str:
     """Build a valid OAuth state payload with the required 'cv' field."""
-    return signing.dumps(
-        {"user_id": user_id, "nonce": "testnonce12345678", "cv": code_verifier},
-        salt=LINEAR_OAUTH_STATE_SALT,
+    return create_oauth_state(
+        flow=LINEAR_OAUTH_STATE_SALT,
+        payload={"user_id": user_id, "cv": code_verifier},
+        ttl_seconds=3600,
     )
 
 
@@ -175,7 +177,7 @@ class TestLinearCallbackView:
 
     def test_expired_state_redirects_state_expired(self, unauth_client, user):
         state = _build_state(user.id)
-        with patch("linear_integration.views.signing.loads") as mock_loads:
+        with patch("core.services.oauth_state.signing.loads") as mock_loads:
             mock_loads.side_effect = signing.SignatureExpired("expired")
             response = unauth_client.get(CALLBACK_URL, {"code": "code123", "state": state})
         assert response.status_code == 302

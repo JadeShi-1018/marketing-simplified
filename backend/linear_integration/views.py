@@ -3,10 +3,8 @@ from urllib.parse import quote
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core import signing
 from django.db import IntegrityError, transaction
 from django.shortcuts import get_object_or_404, redirect
-from django.utils.crypto import get_random_string
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -14,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from core.models import Project, ProjectMember
+from core.services.oauth_state import OAuthStateExpired, OAuthStateInvalid, create_oauth_state, validate_oauth_state
 from task.models import Task
 from task.serializers import TaskSerializer
 
@@ -62,9 +61,10 @@ def _frontend_base_for_oauth_redirect(request) -> str:
 
 
 def _build_linear_oauth_state(user, code_verifier: str) -> str:
-    return signing.dumps(
-        {"user_id": user.id, "nonce": get_random_string(16), "cv": code_verifier},
-        salt=LINEAR_OAUTH_STATE_SALT,
+    return create_oauth_state(
+        flow=LINEAR_OAUTH_STATE_SALT,
+        payload={"user_id": user.id, "cv": code_verifier},
+        ttl_seconds=LINEAR_OAUTH_STATE_MAX_AGE_SECONDS,
     )
 
 
@@ -119,14 +119,14 @@ class LinearCallbackView(APIView):
         if not state:
             return err_redirect("invalid_state")
         try:
-            payload = signing.loads(
+            payload = validate_oauth_state(
                 state,
-                salt=LINEAR_OAUTH_STATE_SALT,
-                max_age=LINEAR_OAUTH_STATE_MAX_AGE_SECONDS,
+                expected_flow=LINEAR_OAUTH_STATE_SALT,
+                ttl_seconds=LINEAR_OAUTH_STATE_MAX_AGE_SECONDS,
             )
-        except signing.SignatureExpired:
+        except OAuthStateExpired:
             return err_redirect("state_expired")
-        except signing.BadSignature:
+        except OAuthStateInvalid:
             return err_redirect("invalid_state")
 
         user_id = payload.get("user_id")
