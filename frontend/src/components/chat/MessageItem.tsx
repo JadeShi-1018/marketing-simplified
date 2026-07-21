@@ -396,6 +396,11 @@ export default function MessageItem({
                 </span>
               ) : null}
               <span className="text-[11px] text-gray-400">{time}</span>
+              {isOwnMessage && !isDeleted && message.send_status === 'failed' ? (
+                <span className="ml-2 text-xs text-red-500">Failed to send</span>
+              ) : isOwnMessage && !isDeleted && (message.send_status === 'pending' || message.send_status === 'sending') ? (
+                <span className="ml-2 text-xs text-gray-400">Sending...</span>
+              ) : null}
               {isOwnMessage && !isDeleted && <MessageStatus message={message} />}
             </div>
           )}

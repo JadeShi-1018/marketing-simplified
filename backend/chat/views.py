@@ -948,37 +948,22 @@ class MessageViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         try:
-            # Create message using serializer (handles attachments)
             message = serializer.save()
-            
-            # Create MessageStatus for all recipients (excluding sender)
-            from .models import MessageStatus
-            recipients = ChatParticipant.objects.filter(
-                chat=message.chat,
-                is_active=True
-            ).exclude(user=request.user).select_related('user')
-            
-            MessageStatus.objects.bulk_create([
-                MessageStatus(
-                    message=message,
-                    user=recipient.user,
-                    status='sent'
-                )
-                for recipient in recipients
-            ])
+            created = getattr(serializer, '_message_created', True)
 
-            transaction.on_commit(lambda: notify_message_recipients.delay(message.id))
-            transaction.on_commit(lambda: notify_new_message.delay(message.id))
-
-            # Refresh message with all relationships for response
             message = Message.objects.select_related(
                 'sender', 'reply_to', 'reply_to__sender'
             ).prefetch_related('attachments').get(id=message.id)
 
-            # Return message with attachments
             response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
-            logger.info(f"Message {message.id} created successfully with {message.attachments.count()} attachments")
-            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            logger.info(
+                "Message %s %s successfully with %s attachments",
+                message.id,
+                'created' if created else 'deduped',
+                message.attachments.count(),
+            )
+            response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+            return Response(response_serializer.data, status=response_status)
             
         except ValueError as e:
             logger.warning(f"Failed to create message: {e}")
