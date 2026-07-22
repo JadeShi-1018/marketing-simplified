@@ -68,6 +68,8 @@ _EVENT_PREFERENCE_KEY: dict[str, tuple[str, str]] = {
     NotificationEventType.BUDGET_APPROVAL_RESULT: ("automation_system", "approval_budget_member"),
     NotificationEventType.BUDGET_POOL_LOW: ("core_business", "budget_pool_low"),
     NotificationEventType.BUDGET_ESCALATION: ("core_business", "budget_escalation"),
+    # Organization
+    NotificationEventType.ORG_INVITE: ("collaboration_assets", "org_invite"),
     NotificationEventType.WORKFLOW_NODE: ("automation_system", "workflow_nodes"),
     NotificationEventType.ACCOUNT_PERMISSION: ("automation_system", "account_security_billing"),
     NotificationEventType.BILLING_ANOMALY: ("automation_system", "account_security_billing"),
@@ -304,8 +306,26 @@ def create_notification(
         action_url=action_url[:1024] if action_url else "",
         metadata=metadata or {},
     )
-    maybe_dispatch_external_channels(notification=n, user=recipient, event_type=event_type)
-    _push_notification_to_redis(recipient_id, n)
+
+    # Isolate external dispatch (Slack, email) in its own savepoint so that
+    # a missing table or broken integration cannot abort the outer transaction
+    # and lose the notification record.
+    try:
+        with transaction.atomic():
+            maybe_dispatch_external_channels(notification=n, user=recipient, event_type=event_type)
+    except Exception:
+        logger.warning(
+            "create_notification: external dispatch failed for id=%s event=%s — notification still saved",
+            n.id, event_type,
+        )
+
+    # Push to Redis only after the transaction commits, so the notification
+    # is guaranteed to be in the DB before the SSE event fires.
+    def _push():
+        _push_notification_to_redis(recipient_id, n)
+
+    transaction.on_commit(_push)
+
     logger.info(
         "create_notification: OK — id=%s recipient_id=%s event=%s",
         n.id, recipient_id, event_type,
@@ -657,6 +677,13 @@ def create_or_update_chat_notification(
         return updated
 
     try:
+        from chat.models import Chat
+        from chat.url_helpers import build_messages_action_url
+
+        chat_slug = Chat.objects.filter(pk=chat_id).values_list('slug', flat=True).first()
+        if not chat_slug:
+            chat_slug = str(chat_id)
+
         n = Notification.objects.create(
             recipient_id=recipient_id,
             actor_id=actor_id,
@@ -666,9 +693,10 @@ def create_or_update_chat_notification(
             related_object_id=str(chat_id),
             title="New message",
             body=_truncate_message_preview(message_preview),
-            action_url=f"/messages?chatId={chat_id}&projectId={project_id}",
+            action_url=build_messages_action_url(chat_slug),
             metadata={
                 "chat_id": chat_id,
+                "chat_slug": chat_slug,
                 "message_id": message_id,
                 "project_id": project_id,
                 "message_count": 1,

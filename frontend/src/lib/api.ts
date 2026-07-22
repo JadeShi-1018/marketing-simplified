@@ -39,7 +39,9 @@ const api = axios.create({
 
 type RetriableRequestConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 
-const AUTH_STORAGE_KEY = 'auth-storage';
+const AUTH_STORAGE_KEY = 'auth-storage-v1';
+/** Old key — read once for migration, never written. Removed by follow-up cleanup ticket. */
+export const LEGACY_AUTH_STORAGE_KEY = 'auth-storage';
 const AUTH_COOKIE_KEY = 'ms_auth';
 const AUTH_COOKIE_MAX_AGE_SECONDS = 4 * 24 * 60 * 60;
 
@@ -88,6 +90,49 @@ function canUseLocalStorage(): boolean {
   }
 }
 
+function canUseSessionStorage(): boolean {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    return false;
+  }
+  try {
+    const testKey = '__marketing_simplified_session_storage_test__';
+    window.sessionStorage.setItem(testKey, '1');
+    window.sessionStorage.removeItem(testKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readAuthSessionStorage(): PersistedAuthState | null {
+  if (!canUseSessionStorage()) return null;
+  try {
+    const raw = window.sessionStorage.getItem(AUTH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    console.warn('Failed to read auth session storage:', error);
+    return null;
+  }
+}
+
+function writeAuthSessionStorage(authData: PersistedAuthState) {
+  if (!canUseSessionStorage()) return;
+  try {
+    window.sessionStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(authData));
+  } catch (error) {
+    console.warn('Failed to persist auth session storage:', error);
+  }
+}
+
+function clearAuthSessionStorage() {
+  if (!canUseSessionStorage()) return;
+  try {
+    window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch (error) {
+    console.warn('Failed to clear auth session storage:', error);
+  }
+}
+
 function readAuthCookie(): PersistedAuthState | null {
   const raw = getCookieValue(AUTH_COOKIE_KEY);
   if (!raw) return null;
@@ -130,6 +175,8 @@ export function readPersistedAuthState() {
       console.warn('Failed to read auth storage:', error);
     }
   }
+  const sessionAuth = readAuthSessionStorage();
+  if (sessionAuth) return sessionAuth;
   return readAuthCookie();
 }
 
@@ -159,6 +206,7 @@ export function persistAuthTokens(tokens: {
       console.warn('Failed to persist auth storage:', error);
     }
   }
+  writeAuthSessionStorage(authData);
   writeAuthCookie(authData);
 }
 
@@ -170,6 +218,7 @@ export function clearPersistedAuthState() {
       console.warn('Failed to clear auth storage:', error);
     }
   }
+  clearAuthSessionStorage();
   clearCookieValue(AUTH_COOKIE_KEY);
 }
 
@@ -183,17 +232,33 @@ export const authPersistStorage = {
         console.warn('Failed to read persisted auth item:', error);
       }
     }
+    if (canUseSessionStorage()) {
+      try {
+        const value = window.sessionStorage.getItem(name);
+        if (value) return value;
+      } catch (error) {
+        console.warn('Failed to read persisted auth session item:', error);
+      }
+    }
     return name === AUTH_STORAGE_KEY ? getCookieValue(AUTH_COOKIE_KEY) : null;
   },
   setItem: (name: string, value: string): void => {
     if (canUseLocalStorage()) {
       try {
         window.localStorage.setItem(name, value);
-        return;
       } catch (error) {
         console.warn('Failed to write persisted auth item:', error);
       }
     }
+    if (canUseSessionStorage()) {
+      try {
+        window.sessionStorage.setItem(name, value);
+      } catch (error) {
+        console.warn('Failed to write persisted auth session item:', error);
+      }
+    }
+    // Always write cookie (not just as localStorage fallback) so SSR requests
+    // have an up-to-date token without needing a separate persistAuthTokens call.
     if (name !== AUTH_STORAGE_KEY) return;
     try {
       writeAuthCookie(JSON.parse(value));
@@ -207,6 +272,13 @@ export const authPersistStorage = {
         window.localStorage.removeItem(name);
       } catch (error) {
         console.warn('Failed to remove persisted auth item:', error);
+      }
+    }
+    if (canUseSessionStorage()) {
+      try {
+        window.sessionStorage.removeItem(name);
+      } catch (error) {
+        console.warn('Failed to remove persisted auth session item:', error);
       }
     }
     if (name === AUTH_STORAGE_KEY) {
@@ -229,6 +301,7 @@ export function updatePersistedAccessToken(accessToken: string, refreshToken?: s
       console.warn('Failed to update persisted auth token:', error);
     }
   }
+  writeAuthSessionStorage(authData);
   writeAuthCookie(authData);
 }
 
@@ -306,7 +379,7 @@ api.interceptors.response.use(
     const status = error.response?.status;
     const config = error.config as RetriableRequestConfig | undefined;
     const url = config?.url;
-    const responseData = error.response?.data;
+    const responseData = error.response?.data as any;
 
     const isGoogleDocsUrl = typeof url === 'string' && url.startsWith('/api/google-docs/');
     const googleErrorMessage = responseData?.error;

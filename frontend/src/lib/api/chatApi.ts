@@ -1,11 +1,17 @@
 // Chat API client
 import api from '../api';
+import {
+  formatFileSize,
+  getFileTypeFromMime,
+} from './attachmentApi';
+export { formatFileSize, getFileTypeFromMime };
 import type {
   Chat,
   ChatParticipant,
   ChannelVisibility,
   ChatStarRow,
   Message,
+  MessageAttachment,
   CreateChatRequest,
   CreateChatResponse,
   SendMessageRequest,
@@ -20,11 +26,118 @@ import type {
 } from '@/types/chat';
 import type { TiptapJSONContent } from '@/types/comment';
 
+const ATTACHMENT_FILE_SIZE_LIMITS = {
+  image: 10 * 1024 * 1024,
+  video: 25 * 1024 * 1024,
+  document: 20 * 1024 * 1024,
+} as const;
+
+const ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX = 'image/';
+const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
+
+const SUPPORTED_ATTACHMENT_DOCUMENT_LABEL =
+  'images, PDF, Word, Excel, and PowerPoint files';
+
+export function isAllowedAttachmentMimeType(mimeType: string): boolean {
+  const normalizedMimeType = mimeType.trim().toLowerCase();
+  return (
+    normalizedMimeType.startsWith(ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX) ||
+    ALLOWED_ATTACHMENT_MIME_TYPES.has(normalizedMimeType)
+  );
+}
+
+export function buildUnsupportedAttachmentMessage(mimeType: string): string {
+  const normalizedMimeType = mimeType.trim() || 'unknown';
+  return `Unsupported file type "${normalizedMimeType}". Accepted formats: ${SUPPORTED_ATTACHMENT_DOCUMENT_LABEL}.`;
+}
+
+export function validateFile(file: File): { isValid: boolean; error?: string } {
+  const mimeType = file.type.trim().toLowerCase();
+  if (!isAllowedAttachmentMimeType(mimeType)) {
+    return {
+      isValid: false,
+      error: buildUnsupportedAttachmentMessage(mimeType),
+    };
+  }
+
+  const fileType = getFileTypeFromMime(mimeType);
+  const maxSize = ATTACHMENT_FILE_SIZE_LIMITS[fileType];
+  if (file.size > maxSize) {
+    const maxMB = maxSize / (1024 * 1024);
+    return {
+      isValid: false,
+      error: `File too large. Maximum size for ${fileType} is ${maxMB} MB`,
+    };
+  }
+
+  return { isValid: true };
+}
+
+export function getAttachmentUploadErrorMessage(error: unknown, fallbackMimeType?: string): string {
+  const responseData = (error as { response?: { data?: Record<string, unknown> } })?.response?.data;
+  const mimeType = typeof responseData?.mime_type === 'string'
+    ? responseData.mime_type
+    : fallbackMimeType;
+
+  if (responseData?.code === 'unsupported_mime_type' && mimeType) {
+    return buildUnsupportedAttachmentMessage(mimeType);
+  }
+
+  if (typeof responseData?.error === 'string' && responseData.error.trim()) {
+    return responseData.error;
+  }
+
+  if ((error as Error)?.message) {
+    return (error as Error).message;
+  }
+
+  if (mimeType) {
+    return buildUnsupportedAttachmentMessage(mimeType);
+  }
+
+  return 'Failed to upload attachment';
+}
+
+export async function uploadAttachment(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<MessageAttachment> {
+  const validation = validateFile(file);
+  if (!validation.isValid) {
+    throw new Error(validation.error || 'Unsupported file type');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await api.post('/api/chat/attachments/', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+    onUploadProgress: (progressEvent) => {
+      if (progressEvent.total && onProgress) {
+        const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        onProgress(progress);
+      }
+    },
+  });
+
+  return response.data;
+}
+
 // ==================== Chat Endpoints ====================
 
-const PROJECT_DRAFT_KEY_PREFIX = (projectId: number) => `chat_draft_v2_${projectId}_`;
+const PROJECT_DRAFT_KEY_PREFIX = (projectId: number | string) => `chat_draft_v2_${projectId}_`;
 
-function pruneProjectChatDrafts(projectId: number, chats: Chat[]) {
+function pruneProjectChatDrafts(projectId: number | string, chats: Chat[]) {
   if (typeof window === 'undefined') return;
 
   const prefix = PROJECT_DRAFT_KEY_PREFIX(projectId);
@@ -58,11 +171,19 @@ export const getChats = async (params?: GetChatsParams): Promise<PaginatedRespon
 };
 
 /**
- * Get a specific chat by ID
+ * Get a specific chat by slug (canonical) or legacy numeric id via resolve endpoint.
  */
-export const getChat = async (chatId: number): Promise<Chat> => {
-  const response = await api.get(`/api/chat/chats/${chatId}/`);
+export const getChat = async (chatKey: number | string): Promise<Chat> => {
+  const response = await api.get(`/api/chat/chats/${chatKey}/`);
   return response.data;
+};
+
+/** Resolve legacy numeric chat pk to slug (bookmarks / old notifications). */
+export const resolveLegacyChatSlug = async (chatId: number): Promise<string> => {
+  const response = await api.get<{ slug: string }>('/api/chat/chats/legacy-id-slug/', {
+    params: { id: chatId },
+  });
+  return response.data.slug;
 };
 
 /**
@@ -106,8 +227,8 @@ export interface PinnedMessageRow {
   message: Message;
 }
 
-export const listPins = async (chatId: number): Promise<PinnedMessageRow[]> => {
-  const response = await api.get(`/api/chat/chats/${chatId}/pins/`);
+export const listPins = async (chatSlug: string): Promise<PinnedMessageRow[]> => {
+  const response = await api.get(`/api/chat/chats/${chatSlug}/pins/`);
   return response.data;
 };
 
@@ -148,7 +269,7 @@ export interface BrowseChannelRow {
   is_member: boolean;
 }
 
-export const browseChannels = async (projectId: number): Promise<BrowseChannelRow[]> => {
+export const browseChannels = async (projectId: number | string): Promise<BrowseChannelRow[]> => {
   const response = await api.get('/api/chat/chats/browse/', { params: { project_id: projectId } });
   return response.data;
 };
@@ -202,7 +323,7 @@ export const updateChatDetails = async (
 
 // ==================== Starred chats ====================
 
-export const listStarredChats = async (projectId: number): Promise<ChatStarRow[]> => {
+export const listStarredChats = async (projectId: number | string): Promise<ChatStarRow[]> => {
   const response = await api.get('/api/chat/starred/', { params: { project_id: projectId } });
   return response.data;
 };
@@ -217,7 +338,7 @@ export const unstarChat = async (chatId: number): Promise<void> => {
 };
 
 export const reorderStarredChats = async (
-  projectId: number,
+  projectId: number | string,
   chatIds: number[]
 ): Promise<void> => {
   await api.post('/api/chat/starred/reorder/', {
@@ -330,6 +451,10 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
     payload.parent_message_id = data.parent_message_id;
   }
 
+  if (data.client_message_id) {
+    payload.client_message_id = data.client_message_id;
+  }
+
   const response = await api.post('/api/chat/messages/', payload);
   return response.data;
 };
@@ -373,8 +498,8 @@ export const markMessageAsRead = async (messageId: number): Promise<Message> => 
 /**
  * Mark all messages in a chat as read (via backend endpoint)
  */
-export const markChatAsRead = async (chatId: number): Promise<void> => {
-  await api.post(`/api/chat/chats/${chatId}/mark_as_read/`);
+export const markChatAsRead = async (chatSlug: string): Promise<void> => {
+  await api.post(`/api/chat/chats/${chatSlug}/mark_as_read/`);
 };
 
 /**
@@ -400,7 +525,7 @@ export const forwardMessagesBatch = async (
  * Check if a private chat already exists between two users
  */
 export const findPrivateChat = async (
-  projectId: number,
+  projectId: number | string,
   otherUserId: number
 ): Promise<Chat | null> => {
   try {

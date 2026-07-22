@@ -9,6 +9,7 @@ import { useProjectMemberRoles } from '@/hooks/useProjectMemberRoles';
 import ChatList from './ChatList';
 import ChatWindow from './ChatWindow';
 import CreateChatDialog from './CreateChatDialog';
+import { buildMessagesPath } from '@/lib/messages/messagesRoutes';
 
 interface ChatWidgetWindowProps {
   projectId?: string;
@@ -98,28 +99,9 @@ export default function ChatWidgetWindow({ projectId }: ChatWidgetWindowProps) {
   };
   
   const handleOpenMessagesPage = () => {
-    // Close the widget and open the messages page
     closeWidget();
     setMessagePageOpen(true);
-
-    const params = new URLSearchParams();
-    const fallbackProjectId = projectId ? Number(projectId) : NaN;
-    const targetProjectId =
-      typeof widgetProjectId === 'number' && widgetProjectId > 0
-        ? widgetProjectId
-        : Number.isFinite(fallbackProjectId) && fallbackProjectId > 0
-          ? fallbackProjectId
-          : null;
-
-    if (targetProjectId) {
-      params.set('projectId', String(targetProjectId));
-    }
-    if (widgetChatId) {
-      params.set('chatId', String(widgetChatId));
-    }
-
-    const query = params.toString();
-    router.push(query ? `/messages?${query}` : '/messages');
+    router.push(buildMessagesPath(widgetChat?.slug ?? null));
   };
 
   const handleProjectSelect = (project: ProjectData) => {

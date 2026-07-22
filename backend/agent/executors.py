@@ -369,7 +369,7 @@ class CreateMiroBoardExecutor(BaseStepExecutor):
                     sse_events=[{
                         'type': 'miro_board_created',
                         'content': f'Miro board created: {getattr(board, "title", "")}'.strip(),
-                        'data': {'board_id': str(getattr(board, 'id', None))},
+                        'data': {'board_id': str(getattr(board, 'id', None)), 'board_slug': getattr(board, 'slug', None)},
                     }],
                 )
 
@@ -884,6 +884,7 @@ class GenerateCriteriaExecutor(BaseStepExecutor):
                 temperature=0.2,
                 max_output_tokens=2048,
                 response_mime_type='application/json',
+                call_purpose='criteria_generation',
             )
             criteria = json.loads(_criteria_result['text'])
 

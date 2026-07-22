@@ -194,7 +194,7 @@ const EditForm: React.FC<EditFormProps> = ({ cu, queues, onSaved, onClose }) => 
 // ── Users Tab ────────────────────────────────────────────────────────────────
 
 interface UsersTabProps {
-  projectId: number;
+  projectId: number | string;
   organisationId: number;
 }
 

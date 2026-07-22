@@ -8,6 +8,7 @@ from meetings.models import MeetingTaskOrigin
 from meetings.services import validate_meeting_for_origin_link, record_task_created
 from task.models import Task, ApprovalRecord, TaskComment, TaskAttachment, TaskFieldHistory, TaskHierarchy, TaskRelation, TaskPin
 from core.models import Project, ProjectMember
+from core.slug_mixins import resolve_project_pk
 from core.utils.project import get_user_active_project
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
@@ -61,7 +62,7 @@ class ProjectSummarySerializer(serializers.ModelSerializer):
     """Serializer for project summary information"""
     class Meta:
         model = Project
-        fields = ['id', 'name']
+        fields = ['id', 'slug', 'name']
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -70,7 +71,8 @@ class TaskSerializer(serializers.ModelSerializer):
     owner_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     created_by = serializers.SerializerMethodField()
     project = ProjectSummarySerializer(read_only=True)
-    project_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    # Accepts a project slug (current frontend) or numeric pk (legacy); resolved in _resolve_project.
+    project_id = serializers.CharField(write_only=True, required=False, allow_null=True)
     current_approver = UserSummarySerializer(read_only=True)
     current_approver_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     create_as_draft = serializers.BooleanField(write_only=True, required=False, default=False)
@@ -88,7 +90,9 @@ class TaskSerializer(serializers.ModelSerializer):
     revision_round = serializers.IntegerField(read_only=True)
     revision_label = serializers.SerializerMethodField()
     origin_meeting = serializers.SerializerMethodField()
-    origin_meeting_id = serializers.IntegerField(
+    # Deep-link carries a meeting slug (or legacy pk); resolved to a pk in
+    # create(). CharField so a slug string passes field validation.
+    origin_meeting_id = serializers.CharField(
         write_only=True,
         required=False,
         allow_null=True,
@@ -100,7 +104,7 @@ class TaskSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Task
-        fields = [
+        fields = ['slug', 
             'id', 'summary', 'description', 'status', 'type', 'priority',
             'owner', 'owner_id', 'created_by', 'project', 'project_id',
             'current_approver', 'current_approver_id',
@@ -120,7 +124,7 @@ class TaskSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = [
+        read_only_fields = ['slug', 
             'id', 'status', 'owner', 'created_by', 'content_type', 'object_id', 'linked_object',
             'is_subtask', 'parent_relationship', 'anomaly_status',
             'approval_chain_progress', 'can_lock', 'approvals_summary', 'is_pinned',
@@ -472,10 +476,13 @@ class TaskSerializer(serializers.ModelSerializer):
     def _resolve_project(self, user, project_id):
         """Return project from id or from user's active project."""
         if project_id is not None:
-            try:
-                return Project.objects.get(id=project_id)
-            except Project.DoesNotExist:
-                raise serializers.ValidationError({'project_id': 'Project not found'})
+            pk = resolve_project_pk(project_id)
+            if pk is not None:
+                try:
+                    return Project.objects.get(id=pk)
+                except Project.DoesNotExist:
+                    pass
+            raise serializers.ValidationError({'project_id': 'Project not found'})
 
         project = get_user_active_project(user)
         if not project:
@@ -500,6 +507,11 @@ class TaskSerializer(serializers.ModelSerializer):
         """Create a new task"""
         create_as_draft = validated_data.pop('create_as_draft', False)
         origin_meeting_id = validated_data.pop('origin_meeting_id', None)
+        if origin_meeting_id is not None:
+            # Deep-link may pass a meeting slug or a legacy pk.
+            from core.slug_mixins import resolve_pk_for
+            from meetings.models import Meeting
+            origin_meeting_id = resolve_pk_for(Meeting, origin_meeting_id)
         # Never persist draft payload on non-draft creates.
         if not create_as_draft:
             validated_data.pop('draft_payload', None)

@@ -4,8 +4,8 @@ import {
   authPersistStorage,
   authAPI,
   clearPersistedAuthState,
-  persistAuthTokens,
   readPersistedAuthState,
+  LEGACY_AUTH_STORAGE_KEY,
 } from './api';
 import { User } from '../types/auth';
 import TeamAPI from './api/teamApi';
@@ -40,9 +40,17 @@ interface AuthState {
   setHasHydrated: (hasHydrated: boolean) => void;
   
   // Authentication actions
-  login: (email: string, password: string) => Promise<{ success: boolean; error?: string; statusCode?: number; errorCode?: string }>;
+  login: (email: string, password: string) => Promise<{
+    success: boolean;
+    error?: string;
+    statusCode?: number;
+    errorCode?: string;
+    retry_after_seconds?: number;
+    requires_captcha?: boolean;
+    lockout_until?: string;
+  }>;
   logout: () => Promise<void>;
-  getCurrentUser: () => Promise<{ success: boolean; error?: string }>;
+  getCurrentUser: () => Promise<{ success: boolean; error?: string; retryable?: boolean }>;
   getUserTeams: () => Promise<{ success: boolean; error?: string }>;
   refreshOrganizationAccessToken: () => Promise<{ success: boolean; error?: string }>;
   
@@ -95,12 +103,6 @@ export const useAuthStore = create<AuthState>()(
             organizationAccessToken: organization_access_token || null,
             isAuthenticated: true,
           });
-          persistAuthTokens({
-            token,
-            refreshToken: refresh,
-            organizationAccessToken: organization_access_token || null,
-            user,
-          });
 
           // Get user teams after successful login
           let userTeams: number[] = [];
@@ -148,11 +150,22 @@ export const useAuthStore = create<AuthState>()(
           const errorData = error?.response?.data;
           const errorCode = errorData?.errorCode;
           const backendMessage = errorData?.error;
+          const retryAfterSeconds = errorData?.retry_after_seconds;
+          const requiresCaptcha = errorData?.requires_captcha;
+          const lockoutUntil = errorData?.lockout_until;
 
           let message: string = LOGIN_ERROR_MESSAGES.GENERIC;
 
           if (statusCode === 401) {
             message = LOGIN_ERROR_MESSAGES.INVALID_PASSWORD;
+          } else if (statusCode === 429) {
+            if (errorCode === 'LOGIN_LOCKED') {
+              message = backendMessage || LOGIN_ERROR_MESSAGES.LOGIN_LOCKED;
+            } else if (errorCode === 'TOO_MANY_ATTEMPTS') {
+              message = backendMessage || LOGIN_ERROR_MESSAGES.TOO_MANY_ATTEMPTS;
+            } else {
+              message = backendMessage || LOGIN_ERROR_MESSAGES.TOO_MANY_ATTEMPTS;
+            }
           } else if (statusCode === 403) {
             if (errorCode === 'EMAIL_NOT_VERIFIED' || backendMessage?.toLowerCase().includes('not verified')) {
               message = LOGIN_ERROR_MESSAGES.EMAIL_NOT_VERIFIED;
@@ -170,6 +183,9 @@ export const useAuthStore = create<AuthState>()(
             error: message,
             statusCode,
             errorCode,
+            retry_after_seconds: retryAfterSeconds,
+            requires_captcha: requiresCaptcha,
+            lockout_until: lockoutUntil,
           };
         }
       },
@@ -206,12 +222,6 @@ export const useAuthStore = create<AuthState>()(
             refreshToken: persistedRefreshToken,
             organizationAccessToken: persistedOrganizationToken,
             isAuthenticated: true,
-          });
-          persistAuthTokens({
-            token: persistedToken,
-            refreshToken: persistedRefreshToken,
-            organizationAccessToken: persistedOrganizationToken,
-            user,
           });
           return { success: true };
         } catch (error: any) {
@@ -250,7 +260,6 @@ export const useAuthStore = create<AuthState>()(
           const response = await authAPI.refreshOrganizationToken();
           const token = response.organization_access_token || null;
           set({ organizationAccessToken: token });
-          persistAuthTokens({ organizationAccessToken: token });
           return { success: true };
         } catch (error: any) {
           const message =
@@ -299,7 +308,6 @@ export const useAuthStore = create<AuthState>()(
                 token: refreshedToken,
                 isAuthenticated: Boolean(refreshedToken && (get().user || persistedUser)),
               });
-              persistAuthTokens({ token: refreshedToken, refreshToken, user: get().user ?? persistedUser });
             }
           }
 
@@ -315,7 +323,6 @@ export const useAuthStore = create<AuthState>()(
             if (refreshedToken) {
               token = refreshedToken;
               set({ token: refreshedToken });
-              persistAuthTokens({ token: refreshedToken, refreshToken, user: get().user ?? persistedUser });
               userResult = await get().getCurrentUser();
             }
           }
@@ -375,10 +382,42 @@ export const useAuthStore = create<AuthState>()(
       }
     }),
     {
-      name: 'auth-storage', // localStorage key
+      name: 'auth-storage-v1',
       storage: createJSONStorage(() => authPersistStorage),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
+        // One-time migration from old key. Idempotent: skipped if new key already
+        // has real data. Old key is left in place for multi-tab safety; the
+        // follow-up cleanup ticket will remove it.
+        if (typeof window === 'undefined') return;
+        // Guard: skip if new key already has real auth data.
+        // We cannot check key existence alone — Zustand writes the empty initial
+        // state to the new key before onRehydrateStorage fires.
+        try {
+          const newRaw = window.localStorage.getItem('auth-storage-v1');
+          if (newRaw) {
+            const newParsed = JSON.parse(newRaw);
+            if (newParsed?.state?.token || newParsed?.state?.user) return;
+          }
+        } catch { /* malformed new key — fall through to migration */ }
+        try {
+          const raw = window.localStorage.getItem(LEGACY_AUTH_STORAGE_KEY);
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          const old = parsed?.state;
+          if (!old) return;
+          useAuthStore.setState({
+            token: old.token ?? null,
+            refreshToken: old.refreshToken ?? null,
+            organizationAccessToken: old.organizationAccessToken ?? null,
+            user: old.user ?? null,
+            isAuthenticated: old.isAuthenticated ?? false,
+            userTeams: old.userTeams ?? [],
+            selectedTeamId: old.selectedTeamId ?? null,
+          });
+        } catch (e) {
+          console.warn('[authStore migration] Failed to migrate legacy persist key:', e);
+        }
       },
       partialize: (state) => ({
         // Only persist these fields to localStorage

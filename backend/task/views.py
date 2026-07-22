@@ -1,5 +1,6 @@
 import logging
 from rest_framework import viewsets, status, generics, permissions
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 
 logger = logging.getLogger(__name__)
 from rest_framework.decorators import action, api_view, permission_classes
@@ -54,7 +55,7 @@ def _debug_log(session_id, location, message, data=None, hypothesis_id=None):
 # endregion
 
 
-class TaskViewSet(viewsets.ModelViewSet):
+class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """ViewSet for Task model"""
     queryset = Task.objects.select_related(
         'project',
@@ -104,8 +105,11 @@ class TaskViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Get the project (404 if it doesn't exist)
-        project = get_object_or_404(Project, id=project_id)
+        # Get the project (404 if it doesn't exist). Accept slug or numeric pk.
+        resolved_pk = resolve_project_pk(project_id)
+        if not resolved_pk:
+            return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
+        project = get_object_or_404(Project, id=resolved_pk)
 
         # Ensure the current user is a member of this project
         ProjectMember.objects.get_or_create(
@@ -153,8 +157,15 @@ class TaskViewSet(viewsets.ModelViewSet):
         )
         
         # Use user.active_project directly to avoid side effects from get_user_active_project
-        # which automatically sets active_project if it's None
-        active_project = user.active_project
+        # which automatically sets active_project if it's None.
+        # Guard against stale active_project_id pointing to a deleted project — Django's FK
+        # accessor raises DoesNotExist (not returning None) in that case.
+        try:
+            active_project = user.active_project
+        except Project.DoesNotExist:
+            active_project = None
+            user.active_project = None
+            user.save(update_fields=['active_project'])
         # Verify that active_project is still accessible (user still has membership)
         if active_project:
             if active_project.id not in accessible_project_ids:
@@ -177,10 +188,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         has_explicit_project_id = requested_project_id_raw is not None
         requested_project_id = None
         if has_explicit_project_id:
-            try:
-                requested_project_id = int(requested_project_id_raw)
-            except (TypeError, ValueError):
-                raise DRFValidationError({'project_id': 'project_id must be an integer'})
+            # Accept slug (current frontend) or numeric pk (legacy); resolve to pk.
+            requested_project_id = resolve_project_pk(requested_project_id_raw)
 
             if requested_project_id not in accessible_project_ids:
                 raise PermissionDenied('You do not have access to this project.')
@@ -406,15 +415,17 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
-                raise DRFValidationError({'project_id': 'project_id must be an integer'})
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
+                raise DRFValidationError({'project_id': 'Unknown project'})
             if pid not in accessible_ids:
                 raise PermissionDenied('You do not have access to this project.')
             return pid
 
-        active = getattr(user, 'active_project', None)
+        try:
+            active = user.active_project
+        except Project.DoesNotExist:
+            active = None
         if not active or active.id not in accessible_ids:
             return None
         return active.id
@@ -513,15 +524,17 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
             project_ids = [pid]
         else:
-            active = getattr(user, 'active_project', None)
+            try:
+                active = user.active_project
+            except Project.DoesNotExist:
+                active = None
             project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
 
         if not project_ids:
@@ -619,15 +632,17 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
             project_ids = [pid]
         else:
-            active = getattr(user, 'active_project', None)
+            try:
+                active = user.active_project
+            except Project.DoesNotExist:
+                active = None
             project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
 
         if not project_ids:
@@ -659,15 +674,17 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         project_id_param = request.query_params.get('project_id')
         if project_id_param:
-            try:
-                pid = int(project_id_param)
-            except ValueError:
+            pid = resolve_project_pk(project_id_param)
+            if pid is None:
                 return Response({'detail': 'Invalid project_id.'}, status=status.HTTP_400_BAD_REQUEST)
             if pid not in accessible_ids:
                 return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
             project_ids = [pid]
         else:
-            active = getattr(user, 'active_project', None)
+            try:
+                active = user.active_project
+            except Project.DoesNotExist:
+                active = None
             project_ids = [active.id] if active and active.id in accessible_ids else list(accessible_ids)
 
         if not project_ids:
@@ -690,9 +707,8 @@ class TaskViewSet(viewsets.ModelViewSet):
         if not project_id_param:
             return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            project_id = int(project_id_param)
-        except (TypeError, ValueError):
+        project_id = resolve_project_pk(project_id_param)
+        if project_id is None:
             return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
 
         has_membership = ProjectMember.objects.filter(
@@ -756,7 +772,10 @@ class TaskViewSet(viewsets.ModelViewSet):
             'current_approver',
             'meeting_origin__meeting__type_definition',
         )
-        task = get_object_or_404(base_qs, pk=self.kwargs.get('pk'))
+        from core.slug_mixins import resolve_lookup_kwargs
+        lookup_value = self.kwargs.get('pk')
+        filter_kwargs = resolve_lookup_kwargs(lookup_value, 'pk')
+        task = get_object_or_404(base_qs, **filter_kwargs)
 
         user = self.request.user
         if not user.is_authenticated:
@@ -813,7 +832,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 body="You have been assigned to a new task.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=task_action_url(task.id),
+                action_url=task_action_url(task.slug),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -837,7 +856,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 body="You have been assigned as approver for this task.",
                 related_object_type="task",
                 related_object_id=str(task.id),
-                action_url=task_action_url(task.id),
+                action_url=task_action_url(task.slug),
                 metadata={
                     "task_id": task.id,
                     "project_id": task.project_id,
@@ -878,7 +897,7 @@ class TaskViewSet(viewsets.ModelViewSet):
 
         actor_id   = self.request.user.id
         project_id = task.project_id
-        action_url = task_action_url(task.id)
+        action_url = task_action_url(task.slug)
         task_meta  = {"task_id": task.id, "project_id": project_id}
 
         # ── Owner reassigned ──────────────────────────────────────────────────
@@ -1207,70 +1226,97 @@ class TaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def make_approval(self, request, pk=None):
         """Make approval decision (approve or reject) for a task"""
+        # Resolve the row up front so we lock the correct pk (routes may be slug-based).
         task = self.get_object()
-        
-        # Validate task can be approved/rejected
-        if task.status != Task.Status.UNDER_REVIEW:
-            return Response(
-                {'error': 'Task must be in UNDER_REVIEW status to be approved or rejected'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
-        # Verify the requesting user is the designated approver for this step
-        if task.current_approver_id and request.user.id != task.current_approver_id:
-            return Response(
-                {'error': 'Only the designated approver for this step can approve or reject.'},
-                status=status.HTTP_403_FORBIDDEN
-            )
-
-        # Validate request data
+        # Validate request data before opening a transaction
         serializer = TaskApprovalSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+
         action = serializer.validated_data['action']
         comment = serializer.validated_data.get('comment', '')
-        
+
         try:
-            # Execute the action
-            if action == 'approve':
-                task.approve()   # UNDER_REVIEW → APPROVED
-                is_approved = True
-            else:  # action == 'reject'
-                task.reject()    # UNDER_REVIEW → REJECTED
-                is_approved = False
+            # Serialize concurrent approvals: lock the row, then re-read status.
+            # A second approver acting at the same time blocks until the first
+            # transaction commits, then sees the already-decided status here and
+            # is rejected with 409 instead of overwriting the winning transition.
+            with transaction.atomic():
+                task = Task.lock_for_transition(task.pk)
+                if task is None:
+                    return Response(
+                        {'error': 'Task not found.'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
 
-            # Record the decision for the current step
-            step_number = (
-                task.current_approval_step
-                if task.current_approval_step
-                else task.approval_records.count() + 1
-            )
-            # Update revision round so next submission is tracked as a new round
-            ApprovalRecord.objects.create(
-                task=task,
-                approved_by=task.current_approver or request.user,
-                is_approved=is_approved,
-                comment=comment,
-                step_number=step_number,
-                revision_round=task.revision_round,
-                resubmitted_after_reject=task.revision_round > 0,
-                has_rejection_history=task.approval_records.filter(is_approved=False).exists()
-            )
+                # Re-validate under lock: task must still be awaiting a decision.
+                if task.status != Task.Status.UNDER_REVIEW:
+                    # A task that already moved to a decided state means another
+                    # approver won a concurrent race → 409 so the loser refreshes.
+                    # Never-review-ready states (DRAFT/SUBMITTED) are a plain 400.
+                    decided_states = {
+                        Task.Status.APPROVED,
+                        Task.Status.REJECTED,
+                        Task.Status.LOCKED,
+                        Task.Status.CANCELLED,
+                    }
+                    if task.status in decided_states:
+                        return Response(
+                            {'error': 'This task has already been decided by another approver.'},
+                            status=status.HTTP_409_CONFLICT
+                        )
+                    return Response(
+                        {'error': 'Task must be in UNDER_REVIEW status to be approved or rejected'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
-            # If approved and a chain is active, auto-advance to the next step
-            if is_approved and task.approval_chain and task.current_approval_step:
-                next_step_num = task.current_approval_step + 1
-                next_step = task.approval_chain.get_step(next_step_num)
-                if next_step:
-                    # More steps remain: APPROVED → UNDER_REVIEW with next approver
-                    task.forward_to_next()
-                    task.current_approver = next_step.approver
-                    task.current_approval_step = next_step_num
-                # else: chain is complete — task stays APPROVED, ready to be locked
+                # Verify the requesting user is the designated approver for this step
+                if task.current_approver_id and request.user.id != task.current_approver_id:
+                    return Response(
+                        {'error': 'Only the designated approver for this step can approve or reject.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
 
-            # Save all changes
-            task.save()
+                # Execute the action
+                if action == 'approve':
+                    task.approve()   # UNDER_REVIEW → APPROVED
+                    is_approved = True
+                else:  # action == 'reject'
+                    task.reject()    # UNDER_REVIEW → REJECTED
+                    is_approved = False
+
+                # Record the decision for the current step
+                step_number = (
+                    task.current_approval_step
+                    if task.current_approval_step
+                    else task.approval_records.count() + 1
+                )
+                # Update revision round so next submission is tracked as a new round
+                ApprovalRecord.objects.create(
+                    task=task,
+                    approved_by=task.current_approver or request.user,
+                    is_approved=is_approved,
+                    comment=comment,
+                    step_number=step_number,
+                    revision_round=task.revision_round,
+                    resubmitted_after_reject=task.revision_round > 0,
+                    has_rejection_history=task.approval_records.filter(is_approved=False).exists()
+                )
+
+                # If approved and a chain is active, auto-advance to the next step
+                if is_approved and task.approval_chain and task.current_approval_step:
+                    next_step_num = task.current_approval_step + 1
+                    next_step = task.approval_chain.get_step(next_step_num)
+                    if next_step:
+                        # More steps remain: APPROVED → UNDER_REVIEW with next approver
+                        task.forward_to_next()
+                        task.current_approver = next_step.approver
+                        task.current_approval_step = next_step_num
+                    # else: chain is complete — task stays APPROVED, ready to be locked
+
+                # Save all changes
+                task.save()
 
             # Sync budget request status when a budget task is approved or rejected
             if task.type == 'budget':
@@ -1777,7 +1823,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     def subtask_detail(self, request, pk=None, subtask_id=None):
         """Remove a subtask relationship (unlink only — does not delete the task)."""
         parent_task = self.get_object()
-        child_task = get_object_or_404(Task, pk=subtask_id)
+        child_task = get_object_or_404(Task, **resolve_lookup_kwargs(subtask_id))
         qs = TaskHierarchy.objects.filter(parent_task=parent_task, child_task=child_task)
         if not qs.exists():
             return Response({'error': 'Subtask relationship not found.'}, status=status.HTTP_404_NOT_FOUND)
@@ -1802,7 +1848,7 @@ class TaskViewSet(viewsets.ModelViewSet):
             return Response({'error': 'old_parent_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         old_parent = get_object_or_404(Task, pk=old_parent_id)
-        child_task = get_object_or_404(Task, pk=subtask_id)
+        child_task = get_object_or_404(Task, **resolve_lookup_kwargs(subtask_id))
 
         # remove old relationship
         TaskHierarchy.objects.filter(parent_task=old_parent, child_task=child_task).delete()
@@ -1954,18 +2000,18 @@ class TaskCommentListView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to this task.')
 
-        return TaskComment.objects.filter(task_id=task_id)
+        return TaskComment.objects.filter(task=task)
 
     def perform_create(self, serializer):
         import re  # noqa: PLC0415
 
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to comment on this task.')
@@ -1993,7 +2039,7 @@ class TaskCommentListView(generics.ListCreateAPIView):
                     body=body[:200] + ("…" if len(body) > 200 else ""),
                     related_object_type="task",
                     related_object_id=str(task.id),
-                    action_url=task_action_url(task.id),
+                    action_url=task_action_url(task.slug),
                     metadata={
                         "task_id": task.id,
                         "project_id": task.project_id,
@@ -2015,16 +2061,16 @@ class TaskAttachmentListView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to this task.')
 
-        return TaskAttachment.objects.filter(task_id=task_id)
+        return TaskAttachment.objects.filter(task=task)
 
     def perform_create(self, serializer):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to upload attachments to this task.')
@@ -2042,12 +2088,12 @@ class TaskAttachmentDetailView(generics.RetrieveDestroyAPIView):
 
     def get_queryset(self):
         task_id = self.kwargs.get('task_id')
-        task = get_object_or_404(Task, pk=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
 
         if not _user_can_access_task(self.request.user, task):
             raise PermissionDenied('You do not have access to this task.')
 
-        return TaskAttachment.objects.filter(task_id=task_id)
+        return TaskAttachment.objects.filter(task=task)
 
     def perform_destroy(self, instance):
         task_id = instance.task_id
@@ -2071,7 +2117,8 @@ class TaskAttachmentDownloadView(APIView):
         attachment_id = self.kwargs.get('pk')
         
         # Get the specific attachment
-        attachment = get_object_or_404(TaskAttachment, pk=attachment_id, task_id=task_id)
+        task = get_object_or_404(Task, **resolve_lookup_kwargs(task_id))
+        attachment = get_object_or_404(TaskAttachment, pk=attachment_id, task=task)
         
         if not _user_can_access_task(request.user, attachment.task):
             raise PermissionDenied('You do not have access to this task.')

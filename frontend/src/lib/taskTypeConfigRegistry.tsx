@@ -50,7 +50,7 @@ export type TaskTypeConfigStatic = {
   requiredFields: string[];
   getPayload: (
     formData: any,
-    taskData: { project_id?: number; summary?: string; current_approver_id?: number | null },
+    taskData: { project_id?: number | string; summary?: string; current_approver_id?: number | null },
     createdTask: { id: number }
   ) => Record<string, unknown> | null;
   updateApi: (id: number | string, payload: any) => Promise<unknown>;

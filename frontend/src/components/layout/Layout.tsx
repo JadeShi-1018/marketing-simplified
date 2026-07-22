@@ -4,8 +4,10 @@ import Header from './Header';
 import Sidebar from './Sidebar';
 import ChatWidget from '@/components/chat/ChatWidget';
 import AgentSidePanel from '@/components/agent/AgentSidePanel';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/authStore';
+import { useProjectStore } from '@/lib/projectStore';
+import { useStripProjectIdFromUrl } from '@/lib/useStripProjectIdFromUrl';
 import { usePermissionEditControl } from '@/hooks/usePermissionEditControl';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import { NotificationDrawerProvider } from '@/components/notifications/NotificationDrawerProvider';
@@ -50,10 +52,14 @@ const Layout: React.FC<LayoutProps> = ({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(sidebarCollapsed);
   const [isMobile, setIsMobile] = useState(false);
   const router = useRouter();
-  const searchParams = useSearchParams();
-  
-  // Get project_id from URL for auto-switching chat widget
-  const contextProjectId = searchParams.get('project_id');
+  useStripProjectIdFromUrl();
+  const activeProject = useProjectStore((s) => s.activeProject);
+  const contextProjectId =
+    activeProject?.slug != null
+      ? String(activeProject.slug)
+      : activeProject?.id != null
+        ? String(activeProject.id)
+        : null;
   
   // Get user from auth store
   const { user: authUser, logout } = useAuthStore();

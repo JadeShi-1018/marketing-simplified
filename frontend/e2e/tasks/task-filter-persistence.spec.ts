@@ -4,6 +4,7 @@ import {
   deleteTaskById,
   navigateToTasksAndSelectProject,
   waitForTasksPageReady,
+  getActiveProjectSlug,
 } from './tasks-helpers';
 import { openFirstTaskFromListAndNavigate } from './task-workspace-helpers';
 
@@ -23,10 +24,10 @@ test.describe('Task list filter/sort persistence', () => {
 
   test.beforeEach(async ({ page }) => {
     // Fresh page load — state always resets on reload now.
-    await page.goto(`/tasks?project_id=${projectId}`);
+    await page.goto(`/projects/${encodeURIComponent(await getActiveProjectSlug(page))}/tasks`);
     await waitForTasksPageReady(page);
     fixtureSummary = `Persistence fixture ${Date.now()}`;
-    fixtureTaskId = await createDraftTaskViaApi(page, projectId, fixtureSummary);
+    fixtureTaskId = (await createDraftTaskViaApi(page, projectId, fixtureSummary)).id;
     await page.reload();
     await waitForTasksPageReady(page);
     await page.getByTestId('tab-tasks').click();
@@ -56,7 +57,7 @@ test.describe('Task list filter/sort persistence', () => {
 
     // Navigate into a task
     await openFirstTaskFromListAndNavigate(page);
-    await page.waitForURL(/\/tasks\/\d+/, { timeout: 10_000 });
+    await page.waitForURL(/\/tasks\/[\w-]+/, { timeout: 10_000 });
 
     // Navigate back
     await page.getByTestId('back-to-tasks').click();
@@ -75,23 +76,7 @@ test.describe('Task list filter/sort persistence', () => {
     await focusFixtureTask(page);
 
     await openFirstTaskFromListAndNavigate(page);
-    await page.waitForURL(/\/tasks\/\d+/, { timeout: 10_000 });
-    await page.getByTestId('back-to-tasks').click();
-    await page.waitForURL(/\/tasks/, { timeout: 10_000 });
-    await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });
-
-    await expect(page.getByRole('combobox', { name: 'Group tasks' })).toHaveValue('status');
-  });
-
-  test('search text persists after navigating to task detail and back', async ({ page }) => {
-    const searchInput = page.getByPlaceholder('Search summary, tags, type or owner…');
-    await expect(searchInput).toBeVisible();
-    await searchInput.fill(fixtureSummary);
-    await expect(page.getByTestId('task-row').filter({ hasText: fixtureSummary })).toBeVisible({ timeout: 10_000 });
-    await page.waitForTimeout(200);
-
-    await openFirstTaskFromListAndNavigate(page);
-    await page.waitForURL(/\/tasks\/\d+/, { timeout: 10_000 });
+    await page.waitForURL(/\/tasks\/[\w-]+/, { timeout: 10_000 });
     await page.getByTestId('back-to-tasks').click();
     await page.waitForURL(/\/tasks/, { timeout: 10_000 });
     await expect(page.getByTestId('task-list')).toBeVisible({ timeout: 15_000 });

@@ -67,11 +67,13 @@ class ZoomCredentialModelTest(TestCase):
 
     def setUp(self):
         # create a clean test user for each test method
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username="testuser",
-            email="test@example.com",
-            password="testpass123",
+            defaults={"email": "test@example.com"},
         )
+        if created:
+            self.user.set_password("testpass123")
+            self.user.save()
 
     def test_create_credential(self):
         """test if ZoomCredential can be created normally"""
@@ -105,11 +107,13 @@ class ZoomCredentialModelTest(TestCase):
 class ZoomServiceTest(TestCase):
 
     def setUp(self):
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username="testuser",
-            email="test@example.com",
-            password="testpass123",
+            defaults={"email": "test@example.com"},
         )
+        if created:
+            self.user.set_password("testpass123")
+            self.user.save()
 
     def test_get_authorization_url_contains_client_id(self):
         """
@@ -354,11 +358,13 @@ class ZoomAPITest(TestCase):
 
     def setUp(self):
         self.client = APIClient()
-        self.user = User.objects.create_user(
+        self.user, created = User.objects.get_or_create(
             username="testuser",
-            email="test@example.com",
-            password="testpass123",
+            defaults={"email": "test@example.com"},
         )
+        if created:
+            self.user.set_password("testpass123")
+            self.user.save()
         # force authentication, skip token validation, focus on testing business logic
         self.client.force_authenticate(user=self.user)
 
@@ -543,7 +549,7 @@ class ZoomAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_302_FOUND)
         self.assertIn("zoom_error=invalid_state", response["Location"])
 
-    @patch("zoom_integration.views.signing.loads")
+    @patch("core.services.oauth_state.signing.loads")
     def test_callback_state_expired(self, mock_loads):
         """test if callback should redirect when signed state is past max_age"""
         mock_loads.side_effect = signing.SignatureExpired("expired")

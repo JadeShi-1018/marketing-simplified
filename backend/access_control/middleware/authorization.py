@@ -1,6 +1,7 @@
 from django.http import JsonResponse
 from django.utils import timezone
 from django.db.models import Q
+from django.db import connection
 from datetime import timedelta
 from core.models import Permission
 from access_control.models import RolePermission, UserRole
@@ -35,11 +36,36 @@ class AuthorizationMiddleware:
         if not user or not user.is_authenticated:
             return None
 
+        # Superusers bypass module-level authorization. The @require_* decorators
+        # in this module already short-circuit for superusers ("Org admin
+        # (superuser) can always proceed"); this middleware was missing the same
+        # bypass, so superusers were denied any module whose RBAC permissions
+        # had not been seeded.
+        if getattr(user, 'is_superuser', False):
+            return None
+
+        # Org admins (role level == 2) bypass module-level permission checks.
+        # Level 2 is the Organization Admin level created by assign_org_admin().
+        # This matches the criterion used by is_org_admin() in admin_utils.py.
+        # TenantSchemaMiddleware has already set the correct search_path, so
+        # querying UserRole here hits the right tenant schema directly.
+        # Temporal validity is enforced: expired admin roles do not grant bypass.
+        try:
+            _now = timezone.now()
+            if UserRole.objects.filter(
+                user=user,
+                role__level=2,
+                valid_from__lte=_now,
+            ).filter(Q(valid_to__gte=_now) | Q(valid_to__isnull=True)).exists():
+                return None
+        except Exception:
+            pass
+
         # Parse the module from the path, e.g. /api/assets/... → ASSET
         parts = request.path.strip('/').split('/')
         if len(parts) < 2 or parts[0] != 'api':
             return None
-        
+
         raw = parts[1]
         module_key = raw.rstrip('s').upper()  # e.g. 'assets' -> 'ASSET'
         allowed_modules = {value for value, _ in Permission.MODULE_CHOICES}
@@ -54,21 +80,42 @@ class AuthorizationMiddleware:
             action_key = self.METHOD_ACTION_MAP.get(request.method, None)
         if not action_key:
             return None
-        
-        
-        # Only consider roles that are currently valid
-        now = timezone.now()
-        role_ids = UserRole.objects.filter(
-            user=request.user,
-            valid_from__lte=now
-        ).filter(Q(valid_to__gte=now) | Q(valid_to__isnull=True)).values_list('role_id', flat=True)
 
-        # Check if any of the user's roles grants the required permission
-        has = RolePermission.objects.filter(
-            role_id__in=role_ids,
-            permission__module=module_key,
-            permission__action=action_key
-        ).exists()
+        # CRITICAL: After multi-organization restructuring, UserRole and RolePermission
+        # tables now live in TENANT schemas, not public schema. TenantSchemaMiddleware
+        # has already set the correct search_path, so we query directly without switching.
+        #
+        # Wrap permission queries in try/except to gracefully handle cases where:
+        # 1. Tables don't exist yet (new organizations)
+        # 2. No roles/permissions have been set up yet
+        try:
+            # Only consider roles that are currently valid
+            now = timezone.now()
+            role_ids = UserRole.objects.filter(
+                user=request.user,
+                valid_from__lte=now
+            ).filter(Q(valid_to__gte=now) | Q(valid_to__isnull=True)).values_list('role_id', flat=True)
+
+            # Check if any of the user's roles grants the required permission
+            has = RolePermission.objects.filter(
+                role_id__in=role_ids,
+                permission__module=module_key,
+                permission__action=action_key
+            ).exists()
+
+            if not has:
+                # Only enforce denial if the user has been assigned at least one role.
+                # If no roles exist (new org / no RBAC configured), allow through as a
+                # grace period.  Users with roles that are all expired or lack the
+                # required permission are still denied.
+                any_role = UserRole.objects.filter(user=request.user).exists()
+                if not any_role:
+                    return None
+
+        except Exception:
+            # If permission tables don't exist or query fails, allow access.
+            # This handles new organizations where RBAC hasn't been configured yet.
+            return None
 
         if has:
             return None  # Allow request to proceed
@@ -95,12 +142,28 @@ class AuthorizationMiddleware:
                 # Check team membership and role
                 if not team_id:
                     return JsonResponse({'error': 'team_id required'}, status=400)
-                membership = TeamMember.objects.filter(user=user, team_id=team_id).first()
-                if not membership:
-                    return JsonResponse({'error': 'Permission denied: not a team member'}, status=403)
-                # Only allow if user has required role
-                if required_role == "LEADER" and membership.role_id != TeamRole.LEADER:
-                    return JsonResponse({'error': 'Permission denied: must be team leader'}, status=403)
+
+                # CRITICAL: Team membership data may live in public schema,
+                # so temporarily switch back if needed
+                with connection.cursor() as cursor:
+                    cursor.execute('SHOW search_path')
+                    original_path = cursor.fetchone()[0]
+
+                with connection.cursor() as cursor:
+                    cursor.execute('SET search_path TO public')
+
+                try:
+                    membership = TeamMember.objects.filter(user=user, team_id=team_id).first()
+                    if not membership:
+                        return JsonResponse({'error': 'Permission denied: not a team member'}, status=403)
+                    # Only allow if user has required role
+                    if required_role == "LEADER" and membership.role_id != TeamRole.LEADER:
+                        return JsonResponse({'error': 'Permission denied: must be team leader'}, status=403)
+                finally:
+                    # CRITICAL: Use f-string instead of %s parameter to avoid quoting the path
+                    with connection.cursor() as cursor:
+                        cursor.execute(f'SET search_path TO {original_path}')
+
                 return view_func(request, team_id=team_id, *args, **kwargs)
             return _wrapped_view
         return decorator

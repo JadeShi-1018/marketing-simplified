@@ -9,12 +9,15 @@ import { CustomerAPI } from '@/lib/api/customerApi';
 import { ExperienceGroupAPI } from '@/lib/api/experienceGroupApi';
 import { RegionAPI } from '@/lib/api/regionAPI';
 import { OrganisationAPI } from '@/lib/api/organisationAPI';
-import { Customer, CreateCustomerData, UpdateCustomerData } from '@/types/customer';
+import { CustomerStatusLabelAPI } from '@/lib/api/customerStatusLabelApi';
+import { Customer, CreateCustomerData, UpdateCustomerData, CustomerStatusLabel } from '@/types/customer';
+import StatusLabelBadge from '@/components/csm-settings/status-labels/StatusLabelBadge';
 import { ExperienceGroupListItem } from '@/types/experienceGroup';
 import { Region } from '@/types/region';
 import { Organisation } from '@/types/organisation';
 import { Plus, Pencil, Trash2, AlertCircle, X, Users, ArrowLeft } from 'lucide-react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 
 // ── Group selector shared between Create and Edit forms ───────────────────────
 
@@ -87,6 +90,29 @@ const OrgSelect: React.FC<OrgSelectProps> = ({ value, onChange, orgs, disabled }
   </select>
 );
 
+// ── Status label selector ─────────────────────────────────────────────────────
+
+interface StatusLabelSelectProps {
+  value: number | null;
+  onChange: (id: number | null) => void;
+  labels: CustomerStatusLabel[];
+  disabled?: boolean;
+}
+
+const StatusLabelSelect: React.FC<StatusLabelSelectProps> = ({ value, onChange, labels, disabled }) => (
+  <select
+    value={value ?? ''}
+    onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+    disabled={disabled}
+    className="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+  >
+    <option value="">— No status —</option>
+    {labels.map((l) => (
+      <option key={l.id} value={l.id}>{l.name}</option>
+    ))}
+  </select>
+);
+
 // ── Create Form ───────────────────────────────────────────────────────────────
 
 interface CreateFormProps {
@@ -94,11 +120,12 @@ interface CreateFormProps {
   groups: ExperienceGroupListItem[];
   regions: Region[];
   orgs: Organisation[];
+  labels: CustomerStatusLabel[];
   onSuccess: (customer: Customer) => void;
   onCancel: () => void;
 }
 
-const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, orgs, onSuccess, onCancel }) => {
+const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, orgs, labels, onSuccess, onCancel }) => {
   const [form, setForm] = useState<CreateCustomerData>({
     email: '',
     full_name: '',
@@ -107,6 +134,7 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, org
     experience_group: null,
     region: null,
     organisation: null,
+    status_label: null,
   });
   const [errors, setErrors] = useState<Partial<Record<keyof CreateCustomerData, string>>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -236,6 +264,16 @@ const CreateForm: React.FC<CreateFormProps> = ({ projectId, groups, regions, org
         </div>
       </div>
 
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-gray-700">Status Label</label>
+        <StatusLabelSelect
+          value={form.status_label ?? null}
+          onChange={(id) => setForm({ ...form, status_label: id })}
+          labels={labels}
+          disabled={submitting}
+        />
+      </div>
+
       <div className="flex justify-end gap-3 pt-2 border-t border-gray-200">
         <button
           type="button"
@@ -264,11 +302,12 @@ interface EditFormProps {
   groups: ExperienceGroupListItem[];
   regions: Region[];
   orgs: Organisation[];
+  labels: CustomerStatusLabel[];
   onSaved: (customer: Customer) => void;
   onClose: () => void;
 }
 
-const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, onSaved, onClose }) => {
+const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, labels, onSaved, onClose }) => {
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -291,6 +330,7 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, 
         experience_group: res.data.experience_group,
         region: res.data.region,
         organisation: res.data.organisation,
+        status_label: res.data.status_label,
         is_active: res.data.is_active,
       });
     } catch {
@@ -312,6 +352,7 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, 
     form.experience_group !== customer.experience_group ||
     form.region !== customer.region ||
     form.organisation !== customer.organisation ||
+    form.status_label !== customer.status_label ||
     form.is_active !== customer.is_active
   );
 
@@ -448,6 +489,16 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, 
         </div>
       </div>
 
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-gray-700">Status Label</label>
+        <StatusLabelSelect
+          value={form.status_label ?? null}
+          onChange={(id) => setForm({ ...form, status_label: id })}
+          labels={labels}
+          disabled={saving}
+        />
+      </div>
+
       <div className="flex items-center gap-3">
         <input
           id="is_active"
@@ -484,14 +535,15 @@ const EditForm: React.FC<EditFormProps> = ({ customerId, groups, regions, orgs, 
 
 const CustomersPage: React.FC = () => {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const projectId = Number(searchParams.get('project'));
-  const projectValid = Number.isFinite(projectId) && projectId > 0;
+  const { activeProject } = useActiveProjectForFlatRoute();
+  const projectId = Number(activeProject?.id ?? 0);
+  const projectValid = projectId > 0;
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [groups, setGroups] = useState<ExperienceGroupListItem[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
   const [orgs, setOrgs] = useState<Organisation[]>([]);
+  const [labels, setLabels] = useState<CustomerStatusLabel[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -508,11 +560,12 @@ const CustomersPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [custRes, grpRes, regRes, orgRes] = await Promise.all([
+      const [custRes, grpRes, regRes, orgRes, labelRes] = await Promise.all([
         CustomerAPI.list({ project: projectId }),
         ExperienceGroupAPI.list({ project: projectId }),
         RegionAPI.list(),
         OrganisationAPI.list(),
+        CustomerStatusLabelAPI.list(projectId).catch(() => [] as CustomerStatusLabel[]),
       ]);
       const custData = custRes.data;
       setCustomers(Array.isArray(custData) ? custData : (custData as any).results ?? []);
@@ -522,6 +575,7 @@ const CustomersPage: React.FC = () => {
       setRegions(Array.isArray(regData) ? regData : (regData as any).results ?? []);
       const orgData = orgRes.data;
       setOrgs(Array.isArray(orgData) ? orgData : (orgData as any).results ?? []);
+      setLabels(labelRes);
     } catch {
       setError('Failed to load data. Please try again.');
     } finally {
@@ -669,6 +723,7 @@ const CustomersPage: React.FC = () => {
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Experience Group</th>
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Region</th>
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Organisation</th>
+                    <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Status Label</th>
                     <th className="px-5 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide">Status</th>
                     <th className="px-5 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wide">Actions</th>
                   </tr>
@@ -704,6 +759,16 @@ const CustomersPage: React.FC = () => {
                           <span className="px-2 py-0.5 text-xs font-medium bg-purple-50 text-purple-700 rounded-full">
                             {orgs.find((o) => o.id === customer.organisation)?.name ?? '—'}
                           </span>
+                        ) : (
+                          <span className="italic text-gray-300 text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4">
+                        {customer.status_label_name ? (
+                          <StatusLabelBadge
+                            name={customer.status_label_name}
+                            color={customer.status_label_color ?? '#475569'}
+                          />
                         ) : (
                           <span className="italic text-gray-300 text-xs">—</span>
                         )}
@@ -753,6 +818,7 @@ const CustomersPage: React.FC = () => {
               groups={groups}
               regions={regions}
               orgs={orgs}
+              labels={labels}
               onSuccess={handleCreated}
               onCancel={() => setIsCreateModalOpen(false)}
             />
@@ -777,6 +843,7 @@ const CustomersPage: React.FC = () => {
                 groups={groups}
                 regions={regions}
                 orgs={orgs}
+                labels={labels}
                 onSaved={handleSaved}
                 onClose={() => setEditingCustomerId(null)}
               />

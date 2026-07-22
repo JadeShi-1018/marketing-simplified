@@ -10,7 +10,8 @@ import subprocess
 import tempfile
 from .models import Chat, ChatParticipant, ChatStar, Message, MessageMention, MessageStatus, ChatType, ChannelVisibility, MessageAttachment, MessageReaction, PinnedMessage, SavedMessage, ScheduledMessage
 from .services import ChatService
-from core.models import ProjectMember
+from core.models import ProjectMember, Project
+from core.slug_mixins import resolve_project_pk
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -642,7 +643,7 @@ class ChatSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name', 'topic', 'description', 'visibility',
+            'id', 'slug', 'project', 'type', 'name', 'topic', 'description', 'visibility',
             'created_by_id', 'created_by',
             'participants', 'last_message', 'unread_count', 'mention_unread_count',
             'created_at', 'updated_at'
@@ -683,7 +684,7 @@ class ChatListSerializer(ChatUnreadCountMixin, serializers.ModelSerializer):
     class Meta:
         model = Chat
         fields = [
-            'id', 'project', 'type', 'name', 'topic', 'description', 'visibility',
+            'id', 'slug', 'project', 'type', 'name', 'topic', 'description', 'visibility',
             'created_by_id', 'created_by',
             'participants', 'participant_count', 'last_message',
             'last_message_time', 'unread_count', 'mention_unread_count',
@@ -811,13 +812,39 @@ class ChatStarReorderSerializer(serializers.Serializer):
     )
 
 
+class ProjectPkOrSlugField(serializers.Field):
+    """Accept project pk (int/str digits) or project slug on write."""
+
+    default_error_messages = {
+        'invalid': 'Invalid project.',
+    }
+
+    def to_internal_value(self, data):
+        pk = resolve_project_pk(data)
+        if pk is None:
+            self.fail('invalid')
+        try:
+            return Project.objects.get(pk=pk)
+        except Project.DoesNotExist:
+            self.fail('invalid')
+
+    def to_representation(self, value):
+        # to_internal_value stores a Project instance, but this can also run on a
+        # raw pk (e.g. serializing a model field), so handle both forms.
+        if isinstance(value, Project):
+            return value.pk
+        return value
+
+
 class ChatCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating chats"""
+    project = ProjectPkOrSlugField()
     participant_ids = serializers.ListField(
         child=serializers.IntegerField(),
         write_only=True,
-        required=True,
-        help_text="List of user IDs to add as participants"
+        required=False,
+        default=list,
+        help_text="List of user IDs to add as participants (creator is added automatically)"
     )
     
     class Meta:
@@ -825,10 +852,10 @@ class ChatCreateSerializer(serializers.ModelSerializer):
         fields = ['project', 'type', 'name', 'participant_ids']
     
     def validate_participant_ids(self, value):
-        """Validate participant IDs"""
+        """Validate participant IDs."""
         if not value:
-            raise serializers.ValidationError("At least one participant is required")
-        
+            return []
+
         # Remove duplicates
         value = list(set(value))
         
@@ -883,11 +910,6 @@ class ChatCreateSerializer(serializers.ModelSerializer):
                 )
         
         elif chat_type == ChatType.GROUP:
-            if len(participant_ids) < 1:
-                raise serializers.ValidationError(
-                    "Group chat must have at least 1 participant (excluding yourself)"
-                )
-            
             if not data.get('name'):
                 raise serializers.ValidationError(
                     "Group chat must have a name"
@@ -897,19 +919,20 @@ class ChatCreateSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"Channel name cannot be longer than {MAX_CHANNEL_NAME_LENGTH} characters"
                 )
-            
-            # Validate all participants are project members
-            all_user_ids = participant_ids + [request.user.id]
-            project_member_count = ProjectMember.objects.filter(
-                project=project,
-                user_id__in=all_user_ids,
-                is_active=True
-            ).count()
-            
-            if project_member_count != len(all_user_ids):
-                raise serializers.ValidationError(
-                    "All participants must be members of the project"
-                )
+
+            if participant_ids:
+                # Validate all participants are project members
+                all_user_ids = participant_ids + [request.user.id]
+                project_member_count = ProjectMember.objects.filter(
+                    project=project,
+                    user_id__in=all_user_ids,
+                    is_active=True
+                ).count()
+
+                if project_member_count != len(all_user_ids):
+                    raise serializers.ValidationError(
+                        "All participants must be members of the project"
+                    )
         
         return data
     
@@ -1155,7 +1178,7 @@ class ChatContextSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Chat
-        fields = ['id', 'type', 'name']
+        fields = ['id', 'slug', 'type', 'name']
         read_only_fields = fields
 
 
@@ -1314,11 +1337,22 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         default=list,
         help_text="User IDs mentioned in this message."
     )
+    client_message_id = serializers.CharField(
+        required=False,
+        write_only=True,
+        allow_blank=True,
+        allow_null=True,
+        max_length=64,
+        help_text="Client-generated idempotency key for retried sends.",
+    )
     attachments = MessageAttachmentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Message
-        fields = ['id', 'chat', 'content', 'rich_body', 'mention_ids', 'attachment_ids', 'reply_to_id', 'parent_message_id', 'attachments', 'created_at']
+        fields = [
+            'id', 'chat', 'content', 'rich_body', 'mention_ids', 'attachment_ids',
+            'reply_to_id', 'parent_message_id', 'client_message_id', 'attachments', 'created_at',
+        ]
         read_only_fields = ['id', 'attachments', 'created_at']
 
     def validate_content(self, value):
@@ -1416,61 +1450,35 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         return value
 
     def create(self, validated_data):
-        # Set sender from request context
+        from .services import MessageService
+
         request = self.context.get('request')
-        validated_data['sender'] = request.user
+        sender = request.user
+        chat = validated_data['chat']
 
-        # Handle reply_to_id (quote reply)
         reply_to_id = validated_data.pop('reply_to_id', None)
-        if reply_to_id:
-            validated_data['reply_to_id'] = reply_to_id
-
-        # Handle parent_message_id (thread reply)
         parent_message_id = validated_data.pop('parent_message_id', None)
-        if parent_message_id:
-            validated_data['parent_message_id'] = parent_message_id
-
         attachment_ids = validated_data.pop('attachment_ids', [])
         mention_ids = validated_data.pop('mention_ids', [])
-        message = super().create(validated_data)
+        client_message_id = validated_data.pop('client_message_id', None) or None
+        if client_message_id == '':
+            client_message_id = None
 
-        # Persist mention relations
-        if mention_ids:
-            MessageMention.objects.bulk_create(
-                [MessageMention(message=message, mentioned_user_id=uid) for uid in mention_ids],
-                ignore_conflicts=True,
-            )
-        
-        # Link attachments to the message
-        if attachment_ids:
-            linked_count = MessageAttachment.objects.filter(
-                id__in=attachment_ids,
-                uploader=request.user,
-                message__isnull=True
-            ).update(message=message)
-            if linked_count > 0 and not message.has_attachments:
-                message.has_attachments = True
-                message.save(update_fields=['has_attachments', 'updated_at'])
+        content = validated_data.get('content', '')
+        rich_body = validated_data.get('rich_body')
 
-        # Route to Agent Bot if it is a participant in this chat
-        try:
-            AGENT_BOT_EMAIL = 'agent-bot@system.local'
-            sender = request.user
-            if sender.email != AGENT_BOT_EMAIL:
-                from .models import ChatParticipant
-                bot_participant = ChatParticipant.objects.filter(
-                    chat=message.chat,
-                    user__email=AGENT_BOT_EMAIL,
-                    is_active=True,
-                ).first()
-                if bot_participant:
-                    from agent.tasks import handle_chat_message_for_agent
-                    handle_chat_message_for_agent.delay(message.id)
-        except Exception:
-            logger.exception(
-                "Failed to route message to agent bot for message %s", message.id
-            )
-
+        message, created = MessageService.create_message_with_attachments(
+            sender=sender,
+            chat=chat,
+            content=content,
+            attachment_ids=attachment_ids,
+            mention_ids=mention_ids,
+            rich_body=rich_body,
+            reply_to_id=reply_to_id,
+            parent_message_id=parent_message_id,
+            client_message_id=client_message_id,
+        )
+        self._message_created = created
         return message
 
 

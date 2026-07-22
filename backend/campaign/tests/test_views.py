@@ -7,6 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
 from decimal import Decimal
+from unittest.mock import patch
 
 from core.models import Organization, Project, ProjectMember
 from campaign.models import (
@@ -151,7 +152,7 @@ class CampaignViewSetCRUDTestCase(CampaignViewSetBaseTestCase):
         campaign1 = self._create_campaign(name="Campaign 1")
         campaign2 = self._create_campaign(name="Campaign 2", project=self.project2)
         
-        url = f'/api/campaigns/?project={self.project.id}'
+        url = f'/api/campaigns/?project={self.project.slug}'
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -172,7 +173,8 @@ class CampaignViewSetCRUDTestCase(CampaignViewSetBaseTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]['status'], 'PLANNING')
     
-    def test_create_campaign(self):
+    @patch('campaign.views.CampaignTaskIntegrationService.on_campaign_created')
+    def test_create_campaign(self, mock_on_campaign_created):
         """Test creating a campaign"""
         url = '/api/campaigns/'
         data = {
@@ -238,7 +240,19 @@ class CampaignViewSetCRUDTestCase(CampaignViewSetBaseTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['name'], 'Test Campaign')
         self.assertEqual(response.data['id'], str(campaign.id))
-    
+
+    def test_retrieve_campaign_by_slug(self):
+        """Campaign resolves by slug (UUID pk still works; slug is the user-facing key)."""
+        campaign = self._create_campaign(name="Winter Sale Campaign")
+        self.assertTrue(campaign.slug)
+
+        url = f'/api/campaigns/{campaign.slug}/'
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['id'], str(campaign.id))
+        self.assertEqual(response.data['slug'], campaign.slug)
+
     def test_update_campaign(self):
         """Test updating a campaign"""
         campaign = self._create_campaign(name="Original Name")

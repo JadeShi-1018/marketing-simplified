@@ -3,12 +3,14 @@ name: MediaJira CI/CD Pipeline
 on:
   push:
     branches: [main, prod-preview]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main, prod-preview]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   block:
@@ -150,6 +152,53 @@ jobs:
             devops/pip-audit/*report*
             devops/npm-audit/*report*
             devops/gitleaks/*report*
+  migration_guard:
+    needs: block
+    if: always() && needs.block.result != 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Guard against deleting historical migrations
+        run: |
+          set -euo pipefail
+
+          if [ "${{ contains(github.event.pull_request.labels.*.name, 'migration-override') }}" = "true" ]; then
+            echo "Override label 'migration-override' detected; skipping migration deletion guard."
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+            HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+            HEAD_SHA="${{ github.sha }}"
+          fi
+
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "No stable base SHA available; skipping migration deletion guard."
+            exit 0
+          fi
+
+          deleted_migrations=$(git diff --name-status "$BASE_SHA" "$HEAD_SHA" -- 'backend/**/migrations/*.py' | awk '$1 ~ /^(D|R)/ { print }')
+
+          if [ -n "$deleted_migrations" ]; then
+            echo "Django migration files were deleted or renamed:"
+            echo "$deleted_migrations"
+            echo
+            echo "Historical migration files must be kept for existing databases."
+            echo "Add merge/squash migrations instead of deleting old migration files."
+            echo "See backend/MIGRATIONS.md for the migration policy (why, and how to change migrations)."
+            exit 1
+          fi
+
+          echo "No deleted or renamed Django migration files detected."
+
   image_scan:
     needs: block
     if: always() && needs.block.result != 'failure'
@@ -256,6 +305,10 @@ jobs:
           load: true
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache,mode=max
+
+      - name: Free disk space before frontend build
+        run: docker buildx prune -af --keep-storage 2GB
+
       - name: Build frontend image
         uses: docker/build-push-action@v5
         with:
@@ -389,31 +442,30 @@ jobs:
            "
 
       # Run tests that are excluded from the parallel run above.
-      # These file-upload integration tests and asset scan Celery tasks share
-      # resources (file storage, scanner state) and are not safe under xdist,
-      # so the parallel run --ignores them (see backend/pytest.ini). They were
-      # part of the suite before SMP-555 (executed by `manage.py test`), so we
-      # run them serially here to avoid a coverage regression.
+      # These file-upload integration tests, asset scan Celery tasks, and budget
+      # concurrency tests share resources / race on timing and are not safe under
+      # xdist, so the parallel run --ignores them (see backend/pytest.ini). They
+      # were part of the suite before SMP-555 (executed by `manage.py test`), so
+      # we run them serially here to avoid a coverage regression.
       - name: Run serial backend tests (excluded from parallel run)
         run: |
           docker compose exec backend sh -c "
             echo 'Running serial backend tests...' &&
-            pytest -v -o addopts='' --ds=backend.settings --timeout=300 metric_upload/tests/integration asset/tests/test_tasks.py
+            pytest -v -o addopts='' --ds=backend.settings --timeout=600 metric_upload/tests/integration asset/tests/test_tasks.py budget_approval/tests/test_concurrency.py
            "
 
       # Run frontend tests in container
       - name: Run frontend tests in container
-        continue-on-error: true
         run: |
           # run tests in the built frontend image
           # connect to the same network as backend services
           docker compose exec frontend sh -c "
             echo 'Running frontend linting...' &&
-            npm run lint &&
+            npx next lint --max-warnings 9999 &&
             echo 'Building frontend application...' &&
             npm run build &&
-            echo 'Running frontend tests (if configured)...' &&
-            npm test || echo 'No tests configured'
+            echo 'Running frontend tests...' &&
+            npm test
           "
 
       # Cleanup containers and volumes
@@ -426,18 +478,47 @@ jobs:
           docker system prune -f
 
   deploy:
-    needs: [block, code_scan, image_scan, application_test]
-    if: always() && needs.block.result != 'failure' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod-preview') && (github.event_name == 'push' || github.event_name == 'pull_request')
+    needs: [block, migration_guard, code_scan, image_scan, application_test]
+    if: needs.block.result == 'success' && needs.migration_guard.result == 'success' && needs.code_scan.result == 'success' && needs.image_scan.result == 'success' && needs.application_test.result == 'success' && github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - name: Trigger deploy (main)
-        if: github.ref == 'refs/heads/main'
         env:
           DEPLOY_WEBHOOK_URL: ${{ secrets.MEDIAJIRA_DEPLOY_WEBHOOK_URL_MAIN }}
         run: |
           curl -fsSL -X POST "$DEPLOY_WEBHOOK_URL" \
             -H "Content-Type: application/json" \
             -d '{"action": "deploy", "source": "github"}'
+
+      - name: Verify production health after deploy
+        env:
+          PRODUCTION_HEALTH_URL: ${{ vars.MEDIAJIRA_PRODUCTION_HEALTH_URL || 'https://zmarkio.com' }}
+          HEALTH_CHECK_ATTEMPTS: ${{ vars.MEDIAJIRA_HEALTH_CHECK_ATTEMPTS || '45' }}
+          HEALTH_CHECK_INTERVAL: ${{ vars.MEDIAJIRA_HEALTH_CHECK_INTERVAL || '20' }}
+        run: |
+          echo "Verifying production health at $PRODUCTION_HEALTH_URL (up to $HEALTH_CHECK_ATTEMPTS attempts, ${HEALTH_CHECK_INTERVAL}s apart)"
+
+          for attempt in $(seq 1 "$HEALTH_CHECK_ATTEMPTS"); do
+            status_code=$(curl -sS -L -o /tmp/mediajira-health.html -w "%{http_code}" --max-time 20 "$PRODUCTION_HEALTH_URL" || true)
+            status_code=${status_code:-000}
+
+            if [ "$status_code" -ge 200 ] && [ "$status_code" -lt 400 ]; then
+              echo "Production health check passed with HTTP $status_code on attempt $attempt."
+              exit 0
+            fi
+
+            echo "Production health check attempt $attempt/$HEALTH_CHECK_ATTEMPTS failed with HTTP $status_code."
+            if grep -qi "error code 521\|web server is down" /tmp/mediajira-health.html 2>/dev/null; then
+              echo "Cloudflare 521 / Web server is down response detected."
+            fi
+
+            if [ "$attempt" -lt "$HEALTH_CHECK_ATTEMPTS" ]; then
+              sleep "$HEALTH_CHECK_INTERVAL"
+            fi
+          done
+
+          echo "Production health check failed after $HEALTH_CHECK_ATTEMPTS attempts."
+          exit 1
 
       # - name: Trigger deploy (prod-preview)
       #   if: github.ref == 'refs/heads/prod-preview'
@@ -466,8 +547,76 @@ jobs:
       #       -H "Content-Type: application/json" \
       #       -d '{"action": "deploy", "source": "github"}'
 
+  sbom_release:
+    needs: block
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install SBOM tools
+        run: |
+          pip install cyclonedx-bom
+          npm install -g @cyclonedx/cyclonedx-npm
+
+      - name: Generate backend and frontend SBOMs
+        run: |
+          mkdir -p sbom
+          cyclonedx-py requirements \
+            backend/requirements.txt \
+            --output-format JSON \
+            --validate \
+            -o sbom/mediajira-backend-python-${{ github.ref_name }}.cdx.json
+          cyclonedx-npm \
+            --package-lock-only \
+            --output-format JSON \
+            --validate \
+            --output-file sbom/mediajira-frontend-npm-${{ github.ref_name }}.cdx.json \
+            frontend/package.json
+
+      - name: Validate SBOM format
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in sorted(Path("sbom").glob("*.cdx.json")):
+              with path.open() as f:
+                  data = json.load(f)
+              assert data.get("bomFormat") == "CycloneDX", f"{path}: missing CycloneDX bomFormat"
+              assert data.get("specVersion"), f"{path}: missing specVersion"
+              assert isinstance(data.get("components", []), list), f"{path}: components must be a list"
+              print(f"validated {path}")
+          PY
+
+      - name: Upload SBOM workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediajira-sboms-${{ github.ref_name }}
+          path: sbom/*.cdx.json
+
+      - name: Publish SBOMs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sbom/*.cdx.json
+
   notify:
-    needs: [block, code_scan, image_scan, application_test, deploy]
+    needs: [block, migration_guard, code_scan, image_scan, application_test, deploy, sbom_release]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -476,28 +625,33 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.MEDIAJIRA_DISCORD_WEBHOOK_URL }}
         run: |
           BLOCK="${{ needs.block.result }}"
+          MIGRATION_GUARD="${{ needs.migration_guard.result }}"
           CODE_SCAN="${{ needs.code_scan.result }}"
           IMAGE_SCAN="${{ needs.image_scan.result }}"
           APPLICATION_TEST="${{ needs.application_test.result }}"
           DEPLOY="${{ needs.deploy.result }}"
+          SBOM_RELEASE="${{ needs.sbom_release.result }}"
           
           # Determine overall status based on all job results
           OVERALL_STATUS="success"
-          if [ "$BLOCK" == "failure" ] || [ "$CODE_SCAN" == "failure" ] || [ "$IMAGE_SCAN" == "failure" ] || [ "$APPLICATION_TEST" == "failure" ] || [ "$DEPLOY" == "failure" ]; then
+          if [ "$BLOCK" == "failure" ] || [ "$MIGRATION_GUARD" == "failure" ] || [ "$CODE_SCAN" == "failure" ] || [ "$IMAGE_SCAN" == "failure" ] || [ "$APPLICATION_TEST" == "failure" ] || [ "$DEPLOY" == "failure" ] || [ "$SBOM_RELEASE" == "failure" ]; then
             OVERALL_STATUS="failure"
           fi
           
           MESSAGE="Workflow *${{ github.workflow }}* finished on branch *${{ github.ref_name }}*\n"
           MESSAGE+="Block: **$BLOCK**\n"
+          MESSAGE+="Migration guard: **$MIGRATION_GUARD**\n"
           MESSAGE+="Code scan: **$CODE_SCAN**\n"
           MESSAGE+="Image scan: **$IMAGE_SCAN**\n"
           MESSAGE+="Application test: **$APPLICATION_TEST**\n"
           MESSAGE+="Deploy: **$DEPLOY**\n"
-          MESSAGE+="Overall status: **$OVERALL_STATUS**"
+          MESSAGE+="SBOM release: **$SBOM_RELEASE**\n"
+          MESSAGE+="Overall status: **$OVERALL_STATUS**\n"
+          MESSAGE+="Commit: ${{ github.sha }}\n"
+          MESSAGE+="Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           curl -fsSL -H "Content-Type: application/json" -X POST -d "{\"content\": \"$MESSAGE\"}" "$DISCORD_WEBHOOK_URL"
           
           # Exit with failure if overall status is failure
           if [ "$OVERALL_STATUS" == "failure" ]; then
             exit 1
           fi
-

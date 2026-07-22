@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 const QueueDetailContent: React.FC = () => {
   const params = useParams();
   const router = useRouter();
-  const queueId = Number(params.id);
+  const queueId = String(params.id);
 
   const [queue, setQueue] = useState<Queue | null>(null);
   const [agents, setAgents] = useState<QueueAgent[]>([]);
@@ -38,11 +38,13 @@ const QueueDetailContent: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [queueData, agentsData, teamsData, counts] = await Promise.all([
-        CsmAPI.getQueue(queueId),
-        CsmAPI.getQueueAgents(queueId),
-        CsmAPI.getQueueTeams(queueId),
-        CsmAPI.getTicketCounts(queueId),
+      // Queue is fetched by slug; nested sub-resources use the
+      // resolved numeric id (their routes are id-keyed).
+      const queueData = await CsmAPI.getQueue(queueId);
+      const [agentsData, teamsData, counts] = await Promise.all([
+        CsmAPI.getQueueAgents(queueData.id),
+        CsmAPI.getQueueTeams(queueData.id),
+        CsmAPI.getTicketCounts(queueData.id),
       ]);
       setQueue(queueData);
       setAgents(agentsData);
@@ -64,9 +66,9 @@ const QueueDetailContent: React.FC = () => {
     if (!agentUserId) return;
     setAssigningAgent(true);
     try {
-      await CsmAPI.assignAgent(queueId, Number(agentUserId));
+      await CsmAPI.assignAgent(queue!.id, Number(agentUserId));
       setAgentUserId('');
-      const updated = await CsmAPI.getQueueAgents(queueId);
+      const updated = await CsmAPI.getQueueAgents(queue!.id);
       setAgents(updated);
     } catch (err: any) {
       alert(err?.response?.data?.detail || err?.response?.data?.user?.[0] || 'Failed to assign agent');
@@ -78,7 +80,7 @@ const QueueDetailContent: React.FC = () => {
   const handleRemoveAgent = async (assignmentId: number) => {
     if (!confirm('Remove this agent from the queue?')) return;
     try {
-      await CsmAPI.removeAgent(queueId, assignmentId);
+      await CsmAPI.removeAgent(queue!.id, assignmentId);
       setAgents((prev) => prev.filter((a) => a.id !== assignmentId));
     } catch {
       alert('Failed to remove agent');
@@ -90,9 +92,9 @@ const QueueDetailContent: React.FC = () => {
     if (!teamId) return;
     setAssigningTeam(true);
     try {
-      await CsmAPI.assignTeam(queueId, Number(teamId));
+      await CsmAPI.assignTeam(queue!.id, Number(teamId));
       setTeamId('');
-      const updated = await CsmAPI.getQueueTeams(queueId);
+      const updated = await CsmAPI.getQueueTeams(queue!.id);
       setTeams(updated);
     } catch (err: any) {
       alert(err?.response?.data?.detail || err?.response?.data?.team?.[0] || 'Failed to assign team');
@@ -104,7 +106,7 @@ const QueueDetailContent: React.FC = () => {
   const handleRemoveTeam = async (assignmentId: number) => {
     if (!confirm('Remove this team from the queue?')) return;
     try {
-      await CsmAPI.removeTeam(queueId, assignmentId);
+      await CsmAPI.removeTeam(queue!.id, assignmentId);
       setTeams((prev) => prev.filter((t) => t.id !== assignmentId));
     } catch {
       alert('Failed to remove team');

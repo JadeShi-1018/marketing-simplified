@@ -564,8 +564,9 @@ function SortableNestedItem({
 export default function MeetingWorkspacePage() {
   const params = useParams();
   const router = useRouter();
-  const projectId = normalizeNumberParam(params?.projectId);
-  const meetingId = normalizeNumberParam(params?.meetingId);
+  const projectId = (Array.isArray(params?.projectId) ? params.projectId[0] : (params?.projectId as string)) ?? '';
+  const meetingIdRaw = Array.isArray(params?.meetingId) ? params.meetingId[0] : (params?.meetingId as string);
+  const meetingId = meetingIdRaw ?? '';
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
   const [agendaItems, setAgendaItems] = useState<AgendaItem[]>([]);
@@ -690,7 +691,7 @@ export default function MeetingWorkspacePage() {
 
   const layoutStorageKey = useMemo(
     () =>
-      Number.isFinite(projectId) && Number.isFinite(meetingId)
+      projectId && meetingId
         ? `meeting-workspace-layout:${projectId}:${meetingId}`
         : null,
     [projectId, meetingId],
@@ -803,7 +804,7 @@ export default function MeetingWorkspacePage() {
   ]);
 
   useEffect(() => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) {
+    if (!projectId || !meetingId) {
       setError('Project ID and Meeting ID are required');
       setProject(null);
       setLoading(false);
@@ -857,7 +858,7 @@ export default function MeetingWorkspacePage() {
 
   // After creating a task/decision in another tab or via bfcache back, refetch so generated_* links appear.
   useEffect(() => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) {
+    if (!projectId || !meetingId) {
       return;
     }
     let cancelled = false;
@@ -943,7 +944,7 @@ export default function MeetingWorkspacePage() {
   }, [loading]);
 
   useEffect(() => {
-    if (!Number.isFinite(projectId) || !meeting) {
+    if (!projectId || !meeting) {
       setArtifactResources({ decisions: [], tasks: [], spreadsheets: [] });
       setArtifactResourcesLoading(false);
       return;
@@ -1005,7 +1006,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const queuePersistWorkspaceLayout = () => {
-    if (!Number.isFinite(projectId) || !Number.isFinite(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (skipLayoutPersistRef.current) return;
     if (layoutPersistTimerRef.current) window.clearTimeout(layoutPersistTimerRef.current);
     layoutPersistTimerRef.current = window.setTimeout(() => {
@@ -1048,7 +1049,7 @@ export default function MeetingWorkspacePage() {
     Boolean(activeTemplateId) && customTemplates.some((t) => t.id === activeTemplateId);
 
   const saveLayoutNow = async (mode: SaveLayoutMode = 'meeting_only') => {
-    if (!Number.isFinite(projectId) || !Number.isFinite(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (layoutPersistTimerRef.current) {
       window.clearTimeout(layoutPersistTimerRef.current);
       layoutPersistTimerRef.current = null;
@@ -1143,7 +1144,7 @@ export default function MeetingWorkspacePage() {
   }, [blocks, nestedSections, meeting?.id, loading]);
 
   const saveMeetingMeta = async () => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (savingMeetingMeta) return;
 
     setSavingMeetingMeta(true);
@@ -1164,7 +1165,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const applyTemplateIfAgendaEmpty = async (meetingType: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (orderedAgenda.length > 0) return;
     if (isCustomTemplateMeetingType(meetingType)) return;
 
@@ -1215,7 +1216,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const handleMeetingTypeChange = async (nextType: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (!meeting) return;
     const trimmed = nextType.trim();
     if (!trimmed || trimmed === meeting.meeting_type || meetingTypeSaving) return;
@@ -1256,7 +1257,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const saveMeetingTitle = async (nextTitle: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (!meeting || nextTitle.trim() === meeting.title.trim()) return;
     try {
       const updated = await MeetingsAPI.patchMeeting(projectId, meetingId, { title: nextTitle.trim() });
@@ -1268,7 +1269,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const saveMeetingObjective = async (nextObjective: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (!meeting || (nextObjective ?? '').trim() === (meeting.objective ?? '').trim()) return;
     try {
       const updated = await MeetingsAPI.patchMeeting(projectId, meetingId, { objective: nextObjective.trim() || '' });
@@ -1362,8 +1363,8 @@ export default function MeetingWorkspacePage() {
     void (async () => {
       if (
         priorMeetingType !== expectedMeetingType &&
-        Number.isFinite(projectId) &&
-        Number.isFinite(meetingId)
+        projectId &&
+        meetingId
       ) {
         try {
           const typeUpdated = await MeetingsAPI.patchMeeting(projectId, meetingId, {
@@ -1532,7 +1533,7 @@ export default function MeetingWorkspacePage() {
   }, [artifactResources, artifacts, artifactSearchText]);
 
   const addParticipant = async (userId: number) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (addingParticipant) return;
 
     setAddingParticipant(true);
@@ -1556,7 +1557,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const linkMeetingArtifact = async (artifact_type: string, artifact_id: number) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (addingArtifact) return;
 
     const id = Math.trunc(artifact_id);
@@ -1604,7 +1605,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const removeArtifact = async (artifactLinkId: number) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (removingArtifactIds.has(artifactLinkId)) return;
 
     const snapshot = artifacts;
@@ -1629,7 +1630,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const saveParticipantRole = async (participantLinkId: number, nextRole: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (savingParticipantIds.has(participantLinkId)) return;
 
     const current = participants.find((p) => p.id === participantLinkId);
@@ -1658,7 +1659,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const removeParticipant = async (participantLinkId: number) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (removingParticipantIds.has(participantLinkId)) return;
 
     const snapshot = participants;
@@ -1687,7 +1688,7 @@ export default function MeetingWorkspacePage() {
     nextContent: string,
     opts?: { silent?: boolean },
   ) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
 
     const trimmed = nextContent.trim();
     const current = agendaItems.find((a) => a.id === agendaItemId);
@@ -1727,7 +1728,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const patchAgendaPriority = async (agendaItemId: number, is_priority: boolean) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
 
     const current = agendaItems.find((a) => a.id === agendaItemId);
     if (!current || current.is_priority === is_priority) return;
@@ -1941,7 +1942,7 @@ export default function MeetingWorkspacePage() {
    *   On failure: rollback optimistic item + show error.
    */
   const addItemToSection = async (sectionId: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
 
     const tempId = `item-${crypto.randomUUID()}`;
     const defaultText = 'New item';
@@ -2060,7 +2061,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const deleteAgendaItem = async (agendaItemId: number) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (deletingAgendaIds.has(agendaItemId)) return;
 
     const snapshot = agendaItems;
@@ -2083,7 +2084,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const deleteNestedSection = async (sectionId: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     const section = nestedSections.find((s) => s.id === sectionId);
     if (!section) return;
     const numericIds = section.items
@@ -2107,7 +2108,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const deleteNestedItem = async (sectionId: string, itemId: string) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     const nid = Number(itemId);
     if (Number.isFinite(nid) && nid > 0) {
       const prevNested = nestedSections;
@@ -2135,7 +2136,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const handleAddAgendaItem = async () => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     const content = newAgendaText.trim();
     if (!content) return;
 
@@ -2161,7 +2162,7 @@ export default function MeetingWorkspacePage() {
   };
 
   const reorderAgendaOptimistically = async (activeId: number, overId: number) => {
-    if (!projectId || Number.isNaN(projectId) || !meetingId || Number.isNaN(meetingId)) return;
+    if (!projectId || !meetingId) return;
     if (activeId === overId) return;
 
     const before = orderedAgenda;
@@ -2204,10 +2205,10 @@ export default function MeetingWorkspacePage() {
           <AlertCircle className="h-6 w-6" />
           <p className="mt-3 font-semibold">Could not load meeting</p>
           <p className="text-sm text-red-500">{error}</p>
-          {Number.isNaN(projectId) ? null : (
+          {!projectId ? null : (
             <button
               type="button"
-              onClick={() => router.push(`/projects/${projectId}/meetings`)}
+              onClick={() => router.push('/meetings')}
               className="mt-4 text-sm font-medium text-[#3CCED7] hover:underline"
             >
               Back to meetings
@@ -2272,7 +2273,7 @@ export default function MeetingWorkspacePage() {
                     size="sm"
                     variant="outline"
                     onClick={() =>
-                      router.push(`/projects/${projectId}/meetings/${meetingId}/document`)
+                      router.push(`/projects/${project?.slug ?? projectId}/meetings/${meeting?.slug || meetingId}/document`)
                     }
                   >
                     Open document
@@ -2296,7 +2297,7 @@ export default function MeetingWorkspacePage() {
                 </div>
               </div>
 
-              {meeting && Number.isFinite(projectId) && Number.isFinite(meetingId) ? (
+              {meeting && projectId && meetingId ? (
                 <div className="mt-6">
                   <MeetingGeneratedKnowledgeSection
                     projectId={projectId}
@@ -2358,7 +2359,7 @@ export default function MeetingWorkspacePage() {
                         onExternalReferenceChange={setExtRefDraft}
                         onMeetingTypeChange={(value) => void handleMeetingTypeChange(value)}
                         onSave={() => void saveMeetingMeta()}
-                        onBack={() => router.push(`/projects/${projectId}/meetings`)}
+                        onBack={() => router.push('/meetings')}
                         onTitleSave={(value) => void saveMeetingTitle(value)}
                         onObjectiveSave={(value) => void saveMeetingObjective(value)}
                       />
@@ -2912,8 +2913,8 @@ export default function MeetingWorkspacePage() {
                       }
                       rows={orderedArtifacts.map((a) => {
                         const href =
-                          Number.isFinite(projectId) && !Number.isNaN(projectId)
-                            ? meetingArtifactHref(projectId, a.artifact_type, a.artifact_id)
+                          projectId
+                            ? meetingArtifactHref(projectId, a.artifact_type, a.artifact_id, artifactResources)
                             : null;
                         const rawT = normalizeMeetingArtifactType(a.artifact_type);
                         const kind: ArtifactKind =
@@ -3006,7 +3007,7 @@ export default function MeetingWorkspacePage() {
               <p className="text-sm text-gray-600">
                 Project:{' '}
                 <span className="font-medium">
-                  {project?.name?.trim() || (Number.isNaN(projectId) ? '—' : `#${projectId}`)}
+                  {project?.name?.trim() || (!projectId ? '—' : `#${projectId}`)}
                 </span>
               </p>
               {layoutSaving ? <p className="text-xs text-slate-400">Saving layout…</p> : null}
@@ -3088,7 +3089,7 @@ export default function MeetingWorkspacePage() {
                   </button>
                 </div>
               ) : null}
-              <Link href={`/projects/${projectId}`} className="text-sm text-[#3CCED7] hover:underline">
+              <Link href={`/projects/${project?.slug ?? projectId}`} className="text-sm text-[#3CCED7] hover:underline">
                 Back to project
               </Link>
             </div>

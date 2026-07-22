@@ -41,6 +41,7 @@ import { replaceAgendaAndLayoutFromNested } from '@/lib/meetings/replaceMeetingA
 import { MeetingLifecyclePanel } from '@/components/meetings/MeetingLifecyclePanel';
 import { hasVisibleText, sanitizeDocumentPreviewHtml } from '@/lib/meetings/documentPreview';
 
+import { Id } from '@/types/common';
 import type { Meeting, MeetingDocument, MeetingPartialUpdateRequest, ParticipantLink, MeetingStatus } from '@/types/meeting';
 function PanelSection({
   title,
@@ -63,8 +64,8 @@ function PanelSection({
 }
 
 export interface MeetingSummaryPanelProps {
-  projectId: number;
-  meetingId: number;
+  projectId: Id;
+  meetingId: Id;
   onClose: () => void;
   /** Called after meeting fields are saved so parent can refresh list cards. */
   onMeetingUpdated?: (meeting: Meeting) => void;
@@ -632,7 +633,7 @@ export function MeetingSummaryPanel({
                 </Button>
 
                 <Link
-                  href={`/projects/${projectId}/meetings/${meetingId}`}
+                  href={`/projects/${projectId}/meetings/${meeting?.slug || meetingId}`}
                   className="inline-flex w-full items-center justify-center rounded-lg border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-3 py-2.5 text-sm font-medium text-[#1a9ba3] transition hover:bg-[#3CCED7]/15"
                 >
                   Open full meeting workspace

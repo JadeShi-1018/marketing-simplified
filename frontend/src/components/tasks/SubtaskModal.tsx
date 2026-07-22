@@ -9,8 +9,8 @@ interface SubtaskModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubtaskAdded: () => void;
-  parentTaskId: number;
-  parentTaskProjectId?: number;
+  parentTaskId: number | string;
+  parentTaskProjectId?: number | string;
   parentTaskIsSubtask?: boolean;
 }
 
@@ -106,7 +106,7 @@ export default function SubtaskModal({
         // Filter tasks: exclude only the current parent task itself
         // Allow selecting all other tasks, including subtasks of other parents
         const filtered = allTasks.filter((task: TaskData) => {
-          if (task.id === parentTaskId) return false;
+          if (task.id != null && String(task.id) === String(parentTaskId)) return false;
           const query = searchQuery.toLowerCase();
           const taskSummary = (task.summary || '').toLowerCase();
           const taskId = task.id?.toString() || '';

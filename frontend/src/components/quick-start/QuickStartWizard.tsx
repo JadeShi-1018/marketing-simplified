@@ -216,11 +216,13 @@ export default function QuickStartWizard() {
 
       const project: ProjectData = {
         id: response.project.id,
+        slug: response.project.slug,
         name: response.project.name,
         is_active: response.project.is_active ?? true,
       };
 
-      await ProjectAPI.setActiveProject(project.id);
+      // set_active is slug-only on the backend; pass slug (fall back to id for legacy).
+      await ProjectAPI.setActiveProject(project.slug ?? project.id);
       markCompleted(project);
       await refreshProjects();
 
@@ -236,8 +238,8 @@ export default function QuickStartWizard() {
         projectName: project.name,
         summary: response.summary,
         enabledModules: { ...state.selectedModules },
-        spreadsheetId: response.created.spreadsheet_ids[0] ?? null,
-        miroBoardId: response.created.miro_board_ids[0] ?? null,
+        spreadsheetId: response.created.spreadsheet_slugs?.[0] ?? null,
+        miroBoardId: response.created.miro_board_slugs?.[0] ?? null,
         createdAt: Date.now(),
       });
       const parts = [

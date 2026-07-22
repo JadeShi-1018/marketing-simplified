@@ -39,8 +39,9 @@ export interface ChatParticipant {
 
 export interface Chat {
   id: number;
-  project_id: number;
-  project?: number; // Backend may send this instead of project_id
+  slug: string;
+  project_id: number | string;
+  project?: number | string; // Backend may send this instead of project_id
   type: ChatType;
   name?: string | null;
   topic?: string | null;
@@ -82,6 +83,17 @@ export interface MessageAttachment {
   created_at: string;
 }
 
+export interface PendingAttachment {
+  /** Temporary client-side id. */
+  id: string;
+  file: File;
+  preview?: string;
+  progress: number;
+  uploading: boolean;
+  uploaded?: MessageAttachment;
+  error?: string;
+}
+
 export interface MissingForwardedAttachment {
   id: number;
   kind: 'audio' | 'video' | 'image' | 'document' | 'unknown';
@@ -92,6 +104,7 @@ export interface MissingForwardedAttachment {
 
 export interface ChatContext {
   id: number;
+  slug: string;
   type: ChatType;
   name?: string | null;
 }
@@ -173,13 +186,42 @@ export interface Message {
   thread_participants?: Array<{ id: number; username: string; email: string; avatar?: string | null }>;
   /** True when there are thread replies the current user has not seen. */
   has_unread_thread_replies?: boolean;
+  /** Client idempotency key while a send is still in the outbox. */
+  client_message_id?: string;
+  /** Local delivery state for optimistic / retried sends. */
+  send_status?: OutboxSendStatus;
+}
+
+// ==================== Outbox Types ====================
+
+export type OutboxSendStatus = 'pending' | 'sending' | 'failed';
+
+export interface OutboxEntry {
+  clientMessageId: string;
+  chatId: number;
+  content: string;
+  richBody?: TiptapJSONContent | null;
+  attachmentIds: number[];
+  mentionIds?: number[];
+  replyToId?: number | null;
+  parentMessageId?: number | null;
+  status: OutboxSendStatus;
+  enqueuedAt: string;
+}
+
+export interface OutboxAckCommit {
+  client_message_id: string;
+  message_id: number;
+  // Embedded by the server so reconnect reconciliation needs no per-id REST
+  // fetch. Optional so an older/absent payload safely falls back to getMessage.
+  message?: Message | null;
 }
 
 // ==================== API Request/Response Types ====================
 
 export interface CreateChatRequest {
   type: ChatType;
-  project_id: number;
+  project_id: number | string;
   participant_ids: number[];
   name?: string;
 }
@@ -197,6 +239,8 @@ export interface SendMessageRequest {
   rich_body?: TiptapJSONContent | null;
   /** IDs of @-mentioned users. */
   mention_ids?: number[];
+  /** Idempotency key for retried sends after reconnect. */
+  client_message_id?: string;
 }
 
 export interface SendMessageResponse extends Message {}
@@ -235,7 +279,7 @@ export interface ForwardBatchResponse {
 }
 
 export interface GetChatsParams {
-  project_id?: number;
+  project_id?: number | string;
   type?: ChatType;
   limit?: number;
   offset?: number;
@@ -331,10 +375,12 @@ export interface WebSocketMessage {
 
 export interface ChatState {
   // Data
-  chatsByProject: Record<number, Chat[]>; // Keyed by project_id
+  chatsByProject: Record<number | string, Chat[]>; // Keyed by project_id
   currentChatId: number | null;  // For Messages page
   widgetChatId: number | null;   // For Chat Widget (independent)
   messages: Record<number, Message[]>; // Keyed by chat_id
+  outbox: OutboxEntry[];
+  pendingAttachmentsByChat: Record<number, PendingAttachment[]>; // Ephemeral upload outbox keyed by chat_id
   unreadCounts: Record<number, number>; // Keyed by chat_id
   capturedUnreadCounts: Record<number, number>; // Snapshot taken at the moment a chat is opened — used for the "New messages" divider
   globalUnreadCount: number; // Total unread across ALL projects
@@ -345,28 +391,41 @@ export interface ChatState {
   // UI State
   isWidgetOpen: boolean;
   isMessagePageOpen: boolean;
-  selectedProjectId: number | null;
-  widgetProjectId: number | null;  // Widget's own project selection
+  selectedProjectId: number | string | null;
+  widgetProjectId: number | string | null;  // Widget's own project selection
   currentView: 'list' | 'chat';
   widgetView: 'list' | 'chat';     // Widget's own view state
   isLoading: boolean;
   
   // Actions
-  setChatsForProject: (projectId: number, chats: Chat[]) => void;
-  getChatsForProject: (projectId: number | null) => Chat[];
+  setChatsForProject: (projectId: number | string, chats: Chat[]) => void;
+  getChatsForProject: (projectId: number | string | null) => Chat[];
   addChat: (chat: Chat) => void;
   removeChat: (chatId: number) => void;
   updateChat: (chatId: number, updates: Partial<Chat>) => void;
   setCurrentChat: (chatId: number | null) => void;
   setWidgetChat: (chatId: number | null) => void;
-  setWidgetProjectId: (projectId: number | null) => void;
+  setWidgetProjectId: (projectId: number | string | null) => void;
   setWidgetView: (view: 'list' | 'chat') => void;
   
   setMessages: (chatId: number, messages: Message[]) => void;
-  addMessage: (chatId: number, message: Message, currentUserId?: number) => void;
-  prependMessages: (chatId: number, messages: Message[]) => void;
+  addMessage: (chatId: number, message: Message, currentUserId?: number, replaceClientMessageId?: string) => void;
+  enqueueOutbox: (entry: OutboxEntry) => void;
+  markOutboxSending: (clientMessageId: string) => void;
+  markOutboxSent: (clientMessageId: string, message: Message) => void;
+  markOutboxFailed: (clientMessageId: string) => void;
+  getOutboxDigest: () => string[];
+  flushOutbox: () => Promise<void>;
+  retryOutboxEntry: (clientMessageId: string) => Promise<void>;
+  reconcileOutboxAck: (committed: OutboxAckCommit[]) => Promise<void>;
+
+    prependMessages: (chatId: number, messages: Message[]) => void;
   updateMessage: (messageId: number, updates: Partial<Message>) => void;
   removeMessage: (messageId: number) => void;
+  addPendingAttachments: (chatId: number, attachments: PendingAttachment[]) => void;
+  updatePendingAttachment: (chatId: number, attachmentId: string, updates: Partial<PendingAttachment>) => void;
+  removePendingAttachment: (chatId: number, attachmentId: string) => void;
+  clearPendingAttachments: (chatId: number) => void;
   applyReactionUpdate: (messageId: number, emoji: string, action: 'added' | 'removed', user: ReactionUser, currentUserId: number | null) => void;
   updateUserPresence: (userId: number, isOnline: boolean, version?: number | null) => void;
   setPresenceSnapshot: (users: Array<{ user_id: number; is_online: boolean; version?: number | null }>) => void;
@@ -388,7 +447,7 @@ export interface ChatState {
   openWidget: () => void;
   closeWidget: () => void;
   setMessagePageOpen: (isOpen: boolean) => void;
-  setSelectedProjectId: (projectId: number | null) => void;
+  setSelectedProjectId: (projectId: number | string | null) => void;
   setView: (view: 'list' | 'chat') => void;
   
   setLoading: (loading: boolean) => void;
@@ -500,10 +559,13 @@ export interface MessageItemProps {
   onRemind?: (messageId: number) => void;
   isPinned?: boolean;
   isSaved?: boolean;
+  /** Canonical chat slug for copy-link URLs. */
+  chatSlug?: string;
 }
 
 export interface MessageListProps {
   messages: Message[];
+  chatSlug?: string;
   currentUserId: number;
   onLoadMore: () => void;
   hasMore: boolean;
@@ -552,7 +614,7 @@ export interface CreateChatDialogProps {
   isOpen: boolean;
   onClose: () => void;
   projectId: string;
-  onChatCreated: (chatId: number) => void;
+  onChatCreated: (chatId: number, chatSlug?: string) => void;
   /** When set, only group (channel) creation is shown — for Slack-style “Add channel”. */
   variant?: 'default' | 'channel';
 }
@@ -567,11 +629,12 @@ export interface ChatStarRow {
 }
 
 export interface ParticipantSelectorProps {
-  projectId: string;
+  projectId: number | string;
   selectedIds: number[];
   onSelect: (ids: number[]) => void;
   maxSelection?: number;
   currentUserId: number;
+  allowSolo?: boolean;
 }
 
 // ==================== Project Member Types ====================

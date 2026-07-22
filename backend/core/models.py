@@ -1,6 +1,11 @@
-from django.db import models
+import uuid
+
+from django.db import models, transaction
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth.models import AbstractUser
 from django.contrib.auth.base_user import BaseUserManager
+from django.conf import settings
+from django.utils import timezone
 from django.utils.text import slugify
 
 class TimeStampedModel(models.Model):
@@ -26,21 +31,46 @@ class Organization(TimeStampedModel):
     stripe_customer_id = models.CharField(max_length=255, null=True, blank=True)
 
     def save(self, *args, **kwargs):
+        is_new = self.pk is None
         if not self.slug:
             self.slug = self._generate_unique_slug()
-        super().save(*args, **kwargs)
+        # transaction.atomic() creates a savepoint when an outer transaction
+        # already exists (e.g. called from a view wrapped in atomic()), so
+        # nesting is safe.  If provision_tenant_schema() raises, the savepoint
+        # is released and both the INSERT and the CREATE SCHEMA are rolled back
+        # — satisfying the AC "no org record without a corresponding schema".
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if is_new:
+                # Synchronous by design: must share this transaction so that
+                # schema-creation failure rolls back the org row atomically.
+                # Org creation is low-frequency; the extra latency is acceptable.
+                from core.services.tenant import provision_tenant_schema
+                provision_tenant_schema(self.slug)
     
     def _generate_unique_slug(self):
         """Generate a unique slug from the organization name"""
+        import uuid
+
         base_slug = slugify(self.name)
+
+        # Fallback: if slugify returns empty (e.g. for Chinese/Korean names),
+        # use allow_unicode=True to preserve Unicode characters
+        if not base_slug:
+            base_slug = slugify(self.name, allow_unicode=True)
+
+        # Last resort: if still empty, use a UUID-based slug
+        if not base_slug:
+            base_slug = f"org-{uuid.uuid4().hex[:8]}"
+
         slug = base_slug
         counter = 1
-        
+
         # Keep checking until we find a unique slug
         while Organization.objects.filter(slug=slug).exclude(pk=self.pk).exists():
             slug = f"{base_slug}-{counter}"
             counter += 1
-            
+
         return slug
 
     def __str__(self):
@@ -221,7 +251,16 @@ class CustomUser(AbstractUser):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='users'
+        related_name='users',
+        help_text="DEPRECATED: Use current_organization instead. Kept for backward compatibility."
+    )
+    current_organization = models.ForeignKey(
+        Organization,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='current_users',
+        help_text="The organization context the user is currently viewing"
     )
     active_project = models.ForeignKey(
         'core.Project',
@@ -229,7 +268,8 @@ class CustomUser(AbstractUser):
         null=True,
         blank=True,
         related_name='active_users',
-        help_text="The currently active project for this user"
+        help_text="The currently active project for this user",
+        db_constraint=False  # CRITICAL: Project is in tenant schema, User in public schema
     )
 
     USERNAME_FIELD = 'email'
@@ -240,7 +280,7 @@ class CustomUser(AbstractUser):
     def __str__(self):
         return self.email 
 
-class Project(TimeStampedModel):
+class Project(SluggedResourceModelMixin, TimeStampedModel):
     """
     Project model - Top-level container for all workspace activities.
     Stores media buyer configuration collected during onboarding wizard.
@@ -480,3 +520,298 @@ class ProjectInvitation(TimeStampedModel):
         """Check if the invitation is valid (not accepted and not expired)"""
         return self.approved and not self.accepted and not self.is_expired()
 
+
+class DataExportRequest(TimeStampedModel):
+    """Tracks GDPR personal-data export jobs requested by a user."""
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        READY = "ready", "Ready"
+        FAILED = "failed", "Failed"
+        EXPIRED = "expired", "Expired"
+
+    class ExportFormat(models.TextChoices):
+        JSON = "json", "JSON"
+        CSV = "csv", "CSV"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        "core.CustomUser",
+        on_delete=models.CASCADE,
+        related_name="data_export_requests",
+    )
+    export_format = models.CharField(max_length=10, choices=ExportFormat.choices, default=ExportFormat.JSON)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    file = models.FileField(upload_to="privacy_exports/%Y/%m/%d/", blank=True, null=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    failure_reason = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+            models.Index(fields=["status", "expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"Data export {self.id} for {self.user_id} ({self.status})"
+
+
+class OrganizationMembership(TimeStampedModel):
+    """
+    Many-to-many relationship between users and organizations.
+    Stores organization-level role and membership metadata.
+    Lives in PUBLIC schema (not tenant schema).
+    """
+    user = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='organization_memberships',
+        help_text="User who is a member of the organization"
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='memberships',
+        help_text="Organization the user belongs to"
+    )
+    role = models.CharField(
+        max_length=50,
+        default='member',
+        help_text="Organization-level role: 'admin', 'member', 'viewer'"
+    )
+    joined_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the user joined the organization"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this membership is currently active"
+    )
+    invited_by = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='invited_memberships',
+        help_text="User who invited this member"
+    )
+
+    class Meta:
+        unique_together = ['user', 'organization']
+        ordering = ['-joined_at']
+        indexes = [
+            models.Index(fields=['user', 'is_active']),
+            models.Index(fields=['organization', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} @ {self.organization.name} ({self.role})"
+
+
+class OrganizationInvitation(TimeStampedModel):
+    """
+    Invitation to join an organization.
+    Supports reusable invitation links with max_uses limit.
+    Lives in PUBLIC schema.
+    """
+    email = models.EmailField(
+        blank=True,
+        null=True,
+        help_text="Specific email address (optional - if null, anyone can use the link)"
+    )
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='invitations',
+        help_text="Organization being invited to"
+    )
+    role = models.CharField(
+        max_length=50,
+        default='member',
+        help_text="Role the invitee will receive: 'admin', 'member', 'viewer'"
+    )
+    invited_by = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sent_org_invitations',
+        help_text="User who created this invitation"
+    )
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        help_text="Unique token for the invitation link"
+    )
+    max_uses = models.PositiveIntegerField(
+        default=1,
+        help_text="Maximum number of times this invitation can be used (0 = unlimited)"
+    )
+    use_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of times this invitation has been used"
+    )
+    expires_at = models.DateTimeField(
+        help_text="When the invitation expires"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this invitation is active (can be manually revoked)"
+    )
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['organization', 'is_active']),
+        ]
+
+    def __str__(self):
+        target = self.email or "anyone"
+        return f"Invitation to {target} for {self.organization.name}"
+
+    def is_expired(self):
+        """Check if the invitation has expired"""
+        from django.utils import timezone
+        return timezone.now() > self.expires_at
+
+    def is_valid(self):
+        """Check if invitation can still be used"""
+        if not self.is_active or self.is_expired():
+            return False
+        # max_uses = 0 means unlimited
+        if self.max_uses > 0 and self.use_count >= self.max_uses:
+            return False
+        return True
+
+    def can_be_used_by(self, email):
+        """Check if a specific email can use this invitation"""
+        if not self.is_valid():
+            return False
+        # If invitation has a specific email, it must match
+        if self.email and self.email.lower() != email.lower():
+            return False
+        return True
+
+
+class OrganizationInvitationUse(TimeStampedModel):
+    """
+    Audit log of invitation usage.
+    Tracks who used which invitation and when.
+    """
+    invitation = models.ForeignKey(
+        OrganizationInvitation,
+        on_delete=models.CASCADE,
+        related_name='uses',
+        help_text="The invitation that was used"
+    )
+    user = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.CASCADE,
+        related_name='invitation_uses',
+        help_text="User who used the invitation"
+    )
+    used_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="When the invitation was used"
+    )
+
+    class Meta:
+        ordering = ['-used_at']
+        indexes = [
+            models.Index(fields=['invitation', 'used_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} used invitation at {self.used_at}"
+
+
+class OrganizationActivityEvent(models.Model):
+    """
+    Append-only audit log for organization-level events.
+    Covers member joins/leaves/removals, subscription plan changes,
+    and token quota milestones.
+    """
+
+    class EventType(models.TextChoices):
+        # Member events
+        MEMBER_JOINED = 'member_joined', 'Member Joined'
+        MEMBER_REMOVED = 'member_removed', 'Member Removed'
+        MEMBER_LEFT = 'member_left', 'Member Left'
+        # Subscription / plan events
+        PLAN_SUBSCRIBED = 'plan_subscribed', 'Plan Subscribed'
+        PLAN_CHANGED = 'plan_changed', 'Plan Changed'
+        PLAN_CANCEL_SCHEDULED = 'plan_cancel_scheduled', 'Plan Cancel Scheduled'
+        PLAN_REACTIVATED = 'plan_reactivated', 'Plan Reactivated'
+        SEATS_CHANGED = 'seats_changed', 'Seats Changed'
+        PLAN_CANCELLED = 'plan_cancelled', 'Plan Cancelled'
+        # Token quota events
+        TOKEN_QUOTA_WARNING = 'token_quota_warning', 'Token Quota Warning'
+        TOKEN_QUOTA_EXCEEDED = 'token_quota_exceeded', 'Token Quota Exceeded'
+        TOKEN_OVERAGE_STARTED = 'token_overage_started', 'Token Overage Started'
+
+    CATEGORY_MAP = {
+        'member_joined': 'member',
+        'member_removed': 'member',
+        'member_left': 'member',
+        'plan_subscribed': 'plan',
+        'plan_changed': 'plan',
+        'plan_cancel_scheduled': 'plan',
+        'plan_reactivated': 'plan',
+        'seats_changed': 'plan',
+        'plan_cancelled': 'plan',
+        'token_quota_warning': 'token',
+        'token_quota_exceeded': 'token',
+        'token_overage_started': 'token',
+    }
+
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='activity_events',
+        db_index=True,
+    )
+    event_type = models.CharField(
+        max_length=40,
+        choices=EventType.choices,
+        db_index=True,
+    )
+    actor = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='org_activity_actor',
+        help_text="User who triggered the event (null = system/webhook)",
+    )
+    target_user = models.ForeignKey(
+        'core.CustomUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='org_activity_target',
+        help_text="User affected by the event (for member events)",
+    )
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Extra context: plan name, seat count, token threshold, etc.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['organization', '-created_at']),
+        ]
+
+    @property
+    def category(self):
+        return self.CATEGORY_MAP.get(self.event_type, 'other')
+
+    def __str__(self):
+        return f"[{self.organization.name}] {self.event_type} at {self.created_at}"

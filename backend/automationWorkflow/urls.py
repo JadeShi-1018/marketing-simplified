@@ -18,7 +18,7 @@ urlpatterns = [
         name="workflow-list",
     ),
     path(
-        "workflows/<int:pk>/",
+        "workflows/<str:pk>/",
         WorkflowViewSet.as_view(
             {
                 "get": "retrieve",
@@ -30,32 +30,32 @@ urlpatterns = [
         name="workflow-detail",
     ),
     path(
-        "workflows/<int:pk>/graph/",
+        "workflows/<str:pk>/graph/",
         WorkflowViewSet.as_view({"get": "graph"}),
         name="workflow-graph",
     ),
     path(
-        "workflows/<int:pk>/validate/",
+        "workflows/<str:pk>/validate/",
         WorkflowViewSet.as_view({"post": "validate"}),
         name="workflow-validate",
     ),
     path(
-        "workflows/<int:pk>/nodes/batch/",
+        "workflows/<str:pk>/nodes/batch/",
         WorkflowViewSet.as_view({"post": "batch_nodes"}),
         name="workflow-batch-nodes",
     ),
     path(
-        "workflows/<int:pk>/connections/batch/",
+        "workflows/<str:pk>/connections/batch/",
         WorkflowViewSet.as_view({"post": "batch_connections"}),
         name="workflow-batch-connections",
     ),
     path(
-        "workflows/<int:workflow_pk>/nodes/",
+        "workflows/<str:workflow_pk>/nodes/",
         WorkflowNodeViewSet.as_view({"get": "list", "post": "create"}),
         name="node-list",
     ),
     path(
-        "workflows/<int:workflow_pk>/nodes/<int:pk>/",
+        "workflows/<str:workflow_pk>/nodes/<int:pk>/",
         WorkflowNodeViewSet.as_view(
             {
                 "get": "retrieve",
@@ -67,12 +67,12 @@ urlpatterns = [
         name="node-detail",
     ),
     path(
-        "workflows/<int:workflow_pk>/connections/",
+        "workflows/<str:workflow_pk>/connections/",
         WorkflowConnectionViewSet.as_view({"get": "list", "post": "create"}),
         name="connection-list",
     ),
     path(
-        "workflows/<int:workflow_pk>/connections/<int:pk>/",
+        "workflows/<str:workflow_pk>/connections/<int:pk>/",
         WorkflowConnectionViewSet.as_view(
             {
                 "get": "retrieve",

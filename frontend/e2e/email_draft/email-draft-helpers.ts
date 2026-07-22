@@ -1,4 +1,4 @@
-import fs from "node:fs";
+﻿import fs from "node:fs";
 import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import {
@@ -9,7 +9,7 @@ import {
 } from "./fixtures/list-user-data";
 
 /** Zustand persist key used by the frontend auth store (same as localStorage in the browser). */
-const AUTH_STORAGE_KEY = "auth-storage";
+const AUTH_STORAGE_KEY = "auth-storage-v1";
 
 /**
  * Written by `e2e/auth.setup.ts` after login.
@@ -24,8 +24,10 @@ export type CleanupRef = {
 
 type DraftLike = {
   id?: number;
+  slug?: string;
   name?: string;
   subject?: string;
+  blocks?: Array<{ email_draft?: number }>;
   settings?: {
     subject_line?: string;
     from_name?: string;
@@ -33,6 +35,29 @@ type DraftLike = {
   updated_at?: string;
   created_at?: string;
 };
+
+type DraftRef = {
+  id: number;
+  slug: string;
+  renderedTitle: string;
+};
+
+const draftSlugById = new Map<number, string>();
+
+function requireDraftRef(
+  draft: DraftLike | undefined,
+  type: "Klaviyo" | "Mailchimp",
+  renderedTitle: string,
+): DraftRef {
+  if (typeof draft?.id !== "number") {
+    throw new TypeError(`${type} create draft response missing id.`);
+  }
+  if (typeof draft.slug !== "string" || draft.slug.trim() === "") {
+    throw new TypeError(`${type} create draft response missing slug.`);
+  }
+  draftSlugById.set(draft.id, draft.slug);
+  return { id: draft.id, slug: draft.slug, renderedTitle };
+}
 
 export function createCleanupRef(): CleanupRef {
   return {
@@ -108,6 +133,39 @@ function sortByMostRecent(a: DraftLike, b: DraftLike): number {
   return bTime - aTime;
 }
 
+function draftIdFromCreateBody(body: DraftLike): number | undefined {
+  return body.id ?? body.blocks?.find((block) => typeof block.email_draft === "number")?.email_draft;
+}
+
+async function findKlaviyoDraftViaList(
+  page: Page,
+  opts: { id?: number; name: string; subject: string },
+): Promise<DraftLike | undefined> {
+  const origin = getApiOrigin(page);
+  let nextUrl: string | null = `${origin}/api/klaviyo/klaviyo-drafts/`;
+  const drafts: DraftLike[] = [];
+
+  for (let i = 0; nextUrl && i < 25; i += 1) {
+    const listResponse = await page.request.get(nextUrl, {
+      headers: authorizedRequestHeaders(),
+    });
+    expect(listResponse.ok()).toBeTruthy();
+    const listBody = await listResponse.json();
+    const pageDrafts = (listBody?.results || listBody || []) as DraftLike[];
+    drafts.push(...pageDrafts);
+
+    const idMatch =
+      typeof opts.id === "number" ? pageDrafts.find((draft) => draft.id === opts.id) : undefined;
+    if (idMatch) return idMatch;
+
+    nextUrl = typeof listBody?.next === "string" ? listBody.next : null;
+  }
+
+  return [...drafts]
+    .sort(sortByMostRecent)
+    .find((draft) => draft.subject === opts.subject && draft.name === opts.name);
+}
+
 export async function createKlaviyoDraftViaApi(
   page: Page,
   cleanup: CleanupRef,
@@ -116,7 +174,7 @@ export async function createKlaviyoDraftViaApi(
     subject?: string;
     status?: "draft" | "published" | "archived";
   },
-): Promise<{ id: number; renderedTitle: string }> {
+): Promise<DraftRef> {
   const runId = shortRunId();
   const name = withRunSuffix(opts?.name ?? KLAVIYO_LIST_FIXTURE.name, runId);
   const subject = withRunSuffix(opts?.subject ?? KLAVIYO_LIST_FIXTURE.subject, runId);
@@ -136,26 +194,16 @@ export async function createKlaviyoDraftViaApi(
 
   expect(response.ok()).toBeTruthy();
   const body = (await response.json()) as DraftLike;
-  let id = body?.id;
-  if (typeof id !== "number") {
-    const listResponse = await page.request.get(`${getApiOrigin(page)}/api/klaviyo/klaviyo-drafts/`, {
-      headers: authorizedRequestHeaders(),
-    });
-    expect(listResponse.ok()).toBeTruthy();
-    const listBody = await listResponse.json();
-    const drafts = (listBody?.results || listBody || []) as DraftLike[];
-    const sortedDrafts = [...drafts].sort(sortByMostRecent);
-    const matchedDraft =
-      sortedDrafts.find((draft) => draft.subject === subject && draft.name === name) ||
-      sortedDrafts[0];
-    id = matchedDraft?.id;
-  }
-  if (typeof id !== "number") {
-    throw new TypeError("Klaviyo create draft response missing id.");
+  let draft = body;
+  const createdId = draftIdFromCreateBody(body);
+  if (typeof draft?.id !== "number" || typeof draft.slug !== "string") {
+    draft = (await findKlaviyoDraftViaList(page, { id: createdId, name, subject })) ?? draft;
   }
 
+  const created = requireDraftRef(draft, "Klaviyo", name);
+  const { id } = created;
   cleanup.klaviyo.push(id);
-  return { id, renderedTitle: name };
+  return created;
 }
 
 async function getMailchimpTemplateId(
@@ -187,7 +235,7 @@ export async function createMailchimpDraftViaApi(
     replyTo?: string;
     templateId?: number;
   },
-): Promise<{ id: number; renderedTitle: string }> {
+): Promise<DraftRef> {
   const runId = shortRunId();
   const templateId = opts?.templateId ?? (await getMailchimpTemplateId(page));
   const subjectLine = withRunSuffix(opts?.subjectLine ?? MAILCHIMP_LIST_FIXTURE.subjectLine, runId);
@@ -215,9 +263,10 @@ export async function createMailchimpDraftViaApi(
 
   expect(response.ok()).toBeTruthy();
   const body = (await response.json()) as DraftLike;
-  let id = body?.id;
-  if (typeof id !== "number") {
-    const listResponse = await page.request.get(`${getApiOrigin(page)}/api/mailchimp/email-drafts/`, {
+  let draft = body;
+  const createdId = body?.id;
+  if (typeof draft?.id !== "number" || typeof draft.slug !== "string") {
+    const listResponse = await page.request.get(`${getApiOrigin(page)}/api/mailchimp/email-drafts/?search=${encodeURIComponent(subjectLine)}`, {
       headers: authorizedRequestHeaders(),
     });
     expect(listResponse.ok()).toBeTruthy();
@@ -225,19 +274,19 @@ export async function createMailchimpDraftViaApi(
     const drafts = (listBody?.results || listBody || []) as DraftLike[];
     const sortedDrafts = [...drafts].sort(sortByMostRecent);
     const matchedDraft =
+      drafts.find((draft) => draft.id === createdId) ||
       sortedDrafts.find(
         (draft) =>
           draft.settings?.subject_line === subjectLine &&
           draft.settings?.from_name === fromName
       ) || sortedDrafts[0];
-    id = matchedDraft?.id;
-  }
-  if (typeof id !== "number") {
-    throw new TypeError("Mailchimp create draft response missing id.");
+    draft = matchedDraft;
   }
 
+  const created = requireDraftRef(draft, "Mailchimp", subjectLine);
+  const { id } = created;
   cleanup.mailchimp.push(id);
-  return { id, renderedTitle: subjectLine };
+  return created;
 }
 
 export async function deleteKlaviyoDraftViaApi(page: Page, id: number): Promise<void> {
@@ -351,8 +400,9 @@ export async function patchMailchimpDraftSections(
   draftId: number,
   sections: Record<string, string>,
 ): Promise<void> {
+  const draftKey = draftSlugById.get(draftId) ?? draftId;
   const response = await page.request.patch(
-    `${getApiOrigin(page)}/api/mailchimp/email-drafts/${draftId}/template-content/`,
+    `${getApiOrigin(page)}/api/mailchimp/email-drafts/${draftKey}/template-content/`,
     {
       headers: authorizedRequestHeaders(),
       data: {
@@ -365,24 +415,24 @@ export async function patchMailchimpDraftSections(
   expect(response.ok()).toBeTruthy();
 }
 
-function matchesKlaviyoDraftGet(response: { url: () => string; request: () => { method: () => string } }, draftId: number): boolean {
+function matchesKlaviyoDraftGet(response: { url: () => string; request: () => { method: () => string } }, draftKey: string | number): boolean {
   const url = response.url();
   return (
     response.request().method() === "GET" &&
     url.includes("/api/klaviyo/klaviyo-drafts/") &&
-    url.includes(String(draftId))
+    url.includes(String(draftKey))
   );
 }
 
 function matchesKlaviyoDraftPatch(
   response: { url: () => string; request: () => { method: () => string }; ok: () => boolean },
-  draftId: number,
+  draftKey: string | number,
 ): boolean {
   const url = response.url();
   return (
     response.request().method() === "PATCH" &&
     url.includes("/api/klaviyo/klaviyo-drafts/") &&
-    url.includes(String(draftId)) &&
+    url.includes(String(draftKey)) &&
     response.ok()
   );
 }
@@ -391,23 +441,41 @@ function klaviyoDraftNeedsInitialSave(draftBody: { blocks?: unknown[] }): boolea
   return !Array.isArray(draftBody.blocks) || draftBody.blocks.length === 0;
 }
 
-function matchesMailchimpDraftGet(response: { url: () => string; request: () => { method: () => string } }, draftId: number): boolean {
+function matchesMailchimpDraftGet(response: { url: () => string; request: () => { method: () => string } }, draftKey: string | number): boolean {
   const url = response.url();
   return (
     response.request().method() === "GET" &&
     url.includes("/api/mailchimp/email-drafts/") &&
-    url.includes(String(draftId))
+    url.includes(String(draftKey))
   );
 }
 
 export async function getKlaviyoDraftViaApi(
   page: Page,
-  draftId: number,
-): Promise<{ blocks?: unknown[] }> {
+  draftKey: string | number,
+): Promise<DraftLike & { blocks?: unknown[] }> {
+  const resolvedKey = typeof draftKey === "number" ? draftSlugById.get(draftKey) ?? draftKey : draftKey;
   const response = await page.request.get(
-    `${getApiOrigin(page)}/api/klaviyo/klaviyo-drafts/${draftId}/`,
+    `${getApiOrigin(page)}/api/klaviyo/klaviyo-drafts/${resolvedKey}/`,
     { headers: authorizedRequestHeaders() },
   );
+  if (response.ok()) {
+    return response.json();
+  }
+
+  if (typeof draftKey === "number") {
+    const listResponse = await page.request.get(`${getApiOrigin(page)}/api/klaviyo/klaviyo-drafts/`, {
+      headers: authorizedRequestHeaders(),
+    });
+    expect(listResponse.ok()).toBeTruthy();
+    const listBody = await listResponse.json();
+    const drafts = (listBody?.results || listBody || []) as DraftLike[];
+    const slug = drafts.find((draft) => draft.id === draftKey)?.slug;
+    if (slug) {
+      return getKlaviyoDraftViaApi(page, slug);
+    }
+  }
+
   expect(response.ok()).toBeTruthy();
   return response.json();
 }
@@ -424,7 +492,7 @@ export async function waitForMailchimpDraftLoad(page: Page, draftId: number): Pr
   });
 }
 
-/** Wait until Klaviyo editor finished loading (positive UI gate — canvas mounts only after load). */
+/** Wait until Klaviyo editor finished loading (positive UI gate 鈥?canvas mounts only after load). */
 export async function waitForKlaviyoEditorReady(
   page: Page,
   opts?: { anchorText?: string },
@@ -439,9 +507,9 @@ export async function waitForKlaviyoEditorReady(
   }
 }
 
-function klaviyoDraftDetailRouteGlob(draftId: number): string {
-  // Trailing `*` (not `/**`) so `/klaviyo-drafts/793/` matches — `/**` requires an extra path segment.
-  return `**/api/klaviyo/klaviyo-drafts/${draftId}*`;
+function klaviyoDraftDetailRouteGlob(draftKey: string | number): string {
+  // Trailing `*` (not `/**`) so `/klaviyo-drafts/793/` matches 鈥?`/**` requires an extra path segment.
+  return `**/api/klaviyo/klaviyo-drafts/${draftKey}*`;
 }
 
 export async function openKlaviyoEditor(
@@ -450,11 +518,15 @@ export async function openKlaviyoEditor(
   opts?: { anchorText?: string; returnTo?: string },
 ): Promise<void> {
   const draftBody = await getKlaviyoDraftViaApi(page, draftId);
+  const draftSlug = draftBody.slug;
+  if (!draftSlug) {
+    throw new TypeError("Klaviyo draft response missing slug.");
+  }
   const needsInitialSave = klaviyoDraftNeedsInitialSave(draftBody);
-  const routePattern = klaviyoDraftDetailRouteGlob(draftId);
+  const routePattern = klaviyoDraftDetailRouteGlob(draftSlug);
   const editorPath = opts?.returnTo
-    ? `/klaviyo/${draftId}?returnTo=${encodeURIComponent(opts.returnTo)}`
-    : `/klaviyo/${draftId}`;
+    ? `/klaviyo/${draftSlug}?returnTo=${encodeURIComponent(opts.returnTo)}`
+    : `/klaviyo/${draftSlug}`;
 
   await page.route(routePattern, async (route) => {
     if (route.request().method() === "GET") {
@@ -471,7 +543,7 @@ export async function openKlaviyoEditor(
   try {
     await page.goto(editorPath, { waitUntil: "domcontentloaded", timeout: 60_000 });
     if (needsInitialSave) {
-      await page.waitForResponse((response) => matchesKlaviyoDraftPatch(response, draftId), {
+      await page.waitForResponse((response) => matchesKlaviyoDraftPatch(response, draftSlug), {
         timeout: 60_000,
       });
     }
@@ -490,27 +562,50 @@ export async function openKlaviyoEditorViaLiveDraftApi(
   draftId: number,
   opts?: { anchorText?: string },
 ): Promise<void> {
+  const draftBody = await getKlaviyoDraftViaApi(page, draftId);
+  const draftSlug = draftBody.slug;
+  if (!draftSlug) {
+    throw new TypeError("Klaviyo draft response missing slug.");
+  }
   const draftGet = page.waitForResponse(
-    (response) => matchesKlaviyoDraftGet(response, draftId),
+    (response) => matchesKlaviyoDraftGet(response, draftSlug),
     { timeout: 60_000 },
   );
-  await page.goto(`/klaviyo/${draftId}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.goto(`/klaviyo/${draftSlug}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
   await draftGet;
   await waitForKlaviyoEditorReady(page, opts);
 }
 
-function mailchimpDraftDetailRouteGlob(draftId: number): string {
-  return `**/api/mailchimp/email-drafts/${draftId}*`;
+function mailchimpDraftDetailRouteGlob(draftKey: string | number): string {
+  return `**/api/mailchimp/email-drafts/${draftKey}*`;
 }
 
 export async function getMailchimpDraftViaApi(
   page: Page,
-  draftId: number,
+  draftKey: string | number,
 ): Promise<Record<string, unknown>> {
+  const resolvedKey = typeof draftKey === "number" ? draftSlugById.get(draftKey) ?? draftKey : draftKey;
   const response = await page.request.get(
-    `${getApiOrigin(page)}/api/mailchimp/email-drafts/${draftId}/`,
+    `${getApiOrigin(page)}/api/mailchimp/email-drafts/${resolvedKey}/`,
     { headers: authorizedRequestHeaders() },
   );
+  if (response.ok()) {
+    return response.json();
+  }
+
+  if (typeof draftKey === "number") {
+    const listResponse = await page.request.get(`${getApiOrigin(page)}/api/mailchimp/email-drafts/`, {
+      headers: authorizedRequestHeaders(),
+    });
+    expect(listResponse.ok()).toBeTruthy();
+    const listBody = await listResponse.json();
+    const drafts = (listBody?.results || listBody || []) as DraftLike[];
+    const slug = drafts.find((draft) => draft.id === draftKey)?.slug;
+    if (slug) {
+      return getMailchimpDraftViaApi(page, slug);
+    }
+  }
+
   expect(response.ok()).toBeTruthy();
   return response.json();
 }
@@ -626,7 +721,11 @@ export async function openMailchimpEditor(
   const draftBody = buildMailchimpEditorDraftFulfillBody(
     await getMailchimpDraftViaApi(page, draftId),
   );
-  const routePattern = mailchimpDraftDetailRouteGlob(draftId);
+  const draftSlug = draftBody.slug;
+  if (typeof draftSlug !== "string" || !draftSlug.trim()) {
+    throw new TypeError("Mailchimp draft response missing slug.");
+  }
+  const routePattern = mailchimpDraftDetailRouteGlob(draftSlug);
 
   await page.route(routePattern, async (route) => {
     if (route.request().method() === "GET") {
@@ -641,7 +740,7 @@ export async function openMailchimpEditor(
   });
 
   try {
-    await page.goto(`/mailchimp/${draftId}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.goto(`/mailchimp/${draftSlug}`, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await waitForMailchimpEditorReady(page, opts);
   } finally {
     await page.unroute(routePattern).catch(() => {});
@@ -653,7 +752,7 @@ export async function createKlaviyoDraftWithBlocksViaApi(
   cleanup: CleanupRef,
   blocks: Array<{ block_type: string; order: number; content: Record<string, unknown> }>,
   opts?: { name?: string; subject?: string },
-): Promise<{ id: number; renderedTitle: string }> {
+): Promise<DraftRef> {
   const runId = shortRunId();
   const name = withRunSuffix(opts?.name ?? KLAVIYO_LIST_FIXTURE.name, runId);
   const subject = withRunSuffix(opts?.subject ?? KLAVIYO_LIST_FIXTURE.subject, runId);
@@ -674,30 +773,20 @@ export async function createKlaviyoDraftWithBlocksViaApi(
 
   expect(response.ok()).toBeTruthy();
   const body = (await response.json()) as DraftLike;
-  let id = body?.id;
-  if (typeof id !== "number") {
-    const listResponse = await page.request.get(`${getApiOrigin(page)}/api/klaviyo/klaviyo-drafts/`, {
-      headers: authorizedRequestHeaders(),
-    });
-    expect(listResponse.ok()).toBeTruthy();
-    const listBody = await listResponse.json();
-    const drafts = (listBody?.results || listBody || []) as DraftLike[];
-    const sortedDrafts = [...drafts].sort(sortByMostRecent);
-    const matchedDraft =
-      sortedDrafts.find((draft) => draft.subject === subject && draft.name === name) ||
-      sortedDrafts[0];
-    id = matchedDraft?.id;
-  }
-  if (typeof id !== "number") {
-    throw new TypeError("Klaviyo create draft response missing id.");
+  let draft = body;
+  const createdId = draftIdFromCreateBody(body);
+  if (typeof draft?.id !== "number" || typeof draft.slug !== "string") {
+    draft = (await findKlaviyoDraftViaList(page, { id: createdId, name, subject })) ?? draft;
   }
 
-  const loaded = await getKlaviyoDraftViaApi(page, id);
+  const created = requireDraftRef(draft, "Klaviyo", name);
+  const { id } = created;
+  const loaded = await getKlaviyoDraftViaApi(page, created.slug);
   const blockCount = Array.isArray(loaded.blocks) ? loaded.blocks.length : 0;
   expect(blockCount).toBeGreaterThan(0);
 
   cleanup.klaviyo.push(id);
-  return { id, renderedTitle: name };
+  return created;
 }
 
 export async function createMailchimpDraftWithSectionsViaApi(
@@ -705,7 +794,7 @@ export async function createMailchimpDraftWithSectionsViaApi(
   cleanup: CleanupRef,
   sections: Record<string, string>,
   opts?: Parameters<typeof createMailchimpDraftViaApi>[2],
-): Promise<{ id: number; renderedTitle: string }> {
+): Promise<DraftRef> {
   const created = await createMailchimpDraftViaApi(page, cleanup, opts);
   await patchMailchimpDraftSections(page, created.id, sections);
   const loaded = await getMailchimpDraftViaApi(page, created.id);
@@ -751,7 +840,7 @@ export async function editCanvasTextBlock(
   }
   const editor = canvas.getByRole("textbox").first();
   await editor.click();
-  // Single input event — Ctrl+A + insertText can emit intermediate empty snapshots
+  // Single input event 鈥?Ctrl+A + insertText can emit intermediate empty snapshots
   // that make one Undo step restore the wrong heading text.
   await editor.evaluate((el, text) => {
     el.textContent = text;
@@ -781,8 +870,8 @@ export async function removeCanvasBlockByText(page: Page, text: string): Promise
   } else {
     await canvas.getByText(text, { exact: false }).first().click();
   }
-  // Selecting a heading swaps h2 → contentEditable; do not re-locate the block shell by
-  // hasText — the filter no longer matches. Delete is visible on the selected block.
+  // Selecting a heading swaps h2 鈫?contentEditable; do not re-locate the block shell by
+  // hasText 鈥?the filter no longer matches. Delete is visible on the selected block.
   await canvas.getByRole("button", { name: "Remove block" }).click();
 }
 
@@ -880,7 +969,7 @@ export async function uploadKlaviyoImageViaApi(
   return body;
 }
 
-/** Klaviyo image picker — `KlaviyoImageSelectionModal` title is a div, not a heading. */
+/** Klaviyo image picker 鈥?`KlaviyoImageSelectionModal` title is a div, not a heading. */
 export async function expectKlaviyoImageSelectionModalVisible(page: Page): Promise<void> {
   await expect(page.getByRole("button", { name: "Image library" })).toBeVisible({ timeout: 30_000 });
 }
@@ -934,7 +1023,7 @@ export async function openMailchimpContentStudioFromImageInspector(page: Page): 
   if (await browseImages.isVisible().catch(() => false)) {
     await browseImages.click();
   } else {
-    // Empty block: `Add` ▾ → Browse Images. Block with `imageUrl`: `Replace` ▾ → Browse Images.
+    // Empty block: `Add` 鈻?鈫?Browse Images. Block with `imageUrl`: `Replace` 鈻?鈫?Browse Images.
     const replaceBtn = page.getByRole("button", { name: "Replace" });
     const addBtn = page.getByRole("button", { name: "Add", exact: true });
     if (await replaceBtn.isVisible().catch(() => false)) {
@@ -979,8 +1068,8 @@ export async function pickMailchimpContentStudioFile(page: Page, fileName: strin
   const panel = mailchimpContentStudioPanel(page);
   const thumbnail = panel.getByRole("img", { name: fileName });
   await expect(thumbnail).toBeVisible({ timeout: 30_000 });
-  // `onClick` is on the grid/list row (`div…cursor-pointer`), not the `<img>`.
-  // Walk up from the thumbnail — `filter({ has: panel.getByRole('img') })` on the panel
+  // `onClick` is on the grid/list row (`div鈥ursor-pointer`), not the `<img>`.
+  // Walk up from the thumbnail 鈥?`filter({ has: panel.getByRole('img') })` on the panel
   // often matches zero rows when the panel locator is chained.
   const tile = thumbnail.locator(
     "xpath=ancestor::div[contains(@class,'cursor-pointer')][1]",

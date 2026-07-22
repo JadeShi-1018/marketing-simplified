@@ -43,7 +43,7 @@ const BASE = '/api/projects';
  * );
  */
 export async function fetchAuditLog(
-  projectId: number,
+  projectId: number | string,
   meetingId: number,
   filters?: AuditLogFilters,
   page: number = 1,
@@ -91,7 +91,7 @@ export async function fetchAuditLog(
  * Convenience function to fetch audit log for the first page
  */
 export async function fetchAuditLogFirstPage(
-  projectId: number,
+  projectId: number | string,
   meetingId: number,
   filters?: AuditLogFilters,
   pageSize: number = 50
@@ -103,7 +103,7 @@ export async function fetchAuditLogFirstPage(
  * Convenience function to fetch audit log for a specific page
  */
 export async function fetchAuditLogPage(
-  projectId: number,
+  projectId: number | string,
   meetingId: number,
   page: number,
   filters?: AuditLogFilters,

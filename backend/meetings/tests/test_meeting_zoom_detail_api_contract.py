@@ -44,7 +44,7 @@ class TestMeetingZoomDetailAPIContract(TestCase):
             type_definition=self.planning,
             objective="o",
         )
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         r = self.client.get(url)
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertIsNone(r.data.get("zoom_post_meeting"))
@@ -89,7 +89,7 @@ class TestMeetingZoomDetailAPIContract(TestCase):
                 },
             ],
         )
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         r = self.client.get(url)
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         z = r.data.get("zoom_post_meeting")
@@ -144,7 +144,7 @@ class TestMeetingZoomDetailAPIContract(TestCase):
             last_sync_at=timezone.now(),
             recording_status=ZoomMeetingData.RecordingStatus.AVAILABLE,
         )
-        url = f"/api/projects/{self.project.id}/meetings/{m.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{m.slug}/"
         r = self.client.get(url)
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         z = r.data["zoom_post_meeting"]
@@ -170,13 +170,13 @@ class TestMeetingZoomDetailAPIContract(TestCase):
             recording_status=ZoomMeetingData.RecordingStatus.UNKNOWN,
             summary_status=ZoomMeetingData.SummaryStatus.PENDING,
         )
-        r = self.client.get(f"/api/projects/{self.project.id}/meetings/{m.id}/")
+        r = self.client.get(f"/api/projects/{self.project.slug}/meetings/{m.slug}/")
         self.assertEqual(r.data["zoom_post_meeting"]["user_feedback_code"], "error")
 
         zd = ZoomMeetingData.objects.get(meeting=m)
         zd.sync_error = "401 Unauthorized from Zoom API"
         zd.save(update_fields=["sync_error"])
-        r2 = self.client.get(f"/api/projects/{self.project.id}/meetings/{m.id}/")
+        r2 = self.client.get(f"/api/projects/{self.project.slug}/meetings/{m.slug}/")
         self.assertEqual(r2.data["zoom_post_meeting"]["user_feedback_code"], "auth_expired")
 
     def test_pending_sync_state(self):
@@ -194,7 +194,7 @@ class TestMeetingZoomDetailAPIContract(TestCase):
             summary_status=ZoomMeetingData.SummaryStatus.NOT_APPLICABLE,
             recording_status=ZoomMeetingData.RecordingStatus.UNKNOWN,
         )
-        r = self.client.get(f"/api/projects/{self.project.id}/meetings/{m.id}/")
+        r = self.client.get(f"/api/projects/{self.project.slug}/meetings/{m.slug}/")
         self.assertEqual(r.data["zoom_post_meeting"]["user_feedback_code"], "pending")
 
     def test_partial_sync_state_user_feedback_none(self):
@@ -216,6 +216,6 @@ class TestMeetingZoomDetailAPIContract(TestCase):
             summary_status=ZoomMeetingData.SummaryStatus.NOT_APPLICABLE,
             recording_status=ZoomMeetingData.RecordingStatus.UNKNOWN,
         )
-        r = self.client.get(f"/api/projects/{self.project.id}/meetings/{m.id}/")
+        r = self.client.get(f"/api/projects/{self.project.slug}/meetings/{m.slug}/")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertIsNone(r.data["zoom_post_meeting"]["user_feedback_code"])

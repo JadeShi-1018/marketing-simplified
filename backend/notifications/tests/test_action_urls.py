@@ -13,10 +13,10 @@ class NotificationActionUrlTests(SimpleTestCase):
         self.assertEqual(overview_action_url(), "/overview")
 
     def test_task_action_url(self):
-        self.assertEqual(task_action_url(42), "/tasks/42")
+        self.assertEqual(task_action_url("design-banner"), "/tasks/design-banner")
 
     def test_meeting_action_url(self):
-        self.assertEqual(meeting_action_url(9, 5), "/meetings/9?project_id=5")
+        self.assertEqual(meeting_action_url("q2-sync", 5), "/meetings/q2-sync?project_id=5")
 
     def test_decision_action_url(self):
-        self.assertEqual(decision_action_url(12, 3), "/decisions/12?project_id=3")
+        self.assertEqual(decision_action_url("approve-budget", 3), "/decisions/approve-budget?project_id=3")

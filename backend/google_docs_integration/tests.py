@@ -1,0 +1,528 @@
+"""
+Tests for google_docs_integration views.
+Covers: google_docs_integration/views.py, models.py, serializers.py
+"""
+import uuid
+from unittest.mock import MagicMock, patch
+
+import pytest
+import requests
+from django.contrib.auth import get_user_model
+from django.test import override_settings
+from rest_framework import status
+from rest_framework.test import APIClient
+
+from core.services.oauth_state import create_oauth_state
+from google_docs_integration.models import GoogleDocsConnection
+
+User = get_user_model()
+
+GOOGLE_DOCS_STATE_SALT = "google-docs-oauth-state"
+STATUS_URL = "/api/google-docs/status/"
+CONNECT_URL = "/api/google-docs/connect/"
+CALLBACK_URL = "/api/google-docs/callback/"
+DISCONNECT_URL = "/api/google-docs/disconnect/"
+DOCUMENTS_URL = "/api/google-docs/documents/"
+IMPORT_URL = "/api/google-docs/import/"
+EXPORT_URL = "/api/google-docs/export/"
+EXPORT_RAW_URL = "/api/google-docs/export/raw/"
+SHEETS_IMPORT_URL = "/api/google-docs/sheets/import/"
+SHEETS_EXPORT_URL = "/api/google-docs/sheets/export/"
+
+
+@pytest.fixture
+def user(db):
+    return User.objects.create_user(
+        username=f"gd_{uuid.uuid4().hex[:8]}",
+        email=f"gd_{uuid.uuid4().hex[:8]}@test.com",
+        password="pass123",
+    )
+
+
+@pytest.fixture
+def user2(db):
+    return User.objects.create_user(
+        username=f"gd2_{uuid.uuid4().hex[:8]}",
+        email=f"gd2_{uuid.uuid4().hex[:8]}@test.com",
+        password="pass123",
+    )
+
+
+@pytest.fixture
+def connection(user, db):
+    """Active GoogleDocsConnection for user."""
+    conn = GoogleDocsConnection(user=user, google_email="user@gmail.com", is_active=True)
+    conn.set_access_token("fake_access_token_abc")
+    conn.set_refresh_token("fake_refresh_token_xyz")
+    conn.save()
+    return conn
+
+
+@pytest.fixture
+def api_client(user):
+    c = APIClient()
+    c.force_authenticate(user=user)
+    return c
+
+
+@pytest.fixture
+def unauth_client():
+    return APIClient()
+
+
+def _build_state(user_id: int) -> str:
+    return create_oauth_state(
+        flow=GOOGLE_DOCS_STATE_SALT,
+        payload={"user_id": user_id},
+        ttl_seconds=600,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsStatusView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsStatusView:
+    def test_not_connected_returns_false(self, api_client):
+        response = api_client.get(STATUS_URL)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["connected"] is False
+        assert response.data["google_email"] is None
+
+    def test_connected_returns_true(self, api_client, connection):
+        response = api_client.get(STATUS_URL)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["connected"] is True
+        assert response.data["google_email"] == "user@gmail.com"
+
+    def test_inactive_connection_returns_false(self, api_client, connection, db):
+        connection.is_active = False
+        connection.save()
+        response = api_client.get(STATUS_URL)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["connected"] is False
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.get(STATUS_URL)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsConnectView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsConnectView:
+    def test_missing_oauth_settings_returns_400(self, api_client):
+        """When GOOGLE_OAUTH env vars are empty, returns 400."""
+        response = api_client.get(CONNECT_URL)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "error" in response.data
+        assert "missing_settings" in response.data.get("details", {})
+
+    @override_settings(
+        GOOGLE_OAUTH_CLIENT_ID="test_client",
+        GOOGLE_OAUTH_CLIENT_SECRET="test_secret",
+        GOOGLE_OAUTH_REDIRECT_URI="http://localhost/api/google-docs/callback/",
+    )
+    def test_with_oauth_settings_returns_auth_url(self, api_client):
+        with patch(
+            "google_docs_integration.views.build_google_auth_url",
+            return_value="https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
+        ):
+            response = api_client.get(CONNECT_URL)
+        assert response.status_code == status.HTTP_200_OK
+        assert "auth_url" in response.data
+        assert "state" in response.data
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.get(CONNECT_URL)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsCallbackView (AllowAny)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsCallbackView:
+    def test_missing_code_and_state_redirects_error(self, unauth_client):
+        response = unauth_client.get(CALLBACK_URL)
+        assert response.status_code == 302
+        assert "google_docs_error=missing_code" in response["Location"]
+
+    def test_missing_code_redirects_error(self, unauth_client):
+        state = _build_state(999)
+        response = unauth_client.get(CALLBACK_URL, {"state": state})
+        assert response.status_code == 302
+        assert "google_docs_error=missing_code" in response["Location"]
+
+    def test_missing_state_redirects_error(self, unauth_client):
+        response = unauth_client.get(CALLBACK_URL, {"code": "mycode"})
+        assert response.status_code == 302
+        assert "google_docs_error=missing_code" in response["Location"]
+
+    def test_invalid_state_redirects_error(self, unauth_client):
+        response = unauth_client.get(CALLBACK_URL, {"code": "code123", "state": "tampered_state"})
+        assert response.status_code == 302
+        assert "google_docs_error=invalid_state" in response["Location"]
+
+    def test_expired_state_redirects_error(self, unauth_client, user):
+        state = _build_state(user.id)
+        with patch("core.services.oauth_state.signing.loads") as mock_loads:
+            from django.core import signing
+
+            mock_loads.side_effect = signing.SignatureExpired("expired")
+            response = unauth_client.get(CALLBACK_URL, {"code": "code123", "state": state})
+        assert response.status_code == 302
+        assert "google_docs_error=state_expired" in response["Location"]
+
+    def test_token_exchange_failure_redirects_error(self, unauth_client, user):
+        state = _build_state(user.id)
+        with patch("google_docs_integration.views.exchange_code_for_token") as mock_exchange:
+            mock_exchange.side_effect = Exception("Network error")
+            response = unauth_client.get(CALLBACK_URL, {"code": "code123", "state": state})
+        assert response.status_code == 302
+        assert "google_docs_error=token_exchange_failed" in response["Location"]
+
+    def test_successful_callback_creates_connection(self, unauth_client, user):
+        state = _build_state(user.id)
+        with patch("google_docs_integration.views.exchange_code_for_token") as mock_exchange, \
+             patch("google_docs_integration.views.fetch_google_email") as mock_email:
+            mock_exchange.return_value = {
+                "access_token": "new_access_token",
+                "refresh_token": "new_refresh_token",
+                "token_expiry": None,
+            }
+            mock_email.return_value = "user@gmail.com"
+            response = unauth_client.get(CALLBACK_URL, {"code": "code123", "state": state})
+        assert response.status_code == 302
+        assert "open_google_docs=1" in response["Location"]
+        assert GoogleDocsConnection.objects.filter(user=user, is_active=True).exists()
+
+    def test_no_access_token_in_response_redirects_error(self, unauth_client, user):
+        state = _build_state(user.id)
+        with patch("google_docs_integration.views.exchange_code_for_token") as mock_exchange:
+            mock_exchange.return_value = {"access_token": None}
+            response = unauth_client.get(CALLBACK_URL, {"code": "code123", "state": state})
+        assert response.status_code == 302
+        assert "token_exchange_failed" in response["Location"]
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsDisconnectView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsDisconnectView:
+    def test_no_connection_returns_success(self, api_client):
+        response = api_client.post(DISCONNECT_URL)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["success"] is True
+
+    def test_active_connection_is_deactivated(self, api_client, connection):
+        response = api_client.post(DISCONNECT_URL)
+        assert response.status_code == status.HTTP_200_OK
+        connection.refresh_from_db()
+        assert connection.is_active is False
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.post(DISCONNECT_URL)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsImportView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsImportView:
+    def test_not_connected_returns_400(self, api_client):
+        response = api_client.post(IMPORT_URL, {"document_id": "doc123"}, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Google Docs is not connected" in response.data["error"]
+
+    def test_missing_document_id_returns_400(self, api_client, connection):
+        response = api_client.post(IMPORT_URL, {}, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_successful_import_returns_content(self, api_client, connection):
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.return_value = ("My Doc Title", "Plain text content", "<p>HTML content</p>")
+            response = api_client.post(IMPORT_URL, {"document_id": "doc123"}, format="json")
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["title"] == "My Doc Title"
+        assert response.data["content"] == "Plain text content"
+        assert response.data["content_html"] == "<p>HTML content</p>"
+
+    def test_google_401_returns_400(self, api_client, connection):
+        http_error = requests.HTTPError()
+        http_error.response = MagicMock(status_code=401)
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = http_error
+            response = api_client.post(IMPORT_URL, {"document_id": "doc123"}, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expired" in response.data["error"].lower()
+
+    def test_google_403_returns_403(self, api_client, connection):
+        http_error = requests.HTTPError()
+        http_error.response = MagicMock(status_code=403)
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = http_error
+            response = api_client.post(IMPORT_URL, {"document_id": "doc123"}, format="json")
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_google_404_returns_404(self, api_client, connection):
+        http_error = requests.HTTPError()
+        http_error.response = MagicMock(status_code=404)
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = http_error
+            response = api_client.post(IMPORT_URL, {"document_id": "doc123"}, format="json")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_request_exception_returns_503(self, api_client, connection):
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = requests.RequestException("timeout")
+            response = api_client.post(IMPORT_URL, {"document_id": "doc123"}, format="json")
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.post(IMPORT_URL, {"document_id": "doc123"}, format="json")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsDocumentListView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsDocumentListView:
+    def test_not_connected_returns_400(self, api_client):
+        response = api_client.get(DOCUMENTS_URL)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_returns_document_list(self, api_client, connection):
+        docs = [{"id": "doc1", "name": "Report"}, {"id": "doc2", "name": "Notes"}]
+        with patch("google_docs_integration.views.run_google_api_with_token_retry", return_value=docs):
+            response = api_client.get(DOCUMENTS_URL)
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["items"] == docs
+
+    def test_invalid_page_size_uses_default(self, api_client, connection):
+        docs = []
+        with patch("google_docs_integration.views.run_google_api_with_token_retry", return_value=docs):
+            response = api_client.get(DOCUMENTS_URL, {"pageSize": "notanumber"})
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_google_api_error_returns_error(self, api_client, connection):
+        http_error = requests.HTTPError()
+        http_error.response = MagicMock(status_code=401)
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = http_error
+            response = api_client.get(DOCUMENTS_URL)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.get(DOCUMENTS_URL)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsExportView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsExportView:
+    def test_not_connected_returns_400(self, api_client):
+        response = api_client.post(EXPORT_URL, {"decision_id": 1}, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_decision_not_found_returns_404(self, api_client, connection):
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.return_value = {"documentId": "newdoc123"}
+            response = api_client.post(EXPORT_URL, {"decision_id": 99999}, format="json")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_missing_decision_id_returns_400(self, api_client, connection):
+        response = api_client.post(EXPORT_URL, {}, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.post(EXPORT_URL, {"decision_id": 1}, format="json")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleDocsRawExportView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleDocsRawExportView:
+    def test_not_connected_returns_400(self, api_client):
+        response = api_client.post(
+            EXPORT_RAW_URL,
+            {"title": "Test Doc", "content": "Hello"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_successful_export_returns_doc_payload(self, api_client, connection):
+        doc_payload = {"documentId": "abc123", "title": "Test Doc"}
+        with patch("google_docs_integration.views.run_google_api_with_token_retry", return_value=doc_payload):
+            response = api_client.post(
+                EXPORT_RAW_URL,
+                {"title": "Test Doc", "content": "Hello world"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["documentId"] == "abc123"
+
+    def test_request_exception_returns_503(self, api_client, connection):
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = requests.RequestException("timeout")
+            response = api_client.post(
+                EXPORT_RAW_URL,
+                {"title": "Test", "content": "Hi"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+    def test_google_502_error(self, api_client, connection):
+        http_error = requests.HTTPError()
+        http_error.response = MagicMock(status_code=500)
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = http_error
+            response = api_client.post(
+                EXPORT_RAW_URL,
+                {"title": "Test", "content": "Hi"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.post(EXPORT_RAW_URL, {"title": "T", "content": "C"}, format="json")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleSheetsImportView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleSheetsImportView:
+    def test_not_connected_returns_400(self, api_client):
+        response = api_client.post(
+            SHEETS_IMPORT_URL,
+            {"sheet_url": "https://docs.google.com/spreadsheets/d/abc123/edit"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_successful_import_returns_matrix(self, api_client, connection):
+        matrix = [["A", "B"], ["1", "2"]]
+        with patch("google_docs_integration.views.run_google_api_with_token_retry", return_value=("My Sheet", matrix)):
+            response = api_client.post(
+                SHEETS_IMPORT_URL,
+                {"sheet_url": "https://docs.google.com/spreadsheets/d/sheet123/edit"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["title"] == "My Sheet"
+        assert response.data["matrix"] == matrix
+
+    def test_sheet_url_extracts_id(self, api_client, connection):
+        """Ensure URL regex extracts spreadsheet ID correctly."""
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.return_value = ("Sheet", [])
+            response = api_client.post(
+                SHEETS_IMPORT_URL,
+                {"sheet_url": "https://docs.google.com/spreadsheets/d/mySheetId123/edit#gid=0"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_google_api_error(self, api_client, connection):
+        http_error = requests.HTTPError()
+        http_error.response = MagicMock(status_code=403)
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = http_error
+            response = api_client.post(
+                SHEETS_IMPORT_URL,
+                {"sheet_url": "https://docs.google.com/spreadsheets/d/abc/edit"},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_missing_sheet_url_returns_400(self, api_client, connection):
+        response = api_client.post(SHEETS_IMPORT_URL, {}, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.post(
+            SHEETS_IMPORT_URL,
+            {"sheet_url": "https://docs.google.com/spreadsheets/d/x"},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# GoogleSheetsExportView
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleSheetsExportView:
+    def test_not_connected_returns_400(self, api_client):
+        response = api_client.post(
+            SHEETS_EXPORT_URL,
+            {"title": "My Sheet", "matrix": [["A", "B"]]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_successful_export_returns_result(self, api_client, connection):
+        result = {"spreadsheetId": "sheet123", "spreadsheetUrl": "https://docs.google.com/..."}
+        with patch("google_docs_integration.views.run_google_api_with_token_retry", return_value=result):
+            response = api_client.post(
+                SHEETS_EXPORT_URL,
+                {"title": "My Sheet", "matrix": [["A", "B"], ["1", "2"]]},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["spreadsheetId"] == "sheet123"
+
+    def test_request_exception_returns_503(self, api_client, connection):
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = requests.RequestException("timeout")
+            response = api_client.post(
+                SHEETS_EXPORT_URL,
+                {"title": "Sheet", "matrix": []},
+                format="json",
+            )
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+
+    def test_unauthenticated_returns_401(self, unauth_client):
+        response = unauth_client.post(
+            SHEETS_EXPORT_URL,
+            {"title": "S", "matrix": []},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# ---------------------------------------------------------------------------
+# Helper function coverage: _google_api_error_response
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestGoogleApiErrorResponse:
+    """Verify all branches of the error helper via the import view."""
+
+    def test_none_response_returns_502(self, api_client, connection):
+        http_error = requests.HTTPError()
+        http_error.response = None  # no response object
+        with patch("google_docs_integration.views.run_google_api_with_token_retry") as mock_api:
+            mock_api.side_effect = http_error
+            response = api_client.post(IMPORT_URL, {"document_id": "doc1"}, format="json")
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY

@@ -28,6 +28,13 @@ from notifications.models import NotificationEventType
 # The exact symbol patched – must match the import path in services.py.
 _PUBLISH_PATH = "notifications.sse.publish_notification_to_redis"
 
+# Prevent slack signal's _get_connection() from switching the DB search_path
+# to the tenant schema mid-request.  Its finally-block runs unconditionally
+# and causes subsequent ORM saves to target the wrong schema, resulting in
+# "Save with update_fields did not affect any rows" (TaskNotificationSSETests)
+# or DEFERRABLE FK violations in _post_teardown.
+_SLACK_GET_CONNECTION_PATH = "slack_integration.signals._get_connection"
+
 
 class MeetingNotificationSSETests(TestCase):
     """
@@ -79,7 +86,7 @@ class MeetingNotificationSSETests(TestCase):
         POST /api/projects/{id}/meetings/ with participant_user_ids must call
         publish_notification_to_redis for each participant (except the creator).
         """
-        url = f"/api/projects/{self.project.id}/meetings/"
+        url = f"/api/projects/{self.project.slug}/meetings/"
         payload = {
             "title": "Kickoff",
             "meeting_type": "planning",
@@ -87,7 +94,8 @@ class MeetingNotificationSSETests(TestCase):
             "participant_user_ids": [self.user_b.id],
         }
 
-        r = self.client.post(url, payload, format="json")
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.post(url, payload, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
 
         # publish must have been called at least once for user_b.
@@ -108,7 +116,7 @@ class MeetingNotificationSSETests(TestCase):
     @patch(_PUBLISH_PATH)
     def test_create_meeting_without_participants_does_not_fire_publish(self, mock_publish):
         """Creating a meeting with no participants → no SSE push."""
-        url = f"/api/projects/{self.project.id}/meetings/"
+        url = f"/api/projects/{self.project.slug}/meetings/"
         payload = {
             "title": "Solo planning",
             "meeting_type": "solo",
@@ -131,8 +139,9 @@ class MeetingNotificationSSETests(TestCase):
             title="Planning",
             type_definition=self._meeting_type(slug="link-test"),
         )
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/participants/"
-        r = self.client.post(url, {"user": self.user_b.id}, format="json")
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/participants/"
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.post(url, {"user": self.user_b.id}, format="json")
         self.assertIn(r.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
 
         recipient_ids = [c[0][0] for c in mock_publish.call_args_list]
@@ -154,8 +163,9 @@ class MeetingNotificationSSETests(TestCase):
         )
         link = ParticipantLink.objects.create(meeting=meeting, user=self.user_b)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/participants/{link.id}/"
-        r = self.client.delete(url)
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/participants/{link.id}/"
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.delete(url)
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
 
         mock_publish.assert_called()
@@ -184,7 +194,7 @@ class MeetingNotificationSSETests(TestCase):
         )
         link = ParticipantLink.objects.create(meeting=meeting, user=self.user_a)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/participants/{link.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/participants/{link.id}/"
         r = self.client.delete(url)
         self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
         mock_publish.assert_not_called()
@@ -204,12 +214,13 @@ class MeetingNotificationSSETests(TestCase):
         )
         ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
-        r = self.client.patch(
-            url,
-            {"scheduled_date": "2099-12-31"},
-            format="json",
-        )
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.patch(
+                url,
+                {"scheduled_date": "2099-12-31"},
+                format="json",
+            )
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 
         mock_publish.assert_called()
@@ -230,12 +241,13 @@ class MeetingNotificationSSETests(TestCase):
         )
         ParticipantLink.objects.create(meeting=meeting, user=self.user_b, is_accepted=True)
 
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
-        r = self.client.patch(
-            url,
-            {"external_reference": "Room B"},
-            format="json",
-        )
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.patch(
+                url,
+                {"external_reference": "Room B"},
+                format="json",
+            )
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 
         mock_publish.assert_called()
@@ -282,6 +294,14 @@ class TaskNotificationSSETests(TestCase):
 
         self.client.force_authenticate(user=self.creator)
 
+        # Prevent slack signal's _get_connection() from contaminating the DB
+        # search_path mid-request.  task/views.py calls task.save(update_fields=...)
+        # after serializer.save(); if the slack signal fires in between and changes
+        # search_path to org_taskorg, that second save raises DatabaseError.
+        _slack_patcher = patch(_SLACK_GET_CONNECTION_PATH, return_value=None)
+        _slack_patcher.start()
+        self.addCleanup(_slack_patcher.stop)
+
     # ── create ───────────────────────────────────────────────────────────────
 
     @patch(_PUBLISH_PATH)
@@ -290,17 +310,18 @@ class TaskNotificationSSETests(TestCase):
         POST /api/tasks/ with owner_id must call publish_notification_to_redis
         for the assigned owner (TASK_ASSIGNED).
         """
-        r = self.client.post(
-            "/api/tasks/",
-            {
-                "summary": "Implement login",
-                "type": "execution",
-                "project_id": self.project.id,
-                "owner_id": self.owner.id,
-                "current_approver_id": self.owner.id,
-            },
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.post(
+                "/api/tasks/",
+                {
+                    "summary": "Implement login",
+                    "type": "execution",
+                    "project_id": self.project.id,
+                    "owner_id": self.owner.id,
+                    "current_approver_id": self.owner.id,
+                },
+                format="json",
+            )
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
 
         mock_publish.assert_called()
@@ -347,16 +368,17 @@ class TaskNotificationSSETests(TestCase):
             format="json",
         )
         self.assertEqual(r_create.status_code, status.HTTP_201_CREATED)
-        task_id = r_create.data["id"]
+        task_slug = r_create.data["slug"]
 
         mock_publish.reset_mock()  # clear any calls from create
 
         # Reassign to owner (allowed while in DRAFT status).
-        r_update = self.client.patch(
-            f"/api/tasks/{task_id}/",
-            {"owner_id": self.owner.id},
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            r_update = self.client.patch(
+                f"/api/tasks/{task_slug}/",
+                {"owner_id": self.owner.id},
+                format="json",
+            )
         self.assertEqual(r_update.status_code, status.HTTP_200_OK)
 
         mock_publish.assert_called()
@@ -398,11 +420,12 @@ class TaskNotificationSSETests(TestCase):
         mock_publish.reset_mock()
 
         # Change the due date (creator/approver → owner notification expected).
-        r_update = self.client.patch(
-            f"/api/tasks/{task_id}/",
-            {"due_date": "2099-06-30"},
-            format="json",
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            r_update = self.client.patch(
+                f"/api/tasks/{task.slug}/",
+                {"due_date": "2099-06-30"},
+                format="json",
+            )
         self.assertEqual(r_update.status_code, status.HTTP_200_OK)
 
         mock_publish.assert_called()
@@ -458,8 +481,10 @@ class AgendaSectionNotificationTests(TestCase):
         self.client.force_authenticate(user=self.organiser)
 
     def _patch_layout(self, layout_config):
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/"
-        return self.client.patch(url, {"layout_config": layout_config}, format="json")
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/"
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.patch(url, {"layout_config": layout_config}, format="json")
+        return r
 
     @patch(_PUBLISH_PATH)
     def test_renaming_section_with_items_fires_notification(self, mock_publish):
@@ -591,14 +616,16 @@ class AgendaItemDedupNotificationTests(TestCase):
         self.client.force_authenticate(user=self.editor)
 
         # Create one agenda item via API
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/agenda-items/"
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/agenda-items/"
         r = self.client.post(url, {"content": "Original text", "order_index": 0}, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
         self.agenda_item_id = r.data["id"]
 
     def _patch_item(self, content):
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/agenda-items/{self.agenda_item_id}/"
-        return self.client.patch(url, {"content": content}, format="json")
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/agenda-items/{self.agenda_item_id}/"
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.patch(url, {"content": content}, format="json")
+        return r
 
     @patch(_PUBLISH_PATH)
     def test_single_update_fires_exactly_one_notification(self, mock_publish):
@@ -736,7 +763,7 @@ class AgendaItemCreateDeleteNotificationTests(TestCase):
 
         self.client.force_authenticate(user=self.actor)
         self.items_url = (
-            f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/agenda-items/"
+            f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/agenda-items/"
         )
 
     @patch(_PUBLISH_PATH)
@@ -901,8 +928,9 @@ class MeetingDocumentNotificationTests(TestCase):
             notify_collaborators=False,
         )
 
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/document/"
-        r = self.client.patch(url, {"content": "Updated draft by editor"}, format="json")
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/document/"
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.client.patch(url, {"content": "Updated draft by editor"}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
 
         mock_publish.assert_called()
@@ -939,7 +967,7 @@ class MeetingDocumentNotificationTests(TestCase):
             notify_collaborators=False,
         )
 
-        url = f"/api/projects/{self.project.id}/meetings/{self.meeting.id}/document/"
+        url = f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}/document/"
         r = self.client.patch(url, {"content": "Identical content"}, format="json")
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         mock_publish.assert_not_called()
@@ -960,12 +988,13 @@ class MeetingDocumentNotificationTests(TestCase):
             notify_collaborators=False,
         )
 
-        update_meeting_document_content(
-            meeting_id=self.meeting.id,
-            content="New content via service",
-            user_id=self.editor.id,
-            notify_collaborators=True,
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            update_meeting_document_content(
+                meeting_id=self.meeting.id,
+                content="New content via service",
+                user_id=self.editor.id,
+                notify_collaborators=True,
+            )
 
         mock_publish.assert_called()
         recipient_ids = [c[0][0] for c in mock_publish.call_args_list]

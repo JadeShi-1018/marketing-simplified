@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { AlertCircle, FileSpreadsheet } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -9,7 +9,7 @@ import toast from 'react-hot-toast';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { ProjectAPI } from '@/lib/api/projectApi';
 import { SpreadsheetAPI } from '@/lib/api/spreadsheetApi';
 import { PatternAPI } from '@/lib/api/patternApi';
@@ -100,13 +100,8 @@ function extractErrorMessage(err: unknown, fallback: string): string {
 
 export default function SpreadsheetsV2DetailPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const spreadsheetId = params?.spreadsheetId as string;
-  const projectIdParam = searchParams?.get('project_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
+  const { projectId } = useActiveProjectForFlatRoute();
 
   const [spreadsheet, setSpreadsheet] = useState<SpreadsheetData | null>(null);
   const [sheets, setSheets] = useState<SheetData[]>([]);
@@ -174,7 +169,7 @@ export default function SpreadsheetsV2DetailPage() {
     ProjectAPI.getProjects()
       .then((list) => {
         if (cancelled) return;
-        const match = list.find((p) => p.id === projectId);
+        const match = list.find((p) => String(p.id) === String(projectId) || p.slug === projectId);
         setProjectName(match?.name ?? null);
       })
       .catch(() => {
@@ -209,7 +204,7 @@ export default function SpreadsheetsV2DetailPage() {
 
       try {
         const response = await SpreadsheetAPI.readCellRange(
-          Number(spreadsheetId),
+          String(spreadsheetId),
           sourceSheetId,
           0,
           999,
@@ -273,11 +268,11 @@ export default function SpreadsheetsV2DetailPage() {
 
     const promise: Promise<SheetData | null> = (async () => {
       try {
-        return await SpreadsheetAPI.createSheet(Number(spreadsheetId), { name: 'Sheet1' });
+        return await SpreadsheetAPI.createSheet(String(spreadsheetId), { name: 'Sheet1' });
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status;
         if (status === 400) {
-          const retry = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+          const retry = await SpreadsheetAPI.listSheets(String(spreadsheetId));
           if (retry.results && retry.results.length > 0) return retry.results[0];
         }
         throw err;
@@ -303,9 +298,9 @@ export default function SpreadsheetsV2DetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const data = await SpreadsheetAPI.getSpreadsheet(Number(spreadsheetId));
+        const data = await SpreadsheetAPI.getSpreadsheet(String(spreadsheetId));
         setSpreadsheet(data);
-        const resp = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+        const resp = await SpreadsheetAPI.listSheets(String(spreadsheetId));
         const list = resp.results || [];
         if (list.length === 0) {
           const created = await ensureFirstSheet(list);
@@ -408,7 +403,7 @@ export default function SpreadsheetsV2DetailPage() {
     setApplySteps((prev) => prev.map((s) => ({ ...s, status: 'pending', errorMessage: undefined })));
     try {
       const response = await PatternAPI.applyPattern(selectedPattern.id, {
-        spreadsheet_id: Number(spreadsheetId),
+        spreadsheet_id: String(spreadsheetId),
         sheet_id: activeSheetId,
       });
       patternJobStartRef.current = Date.now();
@@ -574,7 +569,7 @@ export default function SpreadsheetsV2DetailPage() {
         name,
         description: '',
         origin: {
-          spreadsheet_id: Number(spreadsheetId),
+          spreadsheet_id: String(spreadsheetId),
           sheet_id: activeSheetId ?? undefined,
         },
         steps: timelineItemsToCreateSteps(selectedItems),
@@ -606,17 +601,17 @@ export default function SpreadsheetsV2DetailPage() {
       if (!sourceSheet) return;
       try {
         const sheetName = generatePivotSheetName(sheets.map((s) => s.name));
-        const newSheet = await SpreadsheetAPI.createSheet(Number(spreadsheetId), { name: sheetName });
-        await SpreadsheetAPI.resizeSheet(Number(spreadsheetId), newSheet.id, 100, 26);
+        const newSheet = await SpreadsheetAPI.createSheet(String(spreadsheetId), { name: sheetName });
+        await SpreadsheetAPI.resizeSheet(String(spreadsheetId), newSheet.id, 100, 26);
         const initial = createEmptyPivotConfig(activeSheetId);
-        await SpreadsheetAPI.upsertPivotConfig(Number(spreadsheetId), newSheet.id, {
+        await SpreadsheetAPI.upsertPivotConfig(String(spreadsheetId), newSheet.id, {
           sourceSheetId: activeSheetId,
           rows: initial.rows,
           columns: initial.columns,
           values: initial.values,
           showGrandTotalRow: initial.showGrandTotalRow,
         });
-        const resp = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+        const resp = await SpreadsheetAPI.listSheets(String(spreadsheetId));
         const list = resp.results || [];
         setSheets(list);
         setCreateSheetDefaultName(getNextSheetName(list));
@@ -649,7 +644,7 @@ export default function SpreadsheetsV2DetailPage() {
         let sourceData = pivotSourceDataBySheet[activeSheetId];
         if (!sourceData) {
           const response = await SpreadsheetAPI.readCellRange(
-            Number(spreadsheetId),
+            String(spreadsheetId),
             sourceSheetId,
             0,
             999,
@@ -707,13 +702,13 @@ export default function SpreadsheetsV2DetailPage() {
           ...clearOps,
         ];
         await SpreadsheetAPI.resizeSheet(
-          Number(spreadsheetId),
+          String(spreadsheetId),
           activeSheetId,
           Math.max(pivotResult.rowCount + 10, prevDims.rowCount + 10, 100),
           Math.max(pivotResult.colCount + 5, prevDims.colCount + 5, 26)
         );
         await SpreadsheetAPI.batchUpdateCells(
-          Number(spreadsheetId),
+          String(spreadsheetId),
           activeSheetId,
           allOps,
           false
@@ -728,14 +723,14 @@ export default function SpreadsheetsV2DetailPage() {
       }
       void (async () => {
         try {
-          await SpreadsheetAPI.upsertPivotConfig(Number(spreadsheetId), activeSheetId, {
+          await SpreadsheetAPI.upsertPivotConfig(String(spreadsheetId), activeSheetId, {
             sourceSheetId,
             rows: newConfig.rows,
             columns: newConfig.columns,
             values: newConfig.values,
             showGrandTotalRow: newConfig.showGrandTotalRow,
           });
-          await SpreadsheetAPI.recomputePivot(Number(spreadsheetId), activeSheetId);
+          await SpreadsheetAPI.recomputePivot(String(spreadsheetId), activeSheetId);
         } catch (err) {
           console.error('Background pivot persistence/recompute failed:', err);
         }
@@ -759,8 +754,8 @@ export default function SpreadsheetsV2DetailPage() {
   const handleSubmitCreateSheet = async (name: string) => {
     if (!spreadsheetId) return;
     try {
-      const newSheet = await SpreadsheetAPI.createSheet(Number(spreadsheetId), { name });
-      const resp = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+      const newSheet = await SpreadsheetAPI.createSheet(String(spreadsheetId), { name });
+      const resp = await SpreadsheetAPI.listSheets(String(spreadsheetId));
       const list = resp.results || [];
       setSheets(list);
       setCreateSheetDefaultName(getNextSheetName(list));
@@ -776,7 +771,7 @@ export default function SpreadsheetsV2DetailPage() {
     if (!spreadsheetId) return;
     setRenaming(true);
     try {
-      const updated = await SpreadsheetAPI.updateSheet(Number(spreadsheetId), sheetId, {
+      const updated = await SpreadsheetAPI.updateSheet(String(spreadsheetId), sheetId, {
         name: newName,
       } as UpdateSheetRequest);
       setSheets((prev) =>
@@ -794,7 +789,7 @@ export default function SpreadsheetsV2DetailPage() {
     if (!spreadsheetId) return;
     setRenamingSpreadsheetSaving(true);
     try {
-      const updated = await SpreadsheetAPI.updateSpreadsheet(Number(spreadsheetId), {
+      const updated = await SpreadsheetAPI.updateSpreadsheet(String(spreadsheetId), {
         name: newName,
       });
       setSpreadsheet((prev) => (prev ? { ...prev, name: updated.name } : prev));
@@ -810,9 +805,9 @@ export default function SpreadsheetsV2DetailPage() {
     if (!deleteConfirmSheet || !spreadsheetId || !projectId) return;
     setDeletingSheet(true);
     try {
-      await SpreadsheetAPI.deleteSheet(Number(projectId), Number(spreadsheetId), deleteConfirmSheet.id);
+      await SpreadsheetAPI.deleteSheet(String(projectId), String(spreadsheetId), deleteConfirmSheet.id);
       toast.success('Sheet deleted');
-      const resp = await SpreadsheetAPI.listSheets(Number(spreadsheetId));
+      const resp = await SpreadsheetAPI.listSheets(String(spreadsheetId));
       const list = resp.results || [];
       setSheets(list);
       if (list.length === 0) {
@@ -842,7 +837,7 @@ export default function SpreadsheetsV2DetailPage() {
               <p className="mt-3 text-sm font-semibold text-rose-700">Could not load spreadsheet</p>
               <p className="mt-1 text-xs text-rose-600">{error}</p>
               <Link
-                href={`/spreadsheets${projectId ? `?project_id=${projectId}` : ''}`}
+                href="/spreadsheets"
                 className="mt-4 inline-flex h-9 items-center rounded-md bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-3.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-95"
               >
                 Back to spreadsheets
@@ -864,7 +859,7 @@ export default function SpreadsheetsV2DetailPage() {
               <p className="mt-3 text-sm font-semibold text-gray-900">Spreadsheet not found</p>
               <p className="mt-1 text-xs text-gray-500">The spreadsheet you&apos;re looking for doesn&apos;t exist.</p>
               <Link
-                href={`/spreadsheets${projectId ? `?project_id=${projectId}` : ''}`}
+                href="/spreadsheets"
                 className="mt-4 inline-flex h-9 items-center rounded-md bg-gradient-to-r from-[#3CCED7] to-[#A6E661] px-3.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-95"
               >
                 Back to spreadsheets
@@ -896,7 +891,7 @@ export default function SpreadsheetsV2DetailPage() {
                   <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                     <SpreadsheetGrid
                       ref={gridRef}
-                      spreadsheetId={Number(spreadsheetId)}
+                      spreadsheetId={String(spreadsheetId)}
                       sheetId={activeSheet?.id ?? 0}
                       loading={loading || !activeSheet}
                       spreadsheetName={spreadsheet?.name ?? undefined}

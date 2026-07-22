@@ -40,31 +40,31 @@ export const TicketFormAPI = {
     });
   },
 
-  retrieve(formId: number) {
+  retrieve(formId: number | string) {
     return api.get<TicketFormDetail>(`${BASE}/ticket-forms/${formId}/`);
   },
 
-  update(formId: number, data: UpdateTicketFormData) {
+  update(formId: number | string, data: UpdateTicketFormData) {
     return api.patch<TicketFormDetail>(`${BASE}/ticket-forms/${formId}/`, data);
   },
 
-  delete(formId: number) {
+  delete(formId: number | string) {
     return api.delete(`${BASE}/ticket-forms/${formId}/`);
   },
 
-  bulkFields(formId: number, payload: BulkFieldsPayload) {
+  bulkFields(formId: number | string, payload: BulkFieldsPayload) {
     return api.put<TicketFormDetail>(`${BASE}/ticket-forms/${formId}/fields/`, payload);
   },
 
-  setDefault(formId: number) {
+  setDefault(formId: number | string) {
     return api.post<TicketFormDetail>(`${BASE}/ticket-forms/${formId}/set-default/`);
   },
 
-  listAssignments(formId: number) {
+  listAssignments(formId: number | string) {
     return api.get<TicketFormAssignment[]>(`${BASE}/ticket-forms/${formId}/assignments/`);
   },
 
-  replaceAssignments(formId: number, payload: ReplaceAssignmentsPayload) {
+  replaceAssignments(formId: number | string, payload: ReplaceAssignmentsPayload) {
     return api.put<TicketFormAssignment[]>(
       `${BASE}/ticket-forms/${formId}/assignments/`,
       payload,

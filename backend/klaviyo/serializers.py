@@ -33,7 +33,7 @@ class EmailDraftSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EmailDraft
-        fields = [
+        fields = ['slug', 
             "id",
             "user",
             "name",
@@ -44,7 +44,7 @@ class EmailDraftSerializer(serializers.ModelSerializer):
             "is_deleted",
             "blocks",
         ]
-        read_only_fields = [
+        read_only_fields = ['slug', 
             "id",
             "created_at",
             "updated_at",
@@ -66,6 +66,9 @@ class EmailDraftCreateSerializer(serializers.ModelSerializer):
             "status",
             "blocks",
         ]
+        # Owner is assigned server-side from request.user; never trust a
+        # client-supplied user (prevents creating drafts under another account).
+        read_only_fields = ["user"]
 
     def create(self, validated_data):
         blocks_data = validated_data.pop("blocks", [])

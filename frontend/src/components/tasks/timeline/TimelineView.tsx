@@ -280,7 +280,7 @@ const TimelineView = ({
     try {
       await Promise.all(
         next.map((t, idx) =>
-          t.id ? TaskAPI.updateTask(t.id, { order_in_project: idx }) : Promise.resolve()
+          t.id ? TaskAPI.updateTask(t.slug ?? t.id, { order_in_project: idx }) : Promise.resolve()
         )
       );
     } catch (e) {

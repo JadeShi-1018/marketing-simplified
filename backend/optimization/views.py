@@ -7,6 +7,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 
+from core.slug_mixins import resolve_pk_for
+from task.models import Task
 from .services import ExperimentService, RollbackHistoryService
 from .models import (
     OptimizationExperiment,
@@ -45,8 +47,10 @@ class ExperimentListCreateView(generics.ListCreateAPIView):
     filterset_fields = ['status', 'experiment_type']
     
     def get_queryset(self):
-        """Return experiments with custom date filtering"""
-        queryset = OptimizationExperiment.objects.all().order_by('-id')
+        """Return the current user's experiments with custom date filtering."""
+        queryset = OptimizationExperiment.objects.filter(
+            created_by=self.request.user
+        ).order_by('-id')
         
         # Filter experiments by start and end date
         start_before = self.request.query_params.get('start_before')
@@ -95,8 +99,8 @@ class ExperimentUpdateView(generics.RetrieveUpdateAPIView):
     lookup_field = 'id'
     
     def get_queryset(self):
-        """Return experiments"""
-        return OptimizationExperiment.objects.all()
+        """Return the current user's experiments only (scoped by created_by)."""
+        return OptimizationExperiment.objects.filter(created_by=self.request.user)
     
     def get_serializer_class(self):
         """Use unified serializer for all requests"""
@@ -208,8 +212,10 @@ class ScalingActionListCreateView(generics.ListCreateAPIView):
     filterset_fields = ['action_type', 'campaign_id']
     
     def get_queryset(self):
-        """Return scaling actions with custom date filtering"""
-        queryset = ScalingAction.objects.all().order_by('-performed_at')
+        """Return the current user's scaling actions with custom date filtering."""
+        queryset = ScalingAction.objects.filter(
+            performed_by=self.request.user
+        ).order_by('-performed_at')
         
         # Custom date filtering as specified in OpenAPI spec
         performed_before = self.request.query_params.get('performed_before')
@@ -314,9 +320,9 @@ class ScalingPlanListCreateView(generics.ListCreateAPIView):
             task__project_id__in=accessible_project_ids
         )
 
-        task_id = self.request.query_params.get("task_id")
-        if task_id:
-            queryset = queryset.filter(task_id=task_id)
+        task_pk = resolve_pk_for(Task, self.request.query_params.get("task_id"))
+        if task_pk:
+            queryset = queryset.filter(task_id=task_pk)
 
         return queryset
 
@@ -477,9 +483,9 @@ class OptimizationListCreateView(generics.ListCreateAPIView):
         )
 
         # Optional filtering by query params
-        task_id = self.request.query_params.get("task_id")
-        if task_id:
-            queryset = queryset.filter(task_id=task_id)
+        task_pk = resolve_pk_for(Task, self.request.query_params.get("task_id"))
+        if task_pk:
+            queryset = queryset.filter(task_id=task_pk)
 
         execution_status = self.request.query_params.get("execution_status")
         if execution_status:

@@ -24,6 +24,14 @@ from core.models import CustomUser, Organization, Project, ProjectMember
 from decision.models import Decision
 from notifications.models import NotificationEventType
 
+# Patch target: prevents slack signal's _get_connection() from switching the
+# DB search_path to the tenant schema mid-request.  That function sets
+# "SET search_path TO org_<slug>, public" in its finally-block even when it
+# finds no Slack connection, leaving subsequent ORM calls (e.g.
+# _upsert_commit_record) targeting the wrong schema and causing FK violations
+# during Django's TestCase constraint check (_post_teardown).
+_SLACK_GET_CONNECTION_PATH = 'slack_integration.signals._get_connection'
+
 _PUBLISH_PATH = "notifications.sse.publish_notification_to_redis"
 
 _COMMIT_READY = {
@@ -89,6 +97,15 @@ class DecisionNotificationTests(TestCase):
         self.owner_client.force_authenticate(user=self.owner)
         self.owner_client.credentials(HTTP_X_PROJECT_ID=str(self.project.id))
 
+        # Prevent slack signal's _get_connection() from switching the search_path
+        # to the tenant schema (org_decisionorg, public).  That finally-block runs
+        # unconditionally and causes _upsert_commit_record to insert CommitRecord
+        # into org_decisionorg.decision_commit_records while the decision lives in
+        # public.decisions → DEFERRABLE FK violation in _post_teardown.
+        _slack_patcher = patch(_SLACK_GET_CONNECTION_PATH, return_value=None)
+        _slack_patcher.start()
+        self.addCleanup(_slack_patcher.stop)
+
     def _create_draft(self):
         r = self.author_client.post(
             "/api/decisions/drafts/",
@@ -100,7 +117,7 @@ class DecisionNotificationTests(TestCase):
 
     def _patch_to_commit_ready(self, decision):
         r = self.author_client.patch(
-            f"/api/decisions/drafts/{decision.id}/",
+            f"/api/decisions/drafts/{decision.slug}/",
             _COMMIT_READY,
             format="json",
         )
@@ -117,9 +134,10 @@ class DecisionNotificationTests(TestCase):
         decision = self._create_draft()
         self._patch_to_commit_ready(decision)
 
-        r = self.author_client.post(
-            f"/api/decisions/{decision.id}/commit/", {}, format="json"
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.author_client.post(
+                f"/api/decisions/{decision.slug}/commit/", {}, format="json"
+            )
         self.assertEqual(r.status_code, 200)
 
         decision = Decision.objects.get(pk=decision.id)
@@ -152,7 +170,7 @@ class DecisionNotificationTests(TestCase):
 
         # Author commits → AWAITING_APPROVAL
         self.author_client.post(
-            f"/api/decisions/{decision.id}/commit/", {}, format="json"
+            f"/api/decisions/{decision.slug}/commit/", {}, format="json"
         )
         decision = Decision.objects.get(pk=decision.id)
         self.assertEqual(decision.status, Decision.Status.AWAITING_APPROVAL)
@@ -160,9 +178,10 @@ class DecisionNotificationTests(TestCase):
         mock_publish.reset_mock()
 
         # Owner approves
-        r = self.owner_client.post(
-            f"/api/decisions/{decision.id}/approve/", {}, format="json"
-        )
+        with self.captureOnCommitCallbacks(execute=True):
+            r = self.owner_client.post(
+                f"/api/decisions/{decision.slug}/approve/", {}, format="json"
+            )
         self.assertEqual(r.status_code, 200)
 
         mock_publish.assert_called()
@@ -195,7 +214,7 @@ class DecisionNotificationTests(TestCase):
         self._patch_to_commit_ready(decision)
 
         self.author_client.post(
-            f"/api/decisions/{decision.id}/commit/", {}, format="json"
+            f"/api/decisions/{decision.slug}/commit/", {}, format="json"
         )
         decision = Decision.objects.get(pk=decision.id)
         self.assertEqual(decision.status, Decision.Status.AWAITING_APPROVAL)
@@ -203,7 +222,7 @@ class DecisionNotificationTests(TestCase):
         mock_publish.reset_mock()
 
         r = self.author_client.post(
-            f"/api/decisions/{decision.id}/approve/", {}, format="json"
+            f"/api/decisions/{decision.slug}/approve/", {}, format="json"
         )
         self.assertEqual(r.status_code, 200)
 

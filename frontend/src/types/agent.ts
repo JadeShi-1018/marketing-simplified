@@ -69,6 +69,7 @@ export interface AgentMessageData {
   task_ids?: number[];
   created_tasks?: Array<{ index: number; task_id: number; summary: string }>;
   board_id?: string;
+  board_slug?: string;
   event_type?: string;
   status?: string;
   recommended_tasks?: RecommendedTask[];
@@ -164,6 +165,8 @@ export interface AgentChatRequest {
   csv_filename?: string;
   action?: AgentAction;
   calendar_context?: CalendarContextPayload;
+  /** Draft → Agent context (read-only): { draftId, title, ... }. */
+  draft_context?: Record<string, unknown>;
   workflow_id?: string;
   column_mapping?: Record<string, string>;
   approval_id?: string;
@@ -368,6 +371,7 @@ export interface AgentWorkflowStep {
 
 export interface AgentWorkflowDefinition {
   id: string;
+  slug: string;
   name: string;
   description: string;
   is_default: boolean;
@@ -428,6 +432,7 @@ export interface TemplateProjectInfo {
 
 export interface AgentWorkflowTemplate {
   id: string;
+  slug: string;
   name: string;
   description?: string;
   category: TemplateCategory;

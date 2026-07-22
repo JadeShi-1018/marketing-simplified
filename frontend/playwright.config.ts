@@ -99,5 +99,12 @@ export default defineConfig({
       testMatch: /e2e[\\/]auth[\\/]/,
       testIgnore: [/\.setup\.ts$/, /[\\/]fixtures[\\/]/],
     },
+    {
+      name: 'messages-mock',
+      use: {
+        ...devices['Desktop Chrome'],
+      },
+      testMatch: /e2e[\\/]messages[\\/]messages-reconnect-attachments\.spec\.ts$/,
+    },
   ],
 });

@@ -2,8 +2,72 @@ import api from '../api';
 
 export const SLACK_OAUTH_STATE_STORAGE_KEY = 'slack_oauth_state';
 
+const safeSessionStorage = () => {
+    if (typeof window === 'undefined') return null;
+    try {
+        const testKey = '__slack_oauth_session_storage_test__';
+        window.sessionStorage.setItem(testKey, '1');
+        window.sessionStorage.removeItem(testKey);
+        return window.sessionStorage;
+    } catch {
+        return null;
+    }
+};
+
+const safeLocalStorage = () => {
+    if (typeof window === 'undefined') return null;
+    try {
+        const testKey = '__slack_oauth_local_storage_test__';
+        window.localStorage.setItem(testKey, '1');
+        window.localStorage.removeItem(testKey);
+        return window.localStorage;
+    } catch {
+        return null;
+    }
+};
+
+export const persistSlackOAuthState = (state: string) => {
+    try {
+        safeSessionStorage()?.setItem(SLACK_OAUTH_STATE_STORAGE_KEY, state);
+    } catch {
+        // Ignore restricted browser storage; the signed query state is still validated server-side.
+    }
+    try {
+        safeLocalStorage()?.setItem(SLACK_OAUTH_STATE_STORAGE_KEY, state);
+    } catch {
+        // Ignore restricted browser storage; the signed query state is still validated server-side.
+    }
+};
+
+export const readSlackOAuthState = () => {
+    try {
+        const sessionState = safeSessionStorage()?.getItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+        if (sessionState) return sessionState;
+    } catch {
+        // Ignore restricted browser storage; backend signed state remains authoritative.
+    }
+    try {
+        return safeLocalStorage()?.getItem(SLACK_OAUTH_STATE_STORAGE_KEY) ?? null;
+    } catch {
+        return null;
+    }
+};
+
+export const clearSlackOAuthState = () => {
+    try {
+        safeSessionStorage()?.removeItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+    } catch {
+        // Ignore restricted browser storage.
+    }
+    try {
+        safeLocalStorage()?.removeItem(SLACK_OAUTH_STATE_STORAGE_KEY);
+    } catch {
+        // Ignore restricted browser storage.
+    }
+};
+
 export interface SlackManageableProject {
-    id: number;
+    id: number | string;
     name: string;
 }
 
@@ -25,7 +89,7 @@ export interface SlackChannel {
 }
 
 export interface SlackRequestContext {
-    projectId?: number | null;
+    projectId?: number | string | null;
     organizationId?: number | null;
 }
 

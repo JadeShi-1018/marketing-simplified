@@ -21,7 +21,7 @@ class _TaskOrchestrator:
 
 
 @shared_task
-def generate_miro_board_for_workflow_run_task(workflow_run_id: str):
+def generate_miro_board_for_workflow_run_task(workflow_run_id: str, context_payload: dict | None = None):
     try:
         workflow_run = AgentWorkflowRun.objects.select_related(
             "session",
@@ -41,7 +41,11 @@ def generate_miro_board_for_workflow_run_task(workflow_run_id: str):
     logger.info("Starting background Miro generation for workflow_run=%s", workflow_run_id)
 
     try:
-        _snapshot, board = _generate_miro_board_for_workflow_run(orchestrator, workflow_run)
+        _snapshot, board = _generate_miro_board_for_workflow_run(
+            orchestrator,
+            workflow_run,
+            context_payload=context_payload,
+        )
     except requests.HTTPError as exc:
         status_code = getattr(exc.response, "status_code", None)
         logger.exception(

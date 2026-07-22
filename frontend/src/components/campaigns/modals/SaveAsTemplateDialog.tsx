@@ -75,7 +75,7 @@ export default function SaveAsTemplateDialog({
       const res = await CampaignAPI.saveCampaignAsTemplate(campaignId, data);
       toast.success('Saved as template');
       handleClose(false);
-      router.push(`/campaigns/templates/${res.data.id}`);
+      router.push(`/campaigns/templates/${res.data.slug}`);
     } catch (err: any) {
       const msg =
         err?.response?.data?.error ||

@@ -1206,12 +1206,12 @@ class CalendarEventSignalTests(TestCase):
         task = Task.objects.get(pk=task.pk)
 
         request = APIRequestFactory().patch(
-            f"/api/tasks/{task.id}/",
+            f"/api/tasks/{task.slug}/",
             {"description": "Updated description only"},
             format="json",
         )
         force_authenticate(request, user=self.user)
-        response = TaskViewSet.as_view({"patch": "partial_update"})(request, pk=task.id)
+        response = TaskViewSet.as_view({"patch": "partial_update"})(request, pk=task.slug)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         updated_task = Task.objects.get(pk=task.pk)

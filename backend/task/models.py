@@ -1,5 +1,6 @@
 from contextlib import nullcontext
 from django.db import models
+from core.slug_mixins import SluggedResourceModelMixin
 from django.contrib.auth import get_user_model
 from django_fsm import FSMField, transition
 from django.contrib.contenttypes.models import ContentType
@@ -12,7 +13,7 @@ from django.core.files.uploadedfile import UploadedFile
 User = get_user_model()
 
 
-class Task(models.Model):
+class Task(SluggedResourceModelMixin, models.Model):
     class Status(models.TextChoices):
         DRAFT = 'DRAFT', 'Draft'
         SUBMITTED = 'SUBMITTED', 'Submitted'
@@ -283,6 +284,25 @@ class Task(models.Model):
             or ApprovalChain.objects.filter(project=project, task_type__isnull=True).first()
             or ApprovalChain.objects.filter(project__isnull=True, task_type=task_type).first()
         )
+
+    @classmethod
+    def lock_for_transition(cls, pk):
+        """
+        Fetch a task row with a database-level write lock (SELECT ... FOR UPDATE)
+        so concurrent status transitions are serialized.
+
+        When multiple approvers act on the same approval chain at once, the
+        second caller blocks here until the first transaction commits, then
+        re-reads the freshly-committed status. That lets the caller detect the
+        decision was already made instead of overwriting it (lost update).
+
+        Must be called inside a `transaction.atomic()` block. Returns the locked
+        Task, or None if no row matches the given pk.
+        """
+        try:
+            return cls.objects.select_for_update().get(pk=pk)
+        except cls.DoesNotExist:
+            return None
 
     # --- Helpful Properties ---
     @property

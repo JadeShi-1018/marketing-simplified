@@ -6,6 +6,7 @@ from decision.models import Decision
 from decision.serializers import DecisionCommittedSerializer, DecisionListSerializer
 import logging
 from datetime import datetime
+from django.utils.dateparse import parse_datetime
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, transaction
@@ -13,6 +14,7 @@ from django.db.models.deletion import ProtectedError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
+from core.slug_mixins import SlugLookupViewSetMixin, resolve_lookup_kwargs, resolve_project_pk
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -155,13 +157,13 @@ class AuditLogPagination(PageNumberPagination):
         return super().get_paginated_response(data)
 
 
-class MeetingViewSet(viewsets.ModelViewSet):
+class MeetingViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     serializer_class = MeetingSerializer
     permission_classes = [IsAuthenticated]
 
     def get_project(self) -> Project:
         project_id = self.kwargs.get("project_id")
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
         _ensure_project_membership(self.request.user, project)
         return project
 
@@ -374,7 +376,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     body="You were added as a participant.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=meeting_action_url(meeting.id, project.id),
+                    action_url=meeting_action_url(meeting.slug, project.id),
                     metadata={"project_id": project.id},
                 )
 
@@ -495,7 +497,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                     body="The meeting minutes have been published.",
                     related_object_type="meeting",
                     related_object_id=str(meeting.id),
-                    action_url=meeting_action_url(meeting.id, meeting.project_id),
+                    action_url=meeting_action_url(meeting.slug, meeting.project_id),
                     metadata={
                         "project_id": meeting.project_id,
                         "meeting_title": meeting.title,
@@ -629,7 +631,7 @@ class MeetingViewSet(viewsets.ModelViewSet):
                 body="Meeting details were changed.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=meeting_action_url(meeting.id, project.id),
+                action_url=meeting_action_url(meeting.slug, project.id),
                 metadata={"project_id": project.id, **changes},
             )
 
@@ -730,8 +732,8 @@ class AgendaItemViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
         meeting_id = self.kwargs.get("meeting_id")
         meeting = get_object_or_404(
             Meeting.objects.select_related("project"),
-            id=meeting_id,
-            project_id=project_id,
+            **resolve_lookup_kwargs(meeting_id, 'id'),
+            **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'),
         )
         _ensure_project_membership(self.request.user, meeting.project)
         return meeting
@@ -882,8 +884,8 @@ class ParticipantLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
         meeting_id = self.kwargs.get("meeting_id")
         meeting = get_object_or_404(
             Meeting.objects.select_related("project"),
-            id=meeting_id,
-            project_id=project_id,
+            **resolve_lookup_kwargs(meeting_id, 'id'),
+            **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'),
         )
         _ensure_project_membership(self.request.user, meeting.project)
         return meeting
@@ -925,7 +927,7 @@ class ParticipantLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
                 body="You were added as a participant.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=meeting_action_url(meeting.id, meeting.project_id),
+                action_url=meeting_action_url(meeting.slug, meeting.project_id),
                 metadata={
                     "project_id": meeting.project_id,
                     "meeting_title": meeting.title,
@@ -954,7 +956,7 @@ class ParticipantLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
                 body="You were removed from this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=meeting_action_url(meeting.id, meeting.project_id),
+                action_url=meeting_action_url(meeting.slug, meeting.project_id),
                 metadata={
                     "meeting_title": meeting.title,
                     "project_name": meeting.project.name,
@@ -979,8 +981,8 @@ class ArtifactLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
         meeting_id = self.kwargs.get("meeting_id")
         meeting = get_object_or_404(
             Meeting.objects.select_related("project"),
-            id=meeting_id,
-            project_id=project_id,
+            **resolve_lookup_kwargs(meeting_id, 'id'),
+            **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'),
         )
         _ensure_project_membership(self.request.user, meeting.project)
         return meeting
@@ -1033,7 +1035,7 @@ class ArtifactLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
                 body=f"{type_label} \"{artifact_title}\" was linked to this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=meeting_action_url(meeting.id, meeting.project_id),
+                action_url=meeting_action_url(meeting.slug, meeting.project_id),
                 metadata={
                     "project_id": meeting.project_id,
                     "change_type": "artifact_linked",
@@ -1067,7 +1069,7 @@ class ArtifactLinkViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet):
                 body=f"{type_label} \"{artifact_title}\" was removed from this meeting.",
                 related_object_type="meeting",
                 related_object_id=str(meeting.id),
-                action_url=meeting_action_url(meeting.id, meeting.project_id),
+                action_url=meeting_action_url(meeting.slug, meeting.project_id),
                 metadata={
                     "project_id": meeting.project_id,
                     "change_type": "artifact_unlinked",
@@ -1092,8 +1094,8 @@ class MeetingActionItemViewSet(ArchivedMeetingGuardMixin, viewsets.ModelViewSet)
         meeting_id = self.kwargs.get("meeting_id")
         meeting = get_object_or_404(
             Meeting.objects.select_related("project"),
-            id=meeting_id,
-            project_id=project_id,
+            **resolve_lookup_kwargs(meeting_id, 'id'),
+            **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'),
         )
         _ensure_project_membership(self.request.user, meeting.project)
         return meeting
@@ -1184,8 +1186,8 @@ class MeetingDocumentAPIView(APIView):
     def _get_meeting(self, project_id: int, meeting_id: int) -> Meeting:
         meeting = get_object_or_404(
             Meeting.objects.select_related("project"),
-            id=meeting_id,
-            project_id=project_id,
+            **resolve_lookup_kwargs(meeting_id, 'id'),
+            **resolve_lookup_kwargs(project_id, 'project_id', 'project__slug'),
         )
         _ensure_meeting_document_access(self.request.user, meeting)
         return meeting
@@ -1239,11 +1241,11 @@ class MeetingAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         project_id = self.kwargs.get('project_id')
 
         # Verify project membership
-        project = get_object_or_404(Project, id=project_id)
+        project = get_object_or_404(Project, id=resolve_project_pk(project_id))
         _ensure_project_membership(self.request.user, project)
 
         # Get meeting and verify it belongs to project
-        meeting = get_object_or_404(Meeting, id=meeting_id, project=project)
+        meeting = get_object_or_404(Meeting, **resolve_lookup_kwargs(meeting_id, 'id'), project=project)
 
         queryset = MeetingAuditLog.objects.filter(meeting=meeting).select_related('actor')
 
@@ -1268,18 +1270,16 @@ class MeetingAuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         to_date = self.request.query_params.get('to')
 
         if from_date:
-            try:
-                from_datetime = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
-                queryset = queryset.filter(timestamp__gte=from_datetime)
-            except ValueError:
+            from_datetime = parse_datetime(from_date.replace(' ', '+').replace('Z', '+00:00'))
+            if from_datetime is None:
                 raise ValidationError({'from': 'Invalid ISO 8601 date format'})
+            queryset = queryset.filter(timestamp__gte=from_datetime)
 
         if to_date:
-            try:
-                to_datetime = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
-                queryset = queryset.filter(timestamp__lte=to_datetime)
-            except ValueError:
+            to_datetime = parse_datetime(to_date.replace(' ', '+').replace('Z', '+00:00'))
+            if to_datetime is None:
                 raise ValidationError({'to': 'Invalid ISO 8601 date format'})
+            queryset = queryset.filter(timestamp__lte=to_datetime)
 
         return queryset
 

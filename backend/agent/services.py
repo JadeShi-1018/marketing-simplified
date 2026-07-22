@@ -372,6 +372,7 @@ def _call_gemini_analysis(
         temperature=0.3,
         max_output_tokens=4096,
         response_mime_type='application/json',
+        call_purpose='data_analysis',
     )
     return json.loads(result['text'])
 
@@ -444,6 +445,7 @@ def _call_gemini_calendar_from_analysis(
             temperature=0.3,
             max_output_tokens=4096,
             response_mime_type='application/json',
+            call_purpose='calendar_suggestion',
         )
         raw = json.loads(result['text'])
     logger.info("Calling Gemini for calendar events user_id=%s", user_id)
@@ -720,6 +722,7 @@ def _call_gemini_chat(
                 temperature=0.5,
                 max_output_tokens=4096,
                 response_mime_type='application/json',
+                call_purpose='follow_up_chat',
             )
             parsed = json.loads(result['text'])
     except Exception as e:
@@ -733,7 +736,7 @@ def _call_gemini_chat(
     raise RuntimeError("Gemini chat returned unexpected output format")
 
 
-def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
+def _generate_miro_board_for_workflow_run(orchestrator, workflow_run, context_payload=None):
     """Generate Miro snapshot (Gemini) and persist the board.
 
     Legacy ``generate_miro`` is an explicit user action — clicking Generate Miro
@@ -743,16 +746,28 @@ def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
     from .miro_generation import (
         build_miro_generation_context_from_run,
         call_gemini_miro_generator,
+        deserialize_miro_generation_context,
+        serialize_miro_generation_context,
     )
     from .miro_board_service import create_board_from_snapshot
     from .models import AgentPendingExternalApproval
 
     snapshot = workflow_run.miro_snapshot
     if not snapshot:
-        context = build_miro_generation_context_from_run(
-            session=orchestrator.session,
-            workflow_run=workflow_run,
-        )
+        try:
+            context = deserialize_miro_generation_context(context_payload)
+        except ValueError:
+            logger.warning(
+                "Invalid Miro generation context payload for workflow_run=%s; rebuilding from run",
+                getattr(workflow_run, "id", workflow_run),
+            )
+            context = None
+        if context is None:
+            context = build_miro_generation_context_from_run(
+                session=orchestrator.session,
+                workflow_run=workflow_run,
+            )
+            context = serialize_miro_generation_context(context)
         snapshot = call_gemini_miro_generator(
             context,
             user_id=str(orchestrator.user.id),
@@ -780,14 +795,27 @@ def _generate_miro_board_for_workflow_run(orchestrator, workflow_run):
 
 def _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run):
     """Queue Miro generation so task creation can return immediately."""
+    from .miro_generation import (
+        build_miro_generation_context_from_run,
+        serialize_miro_generation_context,
+    )
     from .tasks import generate_miro_board_for_workflow_run_task
+
+    context = build_miro_generation_context_from_run(
+        session=orchestrator.session,
+        workflow_run=workflow_run,
+    )
+    context_payload = serialize_miro_generation_context(context)
 
     logger.info(
         "Queueing background Miro generation for workflow_run=%s session=%s",
         workflow_run.id,
         orchestrator.session.id,
     )
-    generate_miro_board_for_workflow_run_task.delay(str(workflow_run.id))
+    generate_miro_board_for_workflow_run_task.delay(
+        str(workflow_run.id),
+        context_payload=context_payload,
+    )
 
 
 def _get_or_create_bot_private_chat(bot, target_user, project):
@@ -997,6 +1025,7 @@ class AgentOrchestrator:
 
     def handle_message(self, message, spreadsheet_id=None, csv_filename=None,
                        action=None, file_id=None, calendar_context=None,
+                       draft_context=None,
                        workflow_id=None, column_mapping=None,
                        approval_id=None, approval_decision=None,
                        approval_draft=None, generation_outputs=None, user_context=None,
@@ -1029,6 +1058,12 @@ class AgentOrchestrator:
         # --- Calendar context takes priority over all other routing ---
         if calendar_context:
             yield from self.answer_calendar_question(message, calendar_context)
+            yield {"type": "done"}
+            return
+
+        # --- Draft context: answer using the draft's real content (read-only) ---
+        if draft_context:
+            yield from self.answer_draft_question(message, draft_context)
             yield {"type": "done"}
             return
 
@@ -1292,6 +1327,109 @@ class AgentOrchestrator:
         except Exception as e:
             logger.error(f"Failed to create calendar event: {e}")
             return None
+
+    # Cap on the draft text inlined into the LLM context (chars).
+    _DRAFT_PAYLOAD_MAX_CHARS = 12000
+
+    def answer_draft_question(self, message, draft_context):
+        """Answer a question using a draft's real content (AGENT-7, read-only).
+
+        The Agent reuses notion_editor's existing logic in-process — never
+        reimplementing it:
+          * permissions: DraftViewSet.get_queryset() is the single source of
+            truth for which drafts this user may see, and
+          * rendering: notion_editor's _html_to_plain_text extracts block text.
+        notion_editor's source files are unchanged, and the Agent holds no
+        draft/block/permission logic of its own.
+
+        TODO(AGENT-7 write direction): if Agent → Draft (create/update) becomes
+        in scope, drive it through notion_editor's existing DraftViewSet
+        create/update flow (no duplicate draft/block logic) and surface a
+        confirmation card linking back into the Notion module.
+        """
+        from types import SimpleNamespace
+        from notion_editor.views import DraftViewSet
+        from notion_editor.services import _html_to_plain_text
+        from .gemini_client import call_gemini, _get_api_key as _gemini_key
+
+        draft_ref = None
+        if isinstance(draft_context, dict):
+            draft_ref = draft_context.get('draftId') or draft_context.get('draft_id')
+        if not draft_ref:
+            yield {"type": "error", "content": "No draft was specified."}
+            return
+
+        # Permissions come entirely from DraftViewSet.get_queryset(), which
+        # only reads request.user — so a minimal stub request is enough. The
+        # Agent never reimplements the user/is_deleted access filter.
+        view = DraftViewSet()
+        view.request = SimpleNamespace(user=self.user)
+        accessible = view.get_queryset()
+
+        # Identify the draft within the already permission-scoped queryset
+        # (slug is the public identifier; fall back to a legacy numeric pk).
+        draft_ref = str(draft_ref)
+        draft = accessible.filter(slug=draft_ref).first()
+        if draft is None and draft_ref.isdigit():
+            draft = accessible.filter(pk=int(draft_ref)).first()
+        if draft is None:
+            yield {
+                "type": "error",
+                "content": "That draft could not be found or you do not have access to it.",
+            }
+            return
+
+        if not _gemini_key():
+            yield {"type": "error", "content": "Agent AI is not configured. Please set GEMINI_API_KEY."}
+            return
+
+        # Render blocks to text by reusing notion_editor's HTML extractor; the
+        # Agent does not parse or re-model blocks itself.
+        parts = []
+        title = (draft.title or '').strip()
+        if title:
+            parts.append(f"# {title}")
+        blocks = draft.content_blocks if isinstance(draft.content_blocks, list) else []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            content = block.get('content') or {}
+            html = ''
+            if isinstance(content, dict):
+                html = content.get('html') or content.get('text') or ''
+            text = _html_to_plain_text(html).strip()
+            if text:
+                parts.append(text)
+        draft_text = "\n\n".join(parts)
+        if len(draft_text) > self._DRAFT_PAYLOAD_MAX_CHARS:
+            draft_text = draft_text[:self._DRAFT_PAYLOAD_MAX_CHARS].rstrip() + "\n\n[... draft truncated for length ...]"
+
+        system_prompt = (
+            "You are a helpful writing assistant embedded in a Notion-style draft editor. "
+            "You help the user understand, summarize, expand, and answer questions about THIS draft. "
+            "Use only the provided draft content as ground truth; if the answer is not in the draft, "
+            "say so plainly. Respond in clear plain text (no JSON, no markdown code fences)."
+        )
+        user_prompt = (
+            f"Draft title: {draft.title}\n\n"
+            f'Draft content:\n"""\n{draft_text}\n"""\n\n'
+            f"User question: {message}"
+        )
+
+        try:
+            answer = call_gemini(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                temperature=0.3,
+                timeout=90,
+            )
+        except Exception as e:
+            logger.error(f"Gemini draft Q&A error: {e}")
+            yield {"type": "error", "content": "Failed to get AI response. Please try again."}
+            return
+
+        answer_text = (answer or "").strip() or "I couldn't generate a response for that draft."
+        yield {"type": "text", "content": answer_text}
 
     def answer_calendar_question(self, message, calendar_context):
         """Answer calendar-related questions using real event data via Dify AI."""

@@ -348,12 +348,29 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
                 {"calendar_id": "Calendar not found."}
             )
 
+    def _normalize_recurrence_bounds(self, recurrence_data: dict) -> dict:
+        """
+        Keep count/until mutually exclusive per RecurrenceRule constraint.
+        """
+        data = dict(recurrence_data)
+        if data.get("count") is not None:
+            data["until"] = None
+        elif data.get("until") is not None:
+            data["count"] = None
+        else:
+            data["count"] = None
+            data["until"] = None
+        return data
+
     def _create_or_update_recurrence_rule(
         self, organization: Organization, recurrence_data: dict | None
     ) -> RecurrenceRule | None:
         if not recurrence_data:
             return None
-        rule = RecurrenceRule(organization=organization, **recurrence_data)
+        rule = RecurrenceRule(
+            organization=organization,
+            **self._normalize_recurrence_bounds(recurrence_data),
+        )
         rule.save()
         return rule
 
@@ -386,7 +403,7 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
 
     def update(self, instance: Event, validated_data: dict) -> Event:
         recurrence_data = validated_data.pop("recurrence", None)
-        validated_data.pop("is_recurring", None)
+        is_recurring = validated_data.pop("is_recurring", None)
         calendar_id = validated_data.pop("calendar_id", None)
 
         organization = instance.organization
@@ -394,9 +411,13 @@ class EventCreateUpdateSerializer(serializers.ModelSerializer):
             calendar = self._ensure_calendar(calendar_id, organization)
             instance.calendar = calendar
 
-        if recurrence_data is not None:
+        if is_recurring is False:
+            instance.is_recurring = False
+            instance.recurrence_rule = None
+        elif recurrence_data is not None:
+            normalized = self._normalize_recurrence_bounds(recurrence_data)
             if instance.recurrence_rule:
-                for field, value in recurrence_data.items():
+                for field, value in normalized.items():
                     setattr(instance.recurrence_rule, field, value)
                 instance.recurrence_rule.save()
                 recurrence_rule = instance.recurrence_rule
@@ -630,6 +651,17 @@ class CalendarEventSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True,
     )
+    # Slugs for front-end navigation (browser URLs and API lookups are slug-only)
+    decision_slug = serializers.SlugField(
+        source='decision.slug',
+        read_only=True,
+        allow_null=True,
+    )
+    task_slug = serializers.SlugField(
+        source='task.slug',
+        read_only=True,
+        allow_null=True,
+    )
     review_id = serializers.IntegerField(
         source='review.id',
         read_only=True,
@@ -692,6 +724,8 @@ class CalendarEventSerializer(serializers.ModelSerializer):
             'end_time',
             'decision_id',   # For front-end navigation to decision detail
             'task_id',       # For front-end navigation to task detail
+            'decision_slug', # Slug-based navigation (URLs are slug-only)
+            'task_slug',     # Slug-based navigation (URLs are slug-only)
             'review_id',     # For front-end navigation to review detail
             'project_id',    # For front-end permission header on navigation
             'created_at',
@@ -699,6 +733,6 @@ class CalendarEventSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'event_type', 'title', 'description', 'start_time', 'end_time',
-            'decision_id', 'task_id', 'review_id', 'project_id',
+            'decision_id', 'task_id', 'decision_slug', 'task_slug', 'review_id', 'project_id',
             'created_at', 'updated_at',
         ]

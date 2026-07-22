@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { addDays, format, startOfWeek } from "date-fns";
 import toast from "react-hot-toast";
 import { CalendarAPI, extractNavigationMetadata } from "@/lib/api/calendarApi";
-import type { CalendarDTO, CalendarViewType, EventDTO } from "@/lib/api/calendarApi";
+import type {
+  CalendarDTO,
+  CalendarViewType,
+  EventDTO,
+  RecurringEditScope,
+} from "@/lib/api/calendarApi";
+import { RecurringEditScopeDialog } from "@/components/calendar/RecurringEditScopeDialog";
 import { googleCalendarApi } from "@/lib/api/googleCalendarApi";
 import type { GoogleCalendarStatus } from "@/lib/api/googleCalendarApi";
 import { GoogleCalendarConnectedBadge } from "@/components/google-calendar/GoogleCalendarConnectedBadge";
@@ -65,6 +71,11 @@ export default function CalendarPageContent() {
   const [editingEvent, setEditingEvent] = useState<EventDTO | null>(null);
   const [panelPosition, setPanelPosition] = useState<EventPanelPosition | null>(null);
   const [viewSwitcherOpen, setViewSwitcherOpen] = useState(false);
+  const [recurringDrag, setRecurringDrag] = useState<{
+    event: EventDTO;
+    start: Date;
+    end: Date;
+  } | null>(null);
 
   const [activeEventTypes, setActiveEventTypes] = useState<Set<string>>(() =>
     loadActivityFilter(),
@@ -334,6 +345,40 @@ export default function CalendarPageContent() {
     return format(currentDate, "EEEE, MMMM d, yyyy");
   }, [currentView, currentDate]);
 
+  const handleRecurringDragScope = useCallback(
+    async (scope: RecurringEditScope) => {
+      const pending = recurringDrag;
+      setRecurringDrag(null);
+      if (!pending) {
+        return;
+      }
+
+      const { event, start, end } = pending;
+      const payload = {
+        start_datetime: start.toISOString(),
+        end_datetime: end.toISOString(),
+        timezone: event.timezone,
+        calendar_id: event.calendar_id,
+      };
+      // Identify the occurrence by its original start, not the dragged target.
+      const originalStart = event.original_start ?? event.start_datetime;
+
+      try {
+        if (scope === "all") {
+          await CalendarAPI.updateEvent(event.id, payload, event.etag);
+        } else if (scope === "future") {
+          await CalendarAPI.splitEventSeries(event.id, originalStart, payload);
+        } else {
+          await CalendarAPI.updateEventInstance(event.id, originalStart, payload);
+        }
+        await refetch();
+      } catch {
+        toast.error("Failed to update event time");
+      }
+    },
+    [recurringDrag, refetch],
+  );
+
   const handleToday = () => {
     setCurrentDate(new Date());
   };
@@ -518,13 +563,12 @@ export default function CalendarPageContent() {
             onEventClick={(event, position) => {
               const meta = extractNavigationMetadata(event.description || "");
               if (meta && meta.isDerived) {
-                if (meta.decision_id) {
-                  const query = meta.project_id ? `?project_id=${meta.project_id}` : '';
-                  router.push(`/decisions/${meta.decision_id}${query}`);
+                if (meta.decision_slug || meta.decision_id) {
+                  router.push(`/decisions/${meta.decision_slug ?? meta.decision_id}`);
                   return;
                 }
-                if (meta.task_id) {
-                  router.push(`/tasks/${meta.task_id}`);
+                if (meta.task_slug || meta.task_id) {
+                  router.push(`/tasks/${meta.task_slug ?? meta.task_id}`);
                   return;
                 }
               }
@@ -537,6 +581,11 @@ export default function CalendarPageContent() {
             }}
             onEventTimeChange={async (event, start, end) => {
               if (event.id.toString().startsWith("derived-")) {
+                return;
+              }
+              // Recurring drags need a scope choice before we touch the series.
+              if (event.is_recurring) {
+                setRecurringDrag({ event, start, end });
                 return;
               }
               try {
@@ -613,6 +662,13 @@ export default function CalendarPageContent() {
               toast.error("Failed to delete event");
             }
           }}
+        />
+
+        <RecurringEditScopeDialog
+          open={recurringDrag !== null}
+          title="Change recurring event"
+          onCancel={() => setRecurringDrag(null)}
+          onConfirm={handleRecurringDragScope}
         />
       </div>
     </div>

@@ -11,11 +11,14 @@ import json
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
 
 from .models import Organization, Role, Permission, UserRole, RolePermission, ModuleApprover, Team
-from core.models import Permission as CorePermission
+from core.models import OrganizationMembership, Permission as CorePermission
+from core.models import Project
+from .services import get_project_permission_matrix
 
 User = get_user_model()
 
@@ -277,11 +280,11 @@ def role_detail(request, role_id):
     elif request.method == 'DELETE':
         """Permanently delete a role"""
         try:
-            role_name = role.name  # Store name before deletion
+            role_snapshot = {"name": role.name, "level": role.level, "organization_id": role.organization_id}
             role.delete()  # Permanently delete the role from database
             
             return Response({
-                'message': f'Role "{role_name}" has been deleted successfully'
+                'message': f'Role "{role_snapshot["name"]}" has been deleted successfully'
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -339,6 +342,29 @@ def role_permissions_list(request):
         })
     
     return Response(data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def project_permission_matrix(request, project_id):
+    """Return the effective role x permission matrix for a project."""
+    try:
+        project = Project.objects.select_related("organization").get(id=project_id, is_deleted=False)
+        can_view = request.user.is_superuser or (
+            project.organization_id
+            and OrganizationMembership.objects.filter(
+                user=request.user,
+                organization_id=project.organization_id,
+                is_active=True,
+                role="admin",
+            ).exists()
+        )
+        if not can_view:
+            return Response({'error': 'Permission matrix access requires organization admin rights.'}, status=status.HTTP_403_FORBIDDEN)
+        data = get_project_permission_matrix(project_id)
+        return Response(data, status=status.HTTP_200_OK)
+    except Project.DoesNotExist:
+        return Response({'error': 'Project not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
 @api_view(['POST'])
@@ -450,7 +476,6 @@ def update_role_permissions(request, role_id):
                 error_count += 1
                 print(f"❌ Permission not found: permission_id={permission_id}, parsed as module={module}, action={action}")
                 continue
-        
         return Response({
             'message': f'Permissions updated successfully. {success_count} updated, {error_count} errors.',
             'success_count': success_count,
@@ -501,7 +526,6 @@ def copy_role_permissions(request, to_role_id):
                 role_perm.updated_at = timezone.now()
                 role_perm.save()
                 copied_count += 1
-        
         return Response({
             'message': f'Successfully copied {copied_count} permissions from {from_role.name} to {to_role.name}',
             'copied_count': copied_count

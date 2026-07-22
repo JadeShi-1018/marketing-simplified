@@ -74,19 +74,21 @@ import {
   parseISO,
 } from 'date-fns';
 import type { TiptapJSONContent } from '@/types/comment';
-import type { Message, MessageAttachment, ChatParticipant } from '@/types/chat';
+import type { Message, ChatParticipant, PendingAttachment } from '@/types/chat';
 import {
   uploadAttachment,
   validateFile,
   getFileTypeFromMime,
   formatFileSize,
-} from '@/lib/api/attachmentApi';
+  getAttachmentUploadErrorMessage,
+} from '@/lib/api/chatApi';
 import {
   createChatEditorExtensions,
   insertChatCodeBlockAndFocus,
   CHAT_EDITOR_CONTENT_CLASS,
 } from './editor/chatEditorExtensions';
 import type { CommentUserSummary } from '@/types/comment';
+import { useChatStore } from '@/lib/chatStore';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -113,17 +115,6 @@ export interface SlashCommand {
   onExecute: (args: string, clearEditor: () => void) => void;
 }
 
-interface PendingAttachment {
-  /** Temporary client-side id */
-  id: string;
-  file: File;
-  preview?: string;
-  progress: number;
-  uploading: boolean;
-  uploaded?: MessageAttachment;
-  error?: string;
-}
-
 export interface ChatComposerProps {
   /** Called with rich message data (content, rich_body, mention_ids, …). */
   onSendRich: (data: RichSendData) => void | Promise<void>;
@@ -133,7 +124,7 @@ export interface ChatComposerProps {
   /** Numeric chat id — used for localStorage draft key and typing events. */
   chatId?: number | null;
   /** Project id scopes localStorage drafts so cleanup cannot delete another project's drafts. */
-  projectId?: number | null;
+  projectId?: number | string | null;
   onTypingStart?: () => void;
   onTypingStop?: () => void;
   replyingTo?: Message | null;
@@ -178,10 +169,12 @@ const EmojiPicker = dynamic(() => import('emoji-picker-react'), {
 // ---------------------------------------------------------------------------
 
 const LEGACY_DRAFT_KEY = (chatId: number) => `chat_draft_v1_${chatId}`;
-const PROJECT_DRAFT_KEY = (projectId: number, chatId: number) => `chat_draft_v2_${projectId}_${chatId}`;
-const DRAFT_KEY = (chatId: number, projectId?: number | null) => (
+const PROJECT_DRAFT_KEY = (projectId: number | string, chatId: number) => `chat_draft_v2_${projectId}_${chatId}`;
+const DRAFT_KEY = (chatId: number, projectId?: number | string | null) => (
   projectId ? PROJECT_DRAFT_KEY(projectId, chatId) : LEGACY_DRAFT_KEY(chatId)
 );
+const FALLBACK_ATTACHMENT_STORE_KEY = 0;
+const EMPTY_PENDING_ATTACHMENTS: PendingAttachment[] = [];
 type RecordingMode = 'audio' | 'video';
 type MediaDevicesWithDisplayMedia = MediaDevices & {
   getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
@@ -819,8 +812,15 @@ export default function ChatComposer({
   const slashQueryRef = useRef<string | null>(null);
 
   // ---- attachment state ----
-  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
+  const attachmentStoreKey = chatId ?? FALLBACK_ATTACHMENT_STORE_KEY;
+  const pendingAttachments = useChatStore(
+    (state) => state.pendingAttachmentsByChat[attachmentStoreKey] ?? EMPTY_PENDING_ATTACHMENTS,
+  );
+  const addPendingAttachments = useChatStore((state) => state.addPendingAttachments);
+  const updatePendingAttachment = useChatStore((state) => state.updatePendingAttachment);
+  const removePendingAttachment = useChatStore((state) => state.removePendingAttachment);
+  const clearPendingAttachments = useChatStore((state) => state.clearPendingAttachments);
+  const isUploading = pendingAttachments.some((attachment) => attachment.uploading);
 
   // ---- reactive isEmpty (editor?.isEmpty reads a non-reactive property) ----
   const [isEditorEmpty, setIsEditorEmpty] = useState(true);
@@ -1048,18 +1048,6 @@ export default function ChatComposer({
     }
   }, [showLinkEditor]);
 
-  // Keep a ref so the unmount cleanup can access the latest list without
-  // the effect re-running (and revoking URLs) on every progress update.
-  const pendingAttachmentsRef = useRef(pendingAttachments);
-  useEffect(() => { pendingAttachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
-  useEffect(() => {
-    return () => {
-      pendingAttachmentsRef.current.forEach((a) => {
-        if (a.preview) URL.revokeObjectURL(a.preview);
-      });
-    };
-  }, []); // intentionally empty — only runs on unmount
-
   // ---------------------------------------------------------------------------
   // Typing indicators
   // ---------------------------------------------------------------------------
@@ -1113,7 +1101,7 @@ export default function ChatComposer({
     // Clear editor + attachments immediately for snappy UX
     editor.commands.clearContent(true);
     setIsEditorEmpty(true);
-    setPendingAttachments([]);
+    clearPendingAttachments(attachmentStoreKey);
     setShowEmojiPicker(false);
     setShowLinkEditor(false);
 
@@ -1144,6 +1132,8 @@ export default function ChatComposer({
     projectId,
     replyingTo,
     stopTyping,
+    attachmentStoreKey,
+    clearPendingAttachments,
     onSendRich,
     onClearReply,
   ]);
@@ -1172,7 +1162,7 @@ export default function ChatComposer({
     stopTyping();
     editor.commands.clearContent(true);
     setIsEditorEmpty(true);
-    setPendingAttachments([]);
+    clearPendingAttachments(attachmentStoreKey);
     setShowSchedulePicker(false);
     setCustomScheduleDate('');
     const resetT = new Date(Date.now() + 15 * 60 * 1000);
@@ -1201,6 +1191,8 @@ export default function ChatComposer({
     projectId,
     replyingTo,
     stopTyping,
+    attachmentStoreKey,
+    clearPendingAttachments,
     onScheduleSend,
     onClearReply,
   ]);
@@ -1290,10 +1282,10 @@ export default function ChatComposer({
 
   const uploadFiles = useCallback(async (files: File[]) => {
     const newAttachments: PendingAttachment[] = [];
+    const uploadQueue: PendingAttachment[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const { isValid, error } = validateFile(file);
-      if (!isValid) { toast.error(error || `Invalid file: ${file.name}`); continue; }
       const preview = (
         file.type.startsWith('image/') ||
         file.type.startsWith('video/') ||
@@ -1301,25 +1293,37 @@ export default function ChatComposer({
       )
         ? URL.createObjectURL(file)
         : undefined;
-      newAttachments.push({ id: `tmp-${Date.now()}-${i}`, file, preview, progress: 0, uploading: true });
+      const attachment: PendingAttachment = {
+        id: `tmp-${Date.now()}-${i}`,
+        file,
+        preview,
+        progress: 0,
+        uploading: isValid,
+        error: isValid ? undefined : (error || `Invalid file: ${file.name}`),
+      };
+      newAttachments.push(attachment);
+      if (!isValid) {
+        toast.error(attachment.error || `Invalid file: ${file.name}`);
+        continue;
+      }
+      uploadQueue.push(attachment);
     }
     if (newAttachments.length === 0) return;
-    setPendingAttachments((prev) => [...prev, ...newAttachments]);
-    setIsUploading(true);
-    for (const att of newAttachments) {
+    addPendingAttachments(attachmentStoreKey, newAttachments);
+    if (uploadQueue.length === 0) return;
+    for (const att of uploadQueue) {
       try {
         const uploaded = await uploadAttachment(att.file, (progress) => {
-          setPendingAttachments((prev) => prev.map((a) => a.id === att.id ? { ...a, progress } : a));
+          updatePendingAttachment(attachmentStoreKey, att.id, { progress });
         });
-        setPendingAttachments((prev) => prev.map((a) => a.id === att.id ? { ...a, uploading: false, uploaded } : a));
+        updatePendingAttachment(attachmentStoreKey, att.id, { uploading: false, uploaded });
       } catch (err: unknown) {
-        const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Upload failed';
-        setPendingAttachments((prev) => prev.map((a) => a.id === att.id ? { ...a, uploading: false, error: msg } : a));
-        toast.error(`Failed to upload ${att.file.name}`);
+        const msg = getAttachmentUploadErrorMessage(err, att.file.type);
+        updatePendingAttachment(attachmentStoreKey, att.id, { uploading: false, error: msg });
+        toast.error(msg);
       }
     }
-    setIsUploading(false);
-  }, []);
+  }, [addPendingAttachments, attachmentStoreKey, updatePendingAttachment]);
 
   const handleFileSelect = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files?.length) return;
@@ -1328,12 +1332,8 @@ export default function ChatComposer({
   }, [uploadFiles]);
 
   const handleRemoveAttachment = useCallback((id: string) => {
-    setPendingAttachments((prev) => {
-      const att = prev.find((a) => a.id === id);
-      if (att?.preview) URL.revokeObjectURL(att.preview);
-      return prev.filter((a) => a.id !== id);
-    });
-  }, []);
+    removePendingAttachment(attachmentStoreKey, id);
+  }, [attachmentStoreKey, removePendingAttachment]);
 
   const handlePaste = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
     const files = Array.from(event.clipboardData.files);
@@ -2043,7 +2043,11 @@ export default function ChatComposer({
                     <span className="text-xs text-[#3CCED7]">{att.progress}%</span>
                   </div>
                 )}
-                {att.error && <span className="text-xs text-red-600">Failed</span>}
+                {att.error && (
+                  <p className="max-w-[200px] truncate text-xs text-red-600" title={att.error}>
+                    {att.error}
+                  </p>
+                )}
                 {att.uploaded && !att.uploading && <span className="text-xs text-green-600">✓</span>}
                 <button
                   type="button"
@@ -2135,7 +2139,6 @@ export default function ChatComposer({
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv"
             onChange={handleFileSelect}
             className="hidden"
           />

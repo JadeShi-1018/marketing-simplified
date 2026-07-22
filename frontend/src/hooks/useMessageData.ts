@@ -1,12 +1,39 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { useChatStore } from '@/lib/chatStore';
+import { useChatStore, getChatSlugById } from '@/lib/chatStore';
 import { useAuthStore } from '@/lib/authStore';
 import { getMessages, sendMessage, markMessageAsRead, markChatAsRead } from '@/lib/api/chatApi';
 import type { SendMessageRequest, Message } from '@/types/chat';
 import type { TiptapJSONContent } from '@/types/comment';
 import toast from 'react-hot-toast';
+
+async function sendMessageWithOutbox(request: SendMessageRequest): Promise<Message> {
+  const clientMessageId = crypto.randomUUID();
+  const store = useChatStore.getState();
+  store.enqueueOutbox({
+    clientMessageId,
+    chatId: request.chat_id,
+    content: request.content,
+    richBody: request.rich_body ?? null,
+    attachmentIds: request.attachment_ids ?? [],
+    mentionIds: request.mention_ids,
+    replyToId: request.reply_to_id,
+    parentMessageId: request.parent_message_id,
+    status: 'pending',
+    enqueuedAt: new Date().toISOString(),
+  });
+  store.markOutboxSending(clientMessageId);
+  try {
+    const message = await sendMessage({ ...request, client_message_id: clientMessageId });
+    store.markOutboxSent(clientMessageId, message);
+    return message;
+  } catch (error) {
+    store.markOutboxFailed(clientMessageId);
+    throw error;
+  }
+}
+
 
 // Empty array constant to avoid creating new references
 const EMPTY_MESSAGES: Message[] = [];
@@ -178,7 +205,7 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
         ...(replyToId ? { reply_to_id: replyToId } : {}),
       };
 
-      const newMessage = await sendMessage(data);
+      const newMessage = await sendMessageWithOutbox(data);
 
       // Add to both local state AND store
       if (activeChatIdRef.current === targetChatId) {
@@ -229,7 +256,7 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
         ...(replyToId ? { reply_to_id: replyToId } : {}),
       };
 
-      const newMessage = await sendMessage(data);
+      const newMessage = await sendMessageWithOutbox(data);
 
       // Add to both local state AND store
       if (activeChatIdRef.current === targetChatId) {
@@ -283,7 +310,7 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
         ...(replyToId ? { reply_to_id: replyToId } : {}),
       };
 
-      const newMessage = await sendMessage(data);
+      const newMessage = await sendMessageWithOutbox(data);
 
       if (activeChatIdRef.current === targetChatId) {
         setLocalMessageState((prev) => {
@@ -334,9 +361,12 @@ export function useMessageData(options: UseMessageDataOptions = {}) {
   // Mark all messages in chat as read (uses efficient backend endpoint)
   const markAllAsRead = useCallback(async () => {
     if (!chatId) return;
+    // Chat detail routes are slug-only; resolve the numeric id to its slug.
+    const chatSlug = getChatSlugById(chatId);
+    if (!chatSlug) return;
 
     try {
-      await markChatAsRead(chatId);
+      await markChatAsRead(chatSlug);
     } catch (err: any) {
       console.error('[useMessageData] Error marking chat as read:', chatId, err);
       // Don't show toast for read errors (not critical)

@@ -1,5 +1,7 @@
 import threading
 
+from django.core.management import call_command
+from django.db import connection
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.test import APIClient
@@ -44,7 +46,7 @@ class TestArchivedMeetingImmutability(TestCase):
         )
 
     def _url(self, path):
-        return f"/api/projects/{self.project.id}/meetings/{self.meeting.id}{path}"
+        return f"/api/projects/{self.project.slug}/meetings/{self.meeting.slug}{path}"
 
     # ------------------------------------------------------------------
     # Meeting-level writes → 403
@@ -255,7 +257,7 @@ class TestArchivedMeetingImmutability(TestCase):
         # No action items → _validate_transition_to_archived passes (unresolved count == 0).
         meeting = _meeting(self.project, status=Meeting.STATUS_COMPLETED)
         self.assertEqual(meeting.action_items.filter(is_resolved=False).count(), 0)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "archived"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         meeting.refresh_from_db()
@@ -264,7 +266,7 @@ class TestArchivedMeetingImmutability(TestCase):
 
     def test_direct_patch_of_is_archived_is_ignored(self):
         meeting = _meeting(self.project, status=Meeting.STATUS_DRAFT)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/"
         res = self.client.patch(url, {"is_archived": True}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         meeting.refresh_from_db()
@@ -336,7 +338,7 @@ class TestArchivedMeetingImmutability(TestCase):
             MeetingActionItem.objects.create(
                 meeting=meeting, title=f"Item {i}", description="", order_index=i
             )
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "archived"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("20", str(res.data))
@@ -348,7 +350,7 @@ class TestArchivedMeetingImmutability(TestCase):
                 meeting=meeting, title=f"Item {i}", description="",
                 order_index=i, is_resolved=True
             )
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "archived"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         meeting.refresh_from_db()
@@ -366,7 +368,7 @@ class TestArchivedMeetingImmutability(TestCase):
             ProjectMember.objects.create(user=u, project=self.project, is_active=True)
             ParticipantLink.objects.create(meeting=meeting, user=u)
             users.append(u)
-        url = f"/api/projects/{self.project.id}/meetings/{meeting.id}/lifecycle/transition/"
+        url = f"/api/projects/{self.project.slug}/meetings/{meeting.slug}/lifecycle/transition/"
         res = self.client.post(url, {"to_state": "in_progress"}, format="json")
         self.assertEqual(res.status_code, status.HTTP_200_OK)
 
@@ -377,6 +379,27 @@ class TestConcurrentTransitions(TransactionTestCase):
     concurrent calls: exactly one succeeds, the other gets a clean error.
     Uses TransactionTestCase so each thread can commit its own transaction.
     """
+
+    def _fixture_teardown(self):
+        # Django 4.2's TransactionTestCase._fixture_teardown() hardcodes
+        #   allow_cascade = (self.available_apps is not None)
+        # which evaluates to False here, so flush runs WITHOUT CASCADE.
+        # Tenant-schema tables (e.g. task_task) have FK constraints that point
+        # to public-schema tables (e.g. django_content_type), which makes a
+        # bare TRUNCATE fail with FeatureNotSupported.
+        # Fix: reset search_path to public first, then flush with CASCADE.
+        with connection.cursor() as cursor:
+            cursor.execute('SET search_path TO public')
+        for db_name in self._databases_names(include_mirrors=False):
+            call_command(
+                'flush',
+                verbosity=0,
+                interactive=False,
+                database=db_name,
+                reset_sequences=False,
+                allow_cascade=True,
+                inhibit_post_migrate=True,
+            )
 
     def setUp(self):
         self.organization = Organization.objects.create(name="Org", slug="org-conc")

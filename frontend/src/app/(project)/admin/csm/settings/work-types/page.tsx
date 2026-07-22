@@ -6,7 +6,6 @@ import { AlertCircle, Plus } from 'lucide-react';
 import { TicketFormAPI } from '@/lib/api/ticketFormApi';
 import type { CsmWorkTypeStub } from '@/types/ticketForm';
 import CsmSettingsPageRoot, { CsmSettingsProjectGuard } from '@/components/csm-settings/CsmSettingsPageRoot';
-import SettingsHubLink from '@/components/csm-settings/SettingsHubLink';
 import WorkTypeFormModal from '@/components/csm-settings/WorkTypeFormModal';
 import WorkTypesSortableList from '@/components/csm-settings/WorkTypesSortableList';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
@@ -98,7 +97,6 @@ export default function WorkTypesSettingsPage() {
         </div>
         {projectValid && (
           <div className="flex flex-wrap items-center gap-3">
-            <SettingsHubLink projectId={projectId} />
             <button type="button" onClick={openCreate} className={`gap-2 ${PORTAL_SUBMIT_BUTTON_CLASS}`}>
               <Plus className="h-4 w-4" aria-hidden />
               New work type

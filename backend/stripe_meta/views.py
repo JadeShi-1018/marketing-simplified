@@ -28,6 +28,8 @@ from .tasks import settle_final_overage
 from rest_framework.pagination import PageNumberPagination
 from django.db import transaction
 from core.models import Organization, CustomUser, Project
+from core.services.organization_activity import log_org_activity
+from core.slug_mixins import resolve_project_pk
 
 # Configure Stripe
 stripe.api_key = settings.STRIPE_SECRET_KEY
@@ -572,6 +574,9 @@ def create_organization(request):
 
         validated_data = serializer.validated_data
 
+        from django.db import connection
+        from core.services.tenant import slug_to_schema_name
+
         organization = Organization.objects.create(
             name=validated_data['name'],
             desc=validated_data.get('description', ''),
@@ -582,6 +587,13 @@ def create_organization(request):
         user = request.user
         user.organization = organization
         user.save()
+
+        # CRITICAL: Switch search_path immediately after creating org so any
+        # subsequent operations in this request (or future org-specific logic)
+        # use the correct tenant schema.
+        schema_name = slug_to_schema_name(organization.slug)
+        with connection.cursor() as c:
+            c.execute('SET search_path TO %s, public', [schema_name])
 
         # Align with all other org-creation paths: CSM records + billing admin
         from customer.models import CustomerOrganisation
@@ -694,9 +706,24 @@ def invite_users_to_organization(request):
 @permission_classes([IsAuthenticated, HasValidOrganizationToken])
 def leave_organization(request):
     """Remove current user from their organization"""
+    user = request.user
+    org = user.organization
+
+    if not org:
+        return Response(
+            {'error': 'User is not in any organization', 'code': 'NO_ORGANIZATION'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    # Require an explicit org token — do not accept the onboarding exemption
+    # (no-token fallback) for this destructive action.
+    if not request.META.get('HTTP_X_ORGANIZATION_TOKEN'):
+        return Response(
+            {'error': 'Organization token required', 'code': 'TOKEN_REQUIRED'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
     try:
-        user = request.user
-        org = user.organization
         user.organization = None
         user.save()
 
@@ -845,7 +872,7 @@ def get_usage(request):
         )
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated, HasValidOrganizationToken])
+@permission_classes([IsAuthenticated])
 def quota_preview(request):
     """
     Return current-month token usage + plan quota for a project's organization.
@@ -867,8 +894,10 @@ def quota_preview(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    # The frontend passes the project slug (project routes are slug-only).
+    # resolve_project_pk accepts either a numeric pk (legacy) or a slug.
     try:
-        project = Project.objects.select_related('organization').get(id=project_id)
+        project = Project.objects.select_related('organization').get(id=resolve_project_pk(project_id))
     except Project.DoesNotExist:
         return Response(
             {'error': 'Project not found', 'code': 'PROJECT_NOT_FOUND'},
@@ -1161,6 +1190,13 @@ def handle_subscription_created(subscription_data, event_id=None):
                 deactivated, org_id,
             )
 
+    if subscription.is_active and not subscription.is_internal and plan:
+        log_org_activity(
+            organization,
+            'plan_subscribed',
+            metadata={'plan_name': plan.name, 'seat_count': subscription.seat_count},
+        )
+
     logger.info(
         "handle_subscription_created exit event_id=%s org_id=%s created=%s",
         event_id, org_id, created,
@@ -1236,6 +1272,10 @@ def handle_subscription_updated(subscription_data, event_id=None):
         return
 
     org_id = subscription.organization_id
+    old_plan_name = subscription.plan.name if subscription.plan else None
+    old_seat_count = subscription.seat_count
+    old_cancel = subscription.cancel_at_period_end
+
     subscription.is_active = subscription_data['status'] == 'active'
     subscription.cancel_at_period_end = subscription_data.get('cancel_at_period_end', False)
 
@@ -1273,6 +1313,25 @@ def handle_subscription_updated(subscription_data, event_id=None):
             subscription.seat_count = (subscription.plan.included_seats or 1) + extra_qty
 
     subscription.save()
+
+    # Emit org activity events for meaningful changes only
+    org = subscription.organization
+    new_plan_name = subscription.plan.name if subscription.plan else None
+    if old_plan_name and new_plan_name and old_plan_name != new_plan_name:
+        log_org_activity(
+            org, 'plan_changed',
+            metadata={'old_plan': old_plan_name, 'new_plan': new_plan_name},
+        )
+    if old_seat_count != subscription.seat_count:
+        log_org_activity(
+            org, 'seats_changed',
+            metadata={'old_seats': old_seat_count, 'new_seats': subscription.seat_count},
+        )
+    if not old_cancel and subscription.cancel_at_period_end:
+        log_org_activity(org, 'plan_cancel_scheduled', metadata={})
+    elif old_cancel and not subscription.cancel_at_period_end:
+        log_org_activity(org, 'plan_reactivated', metadata={})
+
     logger.info("handle_subscription_updated exit event_id=%s org_id=%s", event_id, org_id)
 
 def handle_payment_failed(invoice_data, event_id=None):
@@ -1310,7 +1369,13 @@ def handle_subscription_deleted(subscription_data, event_id=None):
     )
 
     subscription.is_active = False
+    plan_name = subscription.plan.name if subscription.plan else None
     subscription.save()
+
+    log_org_activity(
+        org, 'plan_cancelled',
+        metadata={'plan_name': plan_name or ''},
+    )
 
     # Reactivate the Free sentinel so the org falls back to the Free tier.
     # The sentinel was deactivated by handle_subscription_created when the paid sub started.

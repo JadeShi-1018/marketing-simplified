@@ -45,6 +45,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # The runner ran out of disk exporting the frontend image ("no space left
+      # on device"); free buildx storage between the two image builds (mirrors
+      # the main pipeline's pre-frontend-build prune).
+      - name: Free disk space before frontend build
+        run: docker buildx prune -af --keep-storage 2GB
+
       - name: Build frontend image
         uses: docker/build-push-action@v7
         with:

@@ -1,180 +1,151 @@
+import pytest
+import logging
 from unittest.mock import patch
 from types import SimpleNamespace
-
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase
-
 from core.models import Organization, Project, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatType
 from chat.serializers import ChatCreateSerializer
-from chat.services import ChatService, OnlineStatusService
+from chat.services import ChatService, MessageService, OnlineStatusService, UnsupportedAttachmentMimeType, validate_attachment_mime_type
+pytestmark = pytest.mark.django_db
 
 User = get_user_model()
 
+class TestOnlineStatusService:
 
-class OnlineStatusServiceTest(TestCase):
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         cache.clear()
-        self.user = User.objects.create_user(
-            username='presenceuser',
-            email='presence@example.com',
-            password='testpass123',
-        )
-
-    def tearDown(self):
+        self.user = User.objects.create_user(username='presenceuser', email='presence@example.com', password='testpass123')
+        yield
         cache.clear()
 
     def test_multiple_connections_keep_user_online_until_last_disconnect(self):
         count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
-        self.assertEqual(count, 1)
-        self.assertTrue(should_broadcast)
-        self.assertIsInstance(version, int)
-        self.assertTrue(OnlineStatusService.is_online(self.user.id))
-
-        self.assertEqual(OnlineStatusService.connection_opened(self.user.id, 'conn-2'), (2, False, None))
-        self.assertTrue(OnlineStatusService.is_online(self.user.id))
-
-        self.assertEqual(OnlineStatusService.connection_closed(self.user.id, 'conn-1'), (1, None))
-        self.assertTrue(OnlineStatusService.is_online(self.user.id))
-
+        assert count == 1
+        assert should_broadcast
+        assert isinstance(version, int)
+        assert OnlineStatusService.is_online(self.user.id)
+        assert OnlineStatusService.connection_opened(self.user.id, 'conn-2') == (2, False, None)
+        assert OnlineStatusService.is_online(self.user.id)
+        assert OnlineStatusService.connection_closed(self.user.id, 'conn-1') == (1, None)
+        assert OnlineStatusService.is_online(self.user.id)
         remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'conn-2')
-        self.assertEqual(remaining, 0)
-        self.assertIsNotNone(offline_token)
-        self.assertTrue(OnlineStatusService.is_online(self.user.id))
-
+        assert remaining == 0
+        assert offline_token is not None
+        assert OnlineStatusService.is_online(self.user.id)
         offline_version = OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token)
-        self.assertIsInstance(offline_version, int)
-        self.assertFalse(OnlineStatusService.is_online(self.user.id))
+        assert isinstance(offline_version, int)
+        assert not OnlineStatusService.is_online(self.user.id)
 
     def test_non_redis_cache_backend_tracks_connections(self):
         with patch.object(OnlineStatusService, '_redis', side_effect=NotImplementedError('raw redis unavailable')):
             count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
-            self.assertEqual(count, 1)
-            self.assertTrue(should_broadcast)
-            self.assertIsInstance(version, int)
-            self.assertTrue(OnlineStatusService.is_online(self.user.id))
-
-            self.assertEqual(OnlineStatusService.connection_opened(self.user.id, 'conn-2'), (2, False, None))
-            self.assertEqual(OnlineStatusService.connection_closed(self.user.id, 'conn-1'), (1, None))
-            self.assertTrue(OnlineStatusService.is_online(self.user.id))
-
+            assert count == 1
+            assert should_broadcast
+            assert isinstance(version, int)
+            assert OnlineStatusService.is_online(self.user.id)
+            assert OnlineStatusService.connection_opened(self.user.id, 'conn-2') == (2, False, None)
+            assert OnlineStatusService.connection_closed(self.user.id, 'conn-1') == (1, None)
+            assert OnlineStatusService.is_online(self.user.id)
             remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'conn-2')
-            self.assertEqual(remaining, 0)
-            self.assertIsNotNone(offline_token)
-            self.assertTrue(OnlineStatusService.is_online(self.user.id))
-
+            assert remaining == 0
+            assert offline_token is not None
+            assert OnlineStatusService.is_online(self.user.id)
             offline_version = OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token)
-            self.assertIsInstance(offline_version, int)
-            self.assertFalse(OnlineStatusService.is_online(self.user.id))
+            assert isinstance(offline_version, int)
+            assert not OnlineStatusService.is_online(self.user.id)
 
     def test_heartbeat_refreshes_presence_without_incrementing_connections(self):
         count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
-        self.assertEqual(count, 1)
-        self.assertTrue(should_broadcast)
-        self.assertIsInstance(version, int)
-
+        assert count == 1
+        assert should_broadcast
+        assert isinstance(version, int)
         OnlineStatusService.heartbeat(self.user.id, 'conn-1')
-
         remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'conn-1')
-        self.assertEqual(remaining, 0)
-        self.assertIsNotNone(offline_token)
-        self.assertIsInstance(OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token), int)
-        self.assertFalse(OnlineStatusService.is_online(self.user.id))
+        assert remaining == 0
+        assert offline_token is not None
+        assert isinstance(OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token), int)
+        assert not OnlineStatusService.is_online(self.user.id)
 
     def test_pending_offline_is_canceled_by_reconnect(self):
         OnlineStatusService.connection_opened(self.user.id, 'old-conn')
         remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'old-conn')
-        self.assertEqual(remaining, 0)
-        self.assertIsNotNone(offline_token)
-
+        assert remaining == 0
+        assert offline_token is not None
         count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'new-conn')
-        self.assertEqual(count, 1)
-        self.assertTrue(should_broadcast)
-        self.assertIsInstance(version, int)
-
-        self.assertIsNone(OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token))
-        self.assertTrue(OnlineStatusService.is_online(self.user.id))
+        assert count == 1
+        assert should_broadcast
+        assert isinstance(version, int)
+        assert OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token) is None
+        assert OnlineStatusService.is_online(self.user.id)
 
     def test_presence_version_uses_timestamp_seed_after_existing_small_counter(self):
         key = OnlineStatusService._presence_version_key(self.user.id)
         cache.set(key, 5, timeout=OnlineStatusService.PRESENCE_VERSION_TIMEOUT)
-
         version = OnlineStatusService.next_presence_version(self.user.id)
-
-        self.assertIsInstance(version, int)
-        self.assertGreater(version, 1_000_000_000_000)
+        assert isinstance(version, int)
+        assert version > 1000000000000
 
     def test_missing_presence_version_skips_online_broadcast(self):
         with patch.object(OnlineStatusService, 'next_presence_version', return_value=None):
             count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
+        assert count == 1
+        assert not should_broadcast
+        assert version is None
 
-        self.assertEqual(count, 1)
-        self.assertFalse(should_broadcast)
-        self.assertIsNone(version)
-
-    def test_suppressed_online_broadcast_is_logged_for_monitoring(self):
+    def test_suppressed_online_broadcast_is_logged_for_monitoring(self, caplog):
         with patch.object(OnlineStatusService, 'next_presence_version', return_value=None):
-            with self.assertLogs('chat.services', level='WARNING') as captured:
+            with caplog.at_level(logging.WARNING, logger='chat.services'):
                 OnlineStatusService.connection_opened(self.user.id, 'conn-1')
-
-        self.assertTrue(
-            any('presence_broadcast_skipped reason=no_version' in line for line in captured.output),
-            captured.output,
+        assert any(
+            'presence_broadcast_skipped reason=no_version' in r.message
+            for r in caplog.records
         )
 
     def test_invalidate_presence_recipients_clears_cached_lists(self):
         key = OnlineStatusService._presence_recipients_key(self.user.id)
         cache.set(key, [1, 2, 3], timeout=OnlineStatusService.PRESENCE_RECIPIENTS_TIMEOUT)
-
         OnlineStatusService.invalidate_presence_recipients([self.user.id])
-
-        self.assertIsNone(cache.get(key))
+        assert cache.get(key) is None
 
     def test_reconnect_during_finalize_keeps_user_online(self):
         OnlineStatusService.connection_opened(self.user.id, 'old-conn')
         remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'old-conn')
-        self.assertEqual(remaining, 0)
-        self.assertIsNotNone(offline_token)
-
+        assert remaining == 0
+        assert offline_token is not None
         with patch.object(OnlineStatusService, '_connection_count', side_effect=[0, 1]):
-            self.assertIsNone(
-                OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token)
-            )
-
-        self.assertTrue(OnlineStatusService.is_online(self.user.id))
+            assert OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token) is None
+        assert OnlineStatusService.is_online(self.user.id)
 
     def test_connection_count_failure_does_not_finalize_offline(self):
         OnlineStatusService.connection_opened(self.user.id, 'old-conn')
         remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'old-conn')
-        self.assertEqual(remaining, 0)
-        self.assertIsNotNone(offline_token)
-
+        assert remaining == 0
+        assert offline_token is not None
         with patch.object(OnlineStatusService, '_connection_count', return_value=None):
-            self.assertIsNone(
-                OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token)
-            )
-
-        self.assertTrue(OnlineStatusService.is_online(self.user.id))
+            assert OnlineStatusService.finalize_offline_if_still_disconnected(self.user.id, offline_token) is None
+        assert OnlineStatusService.is_online(self.user.id)
 
     def test_redis_add_connection_failure_degrades_presence_without_blocking_connect(self):
         with patch.object(OnlineStatusService, '_add_connection', side_effect=ConnectionError('redis down')):
             count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
-
-        self.assertEqual(count, 1)
-        self.assertFalse(should_broadcast)
-        self.assertIsNone(version)
+        assert count == 1
+        assert not should_broadcast
+        assert version is None
 
     def test_redis_remove_connection_failure_degrades_presence_without_crashing_disconnect(self):
         with patch.object(OnlineStatusService, '_remove_connection', side_effect=ConnectionError('redis down')):
             remaining, offline_token = OnlineStatusService.connection_closed(self.user.id, 'conn-1')
+        assert remaining == 0
+        assert offline_token is None
 
-        self.assertEqual(remaining, 0)
-        self.assertIsNone(offline_token)
+class TestPresenceRecipientCacheInvalidation:
 
-
-class PresenceRecipientCacheInvalidationTest(TestCase):
-    def setUp(self):
+    @pytest.fixture(autouse=True)
+    def _setup(self):
         cache.clear()
         self.org = Organization.objects.create(name='Acme')
         self.project = Project.objects.create(organization=self.org, name='Project')
@@ -185,125 +156,307 @@ class PresenceRecipientCacheInvalidationTest(TestCase):
         self.chat = Chat.objects.create(project=self.project, type=ChatType.GROUP)
         ChatParticipant.objects.create(chat=self.chat, user=self.user_a, is_active=True)
         ChatParticipant.objects.create(chat=self.chat, user=self.user_b, is_active=True)
-
-    def tearDown(self):
+        yield
         cache.clear()
 
     def test_get_presence_recipient_ids_caches_result(self):
         recipients = ChatService.get_presence_recipient_ids(self.user_a.id)
-
-        self.assertEqual(recipients, [self.user_b.id])
+        assert recipients == [self.user_b.id]
         cached = cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id))
-        self.assertEqual(cached, [self.user_b.id])
+        assert cached == [self.user_b.id]
 
-    def test_leaving_chat_invalidates_cached_recipient_lists(self):
-        # Prime the cache for both users so we can prove invalidation, not just a cold miss.
-        self.assertEqual(ChatService.get_presence_recipient_ids(self.user_a.id), [self.user_b.id])
-        self.assertEqual(ChatService.get_presence_recipient_ids(self.user_b.id), [self.user_a.id])
-
-        with self.captureOnCommitCallbacks(execute=True):
+    def test_leaving_chat_invalidates_cached_recipient_lists(self, capture_on_commit_callbacks):
+        assert ChatService.get_presence_recipient_ids(self.user_a.id) == [self.user_b.id]
+        assert ChatService.get_presence_recipient_ids(self.user_b.id) == [self.user_a.id]
+        with capture_on_commit_callbacks(execute=True):
             ChatService.leave_chat(self.chat, self.user_b)
+        assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) is None
+        assert cache.get(OnlineStatusService._presence_recipients_key(self.user_b.id)) is None
+        assert ChatService.get_presence_recipient_ids(self.user_a.id) == []
 
-        # Both the remaining participant's and the leaver's cached lists are dropped.
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)))
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(self.user_b.id)))
-
-        # Recomputed lists reflect the new membership.
-        self.assertEqual(ChatService.get_presence_recipient_ids(self.user_a.id), [])
-
-    def test_adding_participant_invalidates_existing_members_cache(self):
+    def test_adding_participant_invalidates_existing_members_cache(self, capture_on_commit_callbacks):
         user_c = User.objects.create_user(username='c', email='c@example.com', password='x')
         ProjectMember.objects.create(user=user_c, project=self.project, role='Member', is_active=True)
-
-        self.assertEqual(ChatService.get_presence_recipient_ids(self.user_a.id), [self.user_b.id])
-
-        with self.captureOnCommitCallbacks(execute=True):
+        assert ChatService.get_presence_recipient_ids(self.user_a.id) == [self.user_b.id]
+        with capture_on_commit_callbacks(execute=True):
             ChatService.add_participant(self.chat, user_c, added_by=self.user_a)
+        assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) is None
+        assert sorted(ChatService.get_presence_recipient_ids(self.user_a.id)) == sorted([self.user_b.id, user_c.id])
 
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)))
-        self.assertCountEqual(
-            ChatService.get_presence_recipient_ids(self.user_a.id),
-            [self.user_b.id, user_c.id],
-        )
-
-    def test_serializer_chat_create_invalidates_presence_cache(self):
+    def test_serializer_chat_create_invalidates_presence_cache(self, capture_on_commit_callbacks):
         user_c = User.objects.create_user(username='serializer-c', email='serializer-c@example.com', password='x')
         ProjectMember.objects.create(user=user_c, project=self.project, role='Member', is_active=True)
-        self.assertEqual(ChatService.get_presence_recipient_ids(self.user_a.id), [self.user_b.id])
-
-        serializer = ChatCreateSerializer(
-            data={
-                'project': self.project.id,
-                'type': ChatType.GROUP,
-                'name': 'serializer channel',
-                'participant_ids': [user_c.id],
-            },
-            context={'request': SimpleNamespace(user=self.user_a)},
-        )
-        self.assertTrue(serializer.is_valid(), serializer.errors)
-
-        with self.captureOnCommitCallbacks(execute=True):
+        assert ChatService.get_presence_recipient_ids(self.user_a.id) == [self.user_b.id]
+        serializer = ChatCreateSerializer(data={'project': self.project.id, 'type': ChatType.GROUP, 'name': 'serializer channel', 'participant_ids': [user_c.id]}, context={'request': SimpleNamespace(user=self.user_a)})
+        assert serializer.is_valid(), serializer.errors
+        with capture_on_commit_callbacks(execute=True):
             serializer.save()
+        assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) is None
+        assert sorted(ChatService.get_presence_recipient_ids(self.user_a.id)) == sorted([self.user_b.id, user_c.id])
 
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)))
-        self.assertCountEqual(
-            ChatService.get_presence_recipient_ids(self.user_a.id),
-            [self.user_b.id, user_c.id],
-        )
-
-    def test_agent_private_chat_create_invalidates_presence_cache(self):
+    def test_agent_private_chat_create_invalidates_presence_cache(self, capture_on_commit_callbacks):
         from agent.services import _get_or_create_bot_private_chat
-
-        bot = User.objects.create_user(
-            username=f'agent-bot-{self.user_a.id}',
-            email=f'agent-bot-{self.user_a.id}@example.com',
-            password='x',
-        )
+        bot = User.objects.create_user(username=f'agent-bot-{self.user_a.id}', email=f'agent-bot-{self.user_a.id}@example.com', password='x')
         cache.set(OnlineStatusService._presence_recipients_key(bot.id), [self.user_b.id])
         cache.set(OnlineStatusService._presence_recipients_key(self.user_a.id), [self.user_b.id])
-
-        with self.captureOnCommitCallbacks(execute=True):
+        with capture_on_commit_callbacks(execute=True):
             chat, created = _get_or_create_bot_private_chat(bot, self.user_a, self.project)
+        assert created
+        assert chat.type == ChatType.PRIVATE
+        assert cache.get(OnlineStatusService._presence_recipients_key(bot.id)) is None
+        assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) is None
 
-        self.assertTrue(created)
-        self.assertEqual(chat.type, ChatType.PRIVATE)
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(bot.id)))
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)))
-
-    def test_agent_private_chat_reactivation_invalidates_presence_cache(self):
+    def test_agent_private_chat_reactivation_invalidates_presence_cache(self, capture_on_commit_callbacks):
         from agent.services import _get_or_create_bot_private_chat
-
-        bot = User.objects.create_user(
-            username=f'inactive-agent-bot-{self.user_a.id}',
-            email=f'inactive-agent-bot-{self.user_a.id}@example.com',
-            password='x',
-        )
+        bot = User.objects.create_user(username=f'inactive-agent-bot-{self.user_a.id}', email=f'inactive-agent-bot-{self.user_a.id}@example.com', password='x')
         chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
         ChatParticipant.objects.create(chat=chat, user=bot, is_active=False)
         ChatParticipant.objects.create(chat=chat, user=self.user_a, is_active=False)
         cache.set(OnlineStatusService._presence_recipients_key(bot.id), [self.user_b.id])
         cache.set(OnlineStatusService._presence_recipients_key(self.user_a.id), [self.user_b.id])
-
-        with self.captureOnCommitCallbacks(execute=True):
+        with capture_on_commit_callbacks(execute=True):
             returned_chat, created = _get_or_create_bot_private_chat(bot, self.user_a, self.project)
+        assert not created
+        assert returned_chat.id == chat.id
+        assert ChatParticipant.objects.get(chat=chat, user=bot).is_active
+        assert ChatParticipant.objects.get(chat=chat, user=self.user_a).is_active
+        assert cache.get(OnlineStatusService._presence_recipients_key(bot.id)) is None
+        assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) is None
 
-        self.assertFalse(created)
-        self.assertEqual(returned_chat.id, chat.id)
-        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=bot).is_active)
-        self.assertTrue(ChatParticipant.objects.get(chat=chat, user=self.user_a).is_active)
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(bot.id)))
-        self.assertIsNone(cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)))
-
-    def test_large_chat_skips_explicit_invalidation_and_relies_on_ttl(self):
-        # Prime the cache, then make a membership change while the chat is "too big".
-        self.assertEqual(ChatService.get_presence_recipient_ids(self.user_a.id), [self.user_b.id])
-
+    def test_large_chat_skips_explicit_invalidation_and_relies_on_ttl(self, capture_on_commit_callbacks):
+        assert ChatService.get_presence_recipient_ids(self.user_a.id) == [self.user_b.id]
         with patch.object(OnlineStatusService, 'PRESENCE_RECIPIENTS_INVALIDATION_LIMIT', 1):
-            with self.captureOnCommitCallbacks(execute=True):
+            with capture_on_commit_callbacks(execute=True):
                 ChatService.leave_chat(self.chat, self.user_b)
+        assert cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)) == [self.user_b.id]
 
-        # Fan-out skipped: the cached list is left for the TTL to reconcile.
-        self.assertEqual(
-            cache.get(OnlineStatusService._presence_recipients_key(self.user_a.id)),
-            [self.user_b.id],
+class TestMessageServiceIdempotentCreate:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        cache.clear()
+        self.org = Organization.objects.create(name='Msg Org')
+        self.project = Project.objects.create(name='Msg Project', organization=self.org)
+        self.sender = User.objects.create_user(username='sender', email='sender@example.com', password='testpass123')
+        self.recipient = User.objects.create_user(username='recipient', email='recipient@example.com', password='testpass123')
+        for user in (self.sender, self.recipient):
+            ProjectMember.objects.create(user=user, project=self.project, role='Member', is_active=True)
+        self.chat = Chat.objects.create(project=self.project, type=ChatType.PRIVATE)
+        ChatParticipant.objects.create(chat=self.chat, user=self.sender, is_active=True)
+        ChatParticipant.objects.create(chat=self.chat, user=self.recipient, is_active=True)
+        yield
+        cache.clear()
+
+    @patch('agent.tasks.handle_chat_message_for_agent.delay')
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_resolve_client_message_commits_does_not_query_per_message(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        mock_agent_route,
+        capture_on_commit_callbacks,
+        django_assert_max_num_queries,
+    ):
+        """Embedding message bodies in the ack must be prefetch-backed, not N+1.
+
+        A per-message serializer would issue several extra queries per row
+        (reactions, mentions, thread summary, ...). Prefetch keeps the count
+        bounded regardless of batch size, so 4 rows stay well under the ceiling.
+        """
+        from chat.services import MessageService
+
+        client_ids = []
+        with capture_on_commit_callbacks(execute=True):
+            for i in range(4):
+                cid = f'qcount-{i}'
+                MessageService.create_message_with_attachments(
+                    sender=self.sender,
+                    chat=self.chat,
+                    content=f'message {i}',
+                    client_message_id=cid,
+                )
+                client_ids.append(cid)
+
+        # Measured baseline: 14 queries for 4 rows (prefetch-backed). Without
+        # prefetch it would be ~32 (≈6 extra per row). 16 leaves small headroom
+        # while still catching a per-message regression.
+        with django_assert_max_num_queries(16):
+            result = MessageService.resolve_client_message_commits(self.sender, client_ids)
+
+        assert len(result) == 4
+        assert all(row['message']['id'] for row in result)
+
+    @patch('agent.tasks.handle_chat_message_for_agent.delay')
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_create_message_with_attachments_dedupes_by_client_message_id(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        mock_agent_route,
+        capture_on_commit_callbacks,
+    ):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from chat.models import Message, MessageAttachment, MessageStatus
+        from chat.services import MessageService
+
+        attachment = MessageAttachment.objects.create(
+            message=None,
+            uploader=self.sender,
+            file=SimpleUploadedFile('note.txt', b'hello'),
+            file_type='document',
+            file_size=5,
+            original_filename='note.txt',
+            mime_type='text/plain',
         )
+        client_message_id = 'client-msg-001'
+
+        with capture_on_commit_callbacks(execute=True):
+            first, created_first = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='With attachment',
+                attachment_ids=[attachment.id],
+                client_message_id=client_message_id,
+            )
+        assert created_first is True
+        assert first.client_message_id == client_message_id
+        assert first.attachments.count() == 1
+
+        with capture_on_commit_callbacks(execute=True):
+            second, created_second = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='With attachment',
+                attachment_ids=[attachment.id],
+                client_message_id=client_message_id,
+            )
+        assert created_second is False
+        assert second.id == first.id
+        assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 1
+        assert MessageStatus.objects.filter(message=first).count() == 1
+        mock_notify_recipients.assert_called_once_with(first.id)
+        mock_notify_ws.assert_called_once_with(first.id)
+        mock_agent_route.assert_not_called()
+
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_create_without_client_message_id_always_creates(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        capture_on_commit_callbacks,
+    ):
+        from chat.models import Message
+        from chat.services import MessageService
+
+        with capture_on_commit_callbacks(execute=True):
+            first, created_first = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='First',
+            )
+            second, created_second = MessageService.create_message_with_attachments(
+                sender=self.sender,
+                chat=self.chat,
+                content='Second',
+            )
+        assert created_first is True
+        assert created_second is True
+        assert first.id != second.id
+        assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 2
+        assert mock_notify_recipients.call_count == 2
+        assert mock_notify_ws.call_count == 2
+
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_dedupe_via_integrity_error(
+        self,
+        mock_notify_recipients,
+        mock_notify_ws,
+        capture_on_commit_callbacks,
+    ):
+        from django.db import IntegrityError
+        from chat.models import Message, MessageStatus
+        from chat.services import MessageService
+
+        client_message_id = 'integrity-error-client-001'
+        existing = Message.objects.create(
+            chat=self.chat,
+            sender=self.sender,
+            content='Already committed',
+            client_message_id=client_message_id,
+        )
+        MessageStatus.objects.create(message=existing, user=self.recipient, status='sent')
+
+        with patch.object(Message.objects, 'create', side_effect=IntegrityError('duplicate key')):
+            with capture_on_commit_callbacks(execute=True):
+                message, created = MessageService.create_message_with_attachments(
+                    sender=self.sender,
+                    chat=self.chat,
+                    content='Retry',
+                    client_message_id=client_message_id,
+                )
+
+        assert created is False
+        assert message.id == existing.id
+        assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 1
+        mock_notify_recipients.assert_not_called()
+        mock_notify_ws.assert_not_called()
+
+    def test_non_dedupe_integrity_error_is_reraised(self):
+        """A non-dedupe IntegrityError (a different constraint) must propagate,
+        not be silently swallowed as a dedupe hit when no message with the key exists."""
+        from django.db import IntegrityError
+        from chat.models import Message
+        from chat.services import MessageService
+
+        client_message_id = 'genuine-db-error-001'
+        # No existing message with this key, so the except-branch lookup misses;
+        # the original IntegrityError must surface instead of a masked DoesNotExist.
+        with patch.object(Message.objects, 'create', side_effect=IntegrityError('some other constraint')):
+            with pytest.raises(IntegrityError):
+                MessageService.create_message_with_attachments(
+                    sender=self.sender,
+                    chat=self.chat,
+                    content='Retry',
+                    client_message_id=client_message_id,
+                )
+        assert not Message.objects.filter(
+            sender=self.sender, client_message_id=client_message_id
+        ).exists()
+
+
+class AttachmentMimeValidationTest(TestCase):
+    def test_allows_supported_mime_types(self):
+        allowed_types = [
+            "image/png",
+            "image/jpeg",
+            "image/svg+xml",
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ]
+
+        for mime_type in allowed_types:
+            with self.subTest(mime_type=mime_type):
+                validate_attachment_mime_type(mime_type)
+
+    def test_rejects_unsupported_mime_types(self):
+        rejected_types = [
+            "video/mp4",
+            "audio/webm",
+            "text/plain",
+            "text/csv",
+            "application/x-msdownload",
+            "application/x-sh",
+            "application/zip",
+            "text/html",
+            "",
+        ]
+
+        for mime_type in rejected_types:
+            with self.subTest(mime_type=mime_type):
+                with self.assertRaises(UnsupportedAttachmentMimeType):
+                    validate_attachment_mime_type(mime_type)

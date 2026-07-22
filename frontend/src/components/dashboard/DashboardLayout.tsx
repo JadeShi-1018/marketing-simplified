@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { ArrowLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import DashboardSidebar from './DashboardSidebar';
@@ -22,6 +22,8 @@ import type { MeetingListItem } from '@/types/meeting';
 import { NotificationDrawerProvider } from '@/components/notifications/NotificationDrawerProvider';
 import NotificationDrawer from '@/components/notifications/NotificationDrawer';
 import { useNotificationSSE } from '@/hooks/useNotificationSSE';
+import { useStripProjectIdFromUrl } from '@/lib/useStripProjectIdFromUrl';
+import { useGuardedRouterPush } from '@/contexts/UnsavedChangesGuardContext';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -60,6 +62,7 @@ const BREADCRUMB_ROOT: Record<string, string> = {
   settings: 'Tools',
   agent: 'Overview',
   profile: 'Account',
+  organizations: 'Profile',
   csm: 'Service',
 };
 
@@ -69,6 +72,7 @@ const BREADCRUMB_LEAF: Record<string, string> = {
   spreadsheet: 'Spreadsheets',
   'mailchimp-v2': 'Mailchimp',
   'klaviyo-v2': 'Klaviyo',
+  organizations: 'Organizations',
   csm: 'Customer Service',
 };
 
@@ -113,6 +117,7 @@ export default function DashboardLayout({
 }: DashboardLayoutProps) {
   // Establish the SSE connection for real-time notification push.
   useNotificationSSE();
+  useStripProjectIdFromUrl();
 
   const {
     upcomingMeetingsPanelOpen: isPanelOpen,
@@ -123,14 +128,23 @@ export default function DashboardLayout({
   );
   const pathname = usePathname();
   const router = useRouter();
+  const guardedPush = useGuardedRouterPush(router.push);
+  const searchParams = useSearchParams();
   const breadcrumb = useMemo(() => getBreadcrumb(pathname), [pathname]);
   const showBack = !!pathname && !ROOT_PATHS.has(pathname);
   const handleBack = () => {
     const segments = (pathname ?? '').split('/').filter(Boolean);
     const parent = segments.length > 1 ? '/' + segments.slice(0, -1).join('/') : '/overview';
     // /admin maps to Django admin — navigate to project selection instead
-    const safePath = parent === '/admin' ? '/select-project' : parent;
-    router.push(safePath);
+    // /admin/csm/* maps back to the CSM page
+    const safePath =
+      parent === '/admin' ? '/select-project' :
+      parent === '/admin/csm' ? '/csm' :
+      parent === '/organizations' ? '/profile' :
+      parent;
+    // Preserve existing query params (e.g. ?project=1) when navigating within admin settings
+    const qs = searchParams.toString();
+    guardedPush(qs ? `${safePath}?${qs}` : safePath);
   };
   const activeProject = useProjectStore((s) => s.activeProject);
   const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);

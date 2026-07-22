@@ -41,15 +41,31 @@ export async function navigateToSpreadsheetAndSelectProject(
 
   await projectCard.click();
 
-  await page.waitForURL(/\/projects\/\d+\/spreadsheets/, {
+  await page.waitForURL(/\/projects\/[\w-]+\/spreadsheets/, {
     timeout: 100_000,
   });
 
   await waitForSpreadsheetPageReady(page);
 
-  const projectMatch = page.url().match(/\/projects\/(\d+)\/spreadsheets/);
-  const projectId = projectMatch ? parseInt(projectMatch[1], 10) : 0;
-  if (!projectId) throw new Error('Could not parse projectId from URL');
+  const projectSlugMatch = page.url().match(/\/projects\/([\w-]+)\/spreadsheets/);
+  const projectSlug = projectSlugMatch?.[1];
+  if (!projectSlug) throw new Error('Could not parse projectSlug from URL');
+
+  // Fetch the numeric project ID via API using the slug
+  const token = await getAuthToken(page);
+  const origin = new URL(page.url()).origin;
+  const projectResp = await page.request.get(
+    `${origin}/api/projects/?search=${encodeURIComponent(projectSlug)}`,
+    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+  );
+  let projectId = 0;
+  if (projectResp.ok()) {
+    const projectData = await projectResp.json();
+    const projects: Array<{ id: number; slug: string }> = projectData.results ?? projectData ?? [];
+    const match = projects.find((p) => p.slug === projectSlug);
+    if (match) projectId = match.id;
+  }
+  if (!projectId) throw new Error('Could not resolve projectId from slug');
 
   // Open the spreadsheet by name to obtain spreadsheetId
   const row = page
@@ -103,7 +119,7 @@ export async function editCell(
 async function getAuthToken(page: Page): Promise<string | null> {
   return page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('auth-storage');
+      const raw = localStorage.getItem('auth-storage-v1');
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       return parsed?.state?.token ?? null;

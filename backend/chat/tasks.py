@@ -1,15 +1,18 @@
 import logging
 import asyncio
+from datetime import timedelta
 from typing import Any, Dict, Optional
 from celery import shared_task
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage
+from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage, MessageAttachment
 from .services import ChatService, OnlineStatusService
+from .url_helpers import build_messages_action_url
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -165,15 +168,36 @@ async def _broadcast_presence_to_recipients(channel_layer, recipient_ids, event)
     ))
 
 
-def finalize_presence_offline_now(user_id: int, offline_token: str) -> bool:
-    """Finalize delayed offline presence once and broadcast if state changed."""
+def get_offline_broadcast_params(user_id: int, offline_token: str):
+    """Finalize offline presence in cache/DB; return (version, recipient_ids) for broadcast.
+
+    Separated from finalize_presence_offline_now so that the consumer's
+    async disconnect() handler can call this via sync_to_async and then
+    broadcast directly from its own async context, avoiding the nested
+    sync_to_async → async_to_sync deadlock that occurs when
+    InMemoryChannelLayer asyncio.Queue objects are accessed from a thread
+    that is itself running inside the test event loop.
+
+    Returns (None, []) when the user reconnected before this ran.
+    """
     version = OnlineStatusService.finalize_offline_if_still_disconnected(user_id, offline_token)
     if version is None:
-        return False
-
+        return None, []
     recipient_ids = ChatService.get_presence_recipient_ids(user_id)
     recipient_ids = OnlineStatusService.get_online_users(recipient_ids)
-    if not recipient_ids:
+    return version, recipient_ids
+
+
+def finalize_presence_offline_now(user_id: int, offline_token: str) -> bool:
+    """Finalize delayed offline presence once and broadcast if state changed.
+
+    Safe to call from regular sync threads (e.g. Celery workers) where there
+    is no outer asyncio event loop.  Do NOT call this from inside sync_to_async
+    — use get_offline_broadcast_params + consumer.broadcast_presence_update
+    instead to avoid nested async_to_sync deadlocks.
+    """
+    version, recipient_ids = get_offline_broadcast_params(user_id, offline_token)
+    if version is None or not recipient_ids:
         return False
 
     channel_layer = get_channel_layer()
@@ -222,6 +246,53 @@ def cleanup_old_online_status():
         
     except Exception as e:
         logger.error(f"Error cleaning up online status: {e}")
+
+
+# How long an unlinked (message=None) attachment may live before it is treated
+# as abandoned and swept. Must stay comfortably LONGER than the client outbox
+# retention window: a message can sit in the offline outbox for a long time
+# before a successful send links its attachments, and we must never delete an
+# attachment for a message the user is still going to send. Overridable via
+# settings for environments that keep the outbox around longer.
+ORPHAN_ATTACHMENT_TTL_HOURS = getattr(settings, 'CHAT_ORPHAN_ATTACHMENT_TTL_HOURS', 48)
+
+
+@shared_task
+def cleanup_orphaned_attachments() -> int:
+    """Delete abandoned attachment uploads that were never linked to a message.
+
+    Attachments use a two-phase upload: the file is uploaded first (row created
+    with message=None) and linked to a Message only when the user actually sends
+    it. If the send never happens — cancelled draft, failed validation, spam
+    rejection, abandoned outbox entry — the row stays orphaned with message=None
+    and its file lingers in storage forever. This periodic sweep removes those
+    orphans once they are older than ORPHAN_ATTACHMENT_TTL_HOURS.
+
+    Returns the number of attachments deleted (used by tests and logging).
+    """
+    cutoff = timezone.now() - timedelta(hours=ORPHAN_ATTACHMENT_TTL_HOURS)
+    orphans = MessageAttachment.objects.filter(
+        message__isnull=True,
+        created_at__lt=cutoff,
+    )
+
+    deleted = 0
+    # .iterator() streams rows so a large backlog is not all loaded at once.
+    for attachment in orphans.iterator():
+        try:
+            # Delete the stored file FIRST, then the DB row. In this order a
+            # mid-way failure leaves a still-tracked row we retry next run,
+            # never a DB-less file we can no longer locate.
+            if attachment.file:
+                attachment.file.delete(save=False)
+            attachment.delete()
+            deleted += 1
+        except Exception as e:
+            # Isolate per-item failures so one bad file cannot abort the sweep.
+            logger.error("Failed to delete orphaned attachment %s: %s", attachment.id, e)
+
+    logger.info("cleanup_orphaned_attachments: deleted %s orphaned attachment(s)", deleted)
+    return deleted
 
 
 @shared_task
@@ -462,9 +533,13 @@ def notify_message_recipients(self, message_id: int):
                 body=message.content[:200] or "",
                 related_object_type="chat",
                 related_object_id=message.chat_id,
-                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&messageId={message.id}",
+                action_url=build_messages_action_url(
+                    message.chat.slug,
+                    message_id=message.id,
+                ),
                 metadata={
                     "chat_id": message.chat_id,
+                    "chat_slug": message.chat.slug,
                     "message_id": message.id,
                     "project_id": message.chat.project_id,
                     "message_preview": message.content[:200] or "",
@@ -524,9 +599,14 @@ def notify_message_recipients(self, message_id: int):
                 body=message.content[:200] or "",
                 related_object_type="chat",
                 related_object_id=message.chat_id,
-                action_url=f"/messages?chatId={message.chat_id}&projectId={message.chat.project_id}&threadId={root.id}",
+                action_url=build_messages_action_url(
+                    message.chat.slug,
+                    parent_message_id=root.id,
+                    thread_message_id=message.id,
+                ),
                 metadata={
                     "chat_id": message.chat_id,
+                    "chat_slug": message.chat.slug,
                     "root_message_id": root.id,
                     "message_id": message.id,
                     "project_id": message.chat.project_id,
@@ -612,13 +692,13 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
                     body=message.content[:200] or "[Attachment]",
                     related_object_type="chat",
                     related_object_id=message.chat_id,
-                    action_url=(
-                        f"/messages?chatId={message.chat_id}"
-                        f"&projectId={message.chat.project_id}"
-                        f"&messageId={message_id}"
+                    action_url=build_messages_action_url(
+                        message.chat.slug,
+                        message_id=message_id,
                     ),
                     metadata={
                         "chat_id": message.chat_id,
+                        "chat_slug": message.chat.slug,
                         "message_id": message_id,
                         "project_id": message.chat.project_id,
                         "emoji": emoji,

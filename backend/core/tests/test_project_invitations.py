@@ -16,7 +16,7 @@ from core.models import Organization, ProjectInvitation, ProjectMember
 @pytest.mark.django_db
 class TestProjectInvitations:
     def _invite_user(self, client, project, email, role="member"):
-        url = reverse("project-member-list", kwargs={"project_id": project.id})
+        url = reverse("project-member-list", kwargs={"project_id": project.slug})
         payload = {"email": email, "role": role}
         return client.post(url, payload, format="json")
 
@@ -43,7 +43,7 @@ class TestProjectInvitations:
         invitation = ProjectInvitation.objects.get(email=user2.email, project=project, accepted=False)
         approve_url = reverse(
             "approve-project-invitation",
-            kwargs={"project_id": project.id, "invitation_id": invitation.id},
+            kwargs={"project_id": project.slug, "invitation_id": invitation.id},
         )
         approve_response = authenticated_client.post(approve_url)
         assert approve_response.status_code == status.HTTP_200_OK
@@ -82,11 +82,11 @@ class TestProjectInvitations:
 
         approve_url = reverse(
             "approve-project-invitation",
-            kwargs={"project_id": project.id, "invitation_id": invitation.id},
+            kwargs={"project_id": project.slug, "invitation_id": invitation.id},
         )
         reject_url = reverse(
             "reject-project-invitation",
-            kwargs={"project_id": project.id, "invitation_id": invitation.id},
+            kwargs={"project_id": project.slug, "invitation_id": invitation.id},
         )
 
         approve_response = client.post(approve_url)
@@ -110,7 +110,7 @@ class TestProjectInvitations:
         invitation = ProjectInvitation.objects.get(email="pending@test.com", project=project, accepted=False)
         approve_url = reverse(
             "approve-project-invitation",
-            kwargs={"project_id": project.id, "invitation_id": invitation.id},
+            kwargs={"project_id": project.slug, "invitation_id": invitation.id},
         )
 
         client = APIClient()
@@ -144,7 +144,7 @@ class TestProjectInvitations:
         invitation = ProjectInvitation.objects.get(email=user2.email, project=project, accepted=False)
         approve_url = reverse(
             "approve-project-invitation",
-            kwargs={"project_id": project.id, "invitation_id": invitation.id},
+            kwargs={"project_id": project.slug, "invitation_id": invitation.id},
         )
         approve_response = authenticated_client.post(approve_url)
         assert approve_response.status_code == status.HTTP_200_OK
@@ -178,7 +178,7 @@ class TestProjectInvitations:
         invitation = ProjectInvitation.objects.get(email=cross_org_user.email, project=project, accepted=False)
         approve_url = reverse(
             "approve-project-invitation",
-            kwargs={"project_id": project.id, "invitation_id": invitation.id},
+            kwargs={"project_id": project.slug, "invitation_id": invitation.id},
         )
         approve_response = authenticated_client.post(approve_url)
         assert approve_response.status_code == status.HTTP_200_OK

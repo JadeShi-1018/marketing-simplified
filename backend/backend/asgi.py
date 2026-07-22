@@ -20,6 +20,8 @@ django.setup()
 from asset.routing import websocket_urlpatterns as asset_websocket_urlpatterns
 from chat.routing import websocket_urlpatterns as chat_websocket_urlpatterns
 from meetings.routing import websocket_urlpatterns as meetings_websocket_urlpatterns
+from csm.routing import websocket_urlpatterns as csm_websocket_urlpatterns
+from portal.routing import websocket_urlpatterns as portal_websocket_urlpatterns
 from asset.middleware import JWTAuthMiddleware
 
 
@@ -32,7 +34,9 @@ application = ProtocolTypeRouter({
         URLRouter(
             asset_websocket_urlpatterns +
             chat_websocket_urlpatterns +
-            meetings_websocket_urlpatterns
+            meetings_websocket_urlpatterns +
+            csm_websocket_urlpatterns +
+            portal_websocket_urlpatterns
         )
     ),
 })

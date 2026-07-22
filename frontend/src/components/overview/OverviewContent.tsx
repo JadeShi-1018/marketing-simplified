@@ -8,7 +8,7 @@ import type { OverviewMock } from '@/types/overview';
 
 interface OverviewContentProps {
   data: OverviewMock;
-  projectId: number | null;
+  projectId: number | string | null;
   projectName?: string | null;
 }
 

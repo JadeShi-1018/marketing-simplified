@@ -88,7 +88,7 @@ class DraftViewSetTest(TestCase):
     def test_retrieve_draft(self):
         """Test retrieving a specific draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -99,7 +99,7 @@ class DraftViewSetTest(TestCase):
     def test_retrieve_draft_other_user(self):
         """Test retrieving draft from another user"""
         self.client.force_authenticate(user=self.other_user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -131,7 +131,7 @@ class DraftViewSetTest(TestCase):
     def test_update_draft(self):
         """Test updating a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.slug})
         data = {
             'title': 'Updated Draft',
             'status': 'published',
@@ -153,7 +153,7 @@ class DraftViewSetTest(TestCase):
     def test_partial_update_draft(self):
         """Test partially updating a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.slug})
         data = {
             'title': 'Partially Updated Draft'
         }
@@ -167,7 +167,7 @@ class DraftViewSetTest(TestCase):
     def test_delete_draft(self):
         """Test soft deleting a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': self.draft.slug})
         response = self.client.delete(url)
         
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
@@ -185,7 +185,7 @@ class DraftViewSetTest(TestCase):
     def test_add_block_to_draft(self):
         """Test adding a block to a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-add-block', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-add-block', kwargs={'pk': self.draft.slug})
         data = {
             'type': 'heading',
             'content': 'New heading',
@@ -207,7 +207,7 @@ class DraftViewSetTest(TestCase):
     def test_update_block_in_draft(self):
         """Test updating a block in a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-update-block', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-update-block', kwargs={'pk': self.draft.slug})
         block_id = self.draft.content_blocks[0]['id']
         data = {
             'block_id': block_id,
@@ -230,7 +230,7 @@ class DraftViewSetTest(TestCase):
     def test_delete_block_from_draft(self):
         """Test deleting a block from a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-delete-block', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-delete-block', kwargs={'pk': self.draft.slug})
         block_id = self.draft.content_blocks[0]['id']
         data = {
             'block_id': block_id
@@ -248,7 +248,7 @@ class DraftViewSetTest(TestCase):
     def test_add_block_invalid_data(self):
         """Test adding block with invalid data"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-add-block', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-add-block', kwargs={'pk': self.draft.slug})
         data = 'invalid data'  # Should be a dictionary
         
         response = self.client.post(url, data, format='json')
@@ -259,7 +259,7 @@ class DraftViewSetTest(TestCase):
     def test_update_block_missing_data(self):
         """Test updating block with missing data"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-update-block', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-update-block', kwargs={'pk': self.draft.slug})
         data = {
             'block_id': 'some_id'
             # Missing block_data
@@ -273,7 +273,7 @@ class DraftViewSetTest(TestCase):
     def test_delete_block_missing_data(self):
         """Test deleting block with missing data"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-delete-block', kwargs={'pk': self.draft.pk})
+        url = reverse('notion_editor:draft-delete-block', kwargs={'pk': self.draft.slug})
         data = {}  # Missing block_id
         
         response = self.client.delete(url, data, format='json')
@@ -621,7 +621,7 @@ class DraftBlocksViewTest(TestCase):
     def test_get_draft_blocks(self):
         """Test getting blocks for a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-blocks', kwargs={'draft_id': self.draft.id})
+        url = reverse('notion_editor:draft-blocks', kwargs={'draft_id': self.draft.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -634,7 +634,7 @@ class DraftBlocksViewTest(TestCase):
     def test_get_draft_blocks_other_user(self):
         """Test getting blocks for another user's draft"""
         self.client.force_authenticate(user=self.other_user)
-        url = reverse('notion_editor:draft-blocks', kwargs={'draft_id': self.draft.id})
+        url = reverse('notion_editor:draft-blocks', kwargs={'draft_id': self.draft.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -681,7 +681,7 @@ class ExportDraftViewTest(TestCase):
     def test_export_draft(self):
         """Test exporting a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:export-draft', kwargs={'draft_id': self.draft.id})
+        url = reverse('notion_editor:export-draft', kwargs={'draft_id': self.draft.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -701,7 +701,7 @@ class ExportDraftViewTest(TestCase):
     def test_export_draft_other_user(self):
         """Test exporting another user's draft"""
         self.client.force_authenticate(user=self.other_user)
-        url = reverse('notion_editor:export-draft', kwargs={'draft_id': self.draft.id})
+        url = reverse('notion_editor:export-draft', kwargs={'draft_id': self.draft.slug})
         response = self.client.get(url)
         
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -761,7 +761,7 @@ class DuplicateDraftViewTest(TestCase):
     def test_duplicate_draft(self):
         """Test duplicating a draft"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:duplicate-draft', kwargs={'draft_id': self.draft.id})
+        url = reverse('notion_editor:duplicate-draft', kwargs={'draft_id': self.draft.slug})
         data = {
             'title': 'Duplicated Draft'
         }
@@ -794,7 +794,7 @@ class DuplicateDraftViewTest(TestCase):
     def test_duplicate_draft_default_title(self):
         """Test duplicating a draft with default title"""
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:duplicate-draft', kwargs={'draft_id': self.draft.id})
+        url = reverse('notion_editor:duplicate-draft', kwargs={'draft_id': self.draft.slug})
         data = {}  # No title provided
         
         response = self.client.post(url, data, format='json')
@@ -805,7 +805,7 @@ class DuplicateDraftViewTest(TestCase):
     def test_duplicate_draft_other_user(self):
         """Test duplicating another user's draft"""
         self.client.force_authenticate(user=self.other_user)
-        url = reverse('notion_editor:duplicate-draft', kwargs={'draft_id': self.draft.id})
+        url = reverse('notion_editor:duplicate-draft', kwargs={'draft_id': self.draft.slug})
         data = {
             'title': 'Unauthorized Copy'
         }
@@ -1173,7 +1173,7 @@ class DraftVersioningIntegrationTest(TestCase):
         )
 
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.slug})
         data = {
             'title': 'Updated Title',
             'status': 'published',
@@ -1214,7 +1214,7 @@ class DraftVersioningIntegrationTest(TestCase):
         )
 
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.slug})
         data = {
             'title': 'Partially Updated Title'
         }
@@ -1249,7 +1249,7 @@ class DraftVersioningIntegrationTest(TestCase):
         )
 
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.slug})
 
         # Update 1
         response1 = self.client.patch(url, {'title': 'Version 2'}, format='json')
@@ -1291,7 +1291,7 @@ class DraftVersioningIntegrationTest(TestCase):
         )
 
         self.client.force_authenticate(user=self.user)
-        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.pk})
+        url = reverse('notion_editor:draft-detail', kwargs={'pk': draft.slug})
 
         # Update to version 2
         data_v2 = {

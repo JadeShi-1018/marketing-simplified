@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 import { TaskAPI } from '@/lib/api/taskApi';
+import { useTaskStore } from '@/lib/taskStore';
 import { ProjectAPI } from '@/lib/api/projectApi';
 import type { ProjectMemberData } from '@/lib/api/projectApi';
 import toast from 'react-hot-toast';
@@ -115,7 +116,7 @@ const BulkActionBar = ({
   // individually via Promise.allSettled and results are aggregated below.
   // Reject path supplies a placeholder comment because the backend serializer
   // requires a non-empty comment when action='reject'.
-  const statusToApi: Record<string, (id: number) => Promise<unknown>> = {
+  const statusToApi: Record<string, (id: number | string) => Promise<unknown>> = {
     DRAFT:     (id) => TaskAPI.revise(id),
     APPROVED:  (id) => TaskAPI.makeApproval(id, { action: 'approve' }),
     REJECTED:  (id) => TaskAPI.makeApproval(id, { action: 'reject', comment: 'Bulk reject (no comment provided)' }),
@@ -169,7 +170,7 @@ const BulkActionBar = ({
     const timeoutIds = [stage3Timer];
 
     try {
-      let dispatch: (id: number) => Promise<unknown>;
+      let dispatch: (id: number | string) => Promise<unknown>;
 
       if (pendingAction === 'submit') {
         dispatch = (id) => TaskAPI.submitTask(id);
@@ -189,8 +190,12 @@ const BulkActionBar = ({
         throw new Error(`Unknown action: ${pendingAction}`);
       }
 
+      // API lookups are slug-only; resolve slugs from the store where possible.
+      const slugById = new Map(
+        useTaskStore.getState().tasks.map((t) => [t.id, t.slug] as const)
+      );
       const settled = await Promise.allSettled(
-        selectedIds.map((id) => dispatch(id))
+        selectedIds.map((id) => dispatch(slugById.get(id) ?? id))
       );
 
       timeoutIds.forEach(clearTimeout);

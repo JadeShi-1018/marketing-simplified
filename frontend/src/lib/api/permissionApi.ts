@@ -6,12 +6,15 @@ import {
   Permission, 
   RolePermission, 
   PermissionMatrix,
+  ProjectPermissionMatrix,
   ApiResponse,
   PaginatedResponse
 } from '@/types/permission';
 
-// API settings — base must point at access_control namespace so /roles/, /organizations/, etc. resolve correctly
-const DEFAULT_API_BASE_URL = 'https://volar-probankruptcy-orval.ngrok-free.dev/api/access_control';
+// API settings — base must point at access_control namespace so /roles/, /organizations/, etc. resolve correctly.
+// Default to a same-origin relative path so it works through nginx -> local backend in every
+// environment (and so auth cookies are sent). Override with NEXT_PUBLIC_API_URL if needed.
+const DEFAULT_API_BASE_URL = '/api/access_control';
 
 // When overriding, set NEXT_PUBLIC_API_URL to the access_control base (e.g. https://<host>/api/access_control).
 const API_BASE_URL =
@@ -314,6 +317,18 @@ export class PermissionAPI {
     }
   }
 
+  static async getProjectPermissionMatrix(projectId: string): Promise<ProjectPermissionMatrix> {
+    try {
+      console.log('🔄 Fetching project permission matrix:', projectId);
+      const response = await ApiClient.get<ProjectPermissionMatrix>(`/projects/${projectId}/permission-matrix/`);
+      console.log('✅ Project permission matrix loaded:', response);
+      return response;
+    } catch (error) {
+      console.error('❌ Failed to fetch project permission matrix:', error);
+      throw error;
+    }
+  }
+
   // update role permissions
   static async updateRolePermissions(
     roleId: string, 
@@ -418,6 +433,7 @@ export const permissionApiMethods = {
   getCurrentUserRoles: PermissionAPI.getCurrentUserRoles,
   getPermissions: PermissionAPI.getPermissions,
   getRolePermissions: PermissionAPI.getRolePermissions,
+  getProjectPermissionMatrix: PermissionAPI.getProjectPermissionMatrix,
   updateRolePermissions: PermissionAPI.updateRolePermissions,
   copyRolePermissions: PermissionAPI.copyRolePermissions,
   buildPermissionMatrix: PermissionAPI.buildPermissionMatrix,

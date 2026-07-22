@@ -8,6 +8,10 @@ from django.contrib.auth import get_user_model
 from unittest.mock import patch, Mock
 import jwt
 import time
+from urllib.parse import urlencode
+
+from django.core import signing
+from authentication.views import GOOGLE_OAUTH_STATE_SALT, build_google_oauth_state
 
 User = get_user_model()
 
@@ -32,6 +36,8 @@ class GoogleOAuthStartViewTest(TestCase):
         self.assertIn('authorization_url', data)
         self.assertIn('state', data)
         self.assertTrue(data['authorization_url'].startswith('https://accounts.google.com'))
+        payload = signing.loads(data['state'], salt=GOOGLE_OAUTH_STATE_SALT, max_age=600)
+        self.assertEqual(payload['provider'], 'google')
     
     def test_oauth_start_without_config(self):
         """Test error handling when configuration is missing"""
@@ -49,9 +55,23 @@ class GoogleOAuthStartViewTest(TestCase):
 )
 class GoogleOAuthCallbackViewTest(TestCase):
     """Test Google OAuth callback handling"""
-    
+
     def setUp(self):
         self.client = Client()
+
+    def _callback_url(self, code='fake_code', state=None):
+        params = {'code': code}
+        if state is not None:
+            params['state'] = state
+        return f"/auth/google/callback/?{urlencode(params)}"
+
+    def _signed_state(self):
+        return build_google_oauth_state()
+
+    def _set_session_state(self, state):
+        session = self.client.session
+        session['google_oauth_state'] = state
+        session.save()
     
     def test_callback_without_code(self):
         """Test callback without authorization code"""
@@ -96,7 +116,7 @@ class GoogleOAuthCallbackViewTest(TestCase):
             'key_id_123': '-----BEGIN CERTIFICATE-----\nfake_cert\n-----END CERTIFICATE-----'
         }
         
-        response = self.client.get('/auth/google/callback/?code=fake_code')
+        response = self.client.get(self._callback_url(state=self._signed_state()))
         
         # Should redirect to set password page
         self.assertEqual(response.status_code, 302)
@@ -157,7 +177,7 @@ class GoogleOAuthCallbackViewTest(TestCase):
             'key_id_456': '-----BEGIN CERTIFICATE-----\nfake_cert\n-----END CERTIFICATE-----'
         }
         
-        response = self.client.get('/auth/google/callback/?code=fake_code')
+        response = self.client.get(self._callback_url(state=self._signed_state()))
         
         # Should redirect to frontend callback page (with auth_data)
         self.assertEqual(response.status_code, 302)
@@ -216,7 +236,7 @@ class GoogleOAuthCallbackViewTest(TestCase):
             'key_id_789': '-----BEGIN CERTIFICATE-----\nfake_cert\n-----END CERTIFICATE-----'
         }
         
-        response = self.client.get('/auth/google/callback/?code=fake_code')
+        response = self.client.get(self._callback_url(state=self._signed_state()))
         
         # Should redirect to frontend callback page (successful login)
         self.assertEqual(response.status_code, 302)
@@ -270,7 +290,7 @@ class GoogleOAuthCallbackViewTest(TestCase):
             'key_id_789': '-----BEGIN CERTIFICATE-----\nfake_cert\n-----END CERTIFICATE-----'
         }
         
-        response = self.client.get('/auth/google/callback/?code=fake_code')
+        response = self.client.get(self._callback_url(state=self._signed_state()))
         
         self.assertEqual(response.status_code, 400)
         self.assertIn('Email not verified', response.json()['error'])
@@ -284,10 +304,54 @@ class GoogleOAuthCallbackViewTest(TestCase):
             mock_session_instance.fetch_token.side_effect = Exception('invalid_grant')
             mock_oauth_session.return_value = mock_session_instance
             
-            response = self.client.get('/auth/google/callback/?code=fake_code')
-            
+            response = self.client.get(self._callback_url(state=self._signed_state()))
+
             # Should return friendly error message
             self.assertEqual(response.status_code, 400)
+
+    def test_callback_rejects_missing_state(self):
+        """Test callback rejects code-only OAuth callbacks without state."""
+        response = self.client.get('/auth/google/callback/?code=fake_code')
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['errorCode'], 'OAUTH_STATE_INVALID')
+
+    def test_callback_rejects_invalid_state(self):
+        """Test callback rejects tampered OAuth state."""
+        response = self.client.get(self._callback_url(state='invalid-state'))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['errorCode'], 'OAUTH_STATE_INVALID')
+
+    @patch('authentication.views.OAuth2Session')
+    def test_callback_accepts_legacy_session_state_once_for_deploy_grace(self, mock_oauth_session):
+        """Test callback accepts and consumes one pre-deploy legacy session state."""
+        session_state = 'legacy-session-state'
+        self._set_session_state(session_state)
+
+        mock_session_instance = Mock()
+        mock_session_instance.fetch_token.side_effect = Exception('invalid_grant')
+        mock_oauth_session.return_value = mock_session_instance
+
+        response = self.client.get(self._callback_url(state=session_state))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Authorization code expired or already used', response.json()['error'])
+        mock_session_instance.fetch_token.assert_called_once()
+        self.assertNotIn('google_oauth_state', self.client.session)
+
+    @patch('authentication.views.OAuth2Session')
+    def test_callback_accepts_signed_query_state_without_session_cookie(self, mock_oauth_session):
+        """Test callback accepts signed query state when the session cookie is unavailable."""
+        mock_session_instance = Mock()
+        mock_session_instance.fetch_token.side_effect = Exception('invalid_grant')
+        mock_oauth_session.return_value = mock_session_instance
+
+        response = self.client.get(self._callback_url(state=self._signed_state()))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('Authorization code expired or already used', response.json()['error'])
+        mock_session_instance.fetch_token.assert_called_once()
 
 
 @override_settings(

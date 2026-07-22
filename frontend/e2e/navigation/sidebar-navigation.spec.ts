@@ -22,6 +22,7 @@ test.describe('Sidebar and main layout navigation', () => {
 		page,
 	}) => {
 		await page.goto('/tasks');
+
 		await waitForLayoutMain(page);
 		await ensureSidebarExpandedForNav(page);
 
@@ -217,4 +218,198 @@ test.describe('Sidebar and main layout navigation', () => {
 		).toBeVisible({ timeout: 20_000 });
 		await expectSidebarLinkActive(page, '/messages');
 	});
+});
+
+test('hard refresh keeps active project and deep link without empty switcher flash', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+
+  const deepLink = '/tasks?tab=board';
+  const projectName = 'Hydration E2E 50% Project';
+  const appOrigin = new URL(
+    process.env.BASE_URL ?? 'http://localhost',
+  ).origin;
+
+  const activeProject = {
+    id: 'hydration-e2e-project',
+    slug: 'hydration-e2e-project',
+    name: projectName,
+    organization: {
+      id: 1,
+      name: 'E2E Organization',
+    },
+    total_monthly_budget: null,
+    is_active: true,
+  };
+
+  await page.setViewportSize({
+    width: 1280,
+    height: 800,
+  });
+
+
+  await page.addInitScript(() => {
+    window.localStorage.removeItem('project-storage');
+
+    type Med257Window = typeof window & {
+      __med257Probe?: {
+        sawEmptyState: boolean;
+        texts: string[];
+      };
+    };
+
+    const target = window as Med257Window;
+    const switcherSelector =
+      'button[aria-label="Switch project"]';
+
+    const emptyLabels = [
+      'Select project',
+      'Select a project',
+      'No active project',
+    ];
+
+    target.__med257Probe = {
+      sawEmptyState: false,
+      texts: [],
+    };
+
+    const rememberText = (rawText: string | null) => {
+      const text = (rawText ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      if (!text || !target.__med257Probe) return;
+
+      if (!target.__med257Probe.texts.includes(text)) {
+        target.__med257Probe.texts.push(text);
+      }
+
+      if (emptyLabels.some((label) => text.includes(label))) {
+        target.__med257Probe.sawEmptyState = true;
+      }
+    };
+
+    const inspectSwitcher = () => {
+      document
+        .querySelectorAll(switcherSelector)
+        .forEach((switcher) => {
+          rememberText(switcher.textContent);
+        });
+    };
+
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === 'characterData') {
+          const parent = record.target.parentElement;
+
+          if (parent?.closest(switcherSelector)) {
+            rememberText(record.oldValue);
+          }
+        }
+
+        const targetElement =
+          record.target instanceof Element
+            ? record.target
+            : record.target.parentElement;
+
+        if (targetElement?.closest(switcherSelector)) {
+          record.removedNodes.forEach((node) => {
+            rememberText(node.textContent);
+          });
+        }
+      }
+
+      inspectSwitcher();
+    });
+
+    observer.observe(document, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      characterDataOldValue: true,
+    });
+
+    inspectSwitcher();
+  });
+
+  await page.context().addCookies([
+    {
+      name: 'active-project',
+      value: encodeURIComponent(
+        JSON.stringify(activeProject),
+      ),
+      url: appOrigin,
+      sameSite: 'Lax',
+    },
+  ]);
+
+  const assertResolvedPage = async () => {
+    await expect(
+      page.getByRole('heading', {
+        name: 'Tasks',
+        level: 1,
+      }),
+    ).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await expect
+      .poll(() => {
+        const url = new URL(page.url());
+        return `${url.pathname}${url.search}`;
+      })
+      .toBe(deepLink);
+
+    await expect(
+      page.getByTestId('tab-board'),
+    ).toHaveClass(/bg-gray-100/);
+
+    const switcher = page.getByRole('button', {
+      name: 'Switch project',
+    });
+
+    await expect(switcher).toBeVisible({
+      timeout: 30_000,
+    });
+
+    await expect(switcher).toContainText(projectName);
+
+    await expect(
+      page
+        .locator('main')
+        .getByText(projectName, { exact: true }),
+    ).toBeVisible();
+
+    const probe = await page.evaluate(() => {
+      const target = window as typeof window & {
+        __med257Probe?: {
+          sawEmptyState: boolean;
+          texts: string[];
+        };
+      };
+	  return target.__med257Probe ?? null;
+    });
+
+    expect(
+      probe.sawEmptyState,
+      `Switcher showed an empty state. Observed: ${JSON.stringify(
+        probe.texts,
+      )}`,
+    ).toBe(false);
+  };
+
+  await page.goto(deepLink, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  });
+
+  await assertResolvedPage();
+
+  await page.reload({
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  });
+
+  await assertResolvedPage();
 });

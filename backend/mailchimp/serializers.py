@@ -294,7 +294,7 @@ class CampaignSerializer(serializers.ModelSerializer):
     class Meta:
         model = Campaign
         fields = '__all__'
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['slug', 'slug', 'id', 'created_at', 'updated_at']
         extra_kwargs = {
             'user': {'write_only': True, 'required': False}
         }

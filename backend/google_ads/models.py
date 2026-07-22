@@ -3,6 +3,8 @@ from django.contrib.auth import get_user_model
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 
+from core.slug_mixins import SluggedResourceModelMixin
+
 User = get_user_model()
 
 # ========== Account Models ==========
@@ -888,10 +890,11 @@ class AdPreview(models.Model):
     def __str__(self):
         return f"Preview: Ad {self.ad.id} ({self.device_type})"
 
-class Ad(models.Model):
+class Ad(SluggedResourceModelMixin, models.Model):
     """
     Resource Name: customers/{customer_id}/ads/{ad_id}
     """
+    slug_source_field = "name"
     resource_name = models.CharField(
         max_length=255, 
         unique=True,

@@ -1,14 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { AlertCircle, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import ChatFAB from '@/components/global-chat/ChatFAB';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
-import { useProjectStore } from '@/lib/projectStore';
+import { useActiveProjectForFlatRoute } from '@/lib/useActiveProjectForFlatRoute';
 import { ProjectAPI, ProjectData } from '@/lib/api/projectApi';
 import { SpreadsheetAPI } from '@/lib/api/spreadsheetApi';
 import type { SpreadsheetData } from '@/types/spreadsheet';
@@ -34,14 +33,7 @@ function SpreadsheetCardSkeleton() {
 }
 
 export default function SpreadsheetsV2ListPage() {
-  const searchParams = useSearchParams();
-  const projectIdParam = searchParams?.get('project_id');
-  const activeProject = useProjectStore((s) => s.activeProject);
-  const hasProjectStoreHydrated = useProjectStore((s) => s.hasHydrated);
-  const projectId = projectIdParam
-    ? Number(projectIdParam)
-    : activeProject?.id ?? null;
-  const projectContextLoading = !projectIdParam && !hasProjectStoreHydrated;
+  const { projectId, activeProject, projectContextLoading } = useActiveProjectForFlatRoute();
 
   const [project, setProject] = useState<ProjectData | null>(null);
   const [spreadsheets, setSpreadsheets] = useState<SpreadsheetData[]>([]);
@@ -65,7 +57,7 @@ export default function SpreadsheetsV2ListPage() {
     ProjectAPI.getProjects()
       .then((list) => {
         if (cancelled) return;
-        const match = list.find((p) => p.id === projectId);
+        const match = list.find((p) => String(p.id) === String(projectId) || p.slug === projectId);
         setProject(match || null);
       })
       .catch(() => {
@@ -133,7 +125,7 @@ export default function SpreadsheetsV2ListPage() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      await SpreadsheetAPI.deleteSpreadsheet(deleteTarget.id);
+      await SpreadsheetAPI.deleteSpreadsheet(deleteTarget.slug ?? deleteTarget.id);
       toast.success(`Deleted ${deleteTarget.name}`);
       setDeleteTarget(null);
       setRefreshToken((n) => n + 1);

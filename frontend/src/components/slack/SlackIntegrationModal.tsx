@@ -21,7 +21,7 @@ import {
     SlackConnectionStatus,
     NotificationPreference,
     SlackChannel,
-    SLACK_OAUTH_STATE_STORAGE_KEY,
+    persistSlackOAuthState,
     SlackRequestContext,
 } from '@/lib/api/slackApi';
 import {
@@ -78,7 +78,7 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
     const [connection, setConnection] = useState<SlackConnectionStatus | null>(null);
     const [preferences, setPreferences] = useState<NotificationPreference[]>([]);
     const [channels, setChannels] = useState<SlackChannel[]>([]);
-    const [selectedProjectId, setSelectedProjectId] = useState<number | 'ALL'>('ALL');
+    const [selectedProjectId, setSelectedProjectId] = useState<number | string | 'ALL'>('ALL');
     const [loadingChannels, setLoadingChannels] = useState(false);
     const [disconnectConfirmOpen, setDisconnectConfirmOpen] = useState(false);
     const slackContext: SlackRequestContext | undefined = activeProjectId
@@ -106,7 +106,7 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
                 if (
                     activeProjectId &&
                     connStatus.manageable_projects.some(
-                        (project) => project.id === activeProjectId
+                        (project) => String(project.id) === String(activeProjectId)
                     )
                 ) {
                     return activeProjectId;
@@ -115,7 +115,7 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
                 if (
                     previousSelection !== 'ALL' &&
                     !connStatus.manageable_projects.some(
-                        (project) => project.id === previousSelection
+                        (project) => String(project.id) === String(previousSelection)
                     )
                 ) {
                     return 'ALL';
@@ -154,11 +154,11 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
         const manageableProjects = connection?.manageable_projects ?? [];
         if (
             selectedProjectId !== 'ALL' &&
-            !manageableProjects.some((project) => project.id === selectedProjectId)
+            !manageableProjects.some((project) => String(project.id) === String(selectedProjectId))
         ) {
             if (
                 activeProjectId &&
-                manageableProjects.some((project) => project.id === activeProjectId)
+                manageableProjects.some((project) => String(project.id) === String(activeProjectId))
             ) {
                 setSelectedProjectId(activeProjectId);
             } else {
@@ -176,7 +176,7 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
     const handleConnect = async () => {
         try {
             const { url, state } = await slackApi.initOAuth(slackContext);
-            window.localStorage.setItem(SLACK_OAUTH_STATE_STORAGE_KEY, state);
+            persistSlackOAuthState(state);
             window.location.href = url;
         } catch (error) {
             console.error('Failed to init OAuth:', error);
@@ -203,7 +203,7 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
     );
     const selectedProjectHasMissingPreferences = (
         selectedProjectId !== 'ALL' &&
-        manageableProjects.some((project) => project.id === selectedProjectId) &&
+        manageableProjects.some((project) => String(project.id) === String(selectedProjectId)) &&
         scopedPreferences.length === 0
     );
 
@@ -339,7 +339,7 @@ export default function SlackIntegrationModal({ isOpen, onClose }: SlackIntegrat
                                         <Filter className="w-4 h-4 text-gray-400" />
                                         <Select
                                             value={String(selectedProjectId)}
-                                            onValueChange={(val) => setSelectedProjectId(val === 'ALL' ? 'ALL' : Number(val))}
+                                            onValueChange={(val) => setSelectedProjectId(val === 'ALL' ? 'ALL' : (isNaN(Number(val)) ? val : Number(val)))}
                                         >
                                             <SelectTrigger className="w-[180px] h-8 text-xs bg-white">
                                                 <SelectValue placeholder="Select Project" />

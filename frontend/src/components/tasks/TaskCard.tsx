@@ -54,7 +54,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, index }) =
       if (!task.id) return;
       try {
         setAttachmentsLoading(true);
-        const data = await TaskAPI.getAttachments(task.id);
+        const data = await TaskAPI.getAttachments(task.slug ?? task.id);
         setAttachments(data);
       } catch (error) {
         console.error('Failed to fetch attachments:', error);
@@ -148,7 +148,7 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, onClick, onDelete, index }) =
     if (!task.id) return;
     try {
       setDeleting(true);
-      await TaskAPI.deleteTask(task.id);
+      await TaskAPI.deleteTask(task.slug ?? task.id);
       toast.success('Task deleted');
       setShowDeleteConfirm(false);
       if (onDelete) {

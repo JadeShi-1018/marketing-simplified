@@ -1,12 +1,18 @@
 from unittest.mock import patch, Mock
 
 from agent.executors import CreateMiroBoardExecutor, GenerateMiroSnapshotExecutor
-from agent.miro_generation import normalize_miro_snapshot_layout, call_gemini_miro_generator
+from agent.miro_generation import (
+    call_gemini_miro_generator,
+    deserialize_miro_generation_context,
+    normalize_miro_snapshot_layout,
+    serialize_miro_generation_context,
+)
 from agent.miro_board_service import _materialize_snapshot_ids
 from agent.services import (
     MIRO_LEGACY_BG_QUEUED_MESSAGE,
-    _generate_miro_board_for_workflow_run,
     AgentOrchestrator,
+    _enqueue_miro_generation_for_workflow_run,
+    _generate_miro_board_for_workflow_run,
 )
 
 
@@ -163,6 +169,29 @@ def test_materialize_snapshot_ids_converts_ids_and_parent_references():
     assert persisted["items"][1]["parent_item_id"] == persisted["items"][0]["id"]
 
 
+def test_miro_generation_context_payload_round_trips():
+    context = {
+        "session": {"id": "session-1", "title": "Analysis session", "project_id": 99},
+        "workflow_run": {"id": "run-1", "status": "creating_tasks"},
+        "analysis": {
+            "anomalies": [{"metric": "ROAS", "movement": "down"}],
+            "suggested_decision": {
+                "id": "decision-1",
+                "title": "Reduce spend",
+                "options": [{"id": "option-1", "text": "Pause segment", "is_selected": True}],
+            },
+            "recommended_tasks": [{"id": 7, "summary": "Audit placements", "priority": "HIGH"}],
+        },
+    }
+
+    payload = serialize_miro_generation_context(context)
+    rehydrated = deserialize_miro_generation_context(payload)
+
+    assert rehydrated == context
+    assert rehydrated is not context
+    assert rehydrated["analysis"] is not context["analysis"]
+
+
 @patch("agent.miro_generation.call_gemini_miro_generator")
 @patch("agent.miro_generation.build_miro_generation_context_from_run")
 def test_generate_miro_snapshot_executor_saves_snapshot(mock_build_context, mock_call_gemini):
@@ -231,6 +260,58 @@ def test_generate_miro_board_for_workflow_run_updates_run(
     assert ['miro_snapshot', 'miro_board'] in workflow_run.saved_update_fields
 
 
+@patch("agent.models.AgentPendingExternalApproval.objects.filter")
+@patch("agent.miro_board_service.create_board_from_snapshot")
+@patch("agent.miro_generation.call_gemini_miro_generator")
+@patch("agent.miro_generation.build_miro_generation_context_from_run")
+def test_generate_miro_board_for_workflow_run_uses_context_payload(
+    mock_build_context,
+    mock_call_gemini,
+    mock_create_board,
+    mock_pending_filter,
+):
+    workflow_run = _WorkflowRunStub()
+    orchestrator = _OrchestratorStub()
+    context_payload = serialize_miro_generation_context({
+        "session": {"id": "session-1", "title": "Payload session", "project_id": 99},
+        "workflow_run": {"id": "run-1", "status": "creating_tasks"},
+        "analysis": {"recommended_tasks": [{"summary": "Payload task"}]},
+    })
+    mock_call_gemini.return_value = _test_snapshot()
+    board = type("BoardStub", (), {"id": "board-legacy-1", "title": "Agent Miro - Analysis session"})()
+    persisted_snapshot = _materialize_snapshot_ids(_test_snapshot(), _persisted_id_map())
+    mock_create_board.return_value = (board, persisted_snapshot)
+    mock_pending_filter.return_value.update.return_value = 0
+
+    _generate_miro_board_for_workflow_run(
+        orchestrator,
+        workflow_run,
+        context_payload=context_payload,
+    )
+
+    mock_build_context.assert_not_called()
+    mock_call_gemini.assert_called_once()
+    assert mock_call_gemini.call_args.args[0] == context_payload
+
+
+@patch("agent.tasks.generate_miro_board_for_workflow_run_task.delay")
+def test_enqueue_miro_generation_passes_serialized_context_payload(mock_delay):
+    workflow_run = _WorkflowRunStub()
+    workflow_run.analysis_result = {
+        "recommended_tasks": [{"summary": "Audit placements", "priority": "HIGH"}],
+    }
+    orchestrator = _OrchestratorStub()
+
+    _enqueue_miro_generation_for_workflow_run(orchestrator, workflow_run)
+
+    mock_delay.assert_called_once()
+    assert mock_delay.call_args.args == (str(workflow_run.id),)
+    payload = mock_delay.call_args.kwargs["context_payload"]
+    assert payload["session"]["id"] == "session-1"
+    assert payload["workflow_run"]["id"] == "run-1"
+    assert payload["analysis"]["recommended_tasks"][0]["summary"] == "Audit placements"
+
+
 @patch("agent.services.Task.objects.create")
 def test_create_tasks_from_analysis_creates_tasks_without_queueing_miro(mock_task_create):
     orchestrator = AgentOrchestrator(
@@ -249,7 +330,7 @@ def test_create_tasks_from_analysis_creates_tasks_without_queueing_miro(mock_tas
 
     def _make_task(**kwargs):
         task_id = len(created) + 1
-        task = type("TaskStub", (), {"id": task_id, **kwargs})()
+        task = type("TaskStub", (), {"id": task_id, "slug": f"task-{task_id}", **kwargs})()
         created.append(task)
         return task
 
@@ -321,9 +402,10 @@ def test_normalize_miro_snapshot_layout_pushes_overlapping_items_down():
     assert action["y"] + action["height"] <= frame["y"] + frame["height"] - 24
 
 
-@patch("agent.gemini_client.call_gemini_json")
-def test_call_gemini_miro_generator_normalizes_layout_before_validation(mock_call_gemini):
-    mock_call_gemini.return_value = _overlapping_snapshot()
+@patch("agent.llm_client.call_llm")
+def test_call_gemini_miro_generator_normalizes_layout_before_validation(mock_call_llm):
+    import json as _json
+    mock_call_llm.return_value = {'text': _json.dumps(_overlapping_snapshot()), 'usage': {'input': 10, 'output': 20}}
 
     snapshot = call_gemini_miro_generator({"analysis": {"anomalies": []}}, user_id=1)
     title = snapshot["items"][1]

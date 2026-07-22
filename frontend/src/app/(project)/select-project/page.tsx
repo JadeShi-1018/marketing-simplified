@@ -13,7 +13,7 @@ import ChatFAB from '@/components/global-chat/ChatFAB';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import Modal from '@/components/ui/Modal';
 import { useProjects } from '@/hooks/useProjects';
-import { useProjectStore } from '@/lib/projectStore';
+import { Id } from '@/types/common';
 import { ProjectAPI, type ProjectInvitationData } from '@/lib/api/projectApi';
 import { quickStartPathWithCreateProjectReturn } from '@/lib/quickStartReturn';
 
@@ -32,12 +32,12 @@ export default function SelectProjectPage() {
     deletingProjectId,
   } = useProjects();
   const [search, setSearch] = useState('');
-  const [defaultProjectId, setDefaultProjectId] = useState<number | null>(null);
+  const [defaultProjectId, setDefaultProjectId] = useState<Id | null>(null);
   const [pendingInvites, setPendingInvites] = useState<ProjectInvitationData[]>([]);
   const [invitesLoading, setInvitesLoading] = useState(false);
   const [invitesError, setInvitesError] = useState<string | null>(null);
   const [acceptingInviteId, setAcceptingInviteId] = useState<number | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: Id; name: string } | null>(null);
   const [createFlow, setCreateFlow] = useState<CreateProjectFlow>('closed');
 
   useEffect(() => {
@@ -79,7 +79,7 @@ export default function SelectProjectPage() {
       return;
     }
 
-    setDefaultProjectId((prev) => (prev !== null && projects.some((project) => project.id === prev) ? prev : null));
+    setDefaultProjectId((prev) => (prev !== null && projects.some((project) => String(project.id) === String(prev)) ? prev : null));
   }, [projects]);
 
   const filtered = useMemo(() => {
@@ -99,19 +99,17 @@ export default function SelectProjectPage() {
       });
   }, [projects, search]);
 
-  const storeSetActiveProject = useProjectStore((s) => s.setActiveProject);
-
-  const handleSelect = async (id: number) => {
-    const project = projects.find((p) => p.id === id);
-    if (project) storeSetActiveProject(project);
+  const handleSelect = async (id: Id) => {
     const didUpdate = await setActiveProject(id, false);
+
     if (didUpdate !== false) {
       setDefaultProjectId(id);
     }
+
     return didUpdate;
   };
 
-  const handleSetDefault = async (id: number) => {
+  const handleSetDefault = async (id: Id) => {
     const didUpdate = await setActiveProject(id, false);
     if (didUpdate !== false) {
       setDefaultProjectId(id);
@@ -124,7 +122,7 @@ export default function SelectProjectPage() {
   // is not the semantic we want here — card click / checkbox means
   // "make this my default" and must always POST /set_active/.
 
-  const handleDelete = (id: number, name: string) => {
+  const handleDelete = (id: Id, name: string) => {
     setDeleteConfirm({ id, name });
   };
 
@@ -278,7 +276,7 @@ export default function SelectProjectPage() {
               <ProjectCard
                 key={project.id}
                 project={project}
-                isDefault={defaultProjectId === project.id}
+                isDefault={defaultProjectId !== null && String(defaultProjectId) === String(project.id)}
                 onSetDefault={handleSetDefault}
                 onSelect={handleSelect}
                 onDelete={handleDelete}

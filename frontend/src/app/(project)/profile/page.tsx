@@ -6,6 +6,7 @@ import {
   Briefcase,
   Building2,
   Check,
+  ChevronRight,
   ClipboardList,
   Camera,
   Loader2,
@@ -16,18 +17,21 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import PrivacyExportPanel from '@/components/profile/PrivacyExportPanel';
 import useAuth from '@/hooks/useAuth';
 import { useAuthStore } from '@/lib/authStore';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { authAPI } from '@/lib/api';
+import { authAPI, readPersistedAuthState } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
+import { OrganizationAPI, OrgListItem } from '@/lib/api/organizationApi';
 
-type SectionKey = 'overview' | 'organization';
+type SectionKey = 'overview' | 'organization' | 'privacy';
 
 const SECTIONS: Array<{ id: SectionKey; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'organization', label: 'Organization' },
+  { id: 'privacy', label: 'Privacy' },
 ];
 
 const getInitials = (name?: string | null): string => {
@@ -196,6 +200,8 @@ function ProfileContent() {
   // Organization / projects
   const [projects, setProjects] = useState<{ project_id: number; project_name: string; role: string }[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
+  const [orgs, setOrgs] = useState<OrgListItem[]>([]);
+  const [orgsLoading, setOrgsLoading] = useState(false);
 
   const profileLoading = loading || !user;
 
@@ -222,9 +228,24 @@ function ProfileContent() {
     }
   }, []);
 
+  const loadOrgs = useCallback(async () => {
+    setOrgsLoading(true);
+    try {
+      const data = await OrganizationAPI.getUserOrganizations();
+      setOrgs(data.organizations);
+    } catch {
+      toast.error('Failed to load organizations.');
+    } finally {
+      setOrgsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (activeSection === 'organization') loadProjects();
-  }, [activeSection, loadProjects]);
+    if (activeSection === 'organization') {
+      loadProjects();
+      loadOrgs();
+    }
+  }, [activeSection, loadProjects, loadOrgs]);
 
   // ── Patch helper ─────────────────────────────────────────────────────────
 
@@ -269,12 +290,8 @@ function ProfileContent() {
     if (deleteConfirmText !== 'DELETE MY ACCOUNT') return;
     setIsDeleting(true);
     try {
-      const authStorage = typeof window !== 'undefined' ? localStorage.getItem('auth-storage') : null;
-      let refreshToken = '';
-      if (authStorage) {
-        const parsed = JSON.parse(authStorage) as { state?: { refresh?: string } };
-        refreshToken = parsed.state?.refresh ?? '';
-      }
+      // Note: the persisted field is `refreshToken`, not `refresh` (fixed pre-existing typo)
+      const refreshToken = readPersistedAuthState()?.state?.refreshToken ?? '';
       await authAPI.deleteAccount(refreshToken);
       toast.success('Your account has been deleted.');
       await logout();
@@ -390,6 +407,13 @@ function ProfileContent() {
 
   // ── Render organization tab ───────────────────────────────────────────────
 
+  const getOrgInitials = (name: string) => {
+    const words = name.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return '?';
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return (words[0][0] + words[1][0]).toUpperCase();
+  };
+
   const renderOrganization = () => {
     // Group projects by role for clear multi-role display
     const roleOrder = ['owner', 'member', 'viewer'];
@@ -405,18 +429,68 @@ function ProfileContent() {
 
     return (
       <div className="space-y-5">
-        {/* Org info */}
-        {user?.organization && (
-          <div className="flex items-center gap-3 p-4 rounded-lg border border-gray-100 bg-gray-50">
-            <div className="w-9 h-9 rounded-md bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
-              <Building2 className="w-4 h-4 text-white" />
-            </div>
-            <div>
-              <div className="text-sm font-medium text-gray-900">{user.organization.name}</div>
-              <div className="text-xs text-gray-400">Organization</div>
-            </div>
+        {/* Organizations list */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500">
+              My Organizations
+            </h2>
+            {!orgsLoading && orgs.length > 0 && (
+              <span className="text-xs text-gray-400">{orgs.length} organization{orgs.length !== 1 ? 's' : ''}</span>
+            )}
           </div>
-        )}
+
+          {orgsLoading ? (
+            <div className="space-y-2">
+              {[1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100">
+                  <Skeleton className="h-9 w-9 rounded-full" />
+                  <div className="flex-1 space-y-1.5">
+                    <Skeleton className="h-3.5 w-36" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                  <Skeleton className="h-3.5 w-3.5 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : orgs.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-gray-200 py-8 flex flex-col items-center text-center">
+              <Building2 className="w-7 h-7 text-gray-300 mb-2" />
+              <p className="text-sm text-gray-500">No organizations found.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {orgs.map((org) => (
+                <button
+                  key={org.id}
+                  type="button"
+                  onClick={() => router.push(`/organizations/${org.id}`)}
+                  className="w-full flex items-center gap-3 p-3 rounded-lg border border-gray-100 hover:border-[#3CCED7]/40 hover:bg-[#3CCED7]/5 transition-colors text-left group"
+                >
+                  <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#3CCED7] to-[#A6E661] flex items-center justify-center shrink-0">
+                    <span className="text-white text-xs font-bold">{getOrgInitials(org.name)}</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-medium text-gray-900 truncate">{org.name}</span>
+                      {org.is_current && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-600">
+                          Current
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400 truncate">
+                      {org.user_role && <span className="capitalize">{org.user_role}</span>}
+                      {org.user_role && <span className="mx-1">·</span>}
+                      <span>{org.member_count} member{org.member_count !== 1 ? 's' : ''}</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-[#3CCED7] shrink-0 transition-colors" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Projects */}
         <div>
@@ -450,7 +524,6 @@ function ProfileContent() {
             <div className="space-y-4">
               {sortedRoles.map((role) => (
                 <div key={role}>
-                  {/* Role group header — only shown when user has projects in multiple roles */}
                   {sortedRoles.length > 1 && (
                     <div className="flex items-center gap-2 mb-2">
                       <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${roleBadgeClass(role)}`}>
@@ -470,7 +543,6 @@ function ProfileContent() {
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-gray-900 truncate">{p.project_name}</div>
                         </div>
-                        {/* Role badge — always shown; color varies by role */}
                         <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full border ${roleBadgeClass(role)}`}>
                           {humanize(p.role)}
                         </span>
@@ -484,6 +556,12 @@ function ProfileContent() {
         </div>
       </div>
     );
+  };
+
+  const renderActiveSection = () => {
+    if (activeSection === 'overview') return renderOverview();
+    if (activeSection === 'organization') return renderOrganization();
+    return <PrivacyExportPanel />;
   };
 
   // ── Layout ────────────────────────────────────────────────────────────────
@@ -668,7 +746,7 @@ function ProfileContent() {
                     </nav>
                   </div>
                   <div className="p-6">
-                    {activeSection === 'overview' ? renderOverview() : renderOrganization()}
+                    {renderActiveSection()}
                   </div>
                 </div>
               </div>

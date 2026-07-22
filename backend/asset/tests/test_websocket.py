@@ -1,4 +1,5 @@
 import json
+import uuid
 import asyncio
 from channels.testing import WebsocketCommunicator
 from channels.layers import channel_layers
@@ -17,6 +18,43 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 TEST_CHANNEL_LAYERS = {"default": {"BACKEND": "channels.layers.InMemoryChannelLayer"}}
+
+
+class TenantAwareTransactionTestCase(TransactionTestCase):
+    """
+    TransactionTestCase subclass that handles multi-tenant FK constraints.
+
+    Django's default _fixture_teardown runs TRUNCATE without CASCADE, which
+    fails because tenant schemas (org_xxx) have cross-schema FKs pointing at
+    public tables (e.g. org_xxx.core_project → public.core_customuser).
+    Overriding with allow_cascade=True makes PostgreSQL cascade the TRUNCATE
+    to tenant schema tables automatically.
+
+    inhibit_post_migrate=False (Django's own default): after flushing,
+    post_migrate signals must run to repopulate django_content_type and
+    auth_permission.  Without this, TestCase tests that run after us on
+    the same xdist worker find auth_permission rows referencing deleted
+    ContentType IDs (ForeignKeyViolation in check_constraints) and
+    task_task.content_type_id references that no longer exist.
+
+    ContentType cache must be cleared after flush so subsequent tests
+    re-query the freshly repopulated django_content_type table.
+    """
+
+    def _fixture_teardown(self):
+        from django.core.management import call_command
+        from django.contrib.contenttypes.models import ContentType
+        for db_name in self._databases_names(include_mirrors=False):
+            call_command(
+                'flush',
+                verbosity=0,
+                interactive=False,
+                database=db_name,
+                reset_sequences=False,
+                allow_cascade=True,
+                inhibit_post_migrate=False,
+            )
+        ContentType.objects.clear_cache()
 
 
 def _build_ws_application():
@@ -46,18 +84,19 @@ def _reset_channel_layers():
 
 
 @override_settings(CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
-class TestWebSocketConnection(TransactionTestCase):
+class TestWebSocketConnection(TenantAwareTransactionTestCase):
     """Test WebSocket connection functionality"""
-    
+
     def setUp(self):
         _reset_channel_layers()
+        _uid = uuid.uuid4().hex[:8]
         # Create test user
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email=f'user1_{_uid}@example.com',
+            username=f'user1_{_uid}',
             password='testpass123'
         )
-        
+
         # Create test organization and team
         self.organization = Organization.objects.create(
             name="Test Organization"
@@ -70,7 +109,7 @@ class TestWebSocketConnection(TransactionTestCase):
         # Create project and task (core models)
         self.project = Project.objects.create(name="Test Project", organization=self.organization)
         self.task = Task.objects.create(summary="Test Task", type="asset", project=self.project)
-        
+
         # Create test asset
         self.asset = Asset.objects.create(
             task=self.task,
@@ -79,14 +118,14 @@ class TestWebSocketConnection(TransactionTestCase):
             status=Asset.NOT_SUBMITTED,
             tags=['test', 'asset']
         )
-        
+
         # Create JWT token for authentication
         self.token = str(AccessToken.for_user(self.user1))
 
     def tearDown(self):
         _reset_channel_layers()
         super().tearDown()
-    
+
     def test_websocket_connect_success(self):
         """Test successful WebSocket connection with valid authentication"""
         async def test_connection():
@@ -187,15 +226,16 @@ class TestWebSocketConnection(TransactionTestCase):
 
 
 @override_settings(CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
-class TestWebSocketMessageHandling(TransactionTestCase):
+class TestWebSocketMessageHandling(TenantAwareTransactionTestCase):
     """Test WebSocket message handling functionality"""
-    
+
     def setUp(self):
         _reset_channel_layers()
+        _uid = uuid.uuid4().hex[:8]
         # Create test user
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email=f'user1_{_uid}@example.com',
+            username=f'user1_{_uid}',
             password='testpass123'
         )
         
@@ -334,21 +374,23 @@ class TestWebSocketMessageHandling(TransactionTestCase):
 
 
 @override_settings(CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
-class TestWebSocketEventBroadcasting(TransactionTestCase):
+class TestWebSocketEventBroadcasting(TenantAwareTransactionTestCase):
     """Test WebSocket event broadcasting functionality"""
-    
+
     def setUp(self):
         _reset_channel_layers()
+        _uid1 = uuid.uuid4().hex[:8]
+        _uid2 = uuid.uuid4().hex[:8]
         # Create test users
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email=f'user1_{_uid1}@example.com',
+            username=f'user1_{_uid1}',
             password='testpass123'
         )
-        
+
         self.user2 = User.objects.create_user(
-            email='user2@example.com',
-            username='user2',
+            email=f'user2_{_uid2}@example.com',
+            username=f'user2_{_uid2}',
             password='testpass123'
         )
         
@@ -638,21 +680,23 @@ class TestWebSocketEventBroadcasting(TransactionTestCase):
 
 
 @override_settings(CHANNEL_LAYERS=TEST_CHANNEL_LAYERS)
-class TestWebSocketMultipleUsers(TransactionTestCase):
+class TestWebSocketMultipleUsers(TenantAwareTransactionTestCase):
     """Test WebSocket functionality with multiple users"""
-    
+
     def setUp(self):
         _reset_channel_layers()
+        _uid1 = uuid.uuid4().hex[:8]
+        _uid2 = uuid.uuid4().hex[:8]
         # Create test users
         self.user1 = User.objects.create_user(
-            email='user1@example.com',
-            username='user1',
+            email=f'user1_{_uid1}@example.com',
+            username=f'user1_{_uid1}',
             password='testpass123'
         )
-        
+
         self.user2 = User.objects.create_user(
-            email='user2@example.com',
-            username='user2',
+            email=f'user2_{_uid2}@example.com',
+            username=f'user2_{_uid2}',
             password='testpass123'
         )
         

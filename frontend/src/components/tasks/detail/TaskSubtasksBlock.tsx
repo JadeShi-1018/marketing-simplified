@@ -33,7 +33,7 @@ export default function TaskSubtasksBlock({
   useEffect(() => {
     let cancelled = false;
     if (loading || !task.id) return;
-    TaskAPI.getSubtasks(task.id)
+    TaskAPI.getSubtasks(task.slug ?? task.id)
       .then((rows) => {
         if (!cancelled) setItems(rows);
       })
@@ -45,11 +45,11 @@ export default function TaskSubtasksBlock({
     };
   }, [loading, task.id, refreshKey, localKey]);
 
-  const unlink = async (subtaskId: number) => {
+  const unlink = async (subtaskId: number, subtaskSlug?: string) => {
     if (!task.id) return;
     setUnlinkingId(subtaskId);
     try {
-      await TaskAPI.deleteSubtask(task.id, subtaskId);
+      await TaskAPI.deleteSubtask(task.slug ?? task.id, subtaskSlug ?? subtaskId);
       setLocalKey((k) => k + 1);
       onMutated?.();
     } catch (e) {
@@ -102,7 +102,7 @@ export default function TaskSubtasksBlock({
           {items.map((s) => (
             <li key={s.id} className="flex min-w-0 flex-wrap items-center gap-2 py-2 sm:flex-nowrap sm:gap-3">
               <Link
-                href={`/tasks/${s.id}`}
+                href={`/tasks/${s.slug}`}
                 className="min-w-0 flex-1 truncate text-sm text-gray-900 hover:text-[#3CCED7] hover:underline"
               >
                 {s.summary}
@@ -114,7 +114,7 @@ export default function TaskSubtasksBlock({
               {!readOnly && (
                 <button
                   type="button"
-                  onClick={() => unlink(s.id ?? 0)}
+                  onClick={() => unlink(s.id ?? 0, s.slug)}
                   disabled={unlinkingId === s.id}
                   title="Unlink subtask"
                   className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 disabled:opacity-40"

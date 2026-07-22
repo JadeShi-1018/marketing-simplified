@@ -44,9 +44,17 @@ from .serializers import (
     ScheduledMessageSerializer,
     ScheduledMessageCreateSerializer,
 )
-from .services import ChatService, ChatStarService, MessageService, OnlineStatusService
+from .services import (
+    ChatService,
+    ChatStarService,
+    MessageService,
+    OnlineStatusService,
+    UnsupportedAttachmentMimeType,
+    validate_attachment_mime_type,
+)
 from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
 from core.models import ProjectMember
+from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +114,8 @@ class StarredChatViewSet(
                 {'error': 'project_id is required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            pid = int(project_id)
-        except (TypeError, ValueError):
+        pid = resolve_project_pk(project_id)
+        if pid is None:
             return Response(
                 {'error': 'Invalid project_id'},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -158,21 +165,23 @@ class StarredChatViewSet(
         return Response({'status': 'ok'})
 
 
-class ChatViewSet(viewsets.ModelViewSet):
+class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     """
     ViewSet for managing chats.
     
     Endpoints:
     - GET /chats/ - List user's chats
     - POST /chats/ - Create a new chat
-    - GET /chats/{id}/ - Get chat details
-    - DELETE /chats/{id}/ - Leave a chat (soft delete for user)
-    - POST /chats/{id}/add_participant/ - Add participant to group chat
-    - POST /chats/{id}/remove_participant/ - Remove participant from group chat
-    - POST /chats/{id}/mark_as_read/ - Mark all messages as read
+    - GET /chats/{slug}/ - Get chat details
+    - DELETE /chats/{slug}/ - Leave a chat (soft delete for user)
+    - POST /chats/{slug}/add_participant/ - Add participant to group chat
+    - POST /chats/{slug}/remove_participant/ - Remove participant from group chat
+    - POST /chats/{slug}/mark_as_read/ - Mark all messages as read
+    - GET /chats/legacy-id-slug/?id=<pk> - Resolve legacy numeric id to slug (migration)
     """
     
     permission_classes = [IsAuthenticated]
+    lookup_field = 'slug'
 
     def _get_active_participant(self, chat, user):
         return ChatParticipant.objects.filter(chat=chat, user=user, is_active=True).first()
@@ -197,6 +206,8 @@ class ChatViewSet(viewsets.ModelViewSet):
             self.request.query_params.get('project_id')
             or self.request.query_params.get('pro_ct_id')
         )
+        if project_id:
+            project_id = resolve_project_pk(project_id)
 
         return ChatService.get_user_chats(user, project_id)
     
@@ -245,6 +256,18 @@ class ChatViewSet(viewsets.ModelViewSet):
             'page_size': page_size,
             'total': queryset.count()
         })
+
+    @action(detail=False, methods=['get'], url_path='legacy-id-slug')
+    def legacy_id_slug(self, request):
+        """Resolve a legacy numeric chat pk to slug (bookmark/notification migration)."""
+        raw = request.query_params.get('id')
+        if not raw or not str(raw).isdigit():
+            return Response({'error': 'id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        chat = get_object_or_404(
+            ChatService.get_user_chats(request.user, None),
+            pk=int(raw),
+        )
+        return Response({'id': chat.id, 'slug': chat.slug})
     
     def create(self, request, *args, **kwargs):
         """
@@ -319,7 +342,6 @@ class ChatViewSet(viewsets.ModelViewSet):
         
         except Exception as e:
             logger.error(f"Failed to notify participants about new chat: {e}")
-    
     def retrieve(self, request, *args, **kwargs):
         """Get chat details"""
         chat = self.get_object()
@@ -354,7 +376,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-    def add_participant(self, request, pk=None):
+    def add_participant(self, request, slug=None):
         """
         Add a participant to a group chat.
         
@@ -391,7 +413,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
-    def remove_participant(self, request, pk=None):
+    def remove_participant(self, request, slug=None):
         """
         Remove a participant from a group chat.
         
@@ -441,7 +463,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['patch'], url_path='manager')
-    def set_manager(self, request, pk=None):
+    def set_manager(self, request, slug=None):
         """
         Promote or demote a channel participant as manager.
 
@@ -503,7 +525,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(ChatParticipantSerializer(participant).data)
     
     @action(detail=True, methods=['post'])
-    def mark_as_read(self, request, pk=None):
+    def mark_as_read(self, request, slug=None):
         """
         Mark all messages in a chat as read (up to a specific message).
 
@@ -529,7 +551,7 @@ class ChatViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['patch'], url_path='update_details')
-    def update_details(self, request, pk=None):
+    def update_details(self, request, slug=None):
         """
         Update channel name, topic, and/or description.
         Only participants may call this; only group chats support name changes.
@@ -561,7 +583,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(ChatSerializer(chat, context={'request': request}).data)
 
     @action(detail=True, methods=['get'], url_path='pins')
-    def list_pins(self, request, pk=None):
+    def list_pins(self, request, slug=None):
         """List pinned messages for a channel (participant-only)."""
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
@@ -571,7 +593,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
     @action(detail=True, methods=['get'], url_path='files')
-    def list_files(self, request, pk=None):
+    def list_files(self, request, slug=None):
         """
         List files (attachments) shared in this chat, newest first.
 
@@ -618,7 +640,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         })
 
     @action(detail=True, methods=['post'], url_path='pin')
-    def pin_message(self, request, pk=None):
+    def pin_message(self, request, slug=None):
         """Pin a message in a channel. Body: { message_id }"""
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
@@ -642,7 +664,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         )
 
     @action(detail=True, methods=['delete'], url_path='pin/(?P<message_id>[^/.]+)')
-    def unpin_message(self, request, pk=None, message_id=None):
+    def unpin_message(self, request, slug=None, message_id=None):
         """Unpin a message from a channel."""
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
@@ -665,9 +687,8 @@ class ChatViewSet(viewsets.ModelViewSet):
         project_id = request.query_params.get('project_id')
         if not project_id:
             return Response({'error': 'project_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            project_id = int(project_id)
-        except (TypeError, ValueError):
+        project_id = resolve_project_pk(project_id)
+        if project_id is None:
             return Response({'error': 'Invalid project_id'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not ProjectMember.objects.filter(project_id=project_id, user=request.user, is_active=True).exists():
@@ -701,7 +722,7 @@ class ChatViewSet(viewsets.ModelViewSet):
         return Response(results)
 
     @action(detail=True, methods=['patch'], url_path='notification_settings')
-    def notification_settings(self, request, pk=None):
+    def notification_settings(self, request, slug=None):
         """
         Update the current user's notification preferences for this chat.
         Body (all optional): { is_muted, notification_level }
@@ -927,37 +948,22 @@ class MessageViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         try:
-            # Create message using serializer (handles attachments)
             message = serializer.save()
-            
-            # Create MessageStatus for all recipients (excluding sender)
-            from .models import MessageStatus
-            recipients = ChatParticipant.objects.filter(
-                chat=message.chat,
-                is_active=True
-            ).exclude(user=request.user).select_related('user')
-            
-            MessageStatus.objects.bulk_create([
-                MessageStatus(
-                    message=message,
-                    user=recipient.user,
-                    status='sent'
-                )
-                for recipient in recipients
-            ])
+            created = getattr(serializer, '_message_created', True)
 
-            transaction.on_commit(lambda: notify_message_recipients.delay(message.id))
-            transaction.on_commit(lambda: notify_new_message.delay(message.id))
-
-            # Refresh message with all relationships for response
             message = Message.objects.select_related(
                 'sender', 'reply_to', 'reply_to__sender'
             ).prefetch_related('attachments').get(id=message.id)
 
-            # Return message with attachments
             response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
-            logger.info(f"Message {message.id} created successfully with {message.attachments.count()} attachments")
-            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            logger.info(
+                "Message %s %s successfully with %s attachments",
+                message.id,
+                'created' if created else 'deduped',
+                message.attachments.count(),
+            )
+            response_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+            return Response(response_serializer.data, status=response_status)
             
         except ValueError as e:
             logger.warning(f"Failed to create message: {e}")
@@ -1602,6 +1608,22 @@ class AttachmentViewSet(viewsets.GenericViewSet):
         The attachment is initially unlinked (message=null).
         When sending a message, include the attachment IDs to link them.
         """
+
+        uploaded_file = request.FILES.get("file")
+
+        if uploaded_file:
+            try:
+                validate_attachment_mime_type(uploaded_file.content_type)
+            except UnsupportedAttachmentMimeType as e:
+                return Response(
+                    {
+                        "code": "unsupported_mime_type",
+                        "error": str(e),
+                        "mime_type": uploaded_file.content_type,
+                    },
+                    status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                )
+
         serializer = AttachmentUploadSerializer(
             data=request.data, 
             context={'request': request}
@@ -1697,9 +1719,8 @@ class AttachmentViewSet(viewsets.GenericViewSet):
                 {'error': 'project_id is required'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        try:
-            pid = int(project_id)
-        except (TypeError, ValueError):
+        pid = resolve_project_pk(project_id)
+        if pid is None:
             return Response(
                 {'error': 'Invalid project_id'},
                 status=status.HTTP_400_BAD_REQUEST,

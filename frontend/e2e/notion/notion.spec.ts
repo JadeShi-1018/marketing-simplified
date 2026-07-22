@@ -22,10 +22,10 @@ const buildAuthHeadersFromStorageState = (): Record<string, string> => {
 
   const authEntry = storageState.origins
     ?.flatMap((origin) => origin.localStorage || [])
-    .find((item) => item.name === 'auth-storage');
+    .find((item) => item.name === 'auth-storage-v1');
 
   if (!authEntry) {
-    throw new Error('auth-storage is missing in Playwright storage state.');
+    throw new Error('auth-storage-v1 is missing in Playwright storage state.');
   }
 
   const authStorage = JSON.parse(authEntry.value) as {
@@ -38,7 +38,7 @@ const buildAuthHeadersFromStorageState = (): Record<string, string> => {
 
   const token = authStorage.state?.token;
   if (!token) {
-    throw new Error('Bearer token missing in auth-storage.');
+    throw new Error('Bearer token missing in auth-storage-v1.');
   }
 
   const headers: Record<string, string> = {

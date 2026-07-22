@@ -19,7 +19,7 @@ export default function MailchimpNewPage() {
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [templateError, setTemplateError] = useState<string | null>(null);
 
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | string | null>(null);
   const [subject, setSubject] = useState('');
   const [previewText, setPreviewText] = useState('');
   const [fromName, setFromName] = useState('');
@@ -84,7 +84,7 @@ export default function MailchimpNewPage() {
       });
       toast.success('Draft created');
       if (created?.id) {
-        router.push(`/mailchimp/${created.id}`);
+        router.push(`/mailchimp/${created.slug}`);
       } else {
         router.push('/mailchimp');
       }

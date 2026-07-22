@@ -89,7 +89,7 @@ const TasksSection = forwardRef<TasksSectionHandle, TasksSectionProps>(
 
     const handleRowClick = useCallback(
       (task: TaskData) => {
-        if (task?.id != null) router.push(`/tasks/${task.id}`);
+        if (task?.id != null) router.push(`/tasks/${task.slug}`);
       },
       [router]
     );

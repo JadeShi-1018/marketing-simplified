@@ -149,6 +149,9 @@ class ChatInputSerializer(serializers.Serializer):
     )
     approval_draft = serializers.JSONField(required=False, allow_null=True)
     calendar_context = serializers.JSONField(required=False, allow_null=True)
+    # Draft → Agent context (read-only). Format: {"draftId": <pk|slug>, ...}.
+    # The Agent reads the draft via notion_editor's existing API/permissions.
+    draft_context = serializers.JSONField(required=False, allow_null=True)
     workflow_id = serializers.UUIDField(required=False, allow_null=True)
     # User-approved column mapping for confirm_columns action.
     # Format: {original_header: canonical_name or "unknown"}
@@ -190,11 +193,11 @@ class AgentWorkflowDefinitionListSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentWorkflowDefinition
         fields = [
-            'id', 'name', 'description', 'is_default', 'is_system',
+            'id', 'slug', 'name', 'description', 'is_default', 'is_system',
             'status', 'step_count', 'step_types', 'created_at',
             'trigger_config', 'trigger_state',
         ]
-        read_only_fields = ['id', 'is_system', 'created_at']
+        read_only_fields = ['id', 'slug', 'is_system', 'created_at']
 
     def get_step_count(self, obj):
         return obj.steps.filter(is_deleted=False).count()
@@ -223,11 +226,11 @@ class AgentWorkflowDefinitionDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentWorkflowDefinition
         fields = [
-            'id', 'name', 'description', 'is_default', 'is_system',
+            'id', 'slug', 'name', 'description', 'is_default', 'is_system',
             'status', 'steps', 'trigger_config',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'is_system', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'slug', 'is_system', 'created_at', 'updated_at']
         extra_kwargs = {
             'trigger_config': {'required': False},
         }
@@ -284,7 +287,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentWorkflowTemplate
         fields = [
-            'id', 'name', 'description', 'category',
+            'id', 'slug', 'name', 'description', 'category',
             'steps_config', 'workflow_step_count',
             'workflow_step_types', 'created_by',
             'organization', 'organization_name',
@@ -296,7 +299,7 @@ class AgentWorkflowTemplateSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'created_by',
+            'id', 'slug', 'created_by',
             'organization',
             'is_shared_to_current_project',
             'created_at', 'updated_at',

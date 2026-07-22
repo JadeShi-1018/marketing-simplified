@@ -1,4 +1,4 @@
-import api from '../api';
+import api, { readPersistedAuthState } from '../api';
 import {
   AgentSession,
   AgentSessionDetail,
@@ -33,19 +33,12 @@ function dispatchQuotaRefresh(): void {
 /** Build auth headers for SSE fetch requests (mirrors Axios interceptor logic). */
 function getSSEAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
-  const authStorage = typeof window !== 'undefined'
-    ? localStorage.getItem('auth-storage')
-    : null;
-  if (authStorage) {
-    try {
-      const parsed = JSON.parse(authStorage);
-      const token = parsed.state?.token;
-      const orgToken = parsed.state?.organizationAccessToken;
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      if (orgToken) headers['X-Organization-Token'] = orgToken;
-    } catch {
-      // ignore parse errors
-    }
+  const authData = readPersistedAuthState();
+  if (authData) {
+    const token = authData.state?.token;
+    const orgToken = authData.state?.organizationAccessToken;
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (orgToken) headers['X-Organization-Token'] = orgToken;
   }
   return headers;
 }

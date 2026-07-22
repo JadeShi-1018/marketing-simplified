@@ -1,11 +1,31 @@
+import uuid
+
 from django.db import models
 from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from core.models import TimeStampedModel, Project, Team
+from core.slug_mixins import SluggedResourceModelMixin
 
 
-class Queue(TimeStampedModel):
+def default_operating_hours():
+    disabled = {'enabled': False}
+    weekday = {'enabled': True, 'start': '09:00', 'end': '17:00'}
+    return {
+        'monday': weekday.copy(),
+        'tuesday': weekday.copy(),
+        'wednesday': weekday.copy(),
+        'thursday': weekday.copy(),
+        'friday': weekday.copy(),
+        'saturday': disabled.copy(),
+        'sunday': disabled.copy(),
+    }
+
+
+class Queue(SluggedResourceModelMixin, TimeStampedModel):
+    # Slug-only URLs. Slug is derived from name.
+    slug_source_field = 'name'
+
     TIER_CHOICES = [
         ('T1', 'T1 Frontline'),
         ('T2', 'T2 Technical Support'),
@@ -25,6 +45,11 @@ class Queue(TimeStampedModel):
     tier = models.CharField(max_length=4, choices=TIER_CHOICES, default='T1')
     display_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    sla_policy = models.ForeignKey(
+        'SLAPolicy', on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='queues',
+    )
 
     class Meta:
         unique_together = ('organisation', 'name')
@@ -105,6 +130,7 @@ class CustomerUser(TimeStampedModel):
 class CsmNotification(TimeStampedModel):
     NOTIFICATION_TYPES = [
         ('org_invitation', 'Organisation Invitation'),
+        ('sla_breach', 'SLA Breach'),
     ]
     ACTION_STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -141,23 +167,30 @@ class CsmNotification(TimeStampedModel):
 
 
 class Ticket(TimeStampedModel):
+    # Built-in statuses. The per-project status machine
+    # (TicketStatus / TicketStatusTransition) is the source of truth for
+    # transitions and custom statuses; these choices give the five built-ins a
+    # display label. Custom statuses are stored as slugs not listed here —
+    # get_status_display() falls back to the raw slug for those.
     STATUS_CHOICES = [
         ('todo', 'To Do'),
         ('in_progress', 'In Progress'),
+        ('pending_customer', 'Pending Customer Response'),
         ('resolved', 'Resolved'),
         ('closed', 'Closed'),
     ]
     PRIORITY_CHOICES = [
-        ('low', 'Low'),
-        ('medium', 'Medium'),
+        ('critical', 'Critical'),
         ('high', 'High'),
-        ('urgent', 'Urgent'),
+        ('medium', 'Medium'),
+        ('low', 'Low'),
     ]
+    PRIORITY_ORDER = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3}
 
     queue = models.ForeignKey(Queue, on_delete=models.CASCADE, related_name='tickets')
     title = models.CharField(max_length=300)
     description = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='todo')
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='todo')
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
     assigned_to = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
@@ -165,6 +198,25 @@ class Ticket(TimeStampedModel):
         related_name='assigned_tickets',
     )
     customer_email = models.EmailField(blank=True)
+    conversation = models.ForeignKey(
+        'Conversation', on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='tickets',
+    )
+    first_response_due = models.DateTimeField(null=True, blank=True)
+    resolution_due = models.DateTimeField(null=True, blank=True)
+
+    # Set when an agent first replies. Stops the first-response countdown; a
+    # value after first_response_due means the target was missed.
+    first_responded_at = models.DateTimeField(null=True, blank=True)
+
+    # Guard against re-notifying every sweep once a breach has been announced.
+    first_response_breach_notified = models.BooleanField(default=False)
+    resolution_breach_notified = models.BooleanField(default=False)
+
+    # Timestamp the ticket last entered "Pending Customer Response".
+    # Drives the auto-resolution rule (resolve after N days with no customer reply).
+    pending_since = models.DateTimeField(null=True, blank=True)
 
     # --- CSM-S01-07: form submission context ---
     form = models.ForeignKey(
@@ -194,6 +246,193 @@ class Ticket(TimeStampedModel):
 
     def __str__(self):
         return f"[{self.get_status_display()}] {self.title}"
+
+    def save(self, *args, **kwargs):
+        # Keep the pending-clock in sync on every write path (create,
+        # PATCH, task, future callers) so the auto-resolution rule always has a
+        # start time. Stamp it when entering Pending Customer Response, clear it
+        # on leaving.
+        touched = []
+        if self.status == 'pending_customer':
+            if self.pending_since is None:
+                self.pending_since = timezone.now()
+                touched.append('pending_since')
+        elif self.pending_since is not None:
+            # Leaving Pending Customer Response resumes the SLA clock: credit
+            # back the time spent waiting on the customer before clearing.
+            from csm.services.sla import resume_sla_clock
+            resume_sla_clock(self)
+            self.pending_since = None
+            touched += ['pending_since', 'first_response_due', 'resolution_due']
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None and 'status' in update_fields:
+            merged = list(update_fields)
+            merged += [f for f in touched if f not in merged]
+            kwargs['update_fields'] = merged
+        super().save(*args, **kwargs)
+
+
+class Conversation(TimeStampedModel):
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('pending', 'Pending'),
+        ('resolved', 'Resolved'),
+        ('closed', 'Closed'),
+    ]
+    CHANNEL_CHOICES = [
+        ('web', 'Web'),
+        ('email', 'Email'),
+        ('whatsapp', 'WhatsApp'),
+    ]
+
+    customer = models.ForeignKey(
+        'customer.Customer',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='conversations',
+    )
+    queue = models.ForeignKey(
+        Queue, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='conversations',
+    )
+    assigned_to = models.ForeignKey(
+        CustomerUser, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assigned_conversations',
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    channel = models.CharField(max_length=20, choices=CHANNEL_CHOICES, default='web')
+    support_channel = models.ForeignKey(
+        'SupportChannel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='conversations',
+    )
+    tags = models.JSONField(default=list, blank=True)
+    started_at = models.DateTimeField(default=timezone.now)
+    ended_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-started_at']
+
+    def __str__(self):
+        customer_name = self.customer.full_name if self.customer else 'Unknown'
+        return f"Conversation with {customer_name} [{self.get_status_display()}]"
+
+    @property
+    def elapsed_seconds(self):
+        end = self.ended_at or timezone.now()
+        return int((end - self.started_at).total_seconds())
+
+
+class ConversationMessage(models.Model):
+    SENDER_TYPE_CHOICES = [
+        ('agent', 'Agent'),
+        ('customer', 'Customer'),
+        ('system', 'System'),
+    ]
+
+    conversation = models.ForeignKey(
+        Conversation, on_delete=models.CASCADE,
+        related_name='messages',
+    )
+    sender_type = models.CharField(max_length=20, choices=SENDER_TYPE_CHOICES)
+    sender_agent = models.ForeignKey(
+        CustomerUser, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='sent_messages',
+    )
+    content = models.TextField(blank=True)
+    rich_body = models.JSONField(null=True, blank=True)
+    image = models.ImageField(upload_to='conversation_images/', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"[{self.sender_type}] {self.content[:50]}"
+
+
+class QuickReplyTemplate(SluggedResourceModelMixin, TimeStampedModel):
+    """Pre-written reply templates that agents can insert into the conversation composer."""
+    slug_source_field = 'title'
+
+    organisation = models.ForeignKey(
+        'customer.CustomerOrganisation',
+        on_delete=models.CASCADE,
+        related_name='quick_reply_templates',
+    )
+    team = models.ForeignKey(
+        Team, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='quick_reply_templates',
+        help_text="If set, only members of this team can see the template",
+    )
+    title = models.CharField(max_length=200, help_text="Short label shown in the template picker")
+    content = models.TextField(help_text="Plain-text content inserted into the composer")
+    rich_body = models.JSONField(null=True, blank=True, help_text="Optional Tiptap JSON")
+    tags = models.JSONField(default=list, blank=True, help_text="List of tag strings for filtering")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='created_templates',
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['title']
+
+    def __str__(self):
+        return f"[Template] {self.title}"
+
+
+class QuickReplyTemplateHistory(models.Model):
+    """Snapshot of a QuickReplyTemplate captured before each edit."""
+
+    template = models.ForeignKey(
+        QuickReplyTemplate, on_delete=models.CASCADE,
+        related_name='history',
+    )
+    edited_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='template_edits',
+    )
+    edited_at = models.DateTimeField(auto_now_add=True)
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    rich_body = models.JSONField(null=True, blank=True)
+    tags = models.JSONField(default=list)
+
+    class Meta:
+        ordering = ['-edited_at']
+
+    def __str__(self):
+        return f"History of template {self.template_id} at {self.edited_at}"
+
+
+class TemplateTag(TimeStampedModel):
+    """Admin-managed tag entity for quick-reply templates.
+
+    Tags are scoped to an organisation so each CS org has its own tag vocabulary.
+    """
+
+    organisation = models.ForeignKey(
+        'customer.CustomerOrganisation',
+        on_delete=models.CASCADE,
+        related_name='template_tags',
+    )
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        unique_together = [('organisation', 'name')]
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +489,10 @@ class CsmWorkType(TimeStampedModel):
         return self.name
 
 
-class TicketForm(TimeStampedModel):
+class TicketForm(SluggedResourceModelMixin, TimeStampedModel):
+    # Slug-only URLs. Slug is derived from name.
+    slug_source_field = 'name'
+
     project = models.ForeignKey(
         Project, on_delete=models.CASCADE, related_name='ticket_forms',
     )
@@ -435,6 +677,173 @@ class TicketAttachment(models.Model):
         return self.original_name or str(self.file)
 
 
+class BusinessHoursCalendar(TimeStampedModel):
+    """Weekly working hours and timezone for an SLA countdown.
+
+    When a policy references a calendar, its countdowns advance only during
+    the open hours defined here, so nights and weekends do not consume the
+    target. A policy with no calendar counts elapsed wall-clock time instead.
+    ``schedule`` uses the same shape as SupportChannel.operating_hours.
+    """
+
+    project = models.ForeignKey(
+        'core.Project', on_delete=models.CASCADE,
+        related_name='business_hours_calendars',
+    )
+    name = models.CharField(max_length=200)
+    timezone = models.CharField(max_length=64, default='UTC')
+    schedule = models.JSONField(default=default_operating_hours)
+
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class SLAPolicy(TimeStampedModel):
+    """An SLA policy defining per-priority time targets.
+
+    A project can hold several policies; a queue picks one (``Queue.sla_policy``).
+    A queue with no policy falls back to its project's default policy
+    (``is_default``), so every ticket resolves to some SLA rather than none.
+    """
+
+    project = models.ForeignKey(
+        'core.Project', on_delete=models.CASCADE,
+        related_name='sla_policies',
+    )
+    name = models.CharField(max_length=200, default='Default SLA Policy')
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(
+        default=False,
+        help_text='Fallback policy for queues in this project with no policy assigned.',
+    )
+    calendar = models.ForeignKey(
+        BusinessHoursCalendar, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='sla_policies',
+    )
+    pause_on_pending = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'SLA Policy'
+        verbose_name_plural = 'SLA Policies'
+        # A stable order so that picking a fallback policy with .first() (when a
+        # project has several and none is marked default) is deterministic.
+        ordering = ['id']
+
+    def __str__(self):
+        return f"SLA Policy — {self.project_id}"
+
+
+class SLAPriorityTarget(models.Model):
+    """Per-priority SLA time targets within an SLAPolicy."""
+
+    PRIORITY_CHOICES = Ticket.PRIORITY_CHOICES
+
+    policy = models.ForeignKey(
+        SLAPolicy, on_delete=models.CASCADE,
+        related_name='priority_targets',
+    )
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES)
+    first_response_minutes = models.PositiveIntegerField(
+        default=480,
+        help_text='Minutes until first response is due (e.g. 60 = 1 hour)',
+    )
+    resolution_minutes = models.PositiveIntegerField(
+        default=1440,
+        help_text='Minutes until resolution is due (e.g. 480 = 8 hours)',
+    )
+
+    class Meta:
+        unique_together = ('policy', 'priority')
+        ordering = ['policy', 'priority']
+
+    def __str__(self):
+        return (
+            f"{self.policy_id} | {self.priority}: "
+            f"{self.first_response_minutes}m / {self.resolution_minutes}m"
+        )
+
+
+class SupportChannel(TimeStampedModel):
+    class ChannelType(models.TextChoices):
+        LIVE_CHAT = 'live_chat', 'Live chat'
+        CONTACT_FORM = 'contact_form', 'Contact form'
+        EMAIL = 'email', 'Email'
+
+    class OfflineAlternative(models.TextChoices):
+        MESSAGE_ONLY = 'message_only', 'Message only'
+        CONTACT_FORM = 'contact_form', 'Contact form'
+        KNOWLEDGE_BASE = 'knowledge_base', 'Knowledge base'
+
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='support_channels',
+    )
+    channel_type = models.CharField(max_length=20, choices=ChannelType.choices)
+    display_name = models.CharField(max_length=200)
+    welcome_message = models.TextField(blank=True)
+    # Sent to the customer when a ticket is created from a conversation on this
+    # channel (AC5). Blank = no confirmation message is sent.
+    ticket_confirmation_message = models.TextField(blank=True)
+    operating_hours = models.JSONField(default=default_operating_hours)
+    timezone = models.CharField(max_length=64, default='UTC')
+    offline_fallback_message = models.TextField(blank=True)
+    offline_alternative = models.CharField(
+        max_length=20,
+        choices=OfflineAlternative.choices,
+        default=OfflineAlternative.MESSAGE_ONLY,
+    )
+    offline_alternative_target_id = models.PositiveIntegerField(null=True, blank=True)
+    default_queue = models.ForeignKey(
+        Queue, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='support_channels',
+    )
+    ticket_form = models.ForeignKey(
+        TicketForm, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='support_channels',
+    )
+    email_address = models.EmailField(blank=True)
+    embed_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['sort_order', 'display_name']
+        indexes = [
+            models.Index(fields=['project', 'is_active'], name='csm_sc_proj_active_idx'),
+            models.Index(fields=['embed_key'], name='csm_sc_embed_key_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.display_name} ({self.get_channel_type_display()})"
+
+
+class SupportChannelExperienceGroup(models.Model):
+    channel = models.ForeignKey(
+        SupportChannel, on_delete=models.CASCADE, related_name='experience_group_links',
+    )
+    experience_group = models.ForeignKey(
+        'experience_group.ExperienceGroup', on_delete=models.CASCADE,
+        related_name='support_channel_links',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['channel', 'experience_group'],
+                name='csm_sceg_unique_channel_eg',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Channel {self.channel_id} → EG {self.experience_group_id}"
+
+
 class CSMInvitation(TimeStampedModel):
     email = models.EmailField()
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='csm_invitations')
@@ -456,3 +865,80 @@ class CSMInvitation(TimeStampedModel):
 
     def __str__(self):
         return f"Invitation to {self.email} ({'accepted' if self.accepted else 'pending'})"
+
+
+# --- Ticket status machine & lifecycle ------------------------------------
+
+class TicketStatus(TimeStampedModel):
+    """A ticket workflow status, project-scoped (one machine per project).
+
+    The five built-ins (is_builtin=True) are seeded per project; admins add
+    custom statuses and place them anywhere in the sequence via `order`.
+    `slug` is what Ticket.status stores.
+    """
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='ticket_statuses',
+    )
+    slug = models.CharField(max_length=50)
+    name = models.CharField(max_length=100)
+    color = models.CharField(max_length=20, default='#94a3b8')
+    order = models.PositiveIntegerField(default=0)
+    is_builtin = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['order', 'id']
+        verbose_name_plural = 'ticket statuses'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'slug'],
+                name='csm_ticketstatus_unique_slug_per_project',
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.slug})"
+
+
+class TicketStatusTransition(TimeStampedModel):
+    """A permitted edge (from_status -> to_status) in a project's status machine.
+
+    Presence of a row = the transition is allowed. Absence = blocked.
+    Statuses are referenced by slug so custom statuses need no schema change.
+    """
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name='ticket_status_transitions',
+    )
+    from_status = models.CharField(max_length=50)
+    to_status = models.CharField(max_length=50)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'from_status', 'to_status'],
+                name='csm_ticketstatustransition_unique',
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.from_status} -> {self.to_status}"
+
+
+class TicketAutoResolveConfig(TimeStampedModel):
+    """Per-project rule: auto-move tickets left in Pending Customer Response for
+    `days_until_resolve` days with no customer reply to Resolved, notifying them."""
+    project = models.OneToOneField(
+        Project, on_delete=models.CASCADE, related_name='ticket_auto_resolve_config',
+    )
+    enabled = models.BooleanField(default=False)
+    days_until_resolve = models.PositiveIntegerField(default=2)
+    notification_message = models.TextField(
+        default=(
+            'This ticket has been automatically resolved as we did not hear '
+            'back from you. Please reply if you still need help and we will '
+            'reopen it.'
+        ),
+    )
+
+    def __str__(self):
+        return f"AutoResolveConfig(project={self.project_id}, enabled={self.enabled})"

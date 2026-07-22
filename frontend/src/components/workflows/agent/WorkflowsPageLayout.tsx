@@ -47,7 +47,7 @@ export default function WorkflowsPageLayout() {
     try {
       const created = await createWorkflow({ name: "New workflow", status: "draft" })
       setRefreshKey((k) => k + 1)
-      router.push(`/workflows/${created.id}?new=1`)
+      router.push(`/workflows/${created.slug}?new=1`)
     } catch (err: unknown) {
       const msg =
         (err as { message?: string })?.message || "Failed to create workflow"

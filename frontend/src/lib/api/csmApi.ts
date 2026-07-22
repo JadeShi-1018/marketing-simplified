@@ -4,6 +4,8 @@ import {
   QueueAgent, QueueTeam, QueueTicketCounts,
   CustomerUser, CreateCustomerUserData, UpdateCustomerUserData,
   CsmNotification, InviteUserData,
+  SLAPolicy, UpdateSLAPolicyData,
+  BusinessHoursCalendar, SaveBusinessHoursCalendarData,
 } from '@/types/csm';
 
 const BASE = '/api/csm';
@@ -25,7 +27,7 @@ export default class CsmAPI {
     return unwrap<Queue>(res.data);
   }
 
-  static async getQueue(queueId: number) {
+  static async getQueue(queueId: number | string) {
     const res = await api.get<Queue>(`${BASE}/queues/${queueId}/`);
     return res.data;
   }
@@ -35,12 +37,12 @@ export default class CsmAPI {
     return res.data;
   }
 
-  static async updateQueue(queueId: number, data: UpdateQueueData) {
+  static async updateQueue(queueId: number | string, data: UpdateQueueData) {
     const res = await api.patch<Queue>(`${BASE}/queues/${queueId}/`, data);
     return res.data;
   }
 
-  static async deleteQueue(queueId: number) {
+  static async deleteQueue(queueId: number | string) {
     await api.delete(`${BASE}/queues/${queueId}/`);
   }
 
@@ -132,5 +134,47 @@ export default class CsmAPI {
   static async inviteUser(data: InviteUserData) {
     const res = await api.post(`${BASE}/customer-users/invite/`, data);
     return res.data;
+  }
+}
+
+// ── SLA Policy ───────────────────────────────────────────────────────────────
+
+export class SLAPolicyAPI {
+  static async get(projectId: number): Promise<SLAPolicy> {
+    const res = await api.get<SLAPolicy>(`${BASE}/sla-policy/`, { params: { project: projectId } });
+    return res.data;
+  }
+
+  static async update(policyId: number, data: UpdateSLAPolicyData): Promise<SLAPolicy> {
+    const res = await api.patch<SLAPolicy>(`${BASE}/sla-policy/${policyId}/`, data);
+    return res.data;
+  }
+
+  static async replace(policyId: number, data: Required<Pick<UpdateSLAPolicyData, 'name' | 'is_active' | 'priority_targets'>>): Promise<SLAPolicy> {
+    const res = await api.put<SLAPolicy>(`${BASE}/sla-policy/${policyId}/`, data);
+    return res.data;
+  }
+}
+
+export class BusinessHoursCalendarAPI {
+  static async list(projectId: number): Promise<BusinessHoursCalendar[]> {
+    const res = await api.get(`${BASE}/business-hours-calendars/`, { params: { project: projectId } });
+    return unwrap<BusinessHoursCalendar>(res.data);
+  }
+
+  static async create(projectId: number, data: SaveBusinessHoursCalendarData): Promise<BusinessHoursCalendar> {
+    const res = await api.post<BusinessHoursCalendar>(
+      `${BASE}/business-hours-calendars/`, data, { params: { project: projectId } },
+    );
+    return res.data;
+  }
+
+  static async update(id: number, data: Partial<SaveBusinessHoursCalendarData>): Promise<BusinessHoursCalendar> {
+    const res = await api.patch<BusinessHoursCalendar>(`${BASE}/business-hours-calendars/${id}/`, data);
+    return res.data;
+  }
+
+  static async remove(id: number): Promise<void> {
+    await api.delete(`${BASE}/business-hours-calendars/${id}/`);
   }
 }

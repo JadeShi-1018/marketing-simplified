@@ -7,7 +7,7 @@ interface Props {
 export function CsmSettingsProjectGuard() {
   return (
     <p className="text-sm text-gray-600">
-      Add ?project= to the URL from a project context.
+      Select a project from the project switcher to configure its settings.
     </p>
   );
 }

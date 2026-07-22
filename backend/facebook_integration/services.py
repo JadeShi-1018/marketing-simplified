@@ -7,14 +7,13 @@ so the usual short -> long exchange step is not needed.
 
 import datetime as _dt
 import logging
-import secrets
 import urllib.parse as _urlparse
 from typing import Any
 
 import requests
 from django.conf import settings
-from django.core import signing
 from django.utils import timezone
+from core.services.oauth_state import create_oauth_state, validate_oauth_state
 
 from .models import FacebookConnection, MetaAdAccount
 
@@ -30,16 +29,19 @@ FB_OAUTH_STATE_MAX_AGE = 600  # 10 minutes
 
 
 def build_oauth_state(user_id: int, project_id: int | None = None) -> str:
-    payload = {
-        "user_id": int(user_id),
-        "project_id": project_id,
-        "nonce": secrets.token_urlsafe(16),
-    }
-    return signing.dumps(payload, salt=FB_OAUTH_STATE_SALT)
+    return create_oauth_state(
+        flow=FB_OAUTH_STATE_SALT,
+        payload={"user_id": int(user_id), "project_id": project_id},
+        ttl_seconds=FB_OAUTH_STATE_MAX_AGE,
+    )
 
 
 def unpack_oauth_state(state: str) -> dict[str, Any]:
-    return signing.loads(state, salt=FB_OAUTH_STATE_SALT, max_age=FB_OAUTH_STATE_MAX_AGE)
+    return validate_oauth_state(
+        state,
+        expected_flow=FB_OAUTH_STATE_SALT,
+        ttl_seconds=FB_OAUTH_STATE_MAX_AGE,
+    )
 
 
 def build_authorize_url(state: str) -> str:
