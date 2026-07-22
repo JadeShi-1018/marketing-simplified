@@ -100,6 +100,22 @@ function extractErrorMessage(err: unknown, fallback: string): string {
   );
 }
 
+function extractSpreadsheetLoadError(err: unknown): string {
+  const anyErr = err as {
+    response?: { status?: number; data?: { error?: string } };
+    message?: string;
+  };
+  const status = anyErr?.response?.status;
+  if (status === 404) return 'Spreadsheet not found.';
+  if (status === 403) return 'You do not have access to this spreadsheet.';
+  if (status === 401) return 'Your session has expired. Please sign in again.';
+  return (
+    anyErr?.response?.data?.error ||
+    anyErr?.message ||
+    'Failed to load spreadsheet.'
+  );
+}
+
 export default function SpreadsheetsV2DetailPage() {
   const params = useParams();
   const spreadsheetId = params?.spreadsheetId as string;
@@ -108,11 +124,22 @@ export default function SpreadsheetsV2DetailPage() {
   const [spreadsheet, setSpreadsheet] = useState<SpreadsheetData | null>(null);
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<number | null>(null);
+  const refreshSheetListRef = useRef<() => Promise<void>>(async () => {});
+  const sheetListRefreshGenerationRef = useRef(0);
   const { remoteUsers, onSelectionChange, clientId: collabClientId } = useSheetPresenceBridge(
     activeSheetId,
     {
       onCellsUpdated: (cells) => gridRef.current?.applyRemoteCells(cells),
-      onRefreshRequired: () => gridRef.current?.refresh(),
+      onRefreshRequired: (reason) => {
+        if (reason === 'sheet_created' || reason === 'sheet_updated' || reason === 'sheet_deleted') {
+          void refreshSheetListRef.current();
+          return;
+        }
+        if (reason === 'reconnected') {
+          void refreshSheetListRef.current();
+        }
+        gridRef.current?.refresh();
+      },
     }
   );
   const [loading, setLoading] = useState(true);
@@ -156,6 +183,24 @@ export default function SpreadsheetsV2DetailPage() {
   const [agentStepsBySheet, setAgentStepsBySheet] = useState<Record<number, TimelineItem[]>>({});
 
   const gridRef = useRef<SpreadsheetGridHandle | null>(null);
+
+  refreshSheetListRef.current = async () => {
+    if (!spreadsheetId) return;
+    const generation = ++sheetListRefreshGenerationRef.current;
+    try {
+      const response = await SpreadsheetAPI.listSheets(String(spreadsheetId));
+      if (generation !== sheetListRefreshGenerationRef.current) return;
+      const list = response.results || [];
+      setSheets(list);
+      setCreateSheetDefaultName(getNextSheetName(list));
+      setActiveSheetId((current) => {
+        if (current != null && list.some((sheet) => sheet.id === current)) return current;
+        return list[0]?.id ?? null;
+      });
+    } catch (err) {
+      console.error('Failed to refresh sheet list after collaboration event:', err);
+    }
+  };
   const patternJobStartRef = useRef<number | null>(null);
   const renameDedupRef = useRef<Record<number, RenameDedupState>>({});
   const activeJobIdRef = useRef<string | null>(null);
@@ -338,7 +383,7 @@ export default function SpreadsheetsV2DetailPage() {
           if (list.length > 0 && activeSheetId == null) setActiveSheetId(list[0].id);
         }
       } catch (err) {
-        setError(extractErrorMessage(err, 'Failed to load spreadsheet'));
+        setError(extractSpreadsheetLoadError(err));
       } finally {
         setLoading(false);
       }

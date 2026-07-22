@@ -62,7 +62,7 @@ from .serializers import (
 )
 from .services import (
     SpreadsheetService, SheetService, CellService, CellBatchArgumentError,
-    broadcast_sheet_refresh,
+    broadcast_sheet_refresh, broadcast_spreadsheet_sheet_list_refresh,
 )
 from .models import SheetStructureOperation
 from core.models import Project
@@ -79,6 +79,22 @@ def _notify_sheet_refresh(request, sheet, reason: str) -> None:
     broadcast_sheet_refresh(
         sheet_id=sheet.id,
         reason=reason,
+        origin_client_id=(request.headers.get(SHEET_CLIENT_ID_HEADER) or '').strip() or None,
+        origin_user_id=getattr(request.user, 'id', None),
+    )
+
+
+def _notify_spreadsheet_sheet_list_refresh(
+    request,
+    spreadsheet,
+    reason: str,
+    include_sheet_ids=None,
+) -> None:
+    """Broadcast a sheet-tab list change to every room in a spreadsheet."""
+    broadcast_spreadsheet_sheet_list_refresh(
+        spreadsheet_id=spreadsheet.id,
+        reason=reason,
+        include_sheet_ids=include_sheet_ids,
         origin_client_id=(request.headers.get(SHEET_CLIENT_ID_HEADER) or '').strip() or None,
         origin_user_id=getattr(request.user, 'id', None),
     )
@@ -346,6 +362,7 @@ class SheetListView(APIView):
         
         # Refetch with select_related to ensure spreadsheet is loaded for serialization
         sheet = Sheet.objects.select_related('spreadsheet').get(id=sheet.id)
+        _notify_spreadsheet_sheet_list_refresh(request, spreadsheet, 'sheet_created')
         response_serializer = SheetSerializer(sheet)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED)
 
@@ -392,6 +409,7 @@ class SheetDetailView(APIView):
         
         # Refetch with select_related to ensure spreadsheet is loaded for serialization
         updated_sheet = Sheet.objects.select_related('spreadsheet').get(id=updated_sheet.id)
+        _notify_spreadsheet_sheet_list_refresh(request, spreadsheet, 'sheet_updated')
         response_serializer = SheetSerializer(updated_sheet)
         return Response(response_serializer.data)
     
@@ -405,6 +423,12 @@ class SheetDetailView(APIView):
             is_deleted=False
         )
         SheetService.delete_sheet(sheet)
+        _notify_spreadsheet_sheet_list_refresh(
+            request,
+            spreadsheet,
+            'sheet_deleted',
+            include_sheet_ids=[sheet.id],
+        )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -430,6 +454,12 @@ class ProjectSheetDeleteView(APIView):
             is_deleted=False
         )
         SheetService.delete_sheet(sheet)
+        _notify_spreadsheet_sheet_list_refresh(
+            request,
+            spreadsheet,
+            'sheet_deleted',
+            include_sheet_ids=[sheet.id],
+        )
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -1186,4 +1216,3 @@ class SpreadsheetCellFormatBatchView(APIView):
             updated += 1
 
         return Response({'updated': updated})
-

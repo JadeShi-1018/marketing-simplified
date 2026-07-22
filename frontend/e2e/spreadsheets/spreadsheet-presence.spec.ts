@@ -37,12 +37,14 @@ async function getOrCreateSpreadsheetSlug(
     }
   };
 
-  const token: string | undefined = parseState(localStorageOf('auth-storage'))?.token;
+  const token: string | undefined = parseState(
+    localStorageOf('auth-storage-v1') ?? localStorageOf('auth-storage'),
+  )?.token;
   expect(token, 'auth token missing from storageState (auth.setup failed?)').toBeTruthy();
 
   // Must use the active project: pages 401→login on cross-project resources.
   const activeProjectId: number | undefined = parseState(
-    localStorageOf('project-storage'),
+    localStorageOf('project-storage-v1') ?? localStorageOf('project-storage'),
   )?.activeProject?.id;
   expect(activeProjectId, 'no active project in storageState (auth.setup incomplete?)').toBeTruthy();
 
@@ -86,7 +88,6 @@ test.describe('Spreadsheet presence (two tabs)', () => {
     await expect(page2.locator('td[data-row][data-col]').first()).toBeVisible({
       timeout: 30_000,
     });
-
     // Same user, two clients → each tab should see the peer as a remote avatar.
     await expect(page.getByTestId('sheet-presence-avatar').first()).toBeVisible({
       timeout: 15_000,

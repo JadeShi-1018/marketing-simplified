@@ -746,6 +746,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const resizeDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRafIdRef = useRef<number | null>(null);
+  // Invalidates range responses that started before a canonical refresh or
+  // sheet switch. Clearing the in-flight map alone cannot cancel HTTP reads;
+  // without this guard a stale response can repopulate pre-structure cells.
+  const cellCacheGenerationRef = useRef(0);
+  const pendingCanonicalRefreshRef = useRef(false);
   const pendingSelectionRef = useRef<{ position: 'start' | 'end' | number } | null>(null);
   const resizeStateRef = useRef<ResizeState | null>(null);
   const fillStateRef = useRef<{
@@ -765,6 +770,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
   // Initialize dimensions and cells cache for this sheetId
   useEffect(() => {
+    pendingCanonicalRefreshRef.current = false;
+    cellCacheGenerationRef.current += 1;
     if (!cellCache.has(sheetId)) {
       cellCache.set(sheetId, new Map());
     }
@@ -1274,6 +1281,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       force: boolean = false,
       loadOptions?: { includeSheetDimensions?: boolean }
     ) => {
+      const requestGeneration = cellCacheGenerationRef.current;
       const wantSheetDimensions = loadOptions?.includeSheetDimensions !== false;
 
       let inFlightForSheet = inFlightRangeRequests.get(sheetId);
@@ -1337,6 +1345,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               tile.endColumn,
               { includeSheetDimensions: includeThisDimension }
             );
+
+            if (requestGeneration !== cellCacheGenerationRef.current) {
+              return;
+            }
 
             if (includeThisDimension) {
               const res = response as typeof response & {
@@ -1457,6 +1469,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   );
 
   const resetSheetCaches = useCallback((options?: { preserveCells?: boolean }) => {
+    cellCacheGenerationRef.current += 1;
     if (!options?.preserveCells) {
       cellCache.set(sheetId, new Map());
     }
@@ -1543,9 +1556,16 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   }, [isGridLoading, spreadsheetId, sheetId]);
 
   const refreshSheet = useCallback(() => {
-    if (isGridLoading) return;
+    if (isGridLoading) {
+      pendingCanonicalRefreshRef.current = true;
+      return;
+    }
+    pendingCanonicalRefreshRef.current = false;
     setCellCanvasLoading(true);
-    resetSheetCaches({ preserveCells: true });
+    // A canonical refresh follows coordinate-changing operations. Replace the
+    // cell map instead of merging the response, otherwise cells at their old
+    // coordinates remain visible alongside their shifted canonical values.
+    resetSheetCaches();
     const range = computeVisibleRange();
     setVisibleRange({
       startRow: range.startRow,
@@ -1621,6 +1641,12 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         console.error('Failed to load cell formats on refresh:', error);
       });
   }, [isGridLoading, resetSheetCaches, computeVisibleRange, loadCellRange]);
+
+  useEffect(() => {
+    if (!isGridLoading && pendingCanonicalRefreshRef.current) {
+      refreshSheet();
+    }
+  }, [isGridLoading, refreshSheet]);
 
   const handleAddRows = useCallback(async () => {
     const rowsToAdd = parseInt(addRowsInputValue, 10);
@@ -2291,7 +2317,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     setSaveError(null);
 
     // Merge operations by cell (last write wins)
-    const operations: PendingOperation[] = Array.from(pendingOps.values());
+    const submittedOps = new Map(pendingOps);
+    const operations: PendingOperation[] = Array.from(submittedOps.values());
     let minRow = Number.POSITIVE_INFINITY;
     let maxRow = Number.NEGATIVE_INFINITY;
     let minCol = Number.POSITIVE_INFINITY;
@@ -2312,7 +2339,16 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         true,
         collabClientId ? { clientId: collabClientId } : undefined
       );
-      setPendingOps(new Map()); // Clear queue on success
+      // Only remove the exact operations included in this request. Edits made
+      // while the request was in flight have newer operation objects and must
+      // remain queued for the next LWW batch.
+      setPendingOps((current) => {
+        const next = new Map(current);
+        submittedOps.forEach((submitted, key) => {
+          if (next.get(key) === submitted) next.delete(key);
+        });
+        return next;
+      });
       applyCellsFromResponse(response.cells);
       if (Number.isFinite(minRow)) {
         await loadCellRange(minRow, maxRow, minCol, maxCol, true);

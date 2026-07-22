@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { buildWsUrl } from '@/lib/ws';
 import { useAuthStore } from '@/lib/authStore';
+import { readPersistedAuthState } from '@/lib/api';
 import { setSheetCollabClientId } from '@/lib/api/spreadsheetApi';
 import {
   selectRemotePresenceUsers,
@@ -60,6 +61,8 @@ type Api = {
 };
 
 const RECONNECT_DELAY_MS = 1500;
+const HEARTBEAT_INTERVAL_MS = 10_000;
+const CLIENT_ID_SESSION_KEY = 'sheet-collab-client-id-v1';
 
 function createClientId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -68,13 +71,38 @@ function createClientId(): string {
   return `sheet_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
+function getOrCreateClientId(): string {
+  if (typeof window === 'undefined') return createClientId();
+  const clientWindow = window as typeof window & { __sheetCollabClientId?: string };
+  if (clientWindow.__sheetCollabClientId) return clientWindow.__sheetCollabClientId;
+  try {
+    const existing = window.sessionStorage.getItem(CLIENT_ID_SESSION_KEY)?.trim();
+    const navigation = window.performance.getEntriesByType('navigation')[0] as
+      | PerformanceNavigationTiming
+      | undefined;
+    // Reuse only for a real reload of this tab. A newly opened/duplicated tab
+    // may inherit sessionStorage from its opener and still needs a distinct id.
+    const clientId = navigation?.type === 'reload' && existing ? existing : createClientId();
+    clientWindow.__sheetCollabClientId = clientId;
+    window.sessionStorage.setItem(CLIENT_ID_SESSION_KEY, clientId);
+    return clientId;
+  } catch {
+    const clientId = createClientId();
+    clientWindow.__sheetCollabClientId = clientId;
+    return clientId;
+  }
+}
+
 export function useSheetSocket(sheetId: number | null | undefined, options?: Options): Api {
-  const token = useAuthStore((s) => s.token);
-  const rawLocalUserId = useAuthStore((s) => s.user?.id ?? null);
+  const storeToken = useAuthStore((s) => s.token);
+  const storeUserId = useAuthStore((s) => s.user?.id ?? null);
+  const persistedAuth = typeof window === 'undefined' ? null : readPersistedAuthState();
+  const token = storeToken ?? persistedAuth?.state?.token ?? null;
+  const rawLocalUserId = storeUserId ?? persistedAuth?.state?.user?.id ?? null;
   const parsedLocalUserId = rawLocalUserId == null ? null : Number(rawLocalUserId);
   const localUserId =
     parsedLocalUserId != null && Number.isFinite(parsedLocalUserId) ? parsedLocalUserId : null;
-  const clientIdRef = useRef<string>(createClientId());
+  const clientIdRef = useRef<string>(getOrCreateClientId());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const localUserIdRef = useRef(localUserId);
@@ -102,6 +130,7 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
 
     let stopped = false;
     let hadConnection = false;
+    let heartbeatTimer: number | null = null;
     const createdSockets: WebSocket[] = [];
     setSheetCollabClientId(clientIdRef.current);
     useSheetSocketStore.getState().setSheetId(sheetId);
@@ -125,6 +154,12 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
 
       ws.onopen = () => {
         if (stopped) return;
+        if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+        heartbeatTimer = window.setInterval(() => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'ping' }));
+          }
+        }, HEARTBEAT_INTERVAL_MS);
         useSheetSocketStore.getState().setWsState('connected');
         useSheetSocketStore.getState().setCloseCode(null);
         if (hadConnection) {
@@ -139,6 +174,12 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
         try {
           const message = JSON.parse(event.data);
           if (!message || typeof message.type !== 'string') return;
+          if (
+            message.sheet_id != null &&
+            Number(message.sheet_id) !== Number(sheetId)
+          ) {
+            return;
+          }
           const s = useSheetSocketStore.getState();
           if (message.type === 'presence_snapshot') {
             s.applySnapshot(Array.isArray(message.users) ? message.users : []);
@@ -176,6 +217,13 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       };
 
       ws.onclose = (ev) => {
+        if (heartbeatTimer) {
+          window.clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+        // Never display users from a dead connection while reconnecting. The
+        // next authoritative presence_snapshot repopulates this state.
+        useSheetSocketStore.getState().applySnapshot([]);
         if (wsRef.current === ws) {
           wsRef.current = null;
         }
@@ -205,6 +253,10 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
+      }
+      if (heartbeatTimer) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
       }
       createdSockets.forEach((sock) => {
         try {

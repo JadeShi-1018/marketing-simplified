@@ -33,11 +33,13 @@ async function readAuth(
     }
   };
 
-  const token: string | undefined = parseState(localStorageOf('auth-storage'))?.token;
+  const token: string | undefined = parseState(
+    localStorageOf('auth-storage-v1') ?? localStorageOf('auth-storage'),
+  )?.token;
   expect(token, 'auth token missing from storageState (auth.setup failed?)').toBeTruthy();
 
   const activeProjectId: number | undefined = parseState(
-    localStorageOf('project-storage'),
+    localStorageOf('project-storage-v1') ?? localStorageOf('project-storage'),
   )?.activeProject?.id;
   expect(activeProjectId, 'no active project in storageState (auth.setup incomplete?)').toBeTruthy();
 
@@ -93,7 +95,6 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     await expect(page2.locator('td[data-row][data-col]').first()).toBeVisible({
       timeout: 30_000,
     });
-
     // Both sockets joined (presence avatar of the peer tab visible) before editing,
     // so the broadcast has a live subscriber.
     await expect(page2.getByTestId('sheet-presence-avatar').first()).toBeVisible({
@@ -224,6 +225,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
       data: { position: 0, count: 1 },
     });
     expect(insertResp.ok(), `row insert API returned ${insertResp.status()}`).toBeTruthy();
+    const insertBody = await insertResp.json();
 
     await expect(page.locator('td[data-row="6"][data-col="1"]')).toContainText(marker, {
       timeout: 10_000,
@@ -232,6 +234,223 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
       timeout: 10_000,
     });
 
+    // A canonical refresh must replace the peer cache, not merge into it. The
+    // pre-insert coordinate must be empty rather than retaining a duplicate.
+    await expect(
+      page.locator('td[data-row="5"][data-col="1"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+    await expect(
+      page2.locator('td[data-row="5"][data-col="1"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+
+    const revertResp = await request.post(
+      `${base}/operations/${insertBody.operation_id}/revert/`,
+      { headers },
+    );
+    expect(revertResp.ok(), `row revert API returned ${revertResp.status()}`).toBeTruthy();
+
+    await expect(page.locator('td[data-row="5"][data-col="1"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+    await expect(page2.locator('td[data-row="5"][data-col="1"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+    await expect(
+      page.locator('td[data-row="6"][data-col="1"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+    await expect(
+      page2.locator('td[data-row="6"][data-col="1"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+
     await page2.close();
+  });
+
+  test('column insert and revert replace stale peer coordinates', async ({
+    page,
+    context,
+    request,
+  }) => {
+    const spreadsheetSlug = await getOrCreateSpreadsheetSlug(context, request);
+    const { token } = await readAuth(context);
+    const headers = { Authorization: `Bearer ${token}` };
+
+    const sheetsResp = await request.get(
+      `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`,
+      { headers },
+    );
+    expect(sheetsResp.ok(), `sheet list API returned ${sheetsResp.status()}`).toBeTruthy();
+    const sheetsBody = await sheetsResp.json();
+    const sheets: Array<{ id: number }> = sheetsBody.results ?? sheetsBody ?? [];
+    expect(sheets.length).toBeGreaterThan(0);
+    const sheetId = sheets[0].id;
+    const base = `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${sheetId}`;
+
+    await stubOnboardingComplete(page);
+    await page.goto(`/spreadsheets/${spreadsheetSlug}`);
+    await waitForSpreadsheetPageReady(page);
+    await expect(page.locator('td[data-row][data-col]').first()).toBeVisible({
+      timeout: 30_000,
+    });
+
+    const page2 = await context.newPage();
+    await stubOnboardingComplete(page2);
+    await page2.goto(page.url());
+    await waitForSpreadsheetPageReady(page2);
+    await expect(page2.locator('td[data-row][data-col]').first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page2.getByTestId('sheet-presence-avatar').first()).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const marker = `column-struct-${Date.now()}`;
+    const batchResp = await request.post(`${base}/cells/batch/`, {
+      headers,
+      data: {
+        operations: [{ operation: 'set', row: 7, column: 3, raw_input: marker }],
+        auto_expand: true,
+      },
+    });
+    expect(batchResp.ok(), `cell batch API returned ${batchResp.status()}`).toBeTruthy();
+    await expect(page.locator('td[data-row="7"][data-col="3"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+    await expect(page2.locator('td[data-row="7"][data-col="3"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+
+    const insertResp = await request.post(`${base}/columns/insert/`, {
+      headers,
+      data: { position: 3, count: 1 },
+    });
+    expect(insertResp.ok(), `column insert API returned ${insertResp.status()}`).toBeTruthy();
+    const insertBody = await insertResp.json();
+
+    await expect(page.locator('td[data-row="7"][data-col="4"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+    await expect(page2.locator('td[data-row="7"][data-col="4"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+    await expect(
+      page.locator('td[data-row="7"][data-col="3"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+    await expect(
+      page2.locator('td[data-row="7"][data-col="3"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+
+    const revertResp = await request.post(
+      `${base}/operations/${insertBody.operation_id}/revert/`,
+      { headers },
+    );
+    expect(revertResp.ok(), `column revert API returned ${revertResp.status()}`).toBeTruthy();
+
+    await expect(page.locator('td[data-row="7"][data-col="3"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+    await expect(page2.locator('td[data-row="7"][data-col="3"]')).toContainText(marker, {
+      timeout: 10_000,
+    });
+    await expect(
+      page.locator('td[data-row="7"][data-col="4"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+    await expect(
+      page2.locator('td[data-row="7"][data-col="4"]').filter({ hasText: marker }),
+    ).toHaveCount(0);
+
+    await page2.close();
+  });
+
+  test('sheet create and delete refresh the peer tab list', async ({
+    page,
+    context,
+    request,
+  }) => {
+    const spreadsheetSlug = await getOrCreateSpreadsheetSlug(context, request);
+    const { token } = await readAuth(context);
+    const headers = { Authorization: `Bearer ${token}` };
+
+    await stubOnboardingComplete(page);
+    await page.goto(`/spreadsheets/${spreadsheetSlug}`);
+    await waitForSpreadsheetPageReady(page);
+    await expect(page.locator('td[data-row][data-col]').first()).toBeVisible({
+      timeout: 30_000,
+    });
+
+    const page2 = await context.newPage();
+    await stubOnboardingComplete(page2);
+    await page2.goto(page.url());
+    await waitForSpreadsheetPageReady(page2);
+    await expect(page2.locator('td[data-row][data-col]').first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page2.getByTestId('sheet-presence-avatar').first()).toBeVisible({
+      timeout: 15_000,
+    });
+    const initialSheetsResp = await request.get(
+      `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`,
+      { headers },
+    );
+    expect(
+      initialSheetsResp.ok(),
+      `initial sheet list API returned ${initialSheetsResp.status()}`,
+    ).toBeTruthy();
+    const initialSheetsBody = await initialSheetsResp.json();
+    const initialSheets: Array<{ id: number; name: string }> =
+      initialSheetsBody.results ?? initialSheetsBody ?? [];
+    expect(initialSheets.length).toBeGreaterThan(0);
+    const fallbackSheetName = initialSheets[0].name;
+
+    const sheetName = `Realtime Tab ${Date.now()}`;
+    let createdSheetId: number | null = null;
+    let deleted = false;
+    try {
+      const createResp = await request.post(
+        `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`,
+        { headers, data: { name: sheetName } },
+      );
+      expect(createResp.ok(), `sheet create API returned ${createResp.status()}`).toBeTruthy();
+      createdSheetId = (await createResp.json()).id;
+
+      const tab1 = page.getByRole('button', { name: sheetName, exact: true });
+      const tab2 = page2.getByRole('button', { name: sheetName, exact: true });
+      await expect(tab1).toBeVisible({ timeout: 10_000 });
+      await expect(tab2).toBeVisible({ timeout: 10_000 });
+
+      await tab1.click();
+      await tab2.click();
+      await expect(tab1).toHaveAttribute('aria-pressed', 'true');
+      await expect(tab2).toHaveAttribute('aria-pressed', 'true');
+      // Presence proves both sheet-scoped sockets finished switching rooms.
+      await expect(page2.getByTestId('sheet-presence-avatar').first()).toBeVisible({
+        timeout: 15_000,
+      });
+
+      const deleteResp = await request.delete(
+        `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${createdSheetId}/`,
+        { headers },
+      );
+      expect(deleteResp.ok(), `sheet delete API returned ${deleteResp.status()}`).toBeTruthy();
+      deleted = true;
+
+      await expect(page.getByRole('button', { name: sheetName, exact: true })).toHaveCount(0);
+      await expect(page2.getByRole('button', { name: sheetName, exact: true })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: fallbackSheetName, exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      await expect(page2.getByRole('button', { name: fallbackSheetName, exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    } finally {
+      if (createdSheetId != null && !deleted) {
+        await request.delete(
+          `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${createdSheetId}/`,
+          { headers },
+        );
+      }
+      await page2.close();
+    }
   });
 });

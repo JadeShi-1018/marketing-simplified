@@ -258,6 +258,64 @@ class TestSheetRefreshBroadcast:
             )
         ]
 
+    def test_sheet_crud_broadcasts_tab_list_refresh_to_all_rooms(self, monkeypatch):
+        """Create/update/delete fan out to every active room; delete also
+        reaches the removed sheet room so a viewer can switch away from it."""
+        layer = _RecordingLayer()
+        monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+        user = _create_user(f"u_{_uid()}")
+        _, project, spreadsheet, sheet1 = _create_sheet(user)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        create_resp = client.post(
+            f"/api/spreadsheet/spreadsheets/{spreadsheet.slug}/sheets/",
+            {"name": "Sheet2"},
+            format="json",
+        )
+        assert create_resp.status_code == 201, create_resp.content
+        sheet2_id = create_resp.data["id"]
+
+        refresh_events = [
+            (g, m) for g, m in layer.sent if m["type"] == "sheet.refresh_required"
+        ]
+        assert {group for group, _ in refresh_events} == {
+            sheet_room_group_name(sheet1.id),
+            sheet_room_group_name(sheet2_id),
+        }
+        assert {message["reason"] for _, message in refresh_events} == {"sheet_created"}
+
+        layer.sent.clear()
+        update_resp = client.put(
+            f"/api/spreadsheet/spreadsheets/{spreadsheet.slug}/sheets/{sheet2_id}/",
+            {"name": "Renamed"},
+            format="json",
+        )
+        assert update_resp.status_code == 200, update_resp.content
+        refresh_events = [
+            (g, m) for g, m in layer.sent if m["type"] == "sheet.refresh_required"
+        ]
+        assert {group for group, _ in refresh_events} == {
+            sheet_room_group_name(sheet1.id),
+            sheet_room_group_name(sheet2_id),
+        }
+        assert {message["reason"] for _, message in refresh_events} == {"sheet_updated"}
+
+        layer.sent.clear()
+        delete_resp = client.delete(
+            f"/api/projects/{project.slug}/spreadsheets/{spreadsheet.slug}/sheets/{sheet2_id}/"
+        )
+        assert delete_resp.status_code == 204, delete_resp.content
+        refresh_events = [
+            (g, m) for g, m in layer.sent if m["type"] == "sheet.refresh_required"
+        ]
+        assert {group for group, _ in refresh_events} == {
+            sheet_room_group_name(sheet1.id),
+            sheet_room_group_name(sheet2_id),
+        }
+        assert {message["reason"] for _, message in refresh_events} == {"sheet_deleted"}
+
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)

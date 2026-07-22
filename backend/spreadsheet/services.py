@@ -157,6 +157,34 @@ def broadcast_sheet_refresh(
     transaction.on_commit(_send)
 
 
+def broadcast_spreadsheet_sheet_list_refresh(
+    spreadsheet_id: int,
+    reason: str,
+    include_sheet_ids: Optional[List[int]] = None,
+    origin_client_id: Optional[str] = None,
+    origin_user_id: Optional[int] = None,
+) -> None:
+    """Notify every sheet room that the parent spreadsheet's tab list changed.
+
+    Clients only subscribe to their active sheet room, so sheet create/update/
+    delete events must fan out across the spreadsheet. Deleted sheet ids can be
+    included explicitly so clients currently viewing a just-deleted sheet also
+    receive the event and select a remaining sheet.
+    """
+    sheet_ids = set(
+        Sheet.objects.filter(spreadsheet_id=spreadsheet_id, is_deleted=False)
+        .values_list('id', flat=True)
+    )
+    sheet_ids.update(include_sheet_ids or [])
+    for sheet_id in sorted(sheet_ids):
+        broadcast_sheet_refresh(
+            sheet_id=sheet_id,
+            reason=reason,
+            origin_client_id=origin_client_id,
+            origin_user_id=origin_user_id,
+        )
+
+
 class CellBatchArgumentError(Exception):
     """Structured batch cell validation failure (maps to HTTP 400 in views)."""
 
@@ -1829,6 +1857,13 @@ class CellService:
         # Django flattens nested dicts/lists into ErrorDetail/strings and breaks API clients.
         if validation_errors:
             raise CellBatchArgumentError(validation_errors)
+
+        # Serialize writers within a sheet before reading/creating cells. Two
+        # concurrent first writes to the same empty coordinate would otherwise
+        # both choose bulk_create and race the active-cell unique constraint.
+        # Lock acquisition/commit order is the authoritative per-sheet LWW
+        # order; unrelated sheets remain fully concurrent.
+        Sheet.objects.select_for_update().get(pk=sheet.pk)
         
         # PHASE 2: EXECUTION (bulk writes - no per-cell save/update_or_create)
         # Note: previously this section called _log_position_duplicates once per unique
@@ -2534,4 +2569,3 @@ class WorkflowPatternService:
             completed += 1
             if progress_callback:
                 progress_callback(idx + 1, completed, total_steps)
-

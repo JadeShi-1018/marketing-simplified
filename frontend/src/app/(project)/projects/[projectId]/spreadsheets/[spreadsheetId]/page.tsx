@@ -60,6 +60,22 @@ import {
   updateTimelineItemById,
 } from '@/lib/spreadsheets/timelineItems';
 
+function extractSpreadsheetLoadError(err: unknown): string {
+  const anyErr = err as {
+    response?: { status?: number; data?: { error?: string } };
+    message?: string;
+  };
+  const status = anyErr?.response?.status;
+  if (status === 404) return 'Spreadsheet not found.';
+  if (status === 403) return 'You do not have access to this spreadsheet.';
+  if (status === 401) return 'Your session has expired. Please sign in again.';
+  return (
+    anyErr?.response?.data?.error ||
+    anyErr?.message ||
+    'Failed to load spreadsheet.'
+  );
+}
+
 export default function SpreadsheetDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -68,11 +84,22 @@ export default function SpreadsheetDetailPage() {
   const [spreadsheet, setSpreadsheet] = useState<SpreadsheetData | null>(null);
   const [sheets, setSheets] = useState<SheetData[]>([]);
   const [activeSheetId, setActiveSheetId] = useState<number | null>(null);
+  const refreshSheetListRef = useRef<() => Promise<void>>(async () => {});
+  const sheetListRefreshGenerationRef = useRef(0);
   const { remoteUsers, onSelectionChange, clientId: collabClientId } = useSheetPresenceBridge(
     activeSheetId,
     {
       onCellsUpdated: (cells) => gridRef.current?.applyRemoteCells(cells),
-      onRefreshRequired: () => gridRef.current?.refresh(),
+      onRefreshRequired: (reason) => {
+        if (reason === 'sheet_created' || reason === 'sheet_updated' || reason === 'sheet_deleted') {
+          void refreshSheetListRef.current();
+          return;
+        }
+        if (reason === 'reconnected') {
+          void refreshSheetListRef.current();
+        }
+        gridRef.current?.refresh();
+      },
     }
   );
   const [loading, setLoading] = useState(true);
@@ -118,6 +145,24 @@ export default function SpreadsheetDetailPage() {
   const [pivotDimensionsBySheet, setPivotDimensionsBySheet] = useState<Record<number, { rowCount: number; colCount: number }>>({});
   const [showPivotEditor, setShowPivotEditor] = useState(false);
   const gridRef = useRef<SpreadsheetGridHandle | null>(null);
+
+  refreshSheetListRef.current = async () => {
+    if (!spreadsheetId) return;
+    const generation = ++sheetListRefreshGenerationRef.current;
+    try {
+      const response = await SpreadsheetAPI.listSheets(String(spreadsheetId));
+      if (generation !== sheetListRefreshGenerationRef.current) return;
+      const list = response.results || [];
+      setSheets(list);
+      setCreateSheetDefaultName(getNextSheetName(list));
+      setActiveSheetId((current) => {
+        if (current != null && list.some((sheet) => sheet.id === current)) return current;
+        return list[0]?.id ?? null;
+      });
+    } catch (err) {
+      console.error('Failed to refresh sheet list after collaboration event:', err);
+    }
+  };
   const patternJobStartRef = useRef<number | null>(null);
   const renameDedupRef = useRef<Record<number, RenameDedupState>>({});
   const activeJobIdRef = useRef<string | null>(null);
@@ -337,12 +382,7 @@ export default function SpreadsheetDetailPage() {
         }
       } catch (err: any) {
         console.error('Failed to load data:', err);
-        const errorMessage =
-          err?.response?.data?.error ||
-          err?.response?.data?.detail ||
-          err?.message ||
-          'Failed to load spreadsheet';
-        setError(errorMessage);
+        setError(extractSpreadsheetLoadError(err));
       } finally {
         setLoading(false);
       }
@@ -1246,12 +1286,7 @@ export default function SpreadsheetDetailPage() {
                           const sheetsResponse = await SpreadsheetAPI.listSheets(String(spreadsheetId));
                           setSheets(sheetsResponse.results || []);
                         } catch (err: any) {
-                          setError(
-                            err?.response?.data?.error ||
-                              err?.response?.data?.detail ||
-                              err?.message ||
-                              'Failed to load spreadsheet'
-                          );
+                          setError(extractSpreadsheetLoadError(err));
                         } finally {
                           setLoading(false);
                         }
