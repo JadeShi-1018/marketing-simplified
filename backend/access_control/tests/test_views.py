@@ -6,11 +6,124 @@ from datetime import timedelta
 from rest_framework.test import APIClient
 from rest_framework import status
 
-from access_control.models import UserRole
-from core.models import Organization, Team, Role
+from access_control.models import RolePermission, UserRole
+from core.models import Organization, OrganizationMembership, Permission, Project, ProjectMember, Team, Role
 from core.services.tenant import slug_to_schema_name
 
 User = get_user_model()
+
+
+class ProjectPermissionMatrixTest(TestCase):
+    """Test read-only project permission matrix endpoint."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.org = Organization.objects.create(name="MatrixOrg")
+        cls.project = Project.objects.create(
+            name="Matrix Project",
+            organization=cls.org,
+        )
+        cls.user = User.objects.create_user(
+            username="matrix-user",
+            email="matrix-user@test.com",
+            password="password123",
+            is_active=True,
+        )
+        OrganizationMembership.objects.create(
+            user=cls.user,
+            organization=cls.org,
+            role="admin",
+            is_active=True,
+        )
+        cls.other_org = Organization.objects.create(name="OtherMatrixOrg")
+        cls.other_user = User.objects.create_user(
+            username="matrix-other-user",
+            email="matrix-other-user@test.com",
+            password="password123",
+            is_active=True,
+        )
+        OrganizationMembership.objects.create(
+            user=cls.other_user,
+            organization=cls.other_org,
+            role="admin",
+            is_active=True,
+        )
+        ProjectMember.objects.create(
+            user=cls.user,
+            project=cls.project,
+            role="unmapped-role",
+        )
+
+        cls.admin_role = Role.objects.create(
+            organization=cls.org,
+            name="Admin",
+            level=1,
+        )
+        cls.viewer_role = Role.objects.create(
+            organization=cls.org,
+            name="Viewer",
+            level=5,
+        )
+        cls.view_permission, _ = Permission.objects.get_or_create(
+            module="CAMPAIGN",
+            action="VIEW",
+        )
+        cls.edit_permission, _ = Permission.objects.get_or_create(
+            module="CAMPAIGN",
+            action="EDIT",
+        )
+        RolePermission.objects.create(
+            role=cls.admin_role,
+            permission=cls.view_permission,
+        )
+
+    def setUp(self):
+        self.client = APIClient()
+
+    def test_project_permission_matrix_returns_effective_permissions(self):
+        self.client.force_authenticate(user=self.user)
+        url = f"/api/access_control/projects/{self.project.id}/permission-matrix/"
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["projectId"], str(self.project.id))
+        self.assertEqual(response.data["projectName"], self.project.name)
+
+        role_ids = {role["id"] for role in response.data["roles"]}
+        self.assertIn(str(self.admin_role.id), role_ids)
+        self.assertIn(str(self.viewer_role.id), role_ids)
+
+        permission_ids = {permission["id"] for permission in response.data["permissions"]}
+        self.assertIn("campaign_view", permission_ids)
+        self.assertIn("campaign_edit", permission_ids)
+
+        matrix = response.data["matrix"]
+        self.assertTrue(matrix[str(self.admin_role.id)]["campaign_view"])
+        self.assertFalse(matrix[str(self.admin_role.id)]["campaign_edit"])
+        self.assertFalse(matrix[str(self.viewer_role.id)]["campaign_view"])
+
+        warning_codes = {warning["code"] for warning in response.data["warnings"]}
+        self.assertIn("PROJECT_MEMBER_ROLE_UNMAPPED", warning_codes)
+        self.assertIn("ROLE_WITHOUT_PERMISSIONS", warning_codes)
+
+    def test_project_permission_matrix_returns_404_for_missing_project(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.get("/api/access_control/projects/999999/permission-matrix/")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_project_permission_matrix_requires_authentication(self):
+        url = f"/api/access_control/projects/{self.project.id}/permission-matrix/"
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_project_permission_matrix_rejects_other_organization_admin(self):
+        self.client.force_authenticate(user=self.other_user)
+        url = f"/api/access_control/projects/{self.project.id}/permission-matrix/"
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class AssignUserRoleTest(TestCase):

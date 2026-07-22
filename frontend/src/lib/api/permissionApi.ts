@@ -6,6 +6,7 @@ import {
   Permission, 
   RolePermission, 
   PermissionMatrix,
+  ProjectPermissionMatrix,
   ApiResponse,
   PaginatedResponse
 } from '@/types/permission';
@@ -316,6 +317,18 @@ export class PermissionAPI {
     }
   }
 
+  static async getProjectPermissionMatrix(projectId: string): Promise<ProjectPermissionMatrix> {
+    try {
+      console.log('🔄 Fetching project permission matrix:', projectId);
+      const response = await ApiClient.get<ProjectPermissionMatrix>(`/projects/${projectId}/permission-matrix/`);
+      console.log('✅ Project permission matrix loaded:', response);
+      return response;
+    } catch (error) {
+      console.error('❌ Failed to fetch project permission matrix:', error);
+      throw error;
+    }
+  }
+
   // update role permissions
   static async updateRolePermissions(
     roleId: string, 
@@ -420,6 +433,7 @@ export const permissionApiMethods = {
   getCurrentUserRoles: PermissionAPI.getCurrentUserRoles,
   getPermissions: PermissionAPI.getPermissions,
   getRolePermissions: PermissionAPI.getRolePermissions,
+  getProjectPermissionMatrix: PermissionAPI.getProjectPermissionMatrix,
   updateRolePermissions: PermissionAPI.updateRolePermissions,
   copyRolePermissions: PermissionAPI.copyRolePermissions,
   buildPermissionMatrix: PermissionAPI.buildPermissionMatrix,

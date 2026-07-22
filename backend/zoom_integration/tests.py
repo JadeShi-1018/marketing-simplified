@@ -549,7 +549,7 @@ class ZoomAPITest(TestCase):
         self.assertEqual(response.status_code, status.HTTP_302_FOUND)
         self.assertIn("zoom_error=invalid_state", response["Location"])
 
-    @patch("zoom_integration.views.signing.loads")
+    @patch("core.services.oauth_state.signing.loads")
     def test_callback_state_expired(self, mock_loads):
         """test if callback should redirect when signed state is past max_age"""
         mock_loads.side_effect = signing.SignatureExpired("expired")

@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import PrivacyExportPanel from '@/components/profile/PrivacyExportPanel';
 import useAuth from '@/hooks/useAuth';
 import { useAuthStore } from '@/lib/authStore';
 import { useRouter } from 'next/navigation';
@@ -25,11 +26,12 @@ import { authAPI, readPersistedAuthState } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { OrganizationAPI, OrgListItem } from '@/lib/api/organizationApi';
 
-type SectionKey = 'overview' | 'organization';
+type SectionKey = 'overview' | 'organization' | 'privacy';
 
 const SECTIONS: Array<{ id: SectionKey; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'organization', label: 'Organization' },
+  { id: 'privacy', label: 'Privacy' },
 ];
 
 const getInitials = (name?: string | null): string => {
@@ -556,6 +558,12 @@ function ProfileContent() {
     );
   };
 
+  const renderActiveSection = () => {
+    if (activeSection === 'overview') return renderOverview();
+    if (activeSection === 'organization') return renderOrganization();
+    return <PrivacyExportPanel />;
+  };
+
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
@@ -738,7 +746,7 @@ function ProfileContent() {
                     </nav>
                   </div>
                   <div className="p-6">
-                    {activeSection === 'overview' ? renderOverview() : renderOrganization()}
+                    {renderActiveSection()}
                   </div>
                 </div>
               </div>

@@ -22,6 +22,9 @@ interface ConversationComposerProps {
   conversationId: number;
   organisationId?: number | null;
   onTyping?: (isTyping: boolean) => void;
+  // Fired after a message sends, so the ticket list can refresh its SLA
+  // (an agent's first reply stops the first-response countdown).
+  onSent?: () => void;
 }
 
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
@@ -213,6 +216,7 @@ export function ConversationComposer({
   conversationId,
   organisationId,
   onTyping,
+  onSent,
 }: ConversationComposerProps) {
   const [sending, setSending] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
@@ -403,6 +407,7 @@ export function ConversationComposer({
       clearImage();
       clearDraft(conversationId);
       onTyping?.(false);
+      onSent?.();
     } catch (err) {
       console.error('Failed to send message', err);
       const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
@@ -410,7 +415,7 @@ export function ConversationComposer({
     } finally {
       setSending(false);
     }
-  }, [editor, sending, conversationId, addMessage, onTyping, imageFile, clearDraft]);
+  }, [editor, sending, conversationId, addMessage, onTyping, onSent, imageFile, clearDraft]);
 
   // Keep the editor's keydown handler pointing at the latest handleSend so the
   // Enter-to-send shortcut never calls a stale closure (e.g. wrong conversation).

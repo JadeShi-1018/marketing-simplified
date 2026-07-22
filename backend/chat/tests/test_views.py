@@ -312,8 +312,8 @@ class TestMessageAPI:
         assert second.status_code == status.HTTP_429_TOO_MANY_REQUESTS
         assert read.status_code == status.HTTP_200_OK
 
-    @patch('chat.views.notify_new_message.delay')
-    @patch('chat.views.notify_message_recipients.delay')
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
     def test_send_rich_message_with_mention_queues_notification_fanout(self, mock_notify_recipients, mock_notify_ws, capture_on_commit_callbacks):
         """Sending a rich @mention stores mention data and queues async notification fanout."""
         url = reverse('message-list')
@@ -349,6 +349,47 @@ class TestMessageAPI:
         message.mentions.create(mentioned_user=outsider)
         notify_message_recipients.run(message.id)
         assert not Notification.objects.filter(recipient=outsider, event_type=NotificationEventType.CHAT_MENTION).exists()
+
+
+    @patch('chat.tasks.notify_new_message.delay')
+    @patch('chat.tasks.notify_message_recipients.delay')
+    def test_send_message_dedupes_by_client_message_id(self, mock_notify_recipients, mock_notify_ws, capture_on_commit_callbacks):
+        """Retried REST sends with the same client_message_id must not duplicate side effects."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from chat.models import Message, MessageAttachment, MessageStatus
+
+        attachment = MessageAttachment.objects.create(
+            uploader=self.user1,
+            file=SimpleUploadedFile('retry.txt', b'payload'),
+            file_type='document',
+            file_size=7,
+            original_filename='retry.txt',
+            mime_type='text/plain',
+            message=None,
+        )
+        client_message_id = 'view-client-msg-001'
+        url = reverse('message-list')
+        payload = {
+            'chat': self.chat.id,
+            'content': 'Retry me',
+            'attachment_ids': [attachment.id],
+            'client_message_id': client_message_id,
+        }
+        with capture_on_commit_callbacks(execute=True):
+            first = self.client.post(url, payload, format='json')
+            second = self.client.post(url, payload, format='json')
+        assert first.status_code == status.HTTP_201_CREATED
+        assert second.status_code == status.HTTP_200_OK
+        assert second.data['id'] == first.data['id']
+        assert len(second.data['attachments']) == 1
+        assert Message.objects.filter(chat=self.chat, sender=self.user1).count() == 1
+        assert MessageStatus.objects.filter(message_id=first.data['id']).count() == 1
+        mock_notify_recipients.assert_called_once_with(first.data['id'])
+        mock_notify_ws.assert_called_once_with(first.data['id'])
+        assert Message.objects.get(
+            sender=self.user1,
+            client_message_id=client_message_id,
+        ).id == first.data['id']
 
     def test_send_empty_message_fails(self):
         """Test sending an empty message fails"""

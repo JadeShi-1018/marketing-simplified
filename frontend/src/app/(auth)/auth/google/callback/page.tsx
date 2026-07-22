@@ -70,6 +70,7 @@ function GoogleCallbackContent() {
         
         // Original flow: Get authorization code from URL (for new user or password setup)
         const code = searchParams.get('code');
+        const state = searchParams.get('state');
         const error = searchParams.get('error');
 
         // Check for OAuth errors
@@ -89,10 +90,17 @@ function GoogleCallbackContent() {
           return;
         }
 
+        if (!state) {
+          setStatus('error');
+          setErrorMessage('No OAuth state received');
+          toast.error('Authentication failed');
+          setTimeout(() => router.push('/login'), 3000);
+          return;
+        }
+
         // If we reach here with a code, it means backend hasn't processed it yet
         // This shouldn't happen with the new flow, but redirect to backend for processing
         const callbackParams = new URLSearchParams({ code });
-        const state = searchParams.get('state');
         if (state) {
           callbackParams.set('state', state);
         }

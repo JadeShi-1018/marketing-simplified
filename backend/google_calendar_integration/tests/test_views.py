@@ -201,7 +201,7 @@ class GoogleCalendarCallbackViewTests(TestCase):
         self.assertIn("/integrations?", r["Location"])
         self.assertIn("google_calendar_error=missing_code", r["Location"])
 
-    @patch("google_calendar_integration.views.signing.loads", side_effect=signing.BadSignature)
+    @patch("core.services.oauth_state.signing.loads", side_effect=signing.BadSignature)
     def test_redirects_on_invalid_state_signature(self, _mock_loads):
         url = reverse("google-calendar-callback")
         r = self.client.get(url, {"code": "c", "state": "bad"})
@@ -209,7 +209,7 @@ class GoogleCalendarCallbackViewTests(TestCase):
         self.assertIn("/integrations?", r["Location"])
         self.assertIn("google_calendar_error=invalid_state", r["Location"])
 
-    @patch("google_calendar_integration.views.signing.loads", side_effect=signing.SignatureExpired)
+    @patch("core.services.oauth_state.signing.loads", side_effect=signing.SignatureExpired)
     def test_redirects_on_expired_state(self, _mock_loads):
         url = reverse("google-calendar-callback")
         r = self.client.get(url, {"code": "c", "state": "old"})
@@ -217,7 +217,7 @@ class GoogleCalendarCallbackViewTests(TestCase):
         self.assertIn("/integrations?", r["Location"])
         self.assertIn("google_calendar_error=state_expired", r["Location"])
 
-    @patch("google_calendar_integration.views.signing.loads", return_value={})
+    @patch("core.services.oauth_state.signing.loads", return_value={})
     def test_redirects_when_payload_has_no_user_id(self, _mock_loads):
         url = reverse("google-calendar-callback")
         r = self.client.get(url, {"code": "c", "state": "ignored"})

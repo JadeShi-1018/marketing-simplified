@@ -4,7 +4,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 from django.contrib.auth import get_user_model
 from django.core.files import File
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Prefetch, Max
 from django.core.cache import cache
 from django.utils import timezone
@@ -13,6 +13,23 @@ from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment,
 from core.models import ProjectMember
 
 User = get_user_model()
+
+
+class _OutboxAckSerializerRequest:
+    """Minimal DRF-request stand-in for serializing messages inside a WebSocket
+    consumer, where no HTTP request exists.
+
+    MessageSerializer reads ``context['request'].user`` for per-user fields
+    (e.g. status, can_revoke) and calls ``request.build_absolute_uri`` for file
+    URLs. We expose the authenticated viewer and return URLs unchanged so the
+    client receives the same relative paths it already uses against its origin.
+    """
+
+    def __init__(self, user):
+        self.user = user
+
+    def build_absolute_uri(self, url):
+        return url
 logger = logging.getLogger(__name__)
 
 ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX = "image/"
@@ -843,7 +860,269 @@ class MessageService:
 
     class AttachmentCopyError(Exception):
         """Raised when attachment file copy fails during forward."""
-    
+
+    @staticmethod
+    def _get_message_by_client_key(sender: User, client_message_id: str) -> Message:
+        return (
+            Message.objects
+            .select_related('sender', 'reply_to', 'reply_to__sender', 'chat')
+            .prefetch_related('attachments')
+            .get(sender=sender, client_message_id=client_message_id)
+        )
+
+    @staticmethod
+    def _assert_message_matches_request(message: Message, sender: User, chat: Chat) -> None:
+        if message.sender_id != sender.id or message.chat_id != chat.id:
+            raise ValueError('Cached client message does not match sender or chat')
+
+    @staticmethod
+    def _load_message_for_sender(message_id: int, sender: User, chat: Chat) -> Message:
+        message = (
+            Message.objects
+            .select_related('sender', 'reply_to', 'reply_to__sender', 'chat')
+            .prefetch_related('attachments')
+            .get(id=message_id)
+        )
+        if message.sender_id != sender.id or message.chat_id != chat.id:
+            raise ValueError('Cached client message does not match sender or chat')
+        return message
+
+    @staticmethod
+    def _link_attachments_to_message(
+        message: Message,
+        sender: User,
+        attachment_ids: List[int],
+    ) -> None:
+        if not attachment_ids:
+            return
+        linked_count = MessageAttachment.objects.filter(
+            id__in=attachment_ids,
+            uploader=sender,
+            message__isnull=True,
+        ).update(message=message)
+        if linked_count > 0 and not message.has_attachments:
+            message.has_attachments = True
+            message.save(update_fields=['has_attachments', 'updated_at'])
+
+    @staticmethod
+    def _create_recipient_statuses(message: Message, sender: User) -> None:
+        recipients = ChatParticipant.objects.filter(
+            chat=message.chat,
+            is_active=True,
+        ).exclude(user=sender).select_related('user')
+        MessageStatus.objects.bulk_create([
+            MessageStatus(
+                message=message,
+                user=recipient.user,
+                status='sent',
+            )
+            for recipient in recipients
+        ])
+
+    @staticmethod
+    def _schedule_new_message_side_effects(message: Message, sender: User) -> None:
+        message_id = message.id
+
+        def schedule_delivery() -> None:
+            from .tasks import notify_message_recipients, notify_new_message
+            notify_message_recipients.delay(message_id)
+            notify_new_message.delay(message_id)
+
+        transaction.on_commit(schedule_delivery)
+
+        def route_agent_bot() -> None:
+            try:
+                agent_bot_email = 'agent-bot@system.local'
+                if sender.email == agent_bot_email:
+                    return
+                bot_participant = ChatParticipant.objects.filter(
+                    chat_id=message.chat_id,
+                    user__email=agent_bot_email,
+                    is_active=True,
+                ).first()
+                if bot_participant:
+                    from agent.tasks import handle_chat_message_for_agent
+                    handle_chat_message_for_agent.delay(message_id)
+            except Exception:
+                logger.exception(
+                    'Failed to route message to agent bot for message %s',
+                    message_id,
+                )
+
+        transaction.on_commit(route_agent_bot)
+
+    @staticmethod
+    @transaction.atomic
+    def _persist_message_with_attachments(
+        *,
+        sender: User,
+        chat: Chat,
+        content: str,
+        attachment_ids: List[int],
+        mention_ids: List[int],
+        rich_body: Any,
+        reply_to_id: Optional[int],
+        parent_message_id: Optional[int],
+        client_message_id: Optional[str] = None,
+    ) -> Message:
+        if not ChatParticipant.objects.filter(chat=chat, user=sender, is_active=True).exists():
+            logger.warning('User %s is not a participant of chat %s', sender.id, chat.id)
+            raise ValueError('You are not a participant of this chat')
+
+        message = Message.objects.create(
+            chat=chat,
+            sender=sender,
+            content=content,
+            rich_body=rich_body,
+            reply_to_id=reply_to_id,
+            parent_message_id=parent_message_id,
+            client_message_id=client_message_id,
+        )
+
+        if mention_ids:
+            MessageMention.objects.bulk_create(
+                [MessageMention(message=message, mentioned_user_id=uid) for uid in mention_ids],
+                ignore_conflicts=True,
+            )
+
+        MessageService._link_attachments_to_message(message, sender, attachment_ids)
+        MessageService._create_recipient_statuses(message, sender)
+        MessageService._schedule_new_message_side_effects(message, sender)
+
+        logger.info(
+            'Created message %s in chat %s by user %s with %s attachment(s)',
+            message.id,
+            chat.id,
+            sender.id,
+            len(attachment_ids),
+        )
+        return message
+
+    @classmethod
+    def resolve_client_message_commits(
+        cls,
+        viewer: User,
+        client_message_ids: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Map client outbox ids to committed server messages (DB lookup).
+
+        Each entry embeds the fully-serialized message body so the reconnect
+        ``outbox_ack`` can hydrate the client's outbox in the single WS round
+        trip it already makes, instead of a follow-up REST fetch per id.
+        """
+        # Local import avoids a circular import (serializers import services).
+        from .serializers import MessageSerializer
+
+        valid_ids = [client_message_id for client_message_id in client_message_ids if client_message_id]
+        if not valid_ids:
+            return []
+        # Mirror MessageViewSet._message_queryset so MessageSerializer's method
+        # fields (mentions, reactions, thread summary, ...) read prefetched data
+        # in bulk instead of issuing a query per message. Keep in sync with it.
+        thread_replies_for_summary = (
+            Message.objects
+            .select_related('sender')
+            .only(
+                'id', 'chat_id', 'parent_message_id', 'sender_id', 'created_at',
+                'sender__id', 'sender__username', 'sender__email', 'sender__avatar',
+            )
+            .order_by('created_at')
+        )
+        messages = (
+            Message.objects
+            .filter(sender_id=viewer.id, client_message_id__in=valid_ids)
+            .select_related(
+                'sender', 'chat', 'chat__project',
+                'reply_to', 'reply_to__sender', 'forwarded_from_message',
+            )
+            .prefetch_related(
+                'attachments',
+                'reply_to__attachments',
+                'mentions__mentioned_user',
+                'reactions__user',
+                'statuses',
+                Prefetch(
+                    'thread_replies',
+                    queryset=thread_replies_for_summary,
+                    to_attr='_thread_replies_for_summary',
+                ),
+            )
+        )
+        context = {'request': _OutboxAckSerializerRequest(viewer)}
+        return [
+            {
+                'client_message_id': message.client_message_id,
+                'message_id': message.id,
+                'message': MessageSerializer(message, context=context).data,
+            }
+            for message in messages
+        ]
+
+    @classmethod
+    def create_message_with_attachments(
+        cls,
+        *,
+        sender: User,
+        chat: Chat,
+        content: str,
+        attachment_ids: Optional[List[int]] = None,
+        mention_ids: Optional[List[int]] = None,
+        rich_body: Any = None,
+        reply_to_id: Optional[int] = None,
+        parent_message_id: Optional[int] = None,
+        client_message_id: Optional[str] = None,
+    ) -> Tuple[Message, bool]:
+        """
+        Create a chat message with optional attachments and idempotent retries.
+
+        When client_message_id is supplied, concurrent or retried requests with the
+        same key return the existing message without re-running statuses, Celery
+        fanout, or agent-bot routing.
+
+        Returns:
+            (message, created) where created is False on a dedupe DB hit.
+        """
+        attachment_ids = attachment_ids or []
+        mention_ids = mention_ids or []
+
+        if not client_message_id:
+            message = cls._persist_message_with_attachments(
+                sender=sender,
+                chat=chat,
+                content=content,
+                attachment_ids=attachment_ids,
+                mention_ids=mention_ids,
+                rich_body=rich_body,
+                reply_to_id=reply_to_id,
+                parent_message_id=parent_message_id,
+            )
+            return message, True
+
+        try:
+            with transaction.atomic():
+                message = cls._persist_message_with_attachments(
+                    sender=sender,
+                    chat=chat,
+                    content=content,
+                    attachment_ids=attachment_ids,
+                    mention_ids=mention_ids,
+                    rich_body=rich_body,
+                    reply_to_id=reply_to_id,
+                    parent_message_id=parent_message_id,
+                    client_message_id=client_message_id,
+                )
+            return message, True
+        except IntegrityError as exc:
+            # Only treat this as an idempotency hit if a message with this key
+            # actually exists. Otherwise the IntegrityError came from a different
+            # constraint (FK, NOT NULL, ...) and must not be masked as dedupe.
+            try:
+                message = cls._get_message_by_client_key(sender, client_message_id)
+            except Message.DoesNotExist:
+                raise exc
+            cls._assert_message_matches_request(message, sender, chat)
+            return message, False
+
     @staticmethod
     @transaction.atomic
     def create_message(

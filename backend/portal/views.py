@@ -215,6 +215,12 @@ class PortalConversationViewSet(
             image=image,
         )
 
+        # A customer reply pulls any ticket that was waiting on them back into
+        # the agent's queue, which resumes its SLA clock (see Ticket.save).
+        for ticket in conversation.tickets.filter(status='pending_customer'):
+            ticket.status = 'in_progress'
+            ticket.save(update_fields=['status'])
+
         portal_payload = PortalMessageSerializer(msg, context={'request': request}).data
 
         agent_payload = ConversationMessageSerializer(msg, context={'request': request}).data

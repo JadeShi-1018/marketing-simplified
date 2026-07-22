@@ -7,7 +7,8 @@ from .views import (
     organizations_list, teams_list, roles_list, role_detail, permissions_list,
     role_permissions_list, update_role_permissions, copy_role_permissions,
     user_permissions, check_permission, approver_list, approver_detail, approver_remove,
-    module_approver_detail, module_approver_remove, assign_user_role, remove_user_role
+    module_approver_detail, module_approver_remove, assign_user_role, remove_user_role,
+    project_permission_matrix
 )
 
 urlpatterns = [
@@ -20,6 +21,7 @@ urlpatterns = [
     path('teams/', teams_list, name='teams'),
     path('permissions/', permissions_list, name='permissions'),
     path('role-permissions/', role_permissions_list, name='role-permissions'),
+    path('projects/<int:project_id>/permission-matrix/', project_permission_matrix, name='project-permission-matrix'),
     
     # permissions management endpoints (more specific routes first)
     path('roles/<int:role_id>/permissions/', update_role_permissions, name='update-role-permissions'),

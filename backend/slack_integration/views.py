@@ -4,8 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 from django.conf import settings
-from django.core import signing
-from django.utils.crypto import get_random_string
+from core.services.oauth_state import OAuthStateExpired, OAuthStateInvalid, create_oauth_state, validate_oauth_state
 from .models import SlackWorkspaceConnection, NotificationPreference
 from .permissions import resolve_slack_access
 from .serializers import (
@@ -69,13 +68,10 @@ class SlackAuthViewSet(SlackManagementAccessMixin, viewsets.ViewSet):
         """
         Generates a signed state payload tied to the authenticated user.
         """
-        return signing.dumps(
-            {
-                "user_id": user.id,
-                "organization_id": organization_id,
-                "nonce": get_random_string(16)
-            },
-            salt=SLACK_OAUTH_STATE_SALT
+        return create_oauth_state(
+            flow=SLACK_OAUTH_STATE_SALT,
+            payload={"user_id": user.id, "organization_id": organization_id},
+            ttl_seconds=SLACK_OAUTH_STATE_MAX_AGE_SECONDS,
         )
 
     def _validate_oauth_state(self, state, user):
@@ -83,14 +79,14 @@ class SlackAuthViewSet(SlackManagementAccessMixin, viewsets.ViewSet):
         Validates the signed state payload and ensures it belongs to the current user.
         """
         try:
-            payload = signing.loads(
+            payload = validate_oauth_state(
                 state,
-                salt=SLACK_OAUTH_STATE_SALT,
-                max_age=SLACK_OAUTH_STATE_MAX_AGE_SECONDS
+                expected_flow=SLACK_OAUTH_STATE_SALT,
+                ttl_seconds=SLACK_OAUTH_STATE_MAX_AGE_SECONDS,
             )
-        except signing.SignatureExpired:
+        except OAuthStateExpired:
             raise ValidationError("Slack OAuth state has expired. Please try again.")
-        except signing.BadSignature:
+        except OAuthStateInvalid:
             raise ValidationError("Invalid Slack OAuth state.")
 
         if payload.get("user_id") != user.id:

@@ -3,6 +3,8 @@ name: MediaJira CI/CD Pipeline
 on:
   push:
     branches: [main, prod-preview]
+    tags:
+      - 'v*'
   pull_request:
     branches: [main, prod-preview]
 
@@ -303,6 +305,10 @@ jobs:
           load: true
           cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/backend:cache,mode=max
+
+      - name: Free disk space before frontend build
+        run: docker buildx prune -af --keep-storage 2GB
+
       - name: Build frontend image
         uses: docker/build-push-action@v5
         with:
@@ -541,8 +547,76 @@ jobs:
       #       -H "Content-Type: application/json" \
       #       -d '{"action": "deploy", "source": "github"}'
 
+  sbom_release:
+    needs: block
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install SBOM tools
+        run: |
+          pip install cyclonedx-bom
+          npm install -g @cyclonedx/cyclonedx-npm
+
+      - name: Generate backend and frontend SBOMs
+        run: |
+          mkdir -p sbom
+          cyclonedx-py requirements \
+            backend/requirements.txt \
+            --output-format JSON \
+            --validate \
+            -o sbom/mediajira-backend-python-${{ github.ref_name }}.cdx.json
+          cyclonedx-npm \
+            --package-lock-only \
+            --output-format JSON \
+            --validate \
+            --output-file sbom/mediajira-frontend-npm-${{ github.ref_name }}.cdx.json \
+            frontend/package.json
+
+      - name: Validate SBOM format
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in sorted(Path("sbom").glob("*.cdx.json")):
+              with path.open() as f:
+                  data = json.load(f)
+              assert data.get("bomFormat") == "CycloneDX", f"{path}: missing CycloneDX bomFormat"
+              assert data.get("specVersion"), f"{path}: missing specVersion"
+              assert isinstance(data.get("components", []), list), f"{path}: components must be a list"
+              print(f"validated {path}")
+          PY
+
+      - name: Upload SBOM workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediajira-sboms-${{ github.ref_name }}
+          path: sbom/*.cdx.json
+
+      - name: Publish SBOMs to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: sbom/*.cdx.json
+
   notify:
-    needs: [block, migration_guard, code_scan, image_scan, application_test, deploy]
+    needs: [block, migration_guard, code_scan, image_scan, application_test, deploy, sbom_release]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -556,10 +630,11 @@ jobs:
           IMAGE_SCAN="${{ needs.image_scan.result }}"
           APPLICATION_TEST="${{ needs.application_test.result }}"
           DEPLOY="${{ needs.deploy.result }}"
+          SBOM_RELEASE="${{ needs.sbom_release.result }}"
           
           # Determine overall status based on all job results
           OVERALL_STATUS="success"
-          if [ "$BLOCK" == "failure" ] || [ "$MIGRATION_GUARD" == "failure" ] || [ "$CODE_SCAN" == "failure" ] || [ "$IMAGE_SCAN" == "failure" ] || [ "$APPLICATION_TEST" == "failure" ] || [ "$DEPLOY" == "failure" ]; then
+          if [ "$BLOCK" == "failure" ] || [ "$MIGRATION_GUARD" == "failure" ] || [ "$CODE_SCAN" == "failure" ] || [ "$IMAGE_SCAN" == "failure" ] || [ "$APPLICATION_TEST" == "failure" ] || [ "$DEPLOY" == "failure" ] || [ "$SBOM_RELEASE" == "failure" ]; then
             OVERALL_STATUS="failure"
           fi
           
@@ -570,6 +645,7 @@ jobs:
           MESSAGE+="Image scan: **$IMAGE_SCAN**\n"
           MESSAGE+="Application test: **$APPLICATION_TEST**\n"
           MESSAGE+="Deploy: **$DEPLOY**\n"
+          MESSAGE+="SBOM release: **$SBOM_RELEASE**\n"
           MESSAGE+="Overall status: **$OVERALL_STATUS**\n"
           MESSAGE+="Commit: ${{ github.sha }}\n"
           MESSAGE+="Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

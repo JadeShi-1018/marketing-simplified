@@ -227,8 +227,8 @@ export interface PinnedMessageRow {
   message: Message;
 }
 
-export const listPins = async (chatId: number): Promise<PinnedMessageRow[]> => {
-  const response = await api.get(`/api/chat/chats/${chatId}/pins/`);
+export const listPins = async (chatSlug: string): Promise<PinnedMessageRow[]> => {
+  const response = await api.get(`/api/chat/chats/${chatSlug}/pins/`);
   return response.data;
 };
 
@@ -451,6 +451,10 @@ export const sendMessage = async (data: SendMessageRequest): Promise<SendMessage
     payload.parent_message_id = data.parent_message_id;
   }
 
+  if (data.client_message_id) {
+    payload.client_message_id = data.client_message_id;
+  }
+
   const response = await api.post('/api/chat/messages/', payload);
   return response.data;
 };
@@ -494,8 +498,8 @@ export const markMessageAsRead = async (messageId: number): Promise<Message> => 
 /**
  * Mark all messages in a chat as read (via backend endpoint)
  */
-export const markChatAsRead = async (chatId: number): Promise<void> => {
-  await api.post(`/api/chat/chats/${chatId}/mark_as_read/`);
+export const markChatAsRead = async (chatSlug: string): Promise<void> => {
+  await api.post(`/api/chat/chats/${chatSlug}/mark_as_read/`);
 };
 
 /**

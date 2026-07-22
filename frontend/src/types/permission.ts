@@ -103,6 +103,23 @@ export interface PermissionMatrix {
   };
 }
 
+export interface PermissionMatrixWarning {
+  code: string;
+  message: string;
+  roleId?: string;
+  permissionId?: string;
+}
+
+export interface ProjectPermissionMatrix {
+  projectId: string;
+  projectName: string;
+  organizationId?: string | null;
+  roles: Role[];
+  permissions: Permission[];
+  matrix: PermissionMatrix;
+  warnings: PermissionMatrixWarning[];
+}
+
 export interface PermissionFilters {
   organizationId: string;
   teamId: string;

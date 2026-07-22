@@ -1,8 +1,9 @@
 """Smoke tests for the OAuth state signing + token encryption round-trips."""
 
 from django.contrib.auth import get_user_model
-from django.core.signing import BadSignature
 from django.test import TestCase
+
+from core.services.oauth_state import OAuthStateInvalid
 
 from .crypto import decrypt_token, encrypt_token
 from .services import build_oauth_state, unpack_oauth_state
@@ -32,7 +33,7 @@ class OAuthStateTests(TestCase):
     def test_state_rejects_tamper(self):
         state = build_oauth_state(42)
         tampered = state[:-5] + "XXXXX"
-        with self.assertRaises(BadSignature):
+        with self.assertRaises(OAuthStateInvalid):
             unpack_oauth_state(tampered)
 
 
