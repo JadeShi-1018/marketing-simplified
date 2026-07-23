@@ -66,6 +66,18 @@ function parentTypeLabel(type: string | undefined): string | undefined {
   return type ? type.replace(/_/g, ' ') : undefined;
 }
 
+/** Whether a task title (or numeric id) matches a parent-picker search query. */
+export function taskSummaryMatchesSearch(
+  task: TaskData,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return false;
+  if ((task.summary ?? '').toLowerCase().includes(q)) return true;
+  if (/^\d+$/.test(q) && task.id != null && String(task.id) === q) return true;
+  return false;
+}
+
 export default function TaskParentPicker({
   task,
   readOnly = false,
@@ -253,6 +265,26 @@ export default function TaskParentPicker({
 
   const trimmedSearch = searchQuery.trim();
   const isSearching = trimmedSearch.length >= MIN_SEARCH_LENGTH;
+  const matchingPinnedWhenSearching = useMemo(
+    () => (
+      isSearching
+        ? pinnedParents.filter((row) => taskSummaryMatchesSearch(row, trimmedSearch))
+        : []
+    ),
+    [isSearching, pinnedParents, trimmedSearch],
+  );
+  const displayedSearchResults = useMemo(
+    () => mergeParentCandidates(
+      matchingPinnedWhenSearching,
+      searchResults.filter(
+        (row) =>
+          row.id != null &&
+          String(row.id) !== String(taskId) &&
+          !matchingPinnedWhenSearching.some((pinned) => pinned.id === row.id),
+      ),
+    ),
+    [matchingPinnedWhenSearching, searchResults, taskId],
+  );
   const showSearchHint =
     open && trimmedSearch.length > 0 && trimmedSearch.length < MIN_SEARCH_LENGTH;
   const showTypeToSearch = open && trimmedSearch.length === 0 && pinnedParents.length <= 1;
@@ -300,7 +332,7 @@ export default function TaskParentPicker({
               {searching ? (
                 <div className="px-3 py-2 text-xs text-gray-500">Searching…</div>
               ) : null}
-              {isSearching && !searching && searchResults.length === 0 ? (
+              {isSearching && !searching && displayedSearchResults.length === 0 ? (
                 <CommandEmpty>No parent tasks found</CommandEmpty>
               ) : null}
               {!isSearching && !showTypeToSearch && pinnedParents.length === 0 ? (
@@ -338,11 +370,9 @@ export default function TaskParentPicker({
                   })}
                 </CommandGroup>
               ) : null}
-              {isSearching && searchResults.length > 0 ? (
+              {isSearching && displayedSearchResults.length > 0 ? (
                 <CommandGroup heading="Search results">
-                  {searchResults
-                    .filter((row) => !pinnedParents.some((pinned) => pinned.id === row.id))
-                    .map((row) => {
+                  {displayedSearchResults.map((row) => {
                       const isSelected = String(row.id) === parentId;
                       const typeLabel = parentTypeLabel(row.type);
                       return (

@@ -11,7 +11,7 @@ from django.core.cache import cache
 from datetime import datetime
 from django.core.exceptions import ValidationError
 from django.db import DatabaseError, transaction
-from django.db.models import Count, Exists, OuterRef, Q
+from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Value, When
 from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
@@ -384,6 +384,7 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 raise DRFValidationError({'has_parent': 'has_parent must be true or false'})
 
         search_param = self.request.query_params.get('search')
+        search_rank_order = None
         if search_param is not None:
             search_param = str(search_param).strip()
             if search_param:
@@ -393,6 +394,12 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 if search_param.isdigit():
                     search_q |= Q(pk=int(search_param))
                 queryset = queryset.filter(search_q)
+                search_rank_order = Case(
+                    When(summary__iexact=search_param, then=Value(0)),
+                    When(summary__istartswith=search_param, then=Value(1)),
+                    default=Value(2),
+                    output_field=IntegerField(),
+                )
 
         # Tag names filter — matches tasks that have at least one of the given tag names.
         tag_names = _get_multi_values("tag_names")
@@ -406,7 +413,15 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             queryset = queryset.filter(tag_q)
 
         # Personal pins should float to the top without changing the project order.
-        queryset = queryset.order_by('-_is_pinned', 'order_in_project', '-id')
+        if search_rank_order is not None:
+            queryset = queryset.annotate(_search_rank=search_rank_order).order_by(
+                '_search_rank',
+                '-_is_pinned',
+                'order_in_project',
+                '-id',
+            )
+        else:
+            queryset = queryset.order_by('-_is_pinned', 'order_in_project', '-id')
         # List response does not include draft_payload; defer it so list works if migration adding the column is not yet applied.
         if getattr(self, 'action', None) in ('list', 'gantt'):
             queryset = queryset.defer('draft_payload')

@@ -4,6 +4,7 @@ import '@testing-library/jest-dom';
 import TaskParentPicker, {
   mergeParentCandidates,
   rememberParent,
+  taskSummaryMatchesSearch,
 } from '@/components/tasks/TaskParentPicker';
 import { TaskAPI } from '@/lib/api/taskApi';
 import type { TaskData } from '@/types/task';
@@ -68,6 +69,12 @@ describe('parent candidate helpers', () => {
     );
     expect(merged).toHaveLength(2);
     expect(merged.find((row) => row.id === 9)?.summary).toBe('Final Campaign Performance Summary');
+  });
+
+  it('taskSummaryMatchesSearch matches title and numeric id', () => {
+    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset' }, 'A')).toBe(true);
+    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset' }, '9')).toBe(true);
+    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset' }, 'B')).toBe(false);
   });
 });
 

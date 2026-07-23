@@ -547,6 +547,42 @@ class TestTaskListFilters:
         task_ids = [t["id"] for t in _tasks_from_response(response)]
         assert misleading.id not in task_ids
 
+    def test_filter_search_exact_summary_ranks_before_substring(
+        self, authenticated_client, project, user
+    ):
+        """Exact summary matches sort ahead of titles that merely contain the letter."""
+        user.active_project = project
+        user.save()
+
+        exact = Task.objects.create(
+            summary="A",
+            slug="task-a",
+            type="asset",
+            project=project,
+            owner=user,
+            is_subtask=False,
+        )
+        Task.objects.create(
+            summary="Define Prospecting Audience",
+            slug="define-prospecting",
+            type="asset",
+            project=project,
+            owner=user,
+            is_subtask=False,
+        )
+
+        url = reverse("task-list")
+        response = authenticated_client.get(
+            url,
+            {"search": "A", "has_parent": "false", "project_id": project.id, "page_size": 20},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        tasks = _tasks_from_response(response)
+        task_ids = [t["id"] for t in tasks]
+        assert exact.id in task_ids
+        assert task_ids[0] == exact.id
+
     def test_filter_due_date_after(self, authenticated_client, project, user):
         """due_date_after filters correctly."""
         user.active_project = project
