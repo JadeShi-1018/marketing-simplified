@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import TaskParentPicker, {
   mergeParentCandidates,
@@ -9,7 +10,7 @@ import type { TaskData } from '@/types/task';
 
 jest.mock('@/lib/api/taskApi', () => ({
   TaskAPI: {
-    getAllTasks: jest.fn(),
+    getTasks: jest.fn(),
     getTask: jest.fn(),
     moveSubtask: jest.fn(),
   },
@@ -17,7 +18,7 @@ jest.mock('@/lib/api/taskApi', () => ({
   TASK_HIERARCHY_CYCLE_CODE: 'task_hierarchy_cycle',
 }));
 
-const mockedGetAllTasks = TaskAPI.getAllTasks as jest.Mock;
+const mockedGetTasks = TaskAPI.getTasks as jest.Mock;
 const mockedGetTask = TaskAPI.getTask as jest.Mock;
 
 const parentA: TaskData = {
@@ -73,7 +74,10 @@ describe('parent candidate helpers', () => {
 describe('TaskParentPicker', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockedGetAllTasks.mockResolvedValue([parentA]);
+    Element.prototype.scrollIntoView = jest.fn();
+    mockedGetTasks.mockResolvedValue({
+      data: { results: [parentC] },
+    });
     mockedGetTask.mockResolvedValue({
       data: parentA,
     });
@@ -89,30 +93,35 @@ describe('TaskParentPicker', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('renders parent picker for subtasks after loading candidates', async () => {
+  it('shows current parent on mount without fetching task lists', async () => {
     render(<TaskParentPicker task={subtask} onUpdated={jest.fn()} />);
 
     expect(screen.getByTestId('task-parent-picker')).toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Parent task' })).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Parent task' })).toHaveTextContent(
       'Final Campaign Performance Summary',
     );
-
-    await waitFor(() => {
-      expect(mockedGetAllTasks).toHaveBeenCalledWith({
-        project_id: 1,
-        has_parent: false,
-      });
-    });
+    expect(mockedGetTasks).not.toHaveBeenCalled();
+    expect(mockedGetTask).not.toHaveBeenCalled();
   });
 
-  it('does not fetch parent by numeric id in the URL path', async () => {
+  it('searches parent candidates after typing at least two characters', async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     render(<TaskParentPicker task={subtask} onUpdated={jest.fn()} />);
 
-    await waitFor(() => {
-      expect(mockedGetAllTasks).toHaveBeenCalled();
-    });
+    await user.click(screen.getByRole('combobox', { name: 'Parent task' }));
+    await user.type(screen.getByTestId('task-parent-picker-search'), 'Pa');
+    jest.advanceTimersByTime(300);
 
-    expect(mockedGetTask).not.toHaveBeenCalledWith(9);
+    await waitFor(() => {
+      expect(mockedGetTasks).toHaveBeenCalledWith({
+        project_id: 1,
+        has_parent: false,
+        search: 'Pa',
+        page_size: 20,
+        page: 1,
+      });
+    });
+    jest.useRealTimers();
   });
 });

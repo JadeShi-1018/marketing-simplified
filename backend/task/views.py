@@ -383,6 +383,18 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             else:
                 raise DRFValidationError({'has_parent': 'has_parent must be true or false'})
 
+        search_param = self.request.query_params.get('search')
+        if search_param is not None:
+            search_param = str(search_param).strip()
+            if search_param:
+                search_q = (
+                    Q(summary__icontains=search_param)
+                    | Q(slug__icontains=search_param)
+                )
+                if search_param.isdigit():
+                    search_q |= Q(pk=int(search_param))
+                queryset = queryset.filter(search_q)
+
         # Tag names filter — matches tasks that have at least one of the given tag names.
         tag_names = _get_multi_values("tag_names")
         if tag_names:

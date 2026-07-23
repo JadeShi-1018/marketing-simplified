@@ -260,6 +260,8 @@ export interface TaskListFilters {
   include_subtasks?: boolean;
   all_projects?: boolean;
   tag_names?: string[];
+  search?: string;
+  page_size?: number;
 }
 
 /** GET /api/tasks/gantt/ — chart payload derived server-side from tasks + dates */

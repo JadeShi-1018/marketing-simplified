@@ -127,6 +127,8 @@ test.describe('Task hierarchy parent picker (MED-235)', () => {
     });
 
     await page.getByRole('combobox', { name: 'Parent task' }).click();
+    await page.getByTestId('task-parent-picker-search').fill(parentC.summary.slice(0, 12));
+    await expect(page.getByRole('option', { name: parentC.summary })).toBeVisible({ timeout: 10_000 });
     await page.getByRole('option', { name: parentC.summary }).click();
 
     await expect(page.getByTestId('task-parent-picker-error')).toBeVisible({ timeout: 10_000 });
@@ -155,6 +157,8 @@ test.describe('Task hierarchy parent picker (MED-235)', () => {
     );
 
     await page.getByRole('combobox', { name: 'Parent task' }).click();
+    await page.getByTestId('task-parent-picker-search').fill(parentC.summary.slice(0, 12));
+    await expect(page.getByRole('option', { name: parentC.summary })).toBeVisible({ timeout: 10_000 });
     await page.getByRole('option', { name: parentC.summary }).click();
 
     const response = await moveResponse;
