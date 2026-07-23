@@ -104,20 +104,20 @@ describe('TaskParentPicker', () => {
     expect(mockedGetTask).not.toHaveBeenCalled();
   });
 
-  it('searches parent candidates after typing at least two characters', async () => {
+  it('searches parent candidates after typing at least one character', async () => {
     jest.useFakeTimers();
     const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
     render(<TaskParentPicker task={subtask} onUpdated={jest.fn()} />);
 
     await user.click(screen.getByRole('combobox', { name: 'Parent task' }));
-    await user.type(screen.getByTestId('task-parent-picker-search'), 'Pa');
+    await user.type(screen.getByTestId('task-parent-picker-search'), 'P');
     jest.advanceTimersByTime(300);
 
     await waitFor(() => {
       expect(mockedGetTasks).toHaveBeenCalledWith({
         project_id: 1,
         has_parent: false,
-        search: 'Pa',
+        search: 'P',
         page_size: 20,
         page: 1,
       });

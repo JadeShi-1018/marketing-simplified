@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils';
 import type { TaskData } from '@/types/task';
 import { getTaskParentId, getTaskParentSlug, getTaskParentSummary } from '@/types/task';
 
-const MIN_SEARCH_LENGTH = 2;
+const MIN_SEARCH_LENGTH = 1;
 const SEARCH_DEBOUNCE_MS = 300;
 
 interface Props {
