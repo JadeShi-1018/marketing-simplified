@@ -513,6 +513,40 @@ class TestTaskListFilters:
         assert parent_match.id in task_ids
         assert len(task_ids) == 1
 
+    def test_filter_search_does_not_match_slug_when_summary_unrelated(
+        self, authenticated_client, project, user
+    ):
+        """search matches summary only, not slug (avoids misleading picker hits)."""
+        user.active_project = project
+        user.save()
+
+        misleading = Task.objects.create(
+            summary="A",
+            slug="final-campaign-performance-summary",
+            type="asset",
+            project=project,
+            owner=user,
+            is_subtask=False,
+        )
+        Task.objects.create(
+            summary="Final Campaign Performance Summary",
+            slug="another-slug",
+            type="asset",
+            project=project,
+            owner=user,
+            is_subtask=False,
+        )
+
+        url = reverse("task-list")
+        response = authenticated_client.get(
+            url,
+            {"search": "F", "has_parent": "false", "project_id": project.id},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        task_ids = [t["id"] for t in _tasks_from_response(response)]
+        assert misleading.id not in task_ids
+
     def test_filter_due_date_after(self, authenticated_client, project, user):
         """due_date_after filters correctly."""
         user.active_project = project

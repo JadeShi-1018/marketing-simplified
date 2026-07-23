@@ -252,9 +252,11 @@ export default function TaskParentPicker({
     currentParentId == null;
 
   const trimmedSearch = searchQuery.trim();
+  const isSearching = trimmedSearch.length >= MIN_SEARCH_LENGTH;
   const showSearchHint =
     open && trimmedSearch.length > 0 && trimmedSearch.length < MIN_SEARCH_LENGTH;
   const showTypeToSearch = open && trimmedSearch.length === 0 && pinnedParents.length <= 1;
+  const showPinnedGroup = !isSearching && pinnedParents.length > 0;
 
   return (
     <div className="min-w-0" data-testid="task-parent-picker">
@@ -298,10 +300,13 @@ export default function TaskParentPicker({
               {searching ? (
                 <div className="px-3 py-2 text-xs text-gray-500">Searching…</div>
               ) : null}
-              {!showSearchHint && !showTypeToSearch && !searching && searchableParents.length === 0 ? (
+              {isSearching && !searching && searchResults.length === 0 ? (
                 <CommandEmpty>No parent tasks found</CommandEmpty>
               ) : null}
-              {pinnedParents.length > 0 ? (
+              {!isSearching && !showTypeToSearch && pinnedParents.length === 0 ? (
+                <CommandEmpty>No parent tasks found</CommandEmpty>
+              ) : null}
+              {showPinnedGroup ? (
                 <CommandGroup heading="Current & recent">
                   {pinnedParents.map((row) => {
                     const isSelected = String(row.id) === parentId;
@@ -333,7 +338,7 @@ export default function TaskParentPicker({
                   })}
                 </CommandGroup>
               ) : null}
-              {trimmedSearch.length >= MIN_SEARCH_LENGTH && searchResults.length > 0 ? (
+              {isSearching && searchResults.length > 0 ? (
                 <CommandGroup heading="Search results">
                   {searchResults
                     .filter((row) => !pinnedParents.some((pinned) => pinned.id === row.id))

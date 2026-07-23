@@ -387,10 +387,9 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         if search_param is not None:
             search_param = str(search_param).strip()
             if search_param:
-                search_q = (
-                    Q(summary__icontains=search_param)
-                    | Q(slug__icontains=search_param)
-                )
+                # Match visible task title only; slug can contain unrelated letters
+                # (e.g. summary "A" with slug "final-campaign-performance-summary").
+                search_q = Q(summary__icontains=search_param)
                 if search_param.isdigit():
                     search_q |= Q(pk=int(search_param))
                 queryset = queryset.filter(search_q)
