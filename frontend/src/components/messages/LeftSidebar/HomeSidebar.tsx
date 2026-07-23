@@ -7,7 +7,7 @@ import { useCustomSections } from '@/hooks/useCustomSections';
 import type { CustomSection } from '@/hooks/useCustomSections';
 import type { Chat } from '@/types/chat';
 import { useAuthStore } from '@/lib/authStore';
-import { useChatStore } from '@/lib/chatStore';
+import { useChatStore, getChatSlugById } from '@/lib/chatStore';
 import {
   leaveChat,
   listStarredChats,
@@ -566,8 +566,11 @@ export default function HomeSidebar({
   }, []);
 
   const handleMarkAsRead = useCallback(async (chatId: number) => {
+    // Chat detail routes are slug-only; resolve the numeric id to its slug.
+    const chatSlug = getChatSlugById(chatId);
+    if (!chatSlug) return;
     try {
-      await markChatAsRead(chatId);
+      await markChatAsRead(chatSlug);
       useChatStore.getState().updateChat(chatId, { unread_count: 0, mention_unread_count: 0 });
     } catch {
       toast.error('Could not mark as read');

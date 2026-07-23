@@ -417,6 +417,11 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=2, minute=0),  # Run daily at 02:00 UTC (low traffic period)
         'options': {'timezone': 'UTC'}
     },
+    'cleanup-orphaned-chat-attachments': {
+        'task': 'chat.tasks.cleanup_orphaned_attachments',
+        'schedule': crontab(hour=4, minute=0),  # daily 04:00 UTC (low traffic period)
+        'options': {'timezone': 'UTC'},
+    },
     'google-calendar-import-every-15-min': {
         'task': 'google_calendar_integration.tasks.sync_all_google_calendar_imports',
         'schedule': timedelta(minutes=15),

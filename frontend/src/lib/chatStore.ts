@@ -1,12 +1,35 @@
 // Chat state management with Zustand
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ChatState, Chat, Message, PendingAttachment } from '@/types/chat';
-import { getUnreadCount } from './api/chatApi';
+import type { ChatState, Chat, Message, OutboxEntry, OutboxAckCommit, PendingAttachment } from '@/types/chat';
+import { getUnreadCount, sendMessage, getMessage } from './api/chatApi';
 
 // Session-scoped set of message IDs the current user has deleted.
 // Not persisted — only lives until page refresh, but that's enough to
 // filter stale search results within the same browsing session.
+
+function outboxOptimisticMessageId(clientMessageId: string): number {
+  let hash = 0;
+  for (let i = 0; i < clientMessageId.length; i += 1) {
+    hash = ((hash << 5) - hash) + clientMessageId.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash > 0 ? -hash : hash;
+}
+
+function shouldMergeIncomingMessage(existing: Message, incoming: Message): boolean {
+  const existingCount = existing.attachments?.length ?? 0;
+  const incomingCount = incoming.attachments?.length ?? 0;
+  return incomingCount > existingCount;
+}
+
+function stripOptimisticOutboxMessages(messages: Message[], clientMessageId: string): Message[] {
+  const optimisticId = outboxOptimisticMessageId(clientMessageId);
+  return messages.filter(
+    (msg) => msg.client_message_id !== clientMessageId && msg.id !== optimisticId,
+  );
+}
+
 export const deletedMessageIds = new Set<number>();
 
 const revokeAttachmentPreview = (attachment: PendingAttachment | undefined) => {
@@ -94,6 +117,7 @@ export const useChatStore = create<ChatState>()(
       presenceByUserId: {},     // userId -> current online/offline state
       presenceVersionByUserId: {}, // userId -> latest applied presence version
       mentionedChatIds: {},     // chatId -> true when current user has unread @-mention
+      outbox: [],
 
       // Thread panel
       activeThreadMessageId: null,
@@ -320,18 +344,36 @@ export const useChatStore = create<ChatState>()(
         });
       },
 
-      addMessage: (chatId: number, message: Message, currentUserId?: number) => {
+      addMessage: (chatId: number, message: Message, currentUserId?: number, replaceClientMessageId?: string) => {
         // CRITICAL: Ensure chatId is always a number for consistent key access
         const numericChatId = Number(chatId);
-        
+
         set(state => {
-          const existingMessages = state.messages[numericChatId] || [];
+          const storedMessages = state.messages[numericChatId] || [];
+          // When confirming an optimistic send, drop its placeholder in the SAME
+          // reducer pass so the list goes straight from optimistic -> committed
+          // without an intermediate state where the message is momentarily absent.
+          const existingMessages = replaceClientMessageId
+            ? stripOptimisticOutboxMessages(storedMessages, replaceClientMessageId)
+            : storedMessages;
           const nextPresenceByUserId = presenceFromMessages(state.presenceByUserId, [message]);
 
-          // Check if message already exists (avoid duplicates)
-          const messageExists = existingMessages.some(m => m.id === message.id);
-          if (messageExists) {
-            return state;
+          const existingIndex = existingMessages.findIndex(m => m.id === message.id);
+          if (existingIndex >= 0) {
+            const existing = existingMessages[existingIndex];
+            if (!shouldMergeIncomingMessage(existing, message)) {
+              return state;
+            }
+            const mergedMessages = [...existingMessages];
+            mergedMessages[existingIndex] = { ...existing, ...message, attachments: message.attachments ?? existing.attachments };
+            return {
+              ...state,
+              messages: {
+                ...state.messages,
+                [numericChatId]: mergedMessages,
+              },
+              presenceByUserId: nextPresenceByUserId,
+            };
           }
           
           // Determine if we should increment unread count:
@@ -391,6 +433,110 @@ export const useChatStore = create<ChatState>()(
               : {}),
           };
         });
+      },
+
+
+      enqueueOutbox: (entry: OutboxEntry) => {
+        set((state) => {
+          if (state.outbox.some((item) => item.clientMessageId === entry.clientMessageId)) {
+            return state;
+          }
+          return { outbox: [...state.outbox, entry] };
+        });
+      },
+
+      markOutboxSending: (clientMessageId: string) => {
+        set((state) => ({
+          outbox: state.outbox.map((entry) =>
+            entry.clientMessageId === clientMessageId
+              ? { ...entry, status: 'sending' as const }
+              : entry,
+          ),
+        }));
+      },
+
+      markOutboxFailed: (clientMessageId: string) => {
+        set((state) => ({
+          outbox: state.outbox.map((entry) =>
+            entry.clientMessageId === clientMessageId
+              ? { ...entry, status: 'failed' as const }
+              : entry,
+          ),
+        }));
+      },
+
+      markOutboxSent: (clientMessageId: string, message: Message) => {
+        const numericChatId = Number(message.chat_id ?? message.chat);
+        // Clear the outbox entry, then let addMessage swap the optimistic
+        // placeholder for the committed message in a single reducer pass. The
+        // message list never passes through a frame where the message is gone.
+        set((state) => ({
+          outbox: state.outbox.filter((entry) => entry.clientMessageId !== clientMessageId),
+        }));
+        get().addMessage(numericChatId, message, undefined, clientMessageId);
+      },
+
+      getOutboxDigest: () => {
+        return get()
+          .outbox
+          .filter((entry) => entry.status === 'pending' || entry.status === 'sending' || entry.status === 'failed')
+          .map((entry) => entry.clientMessageId);
+      },
+
+      retryOutboxEntry: async (clientMessageId: string) => {
+        const entry = get().outbox.find((item) => item.clientMessageId === clientMessageId);
+        if (!entry) {
+          return;
+        }
+        // Entries left in 'sending' after a refresh/crash must stay retryable;
+        // server-side client_message_id dedupe makes a redundant resend safe.
+        get().markOutboxSending(clientMessageId);
+        try {
+          const message = await sendMessage({
+            chat_id: entry.chatId,
+            content: entry.content,
+            attachment_ids: entry.attachmentIds.length > 0 ? entry.attachmentIds : undefined,
+            mention_ids: entry.mentionIds,
+            rich_body: entry.richBody,
+            reply_to_id: entry.replyToId,
+            parent_message_id: entry.parentMessageId,
+            client_message_id: entry.clientMessageId,
+          });
+          get().markOutboxSent(clientMessageId, message);
+        } catch (error) {
+          console.error('Outbox retry failed:', error);
+          get().markOutboxFailed(clientMessageId);
+        }
+      },
+
+      flushOutbox: async () => {
+        const pendingIds = get()
+          .outbox
+          .filter((entry) => entry.status === 'pending' || entry.status === 'sending' || entry.status === 'failed')
+          .map((entry) => entry.clientMessageId);
+        for (const clientMessageId of pendingIds) {
+          await get().retryOutboxEntry(clientMessageId);
+        }
+      },
+
+      reconcileOutboxAck: async (committed: OutboxAckCommit[]) => {
+        for (const item of committed) {
+          const entry = get().outbox.find((row) => row.clientMessageId === item.client_message_id);
+          set((state) => ({
+            outbox: state.outbox.filter((row) => row.clientMessageId !== item.client_message_id),
+          }));
+          if (!entry) {
+            continue;
+          }
+          try {
+            // The server embeds the committed message in the ack, so the common
+            // path needs no HTTP. Fall back to a fetch only if it's absent.
+            const message = item.message ?? await getMessage(item.message_id);
+            get().markOutboxSent(item.client_message_id, message);
+          } catch (error) {
+            console.error('Failed to hydrate outbox ack message:', error);
+          }
+        }
       },
 
       prependMessages: (chatId: number, messages: Message[]) => {
@@ -872,6 +1018,7 @@ export const useChatStore = create<ChatState>()(
           mentionedChatIds: {},
           activeThreadMessageId: null,
           threadReplies: {},
+          outbox: [],
         });
       },
 
@@ -943,8 +1090,26 @@ export const useChatStore = create<ChatState>()(
       // Only persist specific fields
       partialize: (state) => ({
         isWidgetOpen: state.isWidgetOpen,
+        outbox: state.outbox,
         // Don't persist chats/messages as they should be fetched fresh
       }),
     }
   )
 );
+
+/**
+ * Resolve a numeric chat id to its slug from the loaded chats.
+ *
+ * Chat detail routes are slug-only (SMP-539), but hooks that only hold a numeric
+ * chat id need the slug to address them. Returns undefined if the chat isn't loaded.
+ */
+export const getChatSlugById = (chatId: number | string): string | undefined => {
+  const { chatsByProject } = useChatStore.getState();
+  for (const chats of Object.values(chatsByProject)) {
+    const found = chats.find((chat) => chat.id === chatId);
+    if (found?.slug) {
+      return found.slug;
+    }
+  }
+  return undefined;
+};

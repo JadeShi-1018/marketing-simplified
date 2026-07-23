@@ -120,6 +120,10 @@ export default function DrawerChatView({
       if (!Array.isArray(event.users)) return;
       useChatStore.getState().setPresenceSnapshot(event.users);
     }, []),
+    onOutboxAck: useCallback((event: ChatWsEvent) => {
+      const committed = Array.isArray(event.committed) ? event.committed : [];
+      void useChatStore.getState().reconcileOutboxAck(committed);
+    }, []),
     onTypingIndicator: useCallback((event: ChatWsEvent) => {
       // Only handle typing events for this chat
       if (event.chat_id !== chatId) return;

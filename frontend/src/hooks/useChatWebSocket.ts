@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildWsUrl } from '@/lib/ws';
 import { useAuthStore } from '@/lib/authStore';
+import { useChatStore } from '@/lib/chatStore';
 
 // WebSocket message types (server -> client)
 export type ChatWsEventType =
@@ -15,6 +16,7 @@ export type ChatWsEventType =
   | 'in_app_notification'
   | 'user_session_revoked'
   | 'error'
+  | 'outbox_ack'
   | 'pong'
   | string;
 
@@ -34,6 +36,7 @@ export interface ChatWsEvent<T = any> {
   timestamp?: string;
   version?: number | null;
   users?: Array<{ user_id: number; is_online: boolean; version?: number | null }>;
+  committed?: Array<{ client_message_id: string; message_id: number }>;
 }
 
 export interface UseChatWebSocketHandlers {
@@ -47,6 +50,7 @@ export interface UseChatWebSocketHandlers {
   onError?: (e: ChatWsEvent) => void;
   onUnknownEvent?: (e: ChatWsEvent) => void;
   onOpen?: () => void;
+  onOutboxAck?: (e: ChatWsEvent) => void;
   onClose?: (ev: CloseEvent) => void;
   onConnectionError?: (ev: Event) => void;
 }
@@ -83,6 +87,13 @@ export function useChatWebSocket(
       ws.onopen = () => {
         setConnected(true);
         retryRef.current = 0;
+
+        const store = useChatStore.getState();
+        const digest = store.getOutboxDigest();
+        if (digest.length > 0) {
+          ws.send(JSON.stringify({ type: 'outbox_digest', client_message_ids: digest }));
+        }
+        void store.flushOutbox();
         handlersRef.current.onOpen?.();
 
         // Start heartbeat every 30 seconds to keep connection alive
@@ -132,6 +143,9 @@ export function useChatWebSocket(
               break;
             case 'error':
               handlersRef.current.onError?.(data);
+              break;
+            case 'outbox_ack':
+              handlersRef.current.onOutboxAck?.(data);
               break;
             case 'pong':
               // Heartbeat response, ignore
@@ -213,9 +227,22 @@ export function useChatWebSocket(
     }
   };
 
+  const sendOutboxDigest = (clientMessageIds: string[]) => {
+    if (!clientMessageIds.length) return;
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'outbox_digest',
+          client_message_ids: clientMessageIds,
+        }),
+      );
+    }
+  };
+
   return {
     connected,
     sendTypingStart,
     sendTypingStop,
+    sendOutboxDigest,
   };
 }
