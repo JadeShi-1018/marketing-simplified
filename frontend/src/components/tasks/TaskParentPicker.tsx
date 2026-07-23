@@ -253,16 +253,6 @@ export default function TaskParentPicker({
     }
   };
 
-  if (!task.is_subtask) {
-    return null;
-  }
-
-  const pickerDisabled =
-    readOnly ||
-    disabled ||
-    saving ||
-    currentParentId == null;
-
   const trimmedSearch = searchQuery.trim();
   const isSearching = trimmedSearch.length >= MIN_SEARCH_LENGTH;
   const matchingPinnedWhenSearching = useMemo(
@@ -285,6 +275,17 @@ export default function TaskParentPicker({
     ),
     [matchingPinnedWhenSearching, searchResults, taskId],
   );
+
+  if (!task.is_subtask) {
+    return null;
+  }
+
+  const pickerDisabled =
+    readOnly ||
+    disabled ||
+    saving ||
+    currentParentId == null;
+
   const showSearchHint =
     open && trimmedSearch.length > 0 && trimmedSearch.length < MIN_SEARCH_LENGTH;
   const showTypeToSearch = open && trimmedSearch.length === 0 && pinnedParents.length <= 1;
