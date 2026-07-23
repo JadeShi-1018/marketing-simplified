@@ -271,7 +271,7 @@ const OVERSCAN_ROWS = 20; // Render extra rows above/below viewport
 const OVERSCAN_COLUMNS = 6; // Render extra columns left/right of viewport
 const AUTO_GROW_ROWS = 50; // Batch add rows when expanding (deprecated - only used for import)
 const AUTO_GROW_COLUMNS = 50; // Batch add columns when expanding (deprecated - only used for import)
-// Keep the commit-to-broadcast path inside MED-293's <300 ms acceptance budget.
+// Keep the commit-to-broadcast path inside the <300 ms acceptance budget.
 // Synchronous multi-cell operations still batch into one React update before
 // this timer starts, while direct edits reach peers with ample network/DB headroom.
 const DEBOUNCE_MS = 50;

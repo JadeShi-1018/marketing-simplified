@@ -7,8 +7,8 @@ import {
 import { stubOnboardingComplete, waitForSpreadsheetPageReady } from './spreadsheet-helpers';
 
 /**
- * MED-293 Phase 3: two tabs on the same sheet — an edit committed in tab 1
- * must appear in tab 2 via the cells_updated broadcast, WITHOUT reloading.
+ * Two tabs on the same sheet — an edit committed in tab 1 must appear in
+ * tab 2 via the cells_updated broadcast, WITHOUT reloading.
  *
  * Same navigation strategy as spreadsheet-presence.spec.ts: go straight to the
  * flat slug route, read token/active project from storageState.

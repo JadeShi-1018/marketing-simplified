@@ -1,5 +1,5 @@
 /**
- * MED-293 local realtime-collaboration benchmark.
+ * Local realtime-collaboration benchmark for spreadsheet sheet rooms.
  *
  * Each VU holds one authenticated sheet WebSocket for the full session. The
  * scenario can keep sockets idle (heartbeat only), broadcast cursor updates,
@@ -62,7 +62,7 @@ if (scenario === 'edit') {
 
 export const options = {
   scenarios: {
-    med293: {
+    spreadsheet_realtime: {
       executor: 'per-vu-iterations',
       vus: vus,
       iterations: 1,
@@ -71,7 +71,7 @@ export const options = {
   },
   thresholds: thresholds,
   tags: {
-    ticket: 'MED-293',
+    feature: 'spreadsheet_realtime',
     scenario: scenario,
     configured_vus: String(vus),
     cell_mode: cellMode,
@@ -120,7 +120,7 @@ export default function (data) {
     sleep(((__VU - 1) * startStaggerMs) / 1000);
   }
 
-  const clientId = `med293-${scenario}-${cellMode}-${__VU}-${Date.now()}`;
+  const clientId = `sheet-rt-${scenario}-${cellMode}-${__VU}-${Date.now()}`;
   const socketUrl = `${wsBaseUrl}/ws/spreadsheets/sheets/${sheetId}/?token=${encodeURIComponent(data.token)}&client_id=${encodeURIComponent(clientId)}`;
   const cursorSentAtByCell = {};
   let cursorSequence = 0;
@@ -159,7 +159,7 @@ export default function (data) {
           const sentAt = Date.now();
           const row = cellMode === 'same' ? 2 : 10 + __VU;
           const column = cellMode === 'same' ? 2 : editSequence % 10;
-          const marker = `med293-perf|${sentAt}|${__VU}|${editSequence}`;
+          const marker = `sheet-rt-perf|${sentAt}|${__VU}|${editSequence}`;
           const result = http.post(
             `${baseUrl}/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${sheetId}/cells/batch/`,
             JSON.stringify({
@@ -222,7 +222,7 @@ export default function (data) {
         cellUpdatesReceived.add(cells.length);
         for (let i = 0; i < cells.length; i += 1) {
           const marker = cells[i] && cells[i].raw_input;
-          if (typeof marker !== 'string' || marker.indexOf('med293-perf|') !== 0) continue;
+          if (typeof marker !== 'string' || marker.indexOf('sheet-rt-perf|') !== 0) continue;
           const parts = marker.split('|');
           const sentAt = Number(parts[1]);
           if (sentAt > 0) cellPropagationMs.add(Math.max(0, Date.now() - sentAt));

@@ -7,7 +7,7 @@ import {
 import { waitForSpreadsheetPageReady } from './spreadsheet-helpers';
 
 /**
- * MED-293: two tabs on the same sheet should see each other's presence avatars.
+ * Two tabs on the same sheet should see each other's presence avatars.
  * Cell edit sync is out of scope for this scaffold.
  *
  * Navigates straight to the flat spreadsheet detail route (slug-based; numeric

@@ -1,4 +1,4 @@
-"""Realtime cell sync (MED-293 Phase 3).
+"""Realtime cell sync via cells_updated broadcast.
 
 Coverage is split deterministically in two halves instead of one cross-thread
 end-to-end test (InMemoryChannelLayer is not safe to feed from the on_commit
