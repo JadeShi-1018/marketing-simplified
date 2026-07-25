@@ -165,6 +165,7 @@ export default function (data) {
             JSON.stringify({
               operations: [{ operation: 'set', row: row, column: column, raw_input: marker }],
               auto_expand: true,
+              client_id: clientId,
             }),
             {
               headers: {
@@ -218,6 +219,9 @@ export default function (data) {
         return;
       }
       if (message.type === 'cells_updated') {
+        // Propagation is a peer-to-peer metric. Never count an origin echo,
+        // even if the deployment under test has not enabled server suppression.
+        if (message.origin_client_id === clientId) return;
         const cells = Array.isArray(message.cells) ? message.cells : [];
         cellUpdatesReceived.add(cells.length);
         for (let i = 0; i < cells.length; i += 1) {

@@ -19,31 +19,33 @@ from .models import (
 from .formula_engine import evaluate_formula, extract_references, reference_to_indexes, FormulaError
 from .formula_rewrite import rewrite_cells_for_operation
 from core.models import Project, ProjectMember
+from .access import accessible_sheets
 
 logger = logging.getLogger(__name__)
 
 
-def user_has_sheet_access(user_id: int, sheet_id: int) -> bool:
-    """Active project members may join the sheet WebSocket room."""
-    from spreadsheet.models import Sheet
-
-    sheet = (
-        Sheet.objects.filter(id=sheet_id, is_deleted=False, spreadsheet__is_deleted=False)
-        .select_related("spreadsheet")
-        .first()
-    )
-    if sheet is None:
-        return False
-    return ProjectMember.objects.filter(
-        user_id=user_id,
-        project_id=sheet.spreadsheet.project_id,
-        is_active=True,
-    ).exists()
+def user_has_sheet_access(user, sheet_id: int) -> bool:
+    """Use the same project access policy for HTTP and WebSocket rooms."""
+    return accessible_sheets(user).filter(id=sheet_id).exists()
 
 
 def sheet_room_group_name(sheet_id: int) -> str:
     """Channel-layer group name for a sheet room (must match SheetConsumer)."""
     return f"sheet_{sheet_id}"
+
+
+def _lock_sheet_for_mutation(sheet: Sheet) -> Sheet:
+    """Acquire the common per-sheet mutation lock inside an atomic block.
+
+    Cell writes and coordinate-changing structure operations must all pass
+    through this row lock. That makes their commit order deterministic and
+    prevents a structure rewrite from interleaving with a coordinate write.
+    """
+    return (
+        Sheet.objects.select_for_update()
+        .select_related('spreadsheet')
+        .get(pk=sheet.pk, is_deleted=False, spreadsheet__is_deleted=False)
+    )
 
 
 def _cell_broadcast_payload(cell: Cell) -> Dict[str, Any]:
@@ -401,8 +403,18 @@ class SheetService:
         Args:
             sheet: Sheet instance to delete
         """
+        locked_sheet = (
+            Sheet.objects.select_for_update()
+            .get(pk=sheet.pk, spreadsheet__is_deleted=False)
+        )
+        if locked_sheet.is_deleted:
+            sheet.is_deleted = True
+            return
+        locked_sheet.is_deleted = True
+        locked_sheet.save()
+        # Preserve the service's existing in-memory contract for callers/tests
+        # holding the instance that was passed in.
         sheet.is_deleted = True
-        sheet.save()
     
     @staticmethod
     def _generate_column_name(position: int) -> str:
@@ -444,6 +456,8 @@ class SheetService:
         """
         if row_count < 0 or column_count < 0:
             raise ValidationError("row_count and column_count must be non-negative integers")
+
+        sheet = _lock_sheet_for_mutation(sheet)
 
         # Fetch row state in ONE query (was 3 separate queries + a max() call)
         row_qs = SheetRow.objects.filter(sheet=sheet).values_list('position', 'is_deleted')
@@ -528,6 +542,8 @@ class SheetService:
         if count < 1:
             raise ValidationError("count must be a positive integer")
 
+        sheet = _lock_sheet_for_mutation(sheet)
+
         current_count = SheetRow.objects.filter(sheet=sheet, is_deleted=False).count()
         if position < 0 or position > current_count:
             raise ValidationError("position must be between 0 and current row count")
@@ -600,6 +616,8 @@ class SheetService:
         """
         if count < 1:
             raise ValidationError("count must be a positive integer")
+
+        sheet = _lock_sheet_for_mutation(sheet)
 
         current_count = SheetColumn.objects.filter(sheet=sheet, is_deleted=False).count()
         if position < 0 or position > current_count:
@@ -675,6 +693,8 @@ class SheetService:
         """
         if count < 1:
             raise ValidationError("count must be a positive integer")
+
+        sheet = _lock_sheet_for_mutation(sheet)
 
         active_qs = SheetRow.objects.filter(sheet=sheet, is_deleted=False)
         current_count = active_qs.count()
@@ -752,6 +772,8 @@ class SheetService:
         """
         if count < 1:
             raise ValidationError("count must be a positive integer")
+
+        sheet = _lock_sheet_for_mutation(sheet)
 
         active_qs = SheetColumn.objects.filter(sheet=sheet, is_deleted=False)
         current_count = active_qs.count()
@@ -880,6 +902,7 @@ class SheetService:
         direction = (direction or 'asc').lower()
         if direction not in ('asc', 'desc'):
             raise ValidationError("direction must be 'asc' or 'desc'")
+        sheet = _lock_sheet_for_mutation(sheet)
         rows = list(
             SheetRow.objects.filter(sheet=sheet, is_deleted=False)
             .order_by('position')
@@ -981,6 +1004,7 @@ class SheetService:
         """
         if not order:
             return
+        sheet = _lock_sheet_for_mutation(sheet)
         offset = 1_000_000
         for item in order:
             rid = item.get('row_id')
@@ -1002,6 +1026,10 @@ class SheetService:
         """
         Revert a previously logged structure operation.
         """
+        sheet = _lock_sheet_for_mutation(sheet)
+        operation = SheetStructureOperation.objects.select_for_update().get(
+            pk=operation.pk
+        )
         if operation.is_reverted:
             raise ValidationError("operation has already been reverted")
         if operation.sheet_id != sheet.id:
@@ -1272,6 +1300,7 @@ class CellService:
         return updated_cells
 
     @staticmethod
+    @transaction.atomic
     def recalculate_sheet_formulas(sheet: Sheet) -> None:
         """
         Recalculate all formula cells in a sheet. Used after import finalize when
@@ -1281,6 +1310,7 @@ class CellService:
         batch_update_cells skips _update_dependencies under import_mode to avoid
         N+1 work per chunk.
         """
+        sheet = _lock_sheet_for_mutation(sheet)
         formula_cells = list(
             Cell.objects.filter(
                 sheet=sheet,
@@ -1616,6 +1646,11 @@ class CellService:
                 - code: "INVALID_ARGUMENT"
                 - details: List of error dicts with index, row, column, field, message
         """
+        # Coordinate writes share this mutex with insert/delete/sort/reorder.
+        # Acquiring it before any row/column reads gives the whole operation a
+        # single authoritative order relative to structural changes.
+        sheet = _lock_sheet_for_mutation(sheet)
+
         # PHASE 1: VALIDATION (no DB writes)
         # Validate all operations and collect errors
         validation_errors = []
@@ -1858,13 +1893,6 @@ class CellService:
         if validation_errors:
             raise CellBatchArgumentError(validation_errors)
 
-        # Serialize writers within a sheet before reading/creating cells. Two
-        # concurrent first writes to the same empty coordinate would otherwise
-        # both choose bulk_create and race the active-cell unique constraint.
-        # Lock acquisition/commit order is the authoritative per-sheet LWW
-        # order; unrelated sheets remain fully concurrent.
-        Sheet.objects.select_for_update().get(pk=sheet.pk)
-        
         # PHASE 2: EXECUTION (bulk writes - no per-cell save/update_or_create)
         # Note: previously this section called _log_position_duplicates once per unique
         # row/col position for diagnostics, which issued hundreds of extra queries per

@@ -751,6 +751,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   // without this guard a stale response can repopulate pre-structure cells.
   const cellCacheGenerationRef = useRef(0);
   const pendingCanonicalRefreshRef = useRef(false);
+  const canonicalRefreshInFlightRef = useRef(0);
+  const pendingOpsRef = useRef(pendingOps);
+  const isSavingRef = useRef(isSaving);
+  pendingOpsRef.current = pendingOps;
+  isSavingRef.current = isSaving;
   const pendingSelectionRef = useRef<{ position: 'start' | 'end' | number } | null>(null);
   const resizeStateRef = useRef<ResizeState | null>(null);
   const fillStateRef = useRef<{
@@ -1435,7 +1440,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       computed_number?: number | string | null;
       computed_string?: string | null;
       error_code?: string | null;
-    }>) => {
+    }>, options?: { source?: 'local' | 'remote' }) => {
       if (!cellsResponse || cellsResponse.length === 0) return;
       setCells((prev) => {
         const next = new Map(prev);
@@ -1443,6 +1448,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
         cellsResponse.forEach((cell) => {
           const key = getCellKey(cell.row_position, cell.column_position);
+          // A peer broadcast must not overwrite a newer local optimistic edit
+          // that has not reached the authoritative HTTP write path yet.
+          if (options?.source === 'remote' && pendingOpsRef.current.has(key)) {
+            return;
+          }
           const fallbackRawInput =
             cell.raw_input ??
             cell.formula_value ??
@@ -1556,11 +1566,38 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   }, [isGridLoading, spreadsheetId, sheetId]);
 
   const refreshSheet = useCallback(() => {
-    if (isGridLoading) {
+    pendingCanonicalRefreshRef.current = true;
+
+    const queuedOps = pendingOpsRef.current;
+    if (queuedOps.size > 0) {
+      try {
+        sessionStorage.setItem(
+          `spreadsheet-pending-recovery:${spreadsheetId}:${sheetId}`,
+          JSON.stringify({
+            savedAt: new Date().toISOString(),
+            operations: Array.from(queuedOps.values()),
+          })
+        );
+      } catch (error) {
+        console.warn('Unable to save pending spreadsheet edits for recovery:', error);
+      }
+      const emptyQueue = new Map<CellKey, PendingOperation>();
+      pendingOpsRef.current = emptyQueue;
+      setPendingOps(emptyQueue);
+      toast.error(
+        'The sheet structure changed. Unsaved edits were paused and saved in this browser for recovery.',
+        { duration: 5000 }
+      );
+    }
+
+    // If a write is already in flight, let it finish before fetching canonical
+    // coordinates. The shared backend sheet lock decides the final order.
+    if (isGridLoading || isSavingRef.current) {
       pendingCanonicalRefreshRef.current = true;
       return;
     }
     pendingCanonicalRefreshRef.current = false;
+    canonicalRefreshInFlightRef.current += 1;
     setCellCanvasLoading(true);
     // A canonical refresh follows coordinate-changing operations. Replace the
     // cell map instead of merging the response, otherwise cells at their old
@@ -1580,7 +1617,15 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       range.endColumn,
       true
     );
-    const finishLoading = () => setCellCanvasLoading(false);
+    const finishLoading = () => {
+      canonicalRefreshInFlightRef.current = Math.max(
+        0,
+        canonicalRefreshInFlightRef.current - 1
+      );
+      if (canonicalRefreshInFlightRef.current === 0) {
+        setCellCanvasLoading(false);
+      }
+    };
     if (maybePromise && typeof (maybePromise as Promise<void>).then === 'function') {
       void (maybePromise as Promise<void>).finally(finishLoading);
     } else {
@@ -1640,13 +1685,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       .catch((error) => {
         console.error('Failed to load cell formats on refresh:', error);
       });
-  }, [isGridLoading, resetSheetCaches, computeVisibleRange, loadCellRange]);
+  }, [
+    isGridLoading,
+    resetSheetCaches,
+    computeVisibleRange,
+    loadCellRange,
+    spreadsheetId,
+    sheetId,
+  ]);
 
   useEffect(() => {
-    if (!isGridLoading && pendingCanonicalRefreshRef.current) {
+    if (!isGridLoading && !isSaving && pendingCanonicalRefreshRef.current) {
       refreshSheet();
     }
-  }, [isGridLoading, refreshSheet]);
+  }, [isGridLoading, isSaving, refreshSheet]);
 
   const handleAddRows = useCallback(async () => {
     const rowsToAdd = parseInt(addRowsInputValue, 10);
@@ -2311,7 +2363,12 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
   // Debounced batch save
   const flushPendingOps = useCallback(async () => {
-    if (pendingOps.size === 0 || isSaving) return;
+    if (
+      pendingOps.size === 0 ||
+      isSaving ||
+      pendingCanonicalRefreshRef.current ||
+      canonicalRefreshInFlightRef.current > 0
+    ) return;
 
     setIsSaving(true);
     setSaveError(null);
@@ -5260,7 +5317,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       deleteColumn: (position: number, count: number = 1) => handleDeleteColumn(position, count),
       refresh: () => refreshSheet(),
       applyHighlightOperation: (payload: ApplyHighlightParams) => applyHighlightOperation(payload),
-      applyRemoteCells: (cells) => applyCellsFromResponse(cells),
+      applyRemoteCells: (cells) =>
+        applyCellsFromResponse(cells, { source: 'remote' }),
     }),
     [
       submitFormulaBarValue,

@@ -314,10 +314,17 @@ export const SpreadsheetAPI = {
     if (options?.importMode === true) body.import_mode = true;
     if (options?.clientId) body.client_id = options.clientId;
 
-    const config: { timeout: number; signal?: AbortSignal } = {
+    const config: {
+      timeout: number;
+      signal?: AbortSignal;
+      headers?: Record<string, string>;
+    } = {
       timeout: SPREADSHEET_LONG_REQUEST_TIMEOUT_MS,
     };
     if (options?.signal) config.signal = options.signal;
+    if (options?.clientId) {
+      config.headers = { 'X-Sheet-Client-Id': options.clientId };
+    }
 
     const response = await api.post(
       `/api/spreadsheet/spreadsheets/${spreadsheetId}/sheets/${sheetId}/cells/batch/`,
@@ -598,4 +605,3 @@ export const SpreadsheetAPI = {
     return response.data;
   },
 };
-

@@ -211,6 +211,35 @@ class TestCellSyncService:
 
 @pytest.mark.django_db(transaction=True)
 class TestSheetRefreshBroadcast:
+    def test_cell_batch_uses_header_client_id_for_echo_suppression(self, monkeypatch):
+        layer = _RecordingLayer()
+        monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+
+        user = _create_user(f"u_{_uid()}")
+        _, _, spreadsheet, sheet = _create_sheet(user)
+        client = APIClient()
+        client.force_authenticate(user=user)
+
+        resp = client.post(
+            f"/api/spreadsheet/spreadsheets/{spreadsheet.slug}/sheets/{sheet.id}/cells/batch/",
+            {
+                "operations": [
+                    {"operation": "set", "row": 0, "column": 0, "raw_input": "hello"}
+                ],
+                "auto_expand": True,
+                "client_id": "body-client",
+            },
+            format="json",
+            headers={"X-Sheet-Client-Id": "header-client"},
+        )
+        assert resp.status_code == 200, resp.content
+
+        cell_events = [
+            message for _, message in layer.sent if message["type"] == "cells.updated"
+        ]
+        assert len(cell_events) == 1
+        assert cell_events[0]["origin_client_id"] == "header-client"
+
     def test_structure_op_view_broadcasts_refresh_with_origin(self, monkeypatch):
         """Insert-rows endpoint queues sheet_refresh_required carrying the
         X-Sheet-Client-Id header value for server-side echo suppression."""

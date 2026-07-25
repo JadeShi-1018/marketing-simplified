@@ -81,7 +81,7 @@ class SheetConsumer(AsyncWebsocketConsumer):
             await self.close(code=4001)
             return
 
-        can_access = await self._user_can_access_sheet(user.id, self.sheet_id)
+        can_access = await self._user_can_access_sheet(user, self.sheet_id)
         if not can_access:
             await self.close(code=4003)
             return
@@ -296,8 +296,8 @@ class SheetConsumer(AsyncWebsocketConsumer):
         )
 
     @database_sync_to_async
-    def _user_can_access_sheet(self, user_id: int, sheet_id: int) -> bool:
-        return user_has_sheet_access(user_id, sheet_id)
+    def _user_can_access_sheet(self, user, sheet_id: int) -> bool:
+        return user_has_sheet_access(user, sheet_id)
 
     @sync_to_async
     def _register_presence(self, info: dict) -> list[str]:

@@ -17,6 +17,7 @@ jest.mock('@/lib/api/spreadsheetApi', () => ({
     resizeSheet: (...args: any[]) => resizeSheetMock(...args),
     finalizeImport: (...args: any[]) => finalizeImportMock(...args),
     getHighlights: jest.fn().mockResolvedValue({ highlights: [] }),
+    getCellFormats: jest.fn().mockResolvedValue({ formats: [] }),
     batchUpdateHighlights: jest.fn().mockResolvedValue({ updated: 0, deleted: 0 }),
     deleteRows: (...args: any[]) => deleteRowsMock(...args),
     deleteColumns: (...args: any[]) => deleteColumnsMock(...args),
@@ -744,3 +745,78 @@ describe('SpreadsheetGrid import error handling', () => {
   }, 15000);
 });
 
+describe('SpreadsheetGrid collaboration reconciliation', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    readCellRangeMock.mockReset();
+    readCellRangeMock.mockResolvedValue({ cells: [] });
+    batchUpdateCellsMock.mockReset();
+    batchUpdateCellsMock.mockResolvedValue({
+      updated: 0,
+      cleared: 0,
+      rows_expanded: 0,
+      columns_expanded: 0,
+      cells: [],
+    });
+    toastError.mockClear();
+    sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    act(() => {
+      jest.runOnlyPendingTimers();
+    });
+    jest.useRealTimers();
+  });
+
+  it('protects a pending optimistic edit and quarantines it on structure refresh', async () => {
+    const ref = React.createRef<SpreadsheetGridHandle>();
+    const { container } = render(
+      <SpreadsheetGrid ref={ref} spreadsheetId={77} sheetId={977} />
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const cell = container.querySelector(
+      'td[data-row="0"][data-col="0"]'
+    ) as HTMLTableCellElement;
+    fireEvent.doubleClick(cell);
+    const editor = cell.querySelector('input') as HTMLInputElement;
+    fireEvent.change(editor, { target: { value: 'local-pending' } });
+    fireEvent.keyDown(editor, { key: 'Enter' });
+
+    expect(screen.getByText('local-pending')).toBeInTheDocument();
+
+    act(() => {
+      ref.current?.applyRemoteCells([
+        {
+          row_position: 0,
+          column_position: 0,
+          raw_input: 'remote-committed',
+        },
+      ]);
+    });
+    expect(screen.queryByText('remote-committed')).not.toBeInTheDocument();
+    expect(screen.getByText('local-pending')).toBeInTheDocument();
+
+    act(() => {
+      ref.current?.refresh();
+      jest.advanceTimersByTime(500);
+    });
+
+    const recovery = JSON.parse(
+      sessionStorage.getItem('spreadsheet-pending-recovery:77:977') || '{}'
+    );
+    expect(recovery.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ row: 0, column: 0, raw_input: 'local-pending' }),
+      ])
+    );
+    expect(batchUpdateCellsMock).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining('structure changed'),
+      expect.any(Object)
+    );
+  });
+});
