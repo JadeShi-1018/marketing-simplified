@@ -1,39 +1,13 @@
 import json
-import time
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth.models import AnonymousUser
-from django.core.cache import cache
 
+from spreadsheet.presence import get_presence_store
 from spreadsheet.services import user_has_sheet_access
-
-PRESENCE_CACHE_TTL_SECONDS = 3600
-PRESENCE_STALE_AFTER_SECONDS = 30
-PRESENCE_LAST_SEEN_FIELD = "_last_seen"
-
-
-def _presence_cache_key(sheet_id: int) -> str:
-    return f"sheet_presence:{sheet_id}"
-
-
-def _prune_stale_presence(data: dict, now: float | None = None) -> dict:
-    """Drop abandoned channels independently of the cache-key TTL.
-
-    A single active user refreshes the shared cache key, so key-level expiry
-    alone can keep crashed/restarted clients around indefinitely. Legacy
-    entries without a heartbeat timestamp are stale by definition.
-    """
-    cutoff = (time.time() if now is None else now) - PRESENCE_STALE_AFTER_SECONDS
-    return {
-        channel_name: info
-        for channel_name, info in data.items()
-        if isinstance(info, dict)
-        and isinstance(info.get(PRESENCE_LAST_SEEN_FIELD), (int, float))
-        and info[PRESENCE_LAST_SEEN_FIELD] >= cutoff
-    }
 
 
 def _client_id_from_scope(scope) -> str | None:
@@ -75,6 +49,8 @@ class SheetConsumer(AsyncWebsocketConsumer):
         self.sheet_id = int(self.scope["url_route"]["kwargs"]["sheet_id"])
         self.room_group_name = f"sheet_{self.sheet_id}"
         self.client_id = _client_id_from_scope(self.scope)
+        self.joined_room = False
+        self.presence_registered = False
         user = self.scope.get("user")
 
         if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:
@@ -87,6 +63,7 @@ class SheetConsumer(AsyncWebsocketConsumer):
             return
 
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+        self.joined_room = True
         await self.accept()
 
         stale_channels = await self._register_presence(
@@ -96,15 +73,17 @@ class SheetConsumer(AsyncWebsocketConsumer):
                 "client_id": self.client_id,
             }
         )
+        self.presence_registered = True
         await self._discard_stale_channels(stale_channels)
 
         snapshot = await self._list_presence()
+        await self._discard_stale_channels(snapshot.stale_channels)
         await self.send(
             text_data=json.dumps(
                 {
                     "type": "presence_snapshot",
                     "sheet_id": self.sheet_id,
-                    "users": snapshot,
+                    "users": snapshot.users,
                 }
             )
         )
@@ -123,20 +102,26 @@ class SheetConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         user = self.scope.get("user")
-        if getattr(self, "room_group_name", None):
-            same_identity_remains = await self._unregister_presence()
-            if user and getattr(user, "is_authenticated", False) and not same_identity_remains:
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {
-                        "type": "presence.leave",
-                        "sheet_id": self.sheet_id,
-                        "user_id": user.id,
-                        "username": user.username,
-                        "client_id": getattr(self, "client_id", None),
-                        "channel_name": self.channel_name,
-                    },
-                )
+        if getattr(self, "joined_room", False):
+            if getattr(self, "presence_registered", False):
+                unregister_result = await self._unregister_presence()
+                await self._discard_stale_channels(unregister_result.stale_channels)
+                if (
+                    user
+                    and getattr(user, "is_authenticated", False)
+                    and not unregister_result.same_identity_remains
+                ):
+                    await self.channel_layer.group_send(
+                        self.room_group_name,
+                        {
+                            "type": "presence.leave",
+                            "sheet_id": self.sheet_id,
+                            "user_id": user.id,
+                            "username": user.username,
+                            "client_id": getattr(self, "client_id", None),
+                            "channel_name": self.channel_name,
+                        },
+                    )
             await self.channel_layer.group_discard(self.room_group_name, self.channel_name)
 
     async def receive(self, text_data):
@@ -232,6 +217,20 @@ class SheetConsumer(AsyncWebsocketConsumer):
             )
         )
 
+    async def presence_snapshot(self, event):
+        """Replace peer presence after stale channels are atomically pruned."""
+        if event.get("origin_channel_name") == self.channel_name:
+            return
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "presence_snapshot",
+                    "sheet_id": event["sheet_id"],
+                    "users": event.get("users") or [],
+                }
+            )
+        )
+
     async def cells_updated(self, event):
         """Relay a committed cell change-set to this client.
 
@@ -301,76 +300,58 @@ class SheetConsumer(AsyncWebsocketConsumer):
 
     @sync_to_async
     def _register_presence(self, info: dict) -> list[str]:
-        key = _presence_cache_key(self.sheet_id)
-        original = cache.get(key) or {}
-        data = _prune_stale_presence(original)
-        data[self.channel_name] = {
-            **info,
-            PRESENCE_LAST_SEEN_FIELD: time.time(),
-        }
-        cache.set(key, data, PRESENCE_CACHE_TTL_SECONDS)
-        return [name for name in original if name not in data and name != self.channel_name]
+        return get_presence_store().register(
+            self.sheet_id,
+            self.channel_name,
+            info,
+        )
 
     @sync_to_async
     def _touch_presence(self) -> list[str]:
-        key = _presence_cache_key(self.sheet_id)
-        original = cache.get(key) or {}
-        data = _prune_stale_presence(original)
-        info = data.get(self.channel_name)
-        if info is None:
-            user = self.scope["user"]
-            info = {
+        user = self.scope["user"]
+        return get_presence_store().register(
+            self.sheet_id,
+            self.channel_name,
+            {
                 "user_id": user.id,
                 "username": user.username,
                 "client_id": self.client_id,
-            }
-        data[self.channel_name] = {
-            **info,
-            PRESENCE_LAST_SEEN_FIELD: time.time(),
-        }
-        cache.set(key, data, PRESENCE_CACHE_TTL_SECONDS)
-        return [name for name in original if name not in data and name != self.channel_name]
+            },
+        )
 
     async def _discard_stale_channels(self, channel_names: list[str]) -> None:
+        if not channel_names:
+            return
         for channel_name in channel_names:
             await self.channel_layer.group_discard(self.room_group_name, channel_name)
+        snapshot = await self._list_presence()
+        await self.channel_layer.group_send(
+            self.room_group_name,
+            {
+                "type": "presence.snapshot",
+                "sheet_id": self.sheet_id,
+                "users": snapshot.users,
+                "origin_channel_name": self.channel_name,
+            },
+        )
 
     @sync_to_async
-    def _unregister_presence(self) -> bool:
-        """Remove this channel from the presence cache.
+    def _unregister_presence(self):
+        """Atomically remove this channel and check duplicate identity.
 
-        Returns True if another live channel for the same user+client is still
+        The result reports whether another live channel for the same user+client is
         registered (e.g. React StrictMode's double-mount reconnect), in which
         case the caller must NOT broadcast presence_leave, or the peer stores
         would drop a user whose replacement socket is already connected.
         """
-        key = _presence_cache_key(self.sheet_id)
-        data = _prune_stale_presence(cache.get(key) or {})
-        info = data.pop(self.channel_name, None)
-        if info is not None:
-            if data:
-                cache.set(key, data, PRESENCE_CACHE_TTL_SECONDS)
-            else:
-                cache.delete(key)
-        if info is None:
-            return False
-        return any(
-            entry.get("user_id") == info.get("user_id")
-            and entry.get("client_id") == info.get("client_id")
-            for entry in data.values()
+        user = self.scope["user"]
+        return get_presence_store().unregister(
+            self.sheet_id,
+            self.channel_name,
+            user.id,
+            self.client_id,
         )
 
     @sync_to_async
-    def _list_presence(self) -> list:
-        key = _presence_cache_key(self.sheet_id)
-        original = cache.get(key) or {}
-        data = _prune_stale_presence(original)
-        if data != original:
-            if data:
-                cache.set(key, data, PRESENCE_CACHE_TTL_SECONDS)
-            else:
-                cache.delete(key)
-        return [
-            {field: value for field, value in info.items() if field != PRESENCE_LAST_SEEN_FIELD}
-            for info in data.values()
-        ]
+    def _list_presence(self):
+        return get_presence_store().list(self.sheet_id)

@@ -92,16 +92,20 @@ export const useSheetSocketStore = create<SheetSocketStore>((set) => ({
   setCloseCode: (closeCode) => set({ closeCode }),
 
   applySnapshot: (users) =>
-    set(() => {
+    set((state) => {
       const next: Record<string, SheetPresenceUser> = {};
       for (const u of users) {
         const key = presenceKey(u.user_id, u.client_id);
+        const existing = state.usersByKey[key];
         next[key] = {
           userId: u.user_id,
           username: u.username?.trim() || `User ${u.user_id}`,
           clientId: u.client_id?.trim() || 'default',
-          color: hashColorForUser(u.user_id, key),
-          cursor: null,
+          color: existing?.color || hashColorForUser(u.user_id, key),
+          // Mid-session authoritative snapshots are also emitted after stale
+          // channel pruning. Preserve live cursor state for identities that
+          // remain present while removing identities absent from the snapshot.
+          cursor: existing?.cursor ?? null,
         };
       }
       return { usersByKey: next };

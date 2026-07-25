@@ -222,6 +222,61 @@ class TestSheetConsumer:
         finally:
             await _disconnect_communicators(communicator)
 
+    async def test_stale_prune_broadcasts_authoritative_snapshot_to_peers(self):
+        user_a = await _create_user_sync(f"a_{_uid()}", f"a_{_uid()}@example.com")
+        user_b = await _create_user_sync(f"b_{_uid()}", f"b_{_uid()}@example.com")
+        _, project, _, sheet = await _create_sheet_fixture(user_a)
+        await _add_project_member(user_b, project)
+
+        comm_a = WebsocketCommunicator(
+            _app(),
+            (
+                f"/ws/spreadsheets/sheets/{sheet.id}/"
+                f"?token={AccessToken.for_user(user_a)}&client_id=ca"
+            ),
+        )
+        comm_b = WebsocketCommunicator(
+            _app(),
+            (
+                f"/ws/spreadsheets/sheets/{sheet.id}/"
+                f"?token={AccessToken.for_user(user_b)}&client_id=cb"
+            ),
+        )
+        try:
+            assert (await comm_a.connect(timeout=5))[0]
+            await comm_a.receive_json_from(timeout=5)
+            assert (await comm_b.connect(timeout=5))[0]
+            await comm_b.receive_json_from(timeout=5)
+            await comm_a.receive_json_from(timeout=5)  # b joins
+
+            key = f"sheet_presence:{sheet.id}"
+            data = await sync_to_async(cache.get)(key)
+            data["stale-channel"] = {
+                "user_id": 999,
+                "username": "stale@example.com",
+                "client_id": "stale-client",
+                "_last_seen": 0,
+            }
+            await sync_to_async(cache.set)(key, data)
+            await get_channel_layer().group_add(
+                f"sheet_{sheet.id}",
+                "stale-channel",
+            )
+
+            await comm_a.send_json_to({"type": "ping"})
+            pong = await comm_a.receive_json_from(timeout=5)
+            assert pong["type"] == "pong"
+
+            snapshot = await comm_b.receive_json_from(timeout=5)
+            assert snapshot["type"] == "presence_snapshot"
+            assert {entry["client_id"] for entry in snapshot["users"]} == {"ca", "cb"}
+            assert "stale-channel" not in get_channel_layer().groups.get(
+                f"sheet_{sheet.id}",
+                {},
+            )
+        finally:
+            await _disconnect_communicators(comm_a, comm_b)
+
     async def test_duplicate_client_disconnect_suppresses_leave(self):
         """Closing one of two sockets sharing a user+client_id (StrictMode
         remount) must not broadcast presence_leave; closing the last one must."""
