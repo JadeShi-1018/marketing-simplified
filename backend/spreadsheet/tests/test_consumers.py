@@ -13,6 +13,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 
 from asset.middleware import JWTAuthMiddleware
 from core.models import Organization, Project, ProjectMember
+from spreadsheet.consumers import CURSOR_RATE_LIMIT_BURST, CursorRateLimiter
 from spreadsheet.models import Sheet, Spreadsheet
 from spreadsheet.routing import websocket_urlpatterns
 
@@ -29,6 +30,17 @@ TEST_CACHES = {
         "LOCATION": "sheet-consumer-tests",
     }
 }
+
+
+def test_cursor_rate_limiter_allows_burst_then_refills():
+    limiter = CursorRateLimiter(rate=2, burst=2)
+    started_at = limiter.updated_at
+
+    assert limiter.allow(now=started_at)
+    assert limiter.allow(now=started_at)
+    assert not limiter.allow(now=started_at)
+    assert limiter.allow(now=started_at + 0.5)
+    assert not limiter.allow(now=started_at + 0.5)
 
 
 async def _disconnect_communicators(*communicators):
@@ -373,5 +385,64 @@ class TestSheetConsumer:
                 assert msg["row"] == 1
                 assert msg["col"] == 2
                 assert msg["client_id"] == "client-a"
+        finally:
+            await _disconnect_communicators(comm_a, comm_b)
+
+    async def test_cursor_updates_are_rate_limited_per_connection(self, monkeypatch):
+        user_a = await _create_user_sync(f"a_{_uid()}", f"a_{_uid()}@example.com")
+        user_b = await _create_user_sync(f"b_{_uid()}", f"b_{_uid()}@example.com")
+        _, project, _, sheet = await _create_sheet_fixture(user_a)
+        await _add_project_member(user_b, project)
+        decisions = iter([True] * CURSOR_RATE_LIMIT_BURST + [False])
+        monkeypatch.setattr(
+            CursorRateLimiter,
+            "allow",
+            lambda self: next(decisions, False),
+        )
+
+        comm_a = WebsocketCommunicator(
+            _app(),
+            (
+                f"/ws/spreadsheets/sheets/{sheet.id}/"
+                f"?token={AccessToken.for_user(user_a)}&client_id=ca"
+            ),
+        )
+        comm_b = WebsocketCommunicator(
+            _app(),
+            (
+                f"/ws/spreadsheets/sheets/{sheet.id}/"
+                f"?token={AccessToken.for_user(user_b)}&client_id=cb"
+            ),
+        )
+        try:
+            assert (await comm_a.connect(timeout=5))[0]
+            await comm_a.receive_json_from(timeout=5)
+            assert (await comm_b.connect(timeout=5))[0]
+            await comm_b.receive_json_from(timeout=5)
+            await comm_a.receive_json_from(timeout=5)  # b joins
+
+            for index in range(CURSOR_RATE_LIMIT_BURST + 1):
+                await comm_a.send_json_to(
+                    {
+                        "type": "cursor_update",
+                        "client_id": "ca",
+                        "row": index,
+                        "col": 0,
+                        "start_row": index,
+                        "end_row": index,
+                        "start_col": 0,
+                        "end_col": 0,
+                        "is_active": True,
+                    }
+                )
+
+            received_rows = []
+            for _ in range(CURSOR_RATE_LIMIT_BURST):
+                message = await comm_b.receive_json_from(timeout=5)
+                assert message["type"] == "cursor_updated"
+                received_rows.append(message["row"])
+
+            assert received_rows == list(range(CURSOR_RATE_LIMIT_BURST))
+            assert await comm_b.receive_nothing(timeout=0.25)
         finally:
             await _disconnect_communicators(comm_a, comm_b)

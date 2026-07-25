@@ -62,6 +62,8 @@ type Api = {
 
 const RECONNECT_DELAY_MS = 1500;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const RESUME_RECONNECT_AFTER_MS = 20_000;
+const CLIENT_RESUME_CLOSE_CODE = 4000;
 const CLIENT_ID_SESSION_KEY = 'sheet-collab-client-id-v1';
 
 function createClientId(): string {
@@ -131,14 +133,63 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
     let stopped = false;
     let hadConnection = false;
     let heartbeatTimer: number | null = null;
+    let lastHeartbeatAt = Date.now();
+    let hiddenAt: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
+    let resumeReconnectPending = false;
     const createdSockets: WebSocket[] = [];
     setSheetCollabClientId(clientIdRef.current);
     useSheetSocketStore.getState().setSheetId(sheetId);
     useSheetSocketStore.getState().setWsState('connecting');
     useSheetSocketStore.getState().setCloseCode(null);
 
-    const connect = () => {
+    const stopHeartbeat = () => {
+      if (heartbeatTimer) {
+        window.clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    };
+
+    const scheduleReconnect = (delayMs: number) => {
       if (stopped) return;
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+      }
+      reconnectTimerRef.current = window.setTimeout(connect, delayMs);
+    };
+
+    const forceResumeReconnect = () => {
+      if (stopped || resumeReconnectPending || !hadConnection) return;
+      resumeReconnectPending = true;
+      stopHeartbeat();
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      useSheetSocketStore.getState().applySnapshot([]);
+      useSheetSocketStore.getState().setWsState('reconnecting');
+
+      const ws = wsRef.current;
+      if (ws && ws.readyState !== WebSocket.CLOSED) {
+        if (ws.readyState !== WebSocket.CLOSING) {
+          try {
+            ws.close(CLIENT_RESUME_CLOSE_CODE, 'client_resume');
+          } catch {
+            // Fall through to a fresh connection if the browser refuses close().
+          }
+        }
+        if (ws.readyState === WebSocket.CLOSING || ws.readyState === WebSocket.CLOSED) {
+          return;
+        }
+      }
+
+      wsRef.current = null;
+      resumeReconnectPending = false;
+      scheduleReconnect(0);
+    };
+
+    function connect() {
+      if (stopped) return;
+      reconnectTimerRef.current = null;
       const url = buildWsUrl(`/ws/spreadsheets/sheets/${sheetId}/`, {
         token,
         client_id: clientIdRef.current,
@@ -154,9 +205,19 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
 
       ws.onopen = () => {
         if (stopped) return;
-        if (heartbeatTimer) window.clearInterval(heartbeatTimer);
+        stopHeartbeat();
+        lastHeartbeatAt = Date.now();
+        resumeReconnectPending = false;
         heartbeatTimer = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
+            const now = Date.now();
+            // A long timer gap means the page/OS was suspended. The socket may
+            // still report OPEN even though broadcasts and Presence were lost.
+            if (now - lastHeartbeatAt >= RESUME_RECONNECT_AFTER_MS) {
+              forceResumeReconnect();
+              return;
+            }
+            lastHeartbeatAt = now;
             ws.send(JSON.stringify({ type: 'ping' }));
           }
         }, HEARTBEAT_INTERVAL_MS);
@@ -217,10 +278,7 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       };
 
       ws.onclose = (ev) => {
-        if (heartbeatTimer) {
-          window.clearInterval(heartbeatTimer);
-          heartbeatTimer = null;
-        }
+        stopHeartbeat();
         // Never display users from a dead connection while reconnecting. The
         // next authoritative presence_snapshot repopulates this state.
         useSheetSocketStore.getState().applySnapshot([]);
@@ -228,6 +286,8 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
           wsRef.current = null;
         }
         useSheetSocketStore.getState().setCloseCode(ev.code);
+        const reconnectImmediately = resumeReconnectPending;
+        resumeReconnectPending = false;
         if (stopped) {
           useSheetSocketStore.getState().setWsState('closed');
           return;
@@ -237,27 +297,62 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
           return;
         }
         useSheetSocketStore.getState().setWsState('reconnecting');
-        if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = window.setTimeout(connect, RECONNECT_DELAY_MS);
+        scheduleReconnect(reconnectImmediately ? 0 : RECONNECT_DELAY_MS);
       };
 
       ws.onerror = () => {
         /* onclose will fire */
       };
+    }
+
+    const handleVisibilityChange = () => {
+      const now = Date.now();
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = now;
+        return;
+      }
+      const hiddenFor = hiddenAt == null ? 0 : now - hiddenAt;
+      hiddenAt = null;
+      if (hiddenFor >= RESUME_RECONNECT_AFTER_MS || now - lastHeartbeatAt >= RESUME_RECONNECT_AFTER_MS) {
+        forceResumeReconnect();
+      }
+    };
+
+    const handleWindowFocus = () => {
+      if (Date.now() - lastHeartbeatAt >= RESUME_RECONNECT_AFTER_MS) {
+        forceResumeReconnect();
+      }
+    };
+
+    const handleOnline = () => {
+      // A browser can retain OPEN through a network transition even though its
+      // TCP path and room membership are no longer usable.
+      forceResumeReconnect();
+    };
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        forceResumeReconnect();
+      }
     };
 
     connect();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('pageshow', handlePageShow);
 
     return () => {
       stopped = true;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('pageshow', handlePageShow);
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
-      if (heartbeatTimer) {
-        window.clearInterval(heartbeatTimer);
-        heartbeatTimer = null;
-      }
+      stopHeartbeat();
       createdSockets.forEach((sock) => {
         try {
           sock.close();

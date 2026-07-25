@@ -1,4 +1,5 @@
 import json
+import time
 from urllib.parse import parse_qs
 
 from asgiref.sync import sync_to_async
@@ -8,6 +9,33 @@ from django.contrib.auth.models import AnonymousUser
 
 from spreadsheet.presence import get_presence_store
 from spreadsheet.services import user_has_sheet_access
+
+CURSOR_RATE_LIMIT_PER_SECOND = 30
+CURSOR_RATE_LIMIT_BURST = 10
+
+
+class CursorRateLimiter:
+    """Per-connection token bucket for ephemeral cursor broadcasts."""
+
+    def __init__(
+        self,
+        rate: float = CURSOR_RATE_LIMIT_PER_SECOND,
+        burst: float = CURSOR_RATE_LIMIT_BURST,
+    ):
+        self.rate = rate
+        self.burst = burst
+        self.tokens = burst
+        self.updated_at = time.monotonic()
+
+    def allow(self, now: float | None = None) -> bool:
+        timestamp = time.monotonic() if now is None else now
+        elapsed = max(0.0, timestamp - self.updated_at)
+        self.tokens = min(self.burst, self.tokens + elapsed * self.rate)
+        self.updated_at = timestamp
+        if self.tokens < 1:
+            return False
+        self.tokens -= 1
+        return True
 
 
 def _client_id_from_scope(scope) -> str | None:
@@ -51,6 +79,7 @@ class SheetConsumer(AsyncWebsocketConsumer):
         self.client_id = _client_id_from_scope(self.scope)
         self.joined_room = False
         self.presence_registered = False
+        self.cursor_rate_limiter = CursorRateLimiter()
         user = self.scope.get("user")
 
         if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:
@@ -139,6 +168,11 @@ class SheetConsumer(AsyncWebsocketConsumer):
             return
 
         if message_type == "cursor_update":
+            # Cursor frames are disposable. Silently dropping excess traffic
+            # avoids turning a client-side event storm into Redis/channel-layer
+            # fan-out, without amplifying it with one error frame per drop.
+            if not self.cursor_rate_limiter.allow():
+                return
             await self._handle_cursor_update(payload)
             return
 
@@ -158,8 +192,9 @@ class SheetConsumer(AsyncWebsocketConsumer):
 
         is_active = bool(payload.get("is_active", True))
         cid = payload.get("client_id")
-        if isinstance(cid, str) and cid.strip():
-            self.client_id = cid.strip()
+        normalized_cid = cid.strip() if isinstance(cid, str) else ""
+        if normalized_cid and normalized_cid != self.client_id:
+            self.client_id = normalized_cid
             stale_channels = await self._register_presence(
                 {
                     "user_id": self.scope["user"].id,
