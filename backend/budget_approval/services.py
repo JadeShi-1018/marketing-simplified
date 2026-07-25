@@ -233,7 +233,7 @@ class BudgetRequestService:
                         _insufficient_request = locked_request
                         raise ValidationError("Insufficient budget available for locking")
 
-                    # status: APPROVED --> LOCKED or REJECTED --> LOCKED
+                    # status: APPROVED --> LOCKED (the only legal source state)
                     # The lock() method in the model will automatically deduct from budget pool
                     locked_request.lock()
                     locked_request.save()
