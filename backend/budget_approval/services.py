@@ -184,9 +184,9 @@ class BudgetRequestService:
 
     @staticmethod
     def revise_rejected_request(budget_request, revised_data):
-        """Revise a rejected budget request by modifying existing data, and save it as a draft"""
+        """Revise a rejected or cancelled budget request by modifying existing data, and save it as a draft"""
         if not budget_request.can_revise():
-            raise ValidationError("Only rejected budget requests can be revised")
+            raise ValidationError("Only rejected or cancelled budget requests can be revised")
     
         with transaction.atomic():
             # Update budget request data

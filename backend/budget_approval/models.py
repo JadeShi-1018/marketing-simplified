@@ -252,7 +252,9 @@ class BudgetRequest(models.Model):
     
     def can_revise(self):
         """Check if can revise"""
-        return self.status == BudgetRequestStatus.REJECTED
+        # Mirror the revise() transition sources (REJECTED or CANCELLED) so the
+        # guard stays consistent with the FSM graph.
+        return self.status in (BudgetRequestStatus.REJECTED, BudgetRequestStatus.CANCELLED)
     
     def can_forward(self):
         """Check if can forward to next approver"""

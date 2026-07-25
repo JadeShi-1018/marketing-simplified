@@ -365,8 +365,19 @@ class TestReviseRejectedRequest:
         assert revised.notes == 'Revised notes'
 
     def test_revise_raises_when_not_rejected(self, budget_request_draft):
-        with pytest.raises(ValidationError, match="Only rejected budget requests"):
+        with pytest.raises(ValidationError, match="Only rejected or cancelled budget requests"):
             BudgetRequestService.revise_rejected_request(budget_request_draft, {})
+
+    def test_revise_allowed_when_cancelled(self, budget_request_under_review):
+        """A cancelled request can also be revised back to draft (guard mirrors the FSM)."""
+        br = budget_request_under_review
+        _force_status(br, BudgetRequestStatus.CANCELLED)
+
+        revised = BudgetRequestService.revise_rejected_request(
+            br, {'amount': Decimal('900.00')}
+        )
+        assert revised.status == BudgetRequestStatus.DRAFT
+        assert revised.amount == Decimal('900.00')
 
     def test_revise_clears_stale_approver(self, budget_request_under_review, user2):
         """The rejecting approver must not stay assigned to the new draft."""
