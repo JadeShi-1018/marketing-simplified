@@ -21,6 +21,10 @@ jest.mock('@/lib/api/taskApi', () => ({
 
 const mockedGetTasks = TaskAPI.getTasks as jest.Mock;
 const mockedGetTask = TaskAPI.getTask as jest.Mock;
+const mockedMoveSubtask = TaskAPI.moveSubtask as jest.Mock;
+
+const CYCLE_MESSAGE =
+  'Cannot set this parent: it would create a circular task hierarchy.';
 
 const parentA: TaskData = {
   id: 9,
@@ -129,6 +133,54 @@ describe('TaskParentPicker', () => {
         page: 1,
       });
     });
+    jest.useRealTimers();
+  });
+
+  it('shows inline error when moveSubtask returns hierarchy cycle 422', async () => {
+    jest.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    const onUpdated = jest.fn();
+    mockedMoveSubtask.mockRejectedValue({
+      response: {
+        status: 422,
+        data: {
+          detail: CYCLE_MESSAGE,
+          code: 'task_hierarchy_cycle',
+        },
+      },
+    });
+
+    render(<TaskParentPicker task={subtask} onUpdated={onUpdated} />);
+
+    await user.click(screen.getByRole('combobox', { name: 'Parent task' }));
+    await user.type(screen.getByTestId('task-parent-picker-search'), 'Parent C');
+    jest.advanceTimersByTime(300);
+
+    await waitFor(() => {
+      expect(mockedGetTasks).toHaveBeenCalledWith(
+        expect.objectContaining({ search: 'Parent C' }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /Parent C/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('option', { name: /Parent C/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('task-parent-picker-error')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('task-parent-picker-error')).toHaveTextContent(
+      'circular task hierarchy',
+    );
+    expect(screen.getByRole('combobox', { name: 'Parent task' })).toHaveTextContent(
+      'Final Campaign Performance Summary',
+    );
+    expect(mockedMoveSubtask).toHaveBeenCalledWith(10, 6, { old_parent_id: 9 });
+    expect(onUpdated).not.toHaveBeenCalled();
+
     jest.useRealTimers();
   });
 });
