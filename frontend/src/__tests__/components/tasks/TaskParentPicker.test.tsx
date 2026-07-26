@@ -76,9 +76,9 @@ describe('parent candidate helpers', () => {
   });
 
   it('taskSummaryMatchesSearch matches title and numeric id', () => {
-    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset' }, 'A')).toBe(true);
-    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset' }, '9')).toBe(true);
-    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset' }, 'B')).toBe(false);
+    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset', project_id: 1 }, 'A')).toBe(true);
+    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset', project_id: 1 }, '9')).toBe(true);
+    expect(taskSummaryMatchesSearch({ id: 9, summary: 'A', type: 'asset', project_id: 1 }, 'B')).toBe(false);
   });
 });
 
