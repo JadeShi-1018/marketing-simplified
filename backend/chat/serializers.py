@@ -1337,11 +1337,22 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         default=list,
         help_text="User IDs mentioned in this message."
     )
+    client_message_id = serializers.CharField(
+        required=False,
+        write_only=True,
+        allow_blank=True,
+        allow_null=True,
+        max_length=64,
+        help_text="Client-generated idempotency key for retried sends.",
+    )
     attachments = MessageAttachmentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Message
-        fields = ['id', 'chat', 'content', 'rich_body', 'mention_ids', 'attachment_ids', 'reply_to_id', 'parent_message_id', 'attachments', 'created_at']
+        fields = [
+            'id', 'chat', 'content', 'rich_body', 'mention_ids', 'attachment_ids',
+            'reply_to_id', 'parent_message_id', 'client_message_id', 'attachments', 'created_at',
+        ]
         read_only_fields = ['id', 'attachments', 'created_at']
 
     def validate_content(self, value):
@@ -1439,61 +1450,35 @@ class MessageCreateWithAttachmentsSerializer(ChatParticipantValidationMixin, ser
         return value
 
     def create(self, validated_data):
-        # Set sender from request context
+        from .services import MessageService
+
         request = self.context.get('request')
-        validated_data['sender'] = request.user
+        sender = request.user
+        chat = validated_data['chat']
 
-        # Handle reply_to_id (quote reply)
         reply_to_id = validated_data.pop('reply_to_id', None)
-        if reply_to_id:
-            validated_data['reply_to_id'] = reply_to_id
-
-        # Handle parent_message_id (thread reply)
         parent_message_id = validated_data.pop('parent_message_id', None)
-        if parent_message_id:
-            validated_data['parent_message_id'] = parent_message_id
-
         attachment_ids = validated_data.pop('attachment_ids', [])
         mention_ids = validated_data.pop('mention_ids', [])
-        message = super().create(validated_data)
+        client_message_id = validated_data.pop('client_message_id', None) or None
+        if client_message_id == '':
+            client_message_id = None
 
-        # Persist mention relations
-        if mention_ids:
-            MessageMention.objects.bulk_create(
-                [MessageMention(message=message, mentioned_user_id=uid) for uid in mention_ids],
-                ignore_conflicts=True,
-            )
-        
-        # Link attachments to the message
-        if attachment_ids:
-            linked_count = MessageAttachment.objects.filter(
-                id__in=attachment_ids,
-                uploader=request.user,
-                message__isnull=True
-            ).update(message=message)
-            if linked_count > 0 and not message.has_attachments:
-                message.has_attachments = True
-                message.save(update_fields=['has_attachments', 'updated_at'])
+        content = validated_data.get('content', '')
+        rich_body = validated_data.get('rich_body')
 
-        # Route to Agent Bot if it is a participant in this chat
-        try:
-            AGENT_BOT_EMAIL = 'agent-bot@system.local'
-            sender = request.user
-            if sender.email != AGENT_BOT_EMAIL:
-                from .models import ChatParticipant
-                bot_participant = ChatParticipant.objects.filter(
-                    chat=message.chat,
-                    user__email=AGENT_BOT_EMAIL,
-                    is_active=True,
-                ).first()
-                if bot_participant:
-                    from agent.tasks import handle_chat_message_for_agent
-                    handle_chat_message_for_agent.delay(message.id)
-        except Exception:
-            logger.exception(
-                "Failed to route message to agent bot for message %s", message.id
-            )
-
+        message, created = MessageService.create_message_with_attachments(
+            sender=sender,
+            chat=chat,
+            content=content,
+            attachment_ids=attachment_ids,
+            mention_ids=mention_ids,
+            rich_body=rich_body,
+            reply_to_id=reply_to_id,
+            parent_message_id=parent_message_id,
+            client_message_id=client_message_id,
+        )
+        self._message_created = created
         return message
 
 

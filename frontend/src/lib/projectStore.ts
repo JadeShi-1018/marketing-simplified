@@ -27,6 +27,29 @@ interface ProjectState {
   clearProjects: () => void;
 }
 
+const ACTIVE_PROJECT_COOKIE_NAME = 'active-project';
+const PROJECT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
+const writeActiveProjectCookie = (project: ProjectData | null) => {
+  if (typeof document === 'undefined') return;
+
+  if (!project) {
+    document.cookie = `${encodeURIComponent(ACTIVE_PROJECT_COOKIE_NAME)}=; Max-Age=0; Path=/; SameSite=Lax`;
+    return;
+  }
+
+  document.cookie = `${encodeURIComponent(ACTIVE_PROJECT_COOKIE_NAME)}=${encodeURIComponent(
+    JSON.stringify({
+      id: project.id,
+      slug: project.slug,
+      name: project.name,
+      organization: project.organization,
+      total_monthly_budget: project.total_monthly_budget,
+      is_active: project.is_active,
+    })
+  )}; Max-Age=${PROJECT_COOKIE_MAX_AGE_SECONDS}; Path=/; SameSite=Lax`;
+};
+
+
 export const useProjectStore = create<ProjectState>()(
   persist(
     (set) => ({
@@ -39,7 +62,8 @@ export const useProjectStore = create<ProjectState>()(
       loading: false,
       error: null,
       setProjects: (projects) => set({ projects }),
-      setActiveProject: (activeProject) =>
+      setActiveProject: (activeProject) => {
+        writeActiveProjectCookie(activeProject);
         set((state) => ({
           activeProject,
           activeProjectIds: activeProject?.id
@@ -48,7 +72,8 @@ export const useProjectStore = create<ProjectState>()(
           inactiveProjectIds: activeProject?.id
             ? state.inactiveProjectIds.filter((id) => id !== activeProject.id)
             : state.inactiveProjectIds,
-        })),
+        }));
+      },
       setActiveProjectIds: (ids) =>
         set((state) => {
           const resolvedIds = typeof ids === 'function' ? ids(state.activeProjectIds) : ids;
@@ -99,7 +124,8 @@ export const useProjectStore = create<ProjectState>()(
       setHasHydrated: (hasHydrated) => set({ hasHydrated }),
       setLoading: (loading) => set({ loading }),
       setError: (error) => set({ error }),
-      clearProjects: () =>
+      clearProjects: () => {
+        writeActiveProjectCookie(null);
         set({
           projects: [],
           activeProject: null,
@@ -109,12 +135,45 @@ export const useProjectStore = create<ProjectState>()(
           hasHydrated: true,
           loading: false,
           error: null,
-        }),
+        });
+      },
     }),
     {
-      name: 'project-storage',
+      name: 'project-storage-v1',
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
+        // One-time migration from old key. Idempotent: skipped if new key already
+        // exists. Old key is left in place; follow-up cleanup ticket removes it.
+        if (typeof window === 'undefined') return;
+        // Guard: skip if new key already has real project data.
+        try {
+          const newRaw = window.localStorage.getItem('project-storage-v1');
+          if (newRaw) {
+            const newParsed = JSON.parse(newRaw);
+            const s = newParsed?.state;
+            if (
+              s?.activeProject !== undefined ||
+              (s?.activeProjectIds?.length ?? 0) > 0 ||
+              (s?.completedProjectIds?.length ?? 0) > 0 ||
+              (s?.inactiveProjectIds?.length ?? 0) > 0
+            ) return;
+          }
+        } catch { /* malformed new key — fall through to migration */ }
+        try {
+          const raw = window.localStorage.getItem('project-storage');
+          if (!raw) return;
+          const parsed = JSON.parse(raw);
+          const old = parsed?.state;
+          if (!old) return;
+          useProjectStore.setState({
+            activeProject: old.activeProject ?? null,
+            activeProjectIds: old.activeProjectIds ?? [],
+            inactiveProjectIds: old.inactiveProjectIds ?? [],
+            completedProjectIds: old.completedProjectIds ?? [],
+          });
+        } catch (e) {
+          console.warn('[projectStore migration] Failed to migrate legacy persist key:', e);
+        }
       },
       partialize: (state) => ({
         activeProject: state.activeProject,

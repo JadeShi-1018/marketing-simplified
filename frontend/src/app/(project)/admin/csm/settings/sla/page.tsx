@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { AlertCircle, Save, Info } from 'lucide-react';
-import { SLAPolicyAPI } from '@/lib/api/csmApi';
-import type { SLAPolicy, SLAPriorityTarget, TicketPriority } from '@/types/csm';
+import { SLAPolicyAPI, BusinessHoursCalendarAPI } from '@/lib/api/csmApi';
+import type { SLAPolicy, SLAPriorityTarget, TicketPriority, BusinessHoursCalendar } from '@/types/csm';
 import CsmSettingsPageRoot, { CsmSettingsProjectGuard } from '@/components/csm-settings/CsmSettingsPageRoot';
 import { useProjectIdFromUrl } from '@/components/csm-settings/useProjectIdFromUrl';
 import { CsmPriorityBadge } from '@/components/csm/CsmPriorityBadge';
@@ -77,6 +77,11 @@ export default function SLAPolicySettingsPage() {
   const [policy, setPolicy]   = useState<SLAPolicy | null>(null);
   const [rows, setRows]       = useState<RowDraft[]>([]);
   const [isActive, setIsActive] = useState(true);
+  const [calendars, setCalendars] = useState<BusinessHoursCalendar[]>([]);
+  const [calendarId, setCalendarId] = useState<number | null>(null);
+  const [pauseOnPending, setPauseOnPending] = useState(true);
+  const [savingCalendar, setSavingCalendar] = useState(false);
+  const [savingPause, setSavingPause] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState<string | null>(null);
@@ -90,9 +95,15 @@ export default function SLAPolicySettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await SLAPolicyAPI.get(projectId);
+      const [data, cals] = await Promise.all([
+        SLAPolicyAPI.get(projectId),
+        BusinessHoursCalendarAPI.list(projectId),
+      ]);
       setPolicy(data);
       setIsActive(data.is_active);
+      setCalendars(cals);
+      setCalendarId(data.calendar);
+      setPauseOnPending(data.pause_on_pending);
       setRows(toRows(data.priority_targets));
       setDirty(false);
       setRowErrors({ critical: null, high: null, medium: null, low: null });
@@ -147,6 +158,38 @@ export default function SLAPolicySettingsPage() {
       toast.error('Failed to update SLA status.');
     } finally {
       setTogglingActive(false);
+    }
+  };
+
+  const handleCalendarChange = async (nextId: number | null) => {
+    if (!policy || savingCalendar) return;
+    const prev = calendarId;
+    setCalendarId(nextId);
+    setSavingCalendar(true);
+    try {
+      await SLAPolicyAPI.update(policy.id, { calendar: nextId });
+      toast.success(nextId === null ? 'Countdown now uses wall-clock time.' : 'Business hours calendar applied.');
+    } catch {
+      setCalendarId(prev);
+      toast.error('Failed to update calendar.');
+    } finally {
+      setSavingCalendar(false);
+    }
+  };
+
+  const handleTogglePause = async () => {
+    if (!policy || savingPause) return;
+    const next = !pauseOnPending;
+    setPauseOnPending(next);
+    setSavingPause(true);
+    try {
+      await SLAPolicyAPI.update(policy.id, { pause_on_pending: next });
+      toast.success(`SLA clock will ${next ? 'pause' : 'keep running'} while awaiting the customer.`);
+    } catch {
+      setPauseOnPending(!next);
+      toast.error('Failed to update pause behaviour.');
+    } finally {
+      setSavingPause(false);
     }
   };
 
@@ -225,6 +268,47 @@ export default function SLAPolicySettingsPage() {
             {!isActive && (
               <p className="text-xs text-gray-400">SLA deadlines will not be calculated for new tickets.</p>
             )}
+          </div>
+
+          {/* Business hours + pause behaviour */}
+          <div className="flex flex-col gap-4 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4">
+            <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-4">
+              <div className="sm:w-56">
+                <p className="text-sm font-medium text-gray-600">Business hours</p>
+                <p className="text-xs text-gray-400">Countdowns run only during open hours. None = 24/7 wall-clock.</p>
+              </div>
+              <select
+                value={calendarId ?? ''}
+                onChange={(e) => handleCalendarChange(e.target.value === '' ? null : Number(e.target.value))}
+                disabled={savingCalendar}
+                className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100 disabled:opacity-60"
+              >
+                <option value="">No calendar (24/7)</option>
+                {calendars.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} ({c.timezone})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-4 border-t border-gray-200 pt-4">
+              <div className="flex-1">
+                <p className="text-sm font-medium text-gray-600">Pause while awaiting customer</p>
+                <p className="text-xs text-gray-400">Stop the clock when a ticket is in Pending Customer Response.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleTogglePause}
+                disabled={savingPause}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-60 disabled:cursor-wait ${
+                  pauseOnPending
+                    ? 'border-green-200 bg-green-50 text-green-700 hover:bg-green-100'
+                    : 'border-gray-200 bg-white text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                <span className={`h-2 w-2 rounded-full ${pauseOnPending ? 'bg-green-500' : 'bg-gray-400'}`} />
+                {savingPause ? 'Saving…' : pauseOnPending ? 'On' : 'Off'}
+              </button>
+            </div>
           </div>
 
           {/* Targets table */}

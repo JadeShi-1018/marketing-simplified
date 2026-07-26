@@ -7,7 +7,7 @@ import { TicketAPI } from '@/lib/api/csmConversationApi';
 import type { Ticket } from '@/types/csmConversation';
 import CsmSettingsDrawerShell from '@/components/csm-settings/CsmSettingsDrawerShell';
 import { CsmPriorityBadge } from '@/components/csm/CsmPriorityBadge';
-import { SlaCountdown } from './SlaCountdown';
+import { SlaDetail } from './SlaCountdown';
 
 interface Props {
   ticket: Ticket | null;
@@ -30,7 +30,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 export default function TicketDetailDrawer({
-  ticket,
+  ticket: ticketProp,
   open,
   onClose,
   onUpdated,
@@ -40,19 +40,31 @@ export default function TicketDetailDrawer({
   const [now, setNow] = useState(() => Date.now());
   const [desc, setDesc] = useState('');
   const [savingDesc, setSavingDesc] = useState(false);
+  // Render from a locally-refreshed copy so the drawer's SLA and status stay
+  // current even when the list snapshot that opened it has gone stale (e.g. the
+  // SLA policy was toggled on another page).
+  const [live, setLive] = useState<Ticket | null>(ticketProp);
+  const ticket = live;
 
-  // Keep the SLA countdown fresh while the drawer is open.
+  // Adopt whatever the parent passes, then keep it fresh from the server while
+  // the drawer is open, including a periodic refresh that also drives the tick.
+  useEffect(() => { setLive(ticketProp); }, [ticketProp]);
   useEffect(() => {
-    if (!open) return;
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, [open]);
+    if (!open || !ticketProp) return;
+    let cancelled = false;
+    const refresh = () => {
+      TicketAPI.get(ticketProp.id).then((t) => { if (!cancelled) setLive(t); }).catch(() => {});
+    };
+    refresh();
+    const id = setInterval(() => { setNow(Date.now()); refresh(); }, 30_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [open, ticketProp?.id]);
 
-  // Reset the editable description when the drawer switches tickets or the
-  // ticket's saved description changes.
+  // Reset the editable description only when switching to a different ticket, so
+  // a background refresh doesn't clobber an in-progress edit.
   useEffect(() => {
     setDesc(ticket?.description ?? '');
-  }, [ticket?.id, ticket?.description]);
+  }, [ticket?.id]);
 
   if (!ticket) return null;
 
@@ -61,6 +73,7 @@ export default function TicketDetailDrawer({
     setUpdating(true);
     try {
       const updated = await TicketAPI.update(ticket.id, { status: newStatus });
+      setLive(updated);
       onUpdated(updated);
       toast.success(`Ticket #${ticket.id} marked as ${updated.status_display}`);
     } catch {
@@ -74,6 +87,7 @@ export default function TicketDetailDrawer({
     setSavingDesc(true);
     try {
       const updated = await TicketAPI.update(ticket.id, { description: desc });
+      setLive(updated);
       onUpdated(updated);
       toast.success('Description saved.');
     } catch {
@@ -136,7 +150,7 @@ export default function TicketDetailDrawer({
             </Row>
 
             <Row label="SLA">
-              <SlaCountdown ticket={ticket} now={now} />
+              <SlaDetail ticket={ticket} now={now} />
             </Row>
 
             <Row label="Queue">{ticket.queue_name ?? '—'}</Row>

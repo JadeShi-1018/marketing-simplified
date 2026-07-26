@@ -47,6 +47,9 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
     try {
       const data = await TicketAPI.myTickets('priority');
       setTickets(data);
+      // Keep an open detail drawer in sync with the refreshed list so its SLA
+      // (and other fields) don't stay on a stale snapshot after config changes.
+      setDetailTicket((cur) => (cur ? data.find((t) => t.id === cur.id) ?? cur : cur));
     } catch {
       setTickets([]);
     } finally {
@@ -137,6 +140,11 @@ export function MyTicketsPanel({ refreshKey }: MyTicketsPanelProps) {
                       </p>
                       {ticket.queue_name && (
                         <span className="text-[10px] text-gray-400 truncate">{ticket.queue_name}</span>
+                      )}
+                      {ticket.conversation != null && (
+                        <span className="text-[10px] text-blue-400 truncate">
+                          Conversation #{ticket.conversation}
+                        </span>
                       )}
                     </div>
                     <button

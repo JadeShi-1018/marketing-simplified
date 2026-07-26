@@ -16,7 +16,7 @@ import { navigateToTasksAndSelectProject, waitForTasksPageReady, deleteTaskById 
 async function getToken(page: Page): Promise<string | null> {
   return page.evaluate(() => {
     try {
-      const raw = localStorage.getItem('auth-storage');
+      const raw = localStorage.getItem('auth-storage-v1');
       return raw ? (JSON.parse(raw) as any)?.state?.token ?? null : null;
     } catch {
       return null;

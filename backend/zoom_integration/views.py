@@ -6,8 +6,6 @@ from django.conf import settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
-from django.core import signing
-from django.utils.crypto import get_random_string
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -15,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from meetings.models import Meeting
 from meetings.views import _ensure_project_membership
+from core.services.oauth_state import OAuthStateExpired, OAuthStateInvalid, create_oauth_state, validate_oauth_state
 
 from .services import (
     get_authorization_url,
@@ -54,9 +53,10 @@ ZOOM_OAUTH_STATE_MAX_AGE_SECONDS = 600
 
 def _build_zoom_oauth_state(user) -> str:
     """Signed OAuth state: binds Zoom callback to a user without relying on session cookies."""
-    return signing.dumps(
-        {"user_id": user.id, "nonce": get_random_string(16)},
-        salt=ZOOM_OAUTH_STATE_SALT,
+    return create_oauth_state(
+        flow=ZOOM_OAUTH_STATE_SALT,
+        payload={"user_id": user.id},
+        ttl_seconds=ZOOM_OAUTH_STATE_MAX_AGE_SECONDS,
     )
 
 
@@ -90,14 +90,14 @@ class ZoomCallbackView(APIView):
             return redirect(f"{settings.FRONTEND_URL}/integrations?zoom_error=invalid_state")
 
         try:
-            payload = signing.loads(
+            payload = validate_oauth_state(
                 state,
-                salt=ZOOM_OAUTH_STATE_SALT,
-                max_age=ZOOM_OAUTH_STATE_MAX_AGE_SECONDS,
+                expected_flow=ZOOM_OAUTH_STATE_SALT,
+                ttl_seconds=ZOOM_OAUTH_STATE_MAX_AGE_SECONDS,
             )
-        except signing.SignatureExpired:
+        except OAuthStateExpired:
             return redirect(f"{settings.FRONTEND_URL}/integrations?zoom_error=state_expired")
-        except signing.BadSignature:
+        except OAuthStateInvalid:
             return redirect(f"{settings.FRONTEND_URL}/integrations?zoom_error=invalid_state")
 
         user_id = payload.get("user_id")

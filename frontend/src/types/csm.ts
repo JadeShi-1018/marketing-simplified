@@ -157,6 +157,8 @@ export interface SlaStatus {
   resolution_due: string | null;
   first_response_breached: boolean;
   resolution_breached: boolean;
+  first_response_met: boolean;
+  clock_running: boolean;
   first_response_remaining_seconds: number | null;
   resolution_remaining_seconds: number | null;
 }
@@ -173,6 +175,9 @@ export interface SLAPolicy {
   project: number;
   name: string;
   is_active: boolean;
+  is_default: boolean;
+  calendar: number | null;
+  pause_on_pending: boolean;
   priority_targets: SLAPriorityTarget[];
   created_at: string;
   updated_at: string;
@@ -181,11 +186,41 @@ export interface SLAPolicy {
 export interface UpdateSLAPolicyData {
   name?: string;
   is_active?: boolean;
+  calendar?: number | null;
+  pause_on_pending?: boolean;
   priority_targets?: Array<{
     priority: TicketPriority;
     first_response_minutes: number;
     resolution_minutes: number;
   }>;
+}
+
+export type Weekday =
+  | 'monday' | 'tuesday' | 'wednesday' | 'thursday'
+  | 'friday' | 'saturday' | 'sunday';
+
+export interface DaySchedule {
+  enabled: boolean;
+  start?: string; // 'HH:MM'
+  end?: string;   // 'HH:MM'
+}
+
+export type WeekSchedule = Record<Weekday, DaySchedule>;
+
+export interface BusinessHoursCalendar {
+  id: number;
+  project: number;
+  name: string;
+  timezone: string;
+  schedule: WeekSchedule;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SaveBusinessHoursCalendarData {
+  name: string;
+  timezone: string;
+  schedule: WeekSchedule;
 }
 
 export interface Ticket {

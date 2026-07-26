@@ -1,14 +1,16 @@
 import logging
 import asyncio
+from datetime import timedelta
 from typing import Any, Dict, Optional
 from celery import shared_task
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage
+from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage, MessageAttachment
 from .services import ChatService, OnlineStatusService
 from .url_helpers import build_messages_action_url
 
@@ -244,6 +246,53 @@ def cleanup_old_online_status():
         
     except Exception as e:
         logger.error(f"Error cleaning up online status: {e}")
+
+
+# How long an unlinked (message=None) attachment may live before it is treated
+# as abandoned and swept. Must stay comfortably LONGER than the client outbox
+# retention window: a message can sit in the offline outbox for a long time
+# before a successful send links its attachments, and we must never delete an
+# attachment for a message the user is still going to send. Overridable via
+# settings for environments that keep the outbox around longer.
+ORPHAN_ATTACHMENT_TTL_HOURS = getattr(settings, 'CHAT_ORPHAN_ATTACHMENT_TTL_HOURS', 48)
+
+
+@shared_task
+def cleanup_orphaned_attachments() -> int:
+    """Delete abandoned attachment uploads that were never linked to a message.
+
+    Attachments use a two-phase upload: the file is uploaded first (row created
+    with message=None) and linked to a Message only when the user actually sends
+    it. If the send never happens — cancelled draft, failed validation, spam
+    rejection, abandoned outbox entry — the row stays orphaned with message=None
+    and its file lingers in storage forever. This periodic sweep removes those
+    orphans once they are older than ORPHAN_ATTACHMENT_TTL_HOURS.
+
+    Returns the number of attachments deleted (used by tests and logging).
+    """
+    cutoff = timezone.now() - timedelta(hours=ORPHAN_ATTACHMENT_TTL_HOURS)
+    orphans = MessageAttachment.objects.filter(
+        message__isnull=True,
+        created_at__lt=cutoff,
+    )
+
+    deleted = 0
+    # .iterator() streams rows so a large backlog is not all loaded at once.
+    for attachment in orphans.iterator():
+        try:
+            # Delete the stored file FIRST, then the DB row. In this order a
+            # mid-way failure leaves a still-tracked row we retry next run,
+            # never a DB-less file we can no longer locate.
+            if attachment.file:
+                attachment.file.delete(save=False)
+            attachment.delete()
+            deleted += 1
+        except Exception as e:
+            # Isolate per-item failures so one bad file cannot abort the sweep.
+            logger.error("Failed to delete orphaned attachment %s: %s", attachment.id, e)
+
+    logger.info("cleanup_orphaned_attachments: deleted %s orphaned attachment(s)", deleted)
+    return deleted
 
 
 @shared_task

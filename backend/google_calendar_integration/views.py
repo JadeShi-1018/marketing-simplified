@@ -6,15 +6,14 @@ from urllib.parse import urlparse, urlunparse
 import requests
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core import signing
 from django.db import transaction
 from django.shortcuts import redirect
-from django.utils.crypto import get_random_string
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import GoogleCalendarConnection
+from core.services.oauth_state import OAuthStateExpired, OAuthStateInvalid, create_oauth_state, validate_oauth_state
 from .serializers import GoogleCalendarConnectSerializer, GoogleCalendarStatusSerializer
 from .services import (
     build_google_calendar_auth_url,
@@ -49,9 +48,10 @@ def _frontend_origin() -> str:
 
 
 def _build_oauth_state(user) -> str:
-    return signing.dumps(
-        {"user_id": user.id, "nonce": get_random_string(16)},
-        salt=GOOGLE_CALENDAR_STATE_SALT,
+    return create_oauth_state(
+        flow=GOOGLE_CALENDAR_STATE_SALT,
+        payload={"user_id": user.id},
+        ttl_seconds=GOOGLE_CALENDAR_STATE_MAX_AGE_SECONDS,
     )
 
 
@@ -120,14 +120,14 @@ class GoogleCalendarCallbackView(APIView):
             return redirect(f"{_frontend_origin()}/integrations?google_calendar_error=missing_code")
 
         try:
-            payload = signing.loads(
+            payload = validate_oauth_state(
                 state,
-                salt=GOOGLE_CALENDAR_STATE_SALT,
-                max_age=GOOGLE_CALENDAR_STATE_MAX_AGE_SECONDS,
+                expected_flow=GOOGLE_CALENDAR_STATE_SALT,
+                ttl_seconds=GOOGLE_CALENDAR_STATE_MAX_AGE_SECONDS,
             )
-        except signing.SignatureExpired:
+        except OAuthStateExpired:
             return redirect(f"{_frontend_origin()}/integrations?google_calendar_error=state_expired")
-        except signing.BadSignature:
+        except OAuthStateInvalid:
             return redirect(f"{_frontend_origin()}/integrations?google_calendar_error=invalid_state")
 
         user_id = payload.get("user_id")

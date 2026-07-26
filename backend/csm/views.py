@@ -22,7 +22,7 @@ from .models import (
     Conversation, ConversationMessage, QuickReplyTemplate, QuickReplyTemplateHistory,
     TemplateTag,
     TicketForm, TicketFormAssignment, SupportProject, CsmWorkType,
-    SupportChannel, SLAPolicy, SLAPriorityTarget,
+    SupportChannel, SLAPolicy, SLAPriorityTarget, BusinessHoursCalendar,
 )
 from .serializers import (
     QueueSerializer, QueueAgentSerializer,
@@ -42,6 +42,7 @@ from .serializers import (
     CsmWorkTypeSerializer,
     WorkTypeReorderSerializer,
     SLAPolicySerializer,
+    BusinessHoursCalendarSerializer,
     SupportChannelListSerializer,
     SupportChannelDetailSerializer,
     SupportChannelCreateUpdateSerializer,
@@ -88,6 +89,20 @@ from .services.support_channels import (
 
 def _raise_drf_validation(exc):
     raise ValidationError(exc.message_dict if hasattr(exc, 'message_dict') else exc.messages)
+
+
+SUPPORTED_MESSAGE_IMAGE_TYPES = {
+    'image/png', 'image/jpeg', 'image/gif', 'image/webp',
+    'image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence',
+}
+SUPPORTED_MESSAGE_IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'heic', 'heif'}
+MAX_MESSAGE_IMAGE_BYTES = 10 * 1024 * 1024
+
+
+def _is_supported_message_image(image):
+    content_type = (getattr(image, 'content_type', '') or '').lower()
+    extension = image.name.rsplit('.', 1)[-1].lower() if '.' in image.name else ''
+    return content_type in SUPPORTED_MESSAGE_IMAGE_TYPES or extension in SUPPORTED_MESSAGE_IMAGE_EXTENSIONS
 
 
 class QueueViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
@@ -297,6 +312,38 @@ class CustomerUserViewSet(viewsets.ModelViewSet):
 
 
 
+def _send_ticket_confirmation(conversation):
+    """
+    AC5: notify the customer with the channel's configured confirmation message
+    after a ticket is created from their conversation. No-op when the conversation's
+    support channel has no confirmation message configured.
+    """
+    channel = conversation.support_channel
+    message_text = (channel.ticket_confirmation_message or '').strip() if channel else ''
+    if not message_text:
+        return None
+
+    msg = ConversationMessage.objects.create(
+        conversation=conversation,
+        sender_type='system',
+        content=message_text,
+    )
+
+    channel_layer = get_channel_layer()
+    # Agent side: appears in the workspace thread.
+    async_to_sync(channel_layer.group_send)(
+        f'csm_conversation_{conversation.id}',
+        {'type': 'conversation.message', 'message': ConversationMessageSerializer(msg).data},
+    )
+    # Customer side: delivered to the customer portal in real time.
+    from portal.serializers import PortalMessageSerializer
+    async_to_sync(channel_layer.group_send)(
+        f'portal_conversation_{conversation.id}',
+        {'type': 'conversation.message', 'message': PortalMessageSerializer(msg).data},
+    )
+    return msg
+
+
 class ConversationPagination(PageNumberPagination):
     page_size = 50
     page_size_query_param = 'page_size'
@@ -318,31 +365,53 @@ class ConversationViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'patch', 'head', 'options']
     pagination_class = ConversationPagination
 
+    def _accessible_queues(self):
+        user = self.request.user
+        qs = Queue.objects.filter(is_active=True)
+        if user.is_staff or user.is_superuser:
+            return qs
+
+        admin_org_ids = CustomerUser.objects.filter(
+            user=user,
+            is_active=True,
+            user_type__in=('supervisor', 'admin'),
+            organisation__isnull=False,
+        ).values_list('organisation_id', flat=True)
+        agent_queue_ids = QueueAgent.objects.filter(user=user).values_list('queue_id', flat=True)
+        profile_queue_ids = CustomerUser.objects.filter(
+            user=user,
+            is_active=True,
+            queue__isnull=False,
+        ).values_list('queue_id', flat=True)
+
+        return qs.filter(
+            Q(organisation_id__in=admin_org_ids)
+            | Q(id__in=agent_queue_ids)
+            | Q(id__in=profile_queue_ids)
+        ).distinct()
+
     def get_queryset(self):
         user = self.request.user
-        base_qs = Conversation.objects.select_related('customer', 'queue', 'assigned_to__user')
+        base_qs = Conversation.objects.select_related('customer', 'queue', 'assigned_to__user').prefetch_related('tickets')
 
         # Permission-based filtering
         if user.is_staff or user.is_superuser:
             qs = base_qs.all()
         else:
-            admin_org_ids = CustomerUser.objects.filter(
-                user=user, is_active=True, user_type__in=('supervisor', 'admin')
-            ).values_list('organisation_id', flat=True)
-
-            if admin_org_ids:
-                org_queue_ids = Queue.objects.filter(
-                    organisation_id__in=admin_org_ids,
-                ).values_list('id', flat=True)
-                qs = base_qs.filter(Q(queue_id__in=org_queue_ids) | Q(queue__isnull=True))
-            else:
-                agent_queue_ids = QueueAgent.objects.filter(user=user).values_list('queue_id', flat=True)
-                qs = base_qs.filter(Q(queue_id__in=agent_queue_ids) | Q(queue__isnull=True))
+            accessible_queue_ids = self._accessible_queues().values_list('id', flat=True)
+            qs = base_qs.filter(queue_id__in=accessible_queue_ids)
 
         # Optional queue filter from query params
         queue_id = self.request.query_params.get('queue')
         if queue_id:
             qs = qs.filter(queue_id=queue_id)
+
+        # Status filter — defaults to active+pending for the agent inbox
+        status = self.request.query_params.get('status')
+        if status:
+            qs = qs.filter(status=status)
+        elif self.action == 'list':
+            qs = qs.filter(status__in=['active', 'pending'])
 
         return qs
 
@@ -357,6 +426,69 @@ class ConversationViewSet(viewsets.ModelViewSet):
         instance._prefetched_objects_cache = {}
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'])
+    def available_queues(self, request):
+        """
+        GET /conversations/available_queues/
+        Queues the current agent can see/use in the conversation workspace.
+        """
+        qs = self._accessible_queues().select_related('organisation')
+        org_id = request.query_params.get('organisation')
+        if org_id:
+            qs = qs.filter(organisation_id=org_id)
+        return Response(QueueSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['get'])
+    def assignable_agents(self, request, pk=None):
+        """
+        GET /conversations/{id}/assignable_agents/
+        List active CSM users in the conversation's organisation that this
+        conversation can be reassigned to. Each entry's ``id`` is the CustomerUser
+        id used for ``assigned_to``. Visible to any agent who can see the
+        conversation (get_object enforces queue-based visibility).
+        """
+        conversation = self.get_object()
+        if not conversation.queue_id:
+            return Response([])
+
+        queue_agent_user_ids = set(
+            QueueAgent.objects.filter(queue=conversation.queue)
+            .values_list('user_id', flat=True)
+        )
+        qs = CustomerUser.objects.filter(
+            organisation_id=conversation.queue.organisation_id,
+            is_active=True,
+            user_type__in=('agent', 'supervisor', 'admin'),
+        ).select_related('user')
+
+        # A user may have multiple CustomerUser rows (one per queue). Keep one per
+        # person, preferring the profile scoped to this conversation's queue.
+        best = {}
+        for cu in qs:
+            if (
+                cu.user_type == 'agent'
+                and cu.queue_id != conversation.queue_id
+                and cu.user_id not in queue_agent_user_ids
+            ):
+                continue
+            current = best.get(cu.user_id)
+            if current is None or (
+                cu.queue_id == conversation.queue_id
+                and current.queue_id != conversation.queue_id
+            ):
+                best[cu.user_id] = cu
+
+        agents = []
+        for cu in best.values():
+            full = cu.user.get_full_name()
+            agents.append({
+                'id': cu.id,
+                'name': full if full.strip() else cu.user.email,
+                'email': cu.user.email,
+            })
+        agents.sort(key=lambda a: a['name'].lower())
+        return Response(agents)
 
     @action(detail=True, methods=['post'])
     def claim(self, request, pk=None):
@@ -434,6 +566,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
             {'type': 'conversation.updated', 'conversation': ConversationSerializer(conversation).data},
         )
 
+        # AC5: deliver the channel's configured confirmation message to the customer.
+        _send_ticket_confirmation(conversation)
+
         return Response(TicketSerializer(ticket).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -444,10 +579,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         image = request.FILES.get('image')
         if image:
-            if not image.content_type.startswith('image/'):
-                return Response({'detail': 'File must be an image.'}, status=status.HTTP_400_BAD_REQUEST)
-            if image.size > 5 * 1024 * 1024:
-                return Response({'detail': 'Image must be under 5MB.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not _is_supported_message_image(image):
+                return Response(
+                    {'detail': 'Only PNG, JPG, GIF, WebP, or HEIC images can be attached.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if image.size > MAX_MESSAGE_IMAGE_BYTES:
+                return Response({'detail': 'Image must be under 10MB.'}, status=status.HTTP_400_BAD_REQUEST)
         msg = ConversationMessage.objects.create(
             conversation=conversation,
             sender_type='agent',
@@ -455,6 +593,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
             content=request.data.get('content', ''),
             rich_body=request.data.get('rich_body') if not image else None,
             image=image,
+        )
+
+        # The agent's first reply meets the first-response SLA, stopping that leg
+        # of the countdown for any ticket on this conversation.
+        conversation.tickets.filter(first_responded_at__isnull=True).update(
+            first_responded_at=timezone.now(),
         )
 
         payload = ConversationMessageSerializer(msg, context={'request': request}).data
@@ -489,6 +633,14 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation = self.get_object()
         customer = conversation.customer
 
+        # Enforce 1 conversation : 1 ticket (mirrors the claim flow).
+        existing = conversation.tickets.first()
+        if existing:
+            return Response(
+                {'detail': 'This conversation already has a linked ticket.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         title = request.data.get('title', f'Ticket from conversation #{conversation.id}')
         description = request.data.get('description', '')
         priority = request.data.get('priority', 'medium')
@@ -499,12 +651,16 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 {'detail': 'A queue must be selected to create a ticket.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if not self._accessible_queues().filter(id=queue_id).exists():
+            raise PermissionDenied('You cannot create a ticket in that queue.')
 
         ticket = Ticket.objects.create(
             queue_id=queue_id,
             title=title,
             description=description,
             priority=priority,
+            status='in_progress',
+            assigned_to=request.user,
             customer_email=customer.email if customer else '',
             conversation=conversation,
         )
@@ -512,6 +668,11 @@ class ConversationViewSet(viewsets.ModelViewSet):
         recalculate_ticket_sla(ticket)
         if ticket.first_response_due is not None or ticket.resolution_due is not None:
             ticket.save(update_fields=['first_response_due', 'resolution_due'])
+
+        # Ensure the conversation is active (mirrors the claim flow).
+        if conversation.status in ('pending',):
+            Conversation.objects.filter(id=conversation.id).update(status='active')
+            conversation.refresh_from_db()
 
         # Post a system message in the conversation thread
         system_msg = ConversationMessage.objects.create(
@@ -526,6 +687,16 @@ class ConversationViewSet(viewsets.ModelViewSet):
             f'csm_conversation_{conversation.id}',
             {'type': 'conversation.message', 'message': payload},
         )
+        # Broadcast the updated conversation so all agents' lists (and the active
+        # workspace) pick up the newly linked ticket and unlock the composer.
+        conversation.refresh_from_db()
+        async_to_sync(channel_layer.group_send)(
+            'csm_new_conversations',
+            {'type': 'conversation.updated', 'conversation': ConversationSerializer(conversation).data},
+        )
+
+        # AC5: deliver the channel's configured confirmation message to the customer.
+        _send_ticket_confirmation(conversation)
 
         return Response(
             {
@@ -1184,7 +1355,8 @@ class SupportChannelViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
     def _service_kwargs(self, data):
         kwargs = {}
         for key in (
-            'channel_type', 'display_name', 'welcome_message', 'operating_hours',
+            'channel_type', 'display_name', 'welcome_message',
+            'ticket_confirmation_message', 'operating_hours',
             'timezone', 'offline_fallback_message', 'offline_alternative',
             'offline_alternative_target_id', 'email_address', 'sort_order', 'is_active',
         ):
@@ -1300,10 +1472,17 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         """Return (or lazily create) the project's SLA policy."""
         project_id = self.get_required_project_id()
-        policy, created = SLAPolicy.objects.get_or_create(
-            project_id=project_id,
-            defaults={'name': 'Default SLA Policy'},
+        # Prefer the project's default policy; fall back to any existing one,
+        # else lazily create the default so the project always has a fallback.
+        policy = (
+            SLAPolicy.objects.filter(project_id=project_id, is_default=True).first()
+            or SLAPolicy.objects.filter(project_id=project_id).first()
         )
+        created = policy is None
+        if created:
+            policy = SLAPolicy.objects.create(
+                project_id=project_id, name='Default SLA Policy', is_default=True,
+            )
         if created or not policy.priority_targets.exists():
             existing_priorities = set(
                 policy.priority_targets.values_list('priority', flat=True)
@@ -1333,23 +1512,48 @@ class SLAPolicyViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
         instance.refresh_from_db()
         policy_reactivated = not was_active and instance.is_active
 
-        from csm.services.sla import recalculate_ticket_sla_after_policy_change
-        project_id = instance.project_id
-        open_tickets = list(
-            Ticket.objects
-            .filter(queue__project_id=project_id, status__in=('todo', 'in_progress'))
-            .select_related('queue__project')
-        )
-        for ticket in open_tickets:
-            recalculate_ticket_sla_after_policy_change(
-                ticket,
-                old_targets_by_priority,
-                policy_reactivated=policy_reactivated,
+        # Deactivating leaves the stored due dates untouched: get_sla_status reads
+        # them as no-SLA while the policy is inactive, and they resume unchanged
+        # when it is switched back on. Only recompute while the policy is active
+        # (target edits, reactivation) — the anchor is preserved either way.
+        if instance.is_active:
+            from csm.services.sla import recalculate_ticket_sla_after_policy_change
+            project_id = instance.project_id
+            open_tickets = list(
+                Ticket.objects
+                .filter(queue__project_id=project_id, status__in=('todo', 'in_progress'))
+                .select_related('queue__project')
             )
-        if open_tickets:
-            Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
+            for ticket in open_tickets:
+                recalculate_ticket_sla_after_policy_change(
+                    ticket,
+                    old_targets_by_priority,
+                    policy_reactivated=policy_reactivated,
+                )
+            if open_tickets:
+                Ticket.objects.bulk_update(open_tickets, ['first_response_due', 'resolution_due'])
 
         return Response(serializer.data)
+
+
+class BusinessHoursCalendarViewSet(ProjectScopedViewSetMixin, viewsets.ModelViewSet):
+    """Business-hours calendar CRUD.
+
+    List/create require ?project={id}. Deleting a calendar detaches it from any
+    policies (SET_NULL); those policies fall back to wall-clock countdowns.
+    """
+    serializer_class = BusinessHoursCalendarSerializer
+    permission_classes = [IsAuthenticated, IsProjectMember]
+    http_method_names = ['get', 'post', 'patch', 'put', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        if self.action == 'list':
+            project_id = self.get_required_project_id()
+            return BusinessHoursCalendar.objects.filter(project_id=project_id)
+        return self.filter_by_accessible_projects(BusinessHoursCalendar.objects.all())
+
+    def perform_create(self, serializer):
+        serializer.save(project_id=self.get_required_project_id())
 
 
 # --- Status machine admin config ------------------------------------------

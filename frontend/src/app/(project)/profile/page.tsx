@@ -17,19 +17,21 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import PrivacyExportPanel from '@/components/profile/PrivacyExportPanel';
 import useAuth from '@/hooks/useAuth';
 import { useAuthStore } from '@/lib/authStore';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
-import { authAPI } from '@/lib/api';
+import { authAPI, readPersistedAuthState } from '@/lib/api';
 import { Skeleton } from '@/components/ui/skeleton';
 import { OrganizationAPI, OrgListItem } from '@/lib/api/organizationApi';
 
-type SectionKey = 'overview' | 'organization';
+type SectionKey = 'overview' | 'organization' | 'privacy';
 
 const SECTIONS: Array<{ id: SectionKey; label: string }> = [
   { id: 'overview', label: 'Overview' },
   { id: 'organization', label: 'Organization' },
+  { id: 'privacy', label: 'Privacy' },
 ];
 
 const getInitials = (name?: string | null): string => {
@@ -288,12 +290,8 @@ function ProfileContent() {
     if (deleteConfirmText !== 'DELETE MY ACCOUNT') return;
     setIsDeleting(true);
     try {
-      const authStorage = typeof window !== 'undefined' ? localStorage.getItem('auth-storage') : null;
-      let refreshToken = '';
-      if (authStorage) {
-        const parsed = JSON.parse(authStorage) as { state?: { refresh?: string } };
-        refreshToken = parsed.state?.refresh ?? '';
-      }
+      // Note: the persisted field is `refreshToken`, not `refresh` (fixed pre-existing typo)
+      const refreshToken = readPersistedAuthState()?.state?.refreshToken ?? '';
       await authAPI.deleteAccount(refreshToken);
       toast.success('Your account has been deleted.');
       await logout();
@@ -560,6 +558,12 @@ function ProfileContent() {
     );
   };
 
+  const renderActiveSection = () => {
+    if (activeSection === 'overview') return renderOverview();
+    if (activeSection === 'organization') return renderOrganization();
+    return <PrivacyExportPanel />;
+  };
+
   // ── Layout ────────────────────────────────────────────────────────────────
 
   return (
@@ -742,7 +746,7 @@ function ProfileContent() {
                     </nav>
                   </div>
                   <div className="p-6">
-                    {activeSection === 'overview' ? renderOverview() : renderOrganization()}
+                    {renderActiveSection()}
                   </div>
                 </div>
               </div>

@@ -3,8 +3,9 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from unittest.mock import patch
 from core.models import Organization, CustomUser, Project, ProjectMember
+from core.services.oauth_state import create_oauth_state
 from slack_integration.models import SlackWorkspaceConnection
-from slack_integration.views import SLACK_OAUTH_STATE_SALT
+from slack_integration.views import SLACK_OAUTH_STATE_MAX_AGE_SECONDS, SLACK_OAUTH_STATE_SALT
 from django.core.exceptions import ValidationError
 from django.core import signing
 
@@ -111,13 +112,13 @@ class TestSlackOAuth(APITestCase):
             }
         }
         
-        state = signing.dumps(
-            {
+        state = create_oauth_state(
+            flow=SLACK_OAUTH_STATE_SALT,
+            payload={
                 "user_id": self.user.id,
                 "organization_id": self.organization.id,
-                "nonce": "nonce",
             },
-            salt=SLACK_OAUTH_STATE_SALT,
+            ttl_seconds=SLACK_OAUTH_STATE_MAX_AGE_SECONDS,
         )
         url = reverse('slack-oauth-callback')
         data = {'code': 'valid_code', 'state': state}
