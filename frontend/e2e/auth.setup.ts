@@ -31,6 +31,57 @@ setup('authenticate', async ({ page }) => {
     );
   }
 
+  // Login persistence and project discovery complete on separate async paths.
+  // Seed the persisted active project before capturing storageState so suites
+  // that navigate directly to a project-scoped route cannot race hydration.
+  const activeProjectReady = await page.evaluate(async () => {
+    const rawAuth =
+      window.localStorage.getItem('auth-storage-v1') ??
+      window.localStorage.getItem('auth-storage');
+    if (!rawAuth) return false;
+
+    let token: string | undefined;
+    let organizationToken: string | undefined;
+    try {
+      const authState = JSON.parse(rawAuth)?.state;
+      token = authState?.token;
+      organizationToken = authState?.organizationAccessToken;
+    } catch {
+      return false;
+    }
+    if (!token) return false;
+
+    const response = await fetch('/api/core/projects/', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(organizationToken ? { 'X-Organization-Token': organizationToken } : {}),
+      },
+    });
+    if (!response.ok) return false;
+    const body = await response.json();
+    const projects = Array.isArray(body) ? body : body?.results ?? [];
+    const activeProject =
+      projects.find((project: { is_active?: boolean }) => project.is_active) ??
+      projects[0] ??
+      null;
+    if (!activeProject?.id) return false;
+
+    window.localStorage.setItem(
+      'project-storage-v1',
+      JSON.stringify({
+        state: {
+          activeProject,
+          activeProjectIds: [activeProject.id],
+          inactiveProjectIds: [],
+          completedProjectIds: [],
+        },
+        version: 0,
+      }),
+    );
+    return true;
+  });
+  expect(activeProjectReady, 'authentication setup could not resolve an active project').toBe(true);
+
   fs.mkdirSync(AUTH_DIR, { recursive: true });
   await page.context().storageState({ path: AUTH_FILE });
 });

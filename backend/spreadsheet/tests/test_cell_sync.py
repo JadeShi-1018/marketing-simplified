@@ -10,8 +10,10 @@ worker thread, which would flake in CI):
    origin tab's echo (matched by client_id) is suppressed server-side.
 """
 import asyncio
+import time
 import uuid
 from contextlib import suppress
+from types import SimpleNamespace
 
 import pytest
 from channels.db import database_sync_to_async
@@ -20,8 +22,6 @@ from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from rest_framework_simplejwt.tokens import AccessToken
-
 from rest_framework.test import APIClient
 
 from asset.middleware import JWTAuthMiddleware
@@ -30,9 +30,21 @@ from spreadsheet.models import Cell, Sheet, Spreadsheet
 from spreadsheet.routing import websocket_urlpatterns
 from spreadsheet.services import (
     CellService,
+    broadcast_cells_updated,
     broadcast_sheet_refresh,
     sheet_room_group_name,
 )
+from spreadsheet.ws_tickets import mint_websocket_ticket
+
+
+def test_sheet_room_group_name_is_tenant_scoped():
+    public_room = sheet_room_group_name(7)
+    tenant_a_room = sheet_room_group_name(7, tenant_schema="org_alpha")
+    tenant_b_room = sheet_room_group_name(7, tenant_schema="org_beta")
+
+    assert public_room == "sheet_7"
+    assert tenant_a_room != public_room
+    assert tenant_a_room != tenant_b_room
 
 pytestmark = pytest.mark.django_db
 
@@ -53,6 +65,19 @@ def _reset_channel_layers():
     layer_cache = getattr(channel_layers, "_layers", None)
     if isinstance(layer_cache, dict):
         layer_cache.clear()
+
+
+async def _ticket_url(user, sheet, client_id):
+    ticket = await database_sync_to_async(mint_websocket_ticket)(
+        user_id=user.id,
+        sheet_id=sheet.id,
+        client_id=client_id,
+        connection_expires_at=int(time.time()) + 3600,
+    )
+    return (
+        f"/ws/spreadsheets/sheets/{sheet.id}/"
+        f"?ticket={ticket}&client_id={client_id}"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -137,12 +162,15 @@ class TestCellSyncService:
             sheet=sheet, row__position=0, column__position=0, is_deleted=False
         )
         assert cell.raw_input == "second"
+        sheet.refresh_from_db()
+        assert sheet.revision == 1
 
         assert len(layer.sent) == 2
         for group, message in layer.sent:
             assert group == sheet_room_group_name(sheet.id)
             assert message["type"] == "cells.updated"
             assert message["sheet_id"] == sheet.id
+            assert message["revision"] == sheet.revision
         first_msg = layer.sent[0][1]
         second_msg = layer.sent[1][1]
         assert first_msg["origin_client_id"] == "tab-a"
@@ -239,6 +267,8 @@ class TestSheetRefreshBroadcast:
         ]
         assert len(cell_events) == 1
         assert cell_events[0]["origin_client_id"] == "header-client"
+        sheet.refresh_from_db()
+        assert cell_events[0]["revision"] == sheet.revision == 1
 
     def test_structure_op_view_broadcasts_refresh_with_origin(self, monkeypatch):
         """Insert-rows endpoint queues sheet_refresh_required carrying the
@@ -268,24 +298,54 @@ class TestSheetRefreshBroadcast:
         assert message["reason"] == "rows_inserted"
         assert message["origin_client_id"] == "tab-a"
         assert message["origin_user_id"] == user.id
+        assert message["revision"] == 1
 
     def test_broadcast_sheet_refresh_helper(self, monkeypatch):
         layer = _RecordingLayer()
         monkeypatch.setattr("channels.layers.get_channel_layer", lambda *a, **k: layer)
+        user = _create_user(f"u_{_uid()}")
+        _, _, _, sheet = _create_sheet(user)
 
-        broadcast_sheet_refresh(sheet_id=123, reason="sort", origin_client_id=None)
+        broadcast_sheet_refresh(sheet_id=sheet.id, reason="sort", origin_client_id=None)
         assert layer.sent == [
             (
-                sheet_room_group_name(123),
+                sheet_room_group_name(sheet.id),
                 {
                     "type": "sheet.refresh_required",
-                    "sheet_id": 123,
+                    "sheet_id": sheet.id,
                     "reason": "sort",
                     "origin_client_id": None,
                     "origin_user_id": None,
+                    "revision": None,
                 },
             )
         ]
+
+    def test_broadcast_validates_programmer_input_without_requerying_permissions(self):
+        owner = _create_user(f"owner_{_uid()}")
+        outsider = _create_user(f"outsider_{_uid()}")
+        _, _, _, sheet = _create_sheet(owner)
+
+        for invalid_sheet_id in (0, -1, "1", True):
+            with pytest.raises(ValueError):
+                broadcast_sheet_refresh(
+                    sheet_id=invalid_sheet_id,
+                    reason="invalid",
+                )
+
+        # Nonexistent rooms and origin metadata do not require hot-path DB
+        # lookups; channel delivery to an empty room is harmless.
+        broadcast_sheet_refresh(
+            sheet_id=sheet.id + 999_999,
+            reason="missing",
+            origin_user_id=outsider.id,
+        )
+
+        with pytest.raises(ValueError, match="belong"):
+            broadcast_cells_updated(
+                sheet_id=sheet.id,
+                cells=[SimpleNamespace(sheet_id=sheet.id + 1)],
+            )
 
     def test_sheet_crud_broadcasts_tab_list_refresh_to_all_rooms(self, monkeypatch):
         """Create/update/delete fan out to every active room; delete also
@@ -359,13 +419,11 @@ class TestCellSyncConsumer:
             user=user_b, project=project, role="member", is_active=True
         )
 
-        token_a = str(AccessToken.for_user(user_a))
-        token_b = str(AccessToken.for_user(user_b))
         comm_a = WebsocketCommunicator(
-            _app(), f"/ws/spreadsheets/sheets/{sheet.id}/?token={token_a}&client_id=ca"
+            _app(), await _ticket_url(user_a, sheet, "ca")
         )
         comm_b = WebsocketCommunicator(
-            _app(), f"/ws/spreadsheets/sheets/{sheet.id}/?token={token_b}&client_id=cb"
+            _app(), await _ticket_url(user_b, sheet, "cb")
         )
         try:
             connected_a, _ = await comm_a.connect()

@@ -4,15 +4,18 @@ API views for spreadsheet operations
 Handles CRUD operations for spreadsheets, sheets, rows, columns, and cells
 """
 import logging
+import time
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError, NotFound
+from rest_framework.throttling import ScopedRateThrottle
 from django.shortcuts import get_object_or_404
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.paginator import Paginator
+from django.db import transaction
 
 from .models import (
     Spreadsheet,
@@ -65,6 +68,9 @@ from .services import (
     broadcast_sheet_refresh, broadcast_spreadsheet_sheet_list_refresh,
 )
 from .models import SheetStructureOperation
+from .exceptions import SheetRevisionConflict
+from .ws_tickets import WS_TICKET_TTL_SECONDS, mint_websocket_ticket
+from .tenant import current_tenant_schema
 from .tasks import apply_pattern_job
 from .access import (
     get_accessible_project_or_404,
@@ -88,13 +94,53 @@ def _request_sheet_client_id(request, fallback=None):
     return value or None
 
 
+def _request_base_revision(request):
+    value = request.data.get('base_revision') if isinstance(request.data, dict) else None
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValidationError({'base_revision': 'Must be a non-negative integer.'})
+    try:
+        revision = int(value)
+    except (TypeError, ValueError):
+        raise ValidationError({'base_revision': 'Must be a non-negative integer.'})
+    if revision < 0:
+        raise ValidationError({'base_revision': 'Must be a non-negative integer.'})
+    return revision
+
+
+def _request_token_expiry(request):
+    now = int(time.time())
+    hard_expiry = now + int(
+        getattr(settings, 'SPREADSHEET_WS_CONNECTION_MAX_SECONDS', 3600)
+    )
+    token = getattr(request, 'auth', None)
+    try:
+        expiry = int(token.get('exp'))
+        if expiry > now:
+            return min(expiry, hard_expiry)
+    except (AttributeError, TypeError, ValueError):
+        pass
+    return hard_expiry
+
+
+def _lock_and_validate_sheet_revision(sheet, base_revision):
+    """Lock a coordinate-write domain and reject obsolete coordinate requests."""
+    locked_sheet = Sheet.objects.select_for_update().get(pk=sheet.pk)
+    if base_revision is not None and base_revision != locked_sheet.revision:
+        raise SheetRevisionConflict(base_revision, locked_sheet.revision)
+    return locked_sheet
+
+
 def _notify_sheet_refresh(request, sheet, reason: str) -> None:
     """Broadcast sheet_refresh_required after a successful structure mutation."""
+    sheet.refresh_from_db(fields=['revision'])
     broadcast_sheet_refresh(
         sheet_id=sheet.id,
         reason=reason,
         origin_client_id=_request_sheet_client_id(request),
         origin_user_id=getattr(request.user, 'id', None),
+        revision=sheet.revision,
     )
 
 
@@ -513,6 +559,37 @@ class ProjectSheetDeleteView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class SheetWebSocketTicketView(APIView):
+    """Mint a short-lived, one-time credential bound to one sheet and tab."""
+
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'spreadsheet_ws_ticket'
+
+    def post(self, request, sheet_id):
+        sheet = get_accessible_sheet_or_404(
+            request.user,
+            id=sheet_id,
+        )
+        client_id = _request_sheet_client_id(
+            request,
+            request.data.get('client_id'),
+        )
+        if not client_id:
+            raise ValidationError({'client_id': 'This field is required.'})
+        ticket = mint_websocket_ticket(
+            user_id=request.user.id,
+            sheet_id=sheet.id,
+            client_id=client_id,
+            connection_expires_at=_request_token_expiry(request),
+            tenant_schema=current_tenant_schema(),
+        )
+        return Response({
+            'ticket': ticket,
+            'expires_in': WS_TICKET_TTL_SECONDS,
+        })
+
+
 class SheetResizeView(APIView):
     """Resize a sheet (create rows/columns)"""
     permission_classes = [IsAuthenticated]
@@ -534,7 +611,8 @@ class SheetResizeView(APIView):
             result = SheetService.resize_sheet(
                 sheet=sheet,
                 row_count=serializer.validated_data['row_count'],
-                column_count=serializer.validated_data['column_count']
+                column_count=serializer.validated_data['column_count'],
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -564,6 +642,7 @@ class SheetSortView(APIView):
                 direction=serializer.validated_data['direction'],
                 has_header=serializer.validated_data['has_header'],
                 previous_sort_columns=serializer.validated_data.get('previous_sort_columns') or [],
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -586,12 +665,16 @@ class SheetReorderView(APIView):
         serializer.is_valid(raise_exception=True)
 
         try:
-            SheetService.reorder_rows(sheet=sheet, order=serializer.validated_data['order'])
+            revision = SheetService.reorder_rows(
+                sheet=sheet,
+                order=serializer.validated_data['order'],
+                base_revision=serializer.validated_data.get('base_revision'),
+            )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
         _notify_sheet_refresh(request, sheet, 'reorder')
-        return Response({'status': 'ok'})
+        return Response({'status': 'ok', 'revision': revision})
 
 
 class SheetRowListView(APIView):
@@ -692,7 +775,8 @@ class SheetRowInsertView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -723,7 +807,8 @@ class SheetColumnInsertView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -754,7 +839,8 @@ class SheetRowDeleteView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -785,7 +871,8 @@ class SheetColumnDeleteView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -812,7 +899,11 @@ class SheetStructureOperationRevertView(APIView):
         )
 
         try:
-            result = SheetService.revert_structure_operation(sheet=sheet, operation=operation)
+            result = SheetService.revert_structure_operation(
+                sheet=sheet,
+                operation=operation,
+                base_revision=_request_base_revision(request),
+            )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
@@ -834,7 +925,8 @@ class SheetRowInsertByIdView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -857,7 +949,8 @@ class SheetColumnInsertByIdView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -880,7 +973,8 @@ class SheetRowDeleteByIdView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -903,7 +997,8 @@ class SheetColumnDeleteByIdView(APIView):
                 sheet=sheet,
                 position=serializer.validated_data['position'],
                 count=serializer.validated_data.get('count', 1),
-                created_by=request.user
+                created_by=request.user,
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
@@ -923,7 +1018,11 @@ class SheetOperationRevertByIdView(APIView):
         )
 
         try:
-            result = SheetService.revert_structure_operation(sheet=sheet, operation=operation)
+            result = SheetService.revert_structure_operation(
+                sheet=sheet,
+                operation=operation,
+                base_revision=_request_base_revision(request),
+            )
         except DjangoValidationError as e:
             raise ValidationError({'error': str(e)})
 
@@ -971,6 +1070,7 @@ class CellRangeReadView(APIView):
             'column_count': result['column_count'],
             'sheet_row_count': result.get('sheet_row_count'),
             'sheet_column_count': result.get('sheet_column_count'),
+            'revision': result['revision'],
         })
 
 
@@ -1018,6 +1118,7 @@ class CellBatchUpdateView(APIView):
                     serializer.validated_data.get('client_id'),
                 ),
                 origin_user_id=getattr(request.user, 'id', None),
+                base_revision=serializer.validated_data.get('base_revision'),
             )
         except CellBatchArgumentError as e:
             return Response(
@@ -1083,7 +1184,7 @@ class ImportFinalizeView(APIView):
         # Peers get one coarse refresh for the whole import (per-chunk broadcasts
         # are suppressed by import_mode in batch_update_cells).
         _notify_sheet_refresh(request, sheet, 'import_finalized')
-        return Response({'status': 'ok'})
+        return Response({'status': 'ok', 'revision': sheet.revision})
 
 
 class PivotConfigView(APIView):
@@ -1175,7 +1276,11 @@ class PivotRecomputeView(APIView):
             # Return 202 even on failure; frontend treats this as best-effort background recompute.
             return Response({'status': 'error', 'detail': 'pivot recompute failed'}, status=status.HTTP_202_ACCEPTED)
 
-        return Response({'status': 'ok'}, status=status.HTTP_202_ACCEPTED)
+        sheet.refresh_from_db(fields=['revision'])
+        return Response(
+            {'status': 'ok', 'revision': sheet.revision},
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class SpreadsheetHighlightListView(APIView):
@@ -1190,13 +1295,14 @@ class SpreadsheetHighlightListView(APIView):
 
         highlights = SpreadsheetHighlight.objects.filter(sheet=sheet).order_by('id')
         serializer = SpreadsheetHighlightSerializer(highlights, many=True)
-        return Response({'highlights': serializer.data})
+        return Response({'highlights': serializer.data, 'revision': sheet.revision})
 
 
 class SpreadsheetHighlightBatchView(APIView):
     """Batch set/clear highlights"""
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, spreadsheet_id, sheet_id):
         spreadsheet = get_accessible_spreadsheet_or_404(
             request.user, **resolve_lookup_kwargs(spreadsheet_id)
@@ -1205,6 +1311,10 @@ class SpreadsheetHighlightBatchView(APIView):
 
         serializer = SpreadsheetHighlightBatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        sheet = _lock_and_validate_sheet_revision(
+            sheet,
+            serializer.validated_data.get('base_revision'),
+        )
 
         updated = 0
         deleted = 0
@@ -1256,7 +1366,11 @@ class SpreadsheetHighlightBatchView(APIView):
                     qs = qs.filter(col_index=norm_col)
                 deleted += qs.delete()[0]
 
-        return Response({'updated': updated, 'deleted': deleted})
+        return Response({
+            'updated': updated,
+            'deleted': deleted,
+            'revision': sheet.revision,
+        })
 
 
 class SpreadsheetCellFormatListView(APIView):
@@ -1271,13 +1385,14 @@ class SpreadsheetCellFormatListView(APIView):
 
         formats = SpreadsheetCellFormat.objects.filter(sheet=sheet, is_deleted=False).order_by('row_index', 'column_index')
         serializer = SpreadsheetCellFormatSerializer(formats, many=True)
-        return Response({'formats': serializer.data})
+        return Response({'formats': serializer.data, 'revision': sheet.revision})
 
 
 class SpreadsheetCellFormatBatchView(APIView):
     """Batch update cell formats"""
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, spreadsheet_id, sheet_id):
         spreadsheet = get_accessible_spreadsheet_or_404(
             request.user, **resolve_lookup_kwargs(spreadsheet_id)
@@ -1286,6 +1401,10 @@ class SpreadsheetCellFormatBatchView(APIView):
 
         serializer = SpreadsheetCellFormatBatchSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        sheet = _lock_and_validate_sheet_revision(
+            sheet,
+            serializer.validated_data.get('base_revision'),
+        )
 
         updated = 0
         for op in serializer.validated_data['ops']:
@@ -1312,4 +1431,4 @@ class SpreadsheetCellFormatBatchView(APIView):
             )
             updated += 1
 
-        return Response({'updated': updated})
+        return Response({'updated': updated, 'revision': sheet.revision})

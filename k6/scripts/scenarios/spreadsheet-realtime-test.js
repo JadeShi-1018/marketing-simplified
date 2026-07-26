@@ -27,6 +27,7 @@ const editIntervalMs = Number(__ENV.EDIT_INTERVAL_MS || 2000);
 const startStaggerMs = Number(__ENV.START_STAGGER_MS || 0);
 const baseUrl = (__ENV.K6_BASE_URL || 'http://backend-dev:8000').replace(/\/$/, '');
 const wsBaseUrl = (__ENV.K6_WS_URL || 'ws://backend-dev:8000').replace(/\/$/, '');
+const wsOrigin = (__ENV.K6_WS_ORIGIN || __ENV.K6_FRONTEND_URL || baseUrl).replace(/\/$/, '');
 const spreadsheetSlug = __ENV.SPREADSHEET_SLUG || '';
 const sheetId = Number(__ENV.SHEET_ID || 0);
 const cellMode = __ENV.CELL_MODE || 'distributed';
@@ -103,7 +104,8 @@ export function setup() {
     'setup login is 200': (r) => r.status === 200,
     'setup login returns token': (r) => {
       try {
-        return Boolean(JSON.parse(r.body).token);
+        const body = JSON.parse(r.body);
+        return Boolean(body.token && body.organization_access_token);
       } catch (_) {
         return false;
       }
@@ -112,7 +114,11 @@ export function setup() {
   if (!loginOk) {
     throw new Error(`Login failed: ${login.status} ${String(login.body).slice(0, 200)}`);
   }
-  return { token: JSON.parse(login.body).token };
+  const auth = JSON.parse(login.body);
+  return {
+    token: auth.token,
+    organizationToken: auth.organization_access_token,
+  };
 }
 
 export default function (data) {
@@ -121,12 +127,44 @@ export default function (data) {
   }
 
   const clientId = `sheet-rt-${scenario}-${cellMode}-${__VU}-${Date.now()}`;
-  const socketUrl = `${wsBaseUrl}/ws/spreadsheets/sheets/${sheetId}/?token=${encodeURIComponent(data.token)}&client_id=${encodeURIComponent(clientId)}`;
+  const ticketResponse = http.post(
+    `${baseUrl}/api/spreadsheet/sheets/${sheetId}/ws-ticket/`,
+    JSON.stringify({ client_id: clientId }),
+    {
+      headers: {
+        Authorization: `Bearer ${data.token}`,
+        'X-Organization-Token': data.organizationToken,
+        'Content-Type': 'application/json',
+        'X-Sheet-Client-Id': clientId,
+      },
+      tags: { name: 'sheet_ws_ticket' },
+      timeout: '10s',
+    },
+  );
+  const ticketOk = check(ticketResponse, {
+    'websocket ticket is 200': (r) => r.status === 200,
+    'websocket ticket is present': (r) => {
+      try {
+        return Boolean(JSON.parse(r.body).ticket);
+      } catch (_) {
+        return false;
+      }
+    },
+  });
+  if (!ticketOk) {
+    wsConnectFailed.add(true);
+    return;
+  }
+  const ticket = JSON.parse(ticketResponse.body).ticket;
+  const socketUrl = `${wsBaseUrl}/ws/spreadsheets/sheets/${sheetId}/?ticket=${encodeURIComponent(ticket)}&client_id=${encodeURIComponent(clientId)}`;
   const cursorSentAtByCell = {};
   let cursorSequence = 0;
   let editSequence = 0;
 
-  const response = ws.connect(socketUrl, { tags: { name: `sheet_ws_${scenario}` } }, (socket) => {
+  const response = ws.connect(socketUrl, {
+    headers: { Origin: wsOrigin },
+    tags: { name: `sheet_ws_${scenario}` },
+  }, (socket) => {
     socket.on('open', () => {
       socket.setInterval(() => {
         socket.send(JSON.stringify({ type: 'ping' }));
@@ -170,6 +208,7 @@ export default function (data) {
             {
               headers: {
                 Authorization: `Bearer ${data.token}`,
+                'X-Organization-Token': data.organizationToken,
                 'Content-Type': 'application/json',
                 'X-Sheet-Client-Id': clientId,
               },

@@ -94,6 +94,7 @@ export interface SpreadsheetGridHandle {
       computed_number?: number | string | null;
       computed_string?: string | null;
       error_code?: string | null;
+      updated_at?: string | null;
     }>
   ) => void;
 }
@@ -106,6 +107,7 @@ interface CellData {
   computedNumber?: number | string | null;
   computedString?: string | null;
   errorCode?: string | null;
+  updatedAt?: string | null;
   isLoaded: boolean; // Track if cell was loaded from backend
 }
 
@@ -1382,6 +1384,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
               response.cells.forEach((cell) => {
                 const key = getCellKey(cell.row_position, cell.column_position);
+                const existing = next.get(key);
+                const incomingUpdatedAt = cell.updated_at
+                  ? Date.parse(cell.updated_at)
+                  : Number.NaN;
+                const existingUpdatedAt = existing?.updatedAt
+                  ? Date.parse(existing.updatedAt)
+                  : Number.NaN;
+                if (
+                  Number.isFinite(incomingUpdatedAt) &&
+                  Number.isFinite(existingUpdatedAt) &&
+                  incomingUpdatedAt < existingUpdatedAt
+                ) {
+                  return;
+                }
                 const fallbackRawInput =
                   cell.raw_input ??
                   cell.formula_value ??
@@ -1394,6 +1410,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                   computedNumber: cell.computed_number ?? null,
                   computedString: cell.computed_string ?? null,
                   errorCode: cell.error_code ?? null,
+                  updatedAt: cell.updated_at ?? null,
                   isLoaded: true,
                 };
                 next.set(key, cellData);
@@ -1440,6 +1457,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       computed_number?: number | string | null;
       computed_string?: string | null;
       error_code?: string | null;
+      updated_at?: string | null;
     }>, options?: { source?: 'local' | 'remote' }) => {
       if (!cellsResponse || cellsResponse.length === 0) return;
       setCells((prev) => {
@@ -1451,6 +1469,21 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           // A peer broadcast must not overwrite a newer local optimistic edit
           // that has not reached the authoritative HTTP write path yet.
           if (options?.source === 'remote' && pendingOpsRef.current.has(key)) {
+            return;
+          }
+          const existing = next.get(key);
+          const incomingUpdatedAt = cell.updated_at
+            ? Date.parse(cell.updated_at)
+            : Number.NaN;
+          const existingUpdatedAt = existing?.updatedAt
+            ? Date.parse(existing.updatedAt)
+            : Number.NaN;
+          if (
+            options?.source === 'remote' &&
+            Number.isFinite(incomingUpdatedAt) &&
+            Number.isFinite(existingUpdatedAt) &&
+            incomingUpdatedAt < existingUpdatedAt
+          ) {
             return;
           }
           const fallbackRawInput =
@@ -1465,6 +1498,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
             computedNumber: cell.computed_number ?? null,
             computedString: cell.computed_string ?? null,
             errorCode: cell.error_code ?? null,
+            updatedAt: cell.updated_at ?? existing?.updatedAt ?? null,
             isLoaded: true,
           };
           next.set(key, cellData);
@@ -1570,22 +1604,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
     const queuedOps = pendingOpsRef.current;
     if (queuedOps.size > 0) {
-      try {
-        sessionStorage.setItem(
-          `spreadsheet-pending-recovery:${spreadsheetId}:${sheetId}`,
-          JSON.stringify({
-            savedAt: new Date().toISOString(),
-            operations: Array.from(queuedOps.values()),
-          })
-        );
-      } catch (error) {
-        console.warn('Unable to save pending spreadsheet edits for recovery:', error);
-      }
       const emptyQueue = new Map<CellKey, PendingOperation>();
       pendingOpsRef.current = emptyQueue;
       setPendingOps(emptyQueue);
       toast.error(
-        'The sheet structure changed. Unsaved edits were paused and saved in this browser for recovery.',
+        'The sheet structure changed. Unsaved edits were discarded; please enter them again.',
         { duration: 5000 }
       );
     }
@@ -5496,7 +5519,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   const showGridSpinner = isGridLoading || cellCanvasLoading;
 
   return (
-    <div className={`relative h-full w-full flex flex-col${isGridLoading ? ' pointer-events-none' : ''}`}>
+    <div className={`relative h-full w-full flex flex-col${showGridSpinner ? ' pointer-events-none' : ''}`}>
       {/* Save status indicator */}
       {saveError && (
         <div className="absolute top-2 right-2 z-30 bg-red-50 border border-red-200 text-red-700 px-3 py-1 rounded text-xs">

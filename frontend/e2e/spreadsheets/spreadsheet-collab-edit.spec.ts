@@ -6,6 +6,11 @@ import {
 } from '@playwright/test';
 import { stubOnboardingComplete, waitForSpreadsheetPageReady } from './spreadsheet-helpers';
 
+const apiUrl = (path: string): string => {
+  const base = process.env.PLAYWRIGHT_API_BASE_URL?.replace(/\/$/, '');
+  return base ? `${base}${path}` : path;
+};
+
 /**
  * Two tabs on the same sheet — an edit committed in tab 1 must appear in
  * tab 2 via the cells_updated broadcast, WITHOUT reloading.
@@ -16,7 +21,7 @@ import { stubOnboardingComplete, waitForSpreadsheetPageReady } from './spreadshe
 
 async function readAuth(
   context: BrowserContext,
-): Promise<{ token: string; activeProjectId: number }> {
+): Promise<{ token: string; organizationToken?: string; activeProjectId: number }> {
   const state = await context.storageState();
   const localStorageOf = (name: string): string | undefined => {
     for (const origin of state.origins ?? []) {
@@ -33,9 +38,11 @@ async function readAuth(
     }
   };
 
-  const token: string | undefined = parseState(
+  const authState = parseState(
     localStorageOf('auth-storage-v1') ?? localStorageOf('auth-storage'),
-  )?.token;
+  );
+  const token: string | undefined = authState?.token;
+  const organizationToken: string | undefined = authState?.organizationAccessToken;
   expect(token, 'auth token missing from storageState (auth.setup failed?)').toBeTruthy();
 
   const activeProjectId: number | undefined = parseState(
@@ -43,24 +50,41 @@ async function readAuth(
   )?.activeProject?.id;
   expect(activeProjectId, 'no active project in storageState (auth.setup incomplete?)').toBeTruthy();
 
-  return { token: token as string, activeProjectId: activeProjectId as number };
+  return {
+    token: token as string,
+    organizationToken,
+    activeProjectId: activeProjectId as number,
+  };
+}
+
+function apiHeaders(auth: Awaited<ReturnType<typeof readAuth>>): Record<string, string> {
+  return {
+    Authorization: `Bearer ${auth.token}`,
+    ...(process.env.PLAYWRIGHT_API_HOST
+      ? { Host: process.env.PLAYWRIGHT_API_HOST }
+      : {}),
+    ...(auth.organizationToken
+      ? { 'X-Organization-Token': auth.organizationToken }
+      : {}),
+  };
 }
 
 async function getOrCreateSpreadsheetSlug(
   context: BrowserContext,
   request: APIRequestContext,
 ): Promise<string> {
-  const { token, activeProjectId } = await readAuth(context);
-  const headers = { Authorization: `Bearer ${token}` };
+  const auth = await readAuth(context);
+  const { activeProjectId } = auth;
+  const headers = apiHeaders(auth);
   const listUrl = `/api/spreadsheet/spreadsheets/?project_id=${activeProjectId}`;
 
-  const listResp = await request.get(listUrl, { headers });
+  const listResp = await request.get(apiUrl(listUrl), { headers });
   expect(listResp.ok(), `spreadsheet list API returned ${listResp.status()}`).toBeTruthy();
   const body = await listResp.json();
   const results: Array<{ slug: string }> = body.results ?? body ?? [];
   if (results.length > 0) return results[0].slug;
 
-  const createResp = await request.post(listUrl, {
+  const createResp = await request.post(apiUrl(listUrl), {
     headers,
     data: { name: 'Collab Edit E2E' },
   });
@@ -146,8 +170,14 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
       const peerWindow = window as typeof window & {
         __sheetPropagation?: Promise<number>;
       };
+      if (!peerWindow.__sheetPropagation) {
+        throw new Error('peer propagation observer was not initialized');
+      }
       return peerWindow.__sheetPropagation;
     });
+    console.log(
+      `[MED-293] playwright_peer_propagation_ms=${propagationMs.toFixed(2)}`,
+    );
     expect(
       propagationMs,
       `peer edit propagation took ${propagationMs}ms (expected <300ms)`,
@@ -168,12 +198,11 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     request,
   }) => {
     const spreadsheetSlug = await getOrCreateSpreadsheetSlug(context, request);
-    const { token } = await readAuth(context);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = apiHeaders(await readAuth(context));
 
     // Resolve the first sheet id for API-driven mutations.
     const sheetsResp = await request.get(
-      `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`,
+      apiUrl(`/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`),
       { headers },
     );
     expect(sheetsResp.ok(), `sheet list API returned ${sheetsResp.status()}`).toBeTruthy();
@@ -203,7 +232,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
 
     // Seed a unique marker via the API (no client_id → cells_updated reaches both tabs).
     const marker = `struct-${Date.now()}`;
-    const batchResp = await request.post(`${base}/cells/batch/`, {
+    const batchResp = await request.post(apiUrl(`${base}/cells/batch/`), {
       headers,
       data: {
         operations: [{ operation: 'set', row: 5, column: 1, raw_input: marker }],
@@ -220,7 +249,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
 
     // Insert a row above; no X-Sheet-Client-Id header, so BOTH tabs must
     // receive sheet_refresh_required and reload — the marker shifts down one row.
-    const insertResp = await request.post(`${base}/rows/insert/`, {
+    const insertResp = await request.post(apiUrl(`${base}/rows/insert/`), {
       headers,
       data: { position: 0, count: 1 },
     });
@@ -244,7 +273,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     ).toHaveCount(0);
 
     const revertResp = await request.post(
-      `${base}/operations/${insertBody.operation_id}/revert/`,
+      apiUrl(`${base}/operations/${insertBody.operation_id}/revert/`),
       { headers },
     );
     expect(revertResp.ok(), `row revert API returned ${revertResp.status()}`).toBeTruthy();
@@ -271,11 +300,10 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     request,
   }) => {
     const spreadsheetSlug = await getOrCreateSpreadsheetSlug(context, request);
-    const { token } = await readAuth(context);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = apiHeaders(await readAuth(context));
 
     const sheetsResp = await request.get(
-      `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`,
+      apiUrl(`/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`),
       { headers },
     );
     expect(sheetsResp.ok(), `sheet list API returned ${sheetsResp.status()}`).toBeTruthy();
@@ -304,7 +332,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     });
 
     const marker = `column-struct-${Date.now()}`;
-    const batchResp = await request.post(`${base}/cells/batch/`, {
+    const batchResp = await request.post(apiUrl(`${base}/cells/batch/`), {
       headers,
       data: {
         operations: [{ operation: 'set', row: 7, column: 3, raw_input: marker }],
@@ -319,7 +347,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
       timeout: 10_000,
     });
 
-    const insertResp = await request.post(`${base}/columns/insert/`, {
+    const insertResp = await request.post(apiUrl(`${base}/columns/insert/`), {
       headers,
       data: { position: 3, count: 1 },
     });
@@ -340,7 +368,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     ).toHaveCount(0);
 
     const revertResp = await request.post(
-      `${base}/operations/${insertBody.operation_id}/revert/`,
+      apiUrl(`${base}/operations/${insertBody.operation_id}/revert/`),
       { headers },
     );
     expect(revertResp.ok(), `column revert API returned ${revertResp.status()}`).toBeTruthy();
@@ -367,8 +395,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     request,
   }) => {
     const spreadsheetSlug = await getOrCreateSpreadsheetSlug(context, request);
-    const { token } = await readAuth(context);
-    const headers = { Authorization: `Bearer ${token}` };
+    const headers = apiHeaders(await readAuth(context));
 
     await stubOnboardingComplete(page);
     await page.goto(`/spreadsheets/${spreadsheetSlug}`);
@@ -388,7 +415,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
       timeout: 15_000,
     });
     const initialSheetsResp = await request.get(
-      `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`,
+      apiUrl(`/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`),
       { headers },
     );
     expect(
@@ -406,7 +433,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     let deleted = false;
     try {
       const createResp = await request.post(
-        `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`,
+        apiUrl(`/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/`),
         { headers, data: { name: sheetName } },
       );
       expect(createResp.ok(), `sheet create API returned ${createResp.status()}`).toBeTruthy();
@@ -427,7 +454,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
       });
 
       const deleteResp = await request.delete(
-        `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${createdSheetId}/`,
+        apiUrl(`/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${createdSheetId}/`),
         { headers },
       );
       expect(deleteResp.ok(), `sheet delete API returned ${deleteResp.status()}`).toBeTruthy();
@@ -446,7 +473,7 @@ test.describe('Spreadsheet realtime edit (two tabs)', () => {
     } finally {
       if (createdSheetId != null && !deleted) {
         await request.delete(
-          `/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${createdSheetId}/`,
+          apiUrl(`/api/spreadsheet/spreadsheets/${spreadsheetSlug}/sheets/${createdSheetId}/`),
           { headers },
         );
       }

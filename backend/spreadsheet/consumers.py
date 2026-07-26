@@ -1,4 +1,6 @@
+import asyncio
 import json
+import logging
 import time
 from urllib.parse import parse_qs
 
@@ -8,10 +10,15 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from django.contrib.auth.models import AnonymousUser
 
 from spreadsheet.presence import get_presence_store
-from spreadsheet.services import user_has_sheet_access
+from spreadsheet.services import sheet_room_group_name, user_has_sheet_access
+from spreadsheet.tenant import tenant_schema_context, validate_tenant_schema
 
 CURSOR_RATE_LIMIT_PER_SECOND = 30
 CURSOR_RATE_LIMIT_BURST = 10
+AUTH_RECHECK_INTERVAL_SECONDS = 30
+AUTH_WATCHDOG_INTERVAL_SECONDS = 10
+
+logger = logging.getLogger(__name__)
 
 
 class CursorRateLimiter:
@@ -47,7 +54,7 @@ def _client_id_from_scope(scope) -> str | None:
     if not values:
         return None
     cid = (values[0] or "").strip()
-    return cid or None
+    return cid if 0 < len(cid) <= 64 else None
 
 
 def _optional_int_from_json(value, field_name: str):
@@ -75,11 +82,28 @@ class SheetConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         self.sheet_id = int(self.scope["url_route"]["kwargs"]["sheet_id"])
-        self.room_group_name = f"sheet_{self.sheet_id}"
+        try:
+            self.tenant_schema = validate_tenant_schema(
+                self.scope.get("tenant_schema", "public")
+            )
+            self.room_group_name = sheet_room_group_name(
+                self.sheet_id,
+                tenant_schema=self.tenant_schema,
+            )
+            self.presence_room_key = (
+                self.sheet_id
+                if self.tenant_schema == "public"
+                else self.room_group_name
+            )
+        except (TypeError, ValueError):
+            await self.close(code=4003)
+            return
         self.client_id = _client_id_from_scope(self.scope)
         self.joined_room = False
         self.presence_registered = False
         self.cursor_rate_limiter = CursorRateLimiter()
+        self.last_authorization_check = time.monotonic()
+        self.authorization_task = None
         user = self.scope.get("user")
 
         if not user or isinstance(user, AnonymousUser) or not user.is_authenticated:
@@ -89,6 +113,9 @@ class SheetConsumer(AsyncWebsocketConsumer):
         can_access = await self._user_can_access_sheet(user, self.sheet_id)
         if not can_access:
             await self.close(code=4003)
+            return
+        if not self.client_id:
+            await self.close(code=4002)
             return
 
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
@@ -128,8 +155,13 @@ class SheetConsumer(AsyncWebsocketConsumer):
                 "channel_name": self.channel_name,
             },
         )
+        self.authorization_task = asyncio.create_task(self._authorization_watchdog())
 
     async def disconnect(self, close_code):
+        authorization_task = getattr(self, "authorization_task", None)
+        if authorization_task and authorization_task is not asyncio.current_task():
+            authorization_task.cancel()
+        self.authorization_task = None
         user = self.scope.get("user")
         if getattr(self, "joined_room", False):
             if getattr(self, "presence_registered", False):
@@ -158,6 +190,11 @@ class SheetConsumer(AsyncWebsocketConsumer):
             payload = json.loads(text_data)
         except json.JSONDecodeError:
             await self.send(text_data=json.dumps({"type": "error", "message": "Invalid JSON format"}))
+            return
+
+        close_code = await self._connection_close_code()
+        if close_code is not None:
+            await self.close(code=close_code)
             return
 
         message_type = payload.get("type")
@@ -194,15 +231,15 @@ class SheetConsumer(AsyncWebsocketConsumer):
         cid = payload.get("client_id")
         normalized_cid = cid.strip() if isinstance(cid, str) else ""
         if normalized_cid and normalized_cid != self.client_id:
-            self.client_id = normalized_cid
-            stale_channels = await self._register_presence(
-                {
-                    "user_id": self.scope["user"].id,
-                    "username": self.scope["user"].username,
-                    "client_id": self.client_id,
-                }
+            await self.send(
+                text_data=json.dumps(
+                    {
+                        "type": "error",
+                        "message": "client_id does not match this connection",
+                    }
+                )
             )
-            await self._discard_stale_channels(stale_channels)
+            return
 
         await self.channel_layer.group_send(
             self.room_group_name,
@@ -283,6 +320,7 @@ class SheetConsumer(AsyncWebsocketConsumer):
                     "sheet_id": event["sheet_id"],
                     "origin_client_id": origin_client_id,
                     "origin_user_id": event.get("origin_user_id"),
+                    "revision": event.get("revision"),
                     "cells": event.get("cells") or [],
                 }
             )
@@ -305,6 +343,7 @@ class SheetConsumer(AsyncWebsocketConsumer):
                     "reason": event.get("reason"),
                     "origin_client_id": origin_client_id,
                     "origin_user_id": event.get("origin_user_id"),
+                    "revision": event.get("revision"),
                 }
             )
         )
@@ -331,12 +370,48 @@ class SheetConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _user_can_access_sheet(self, user, sheet_id: int) -> bool:
-        return user_has_sheet_access(user, sheet_id)
+        with tenant_schema_context(self.tenant_schema):
+            return user_has_sheet_access(user, sheet_id)
+
+    async def _connection_close_code(self) -> int | None:
+        """Revalidate token expiry and project access throughout the connection."""
+        token_exp = self.scope.get("jwt_exp")
+        if isinstance(token_exp, (int, float)) and time.time() >= token_exp:
+            return 4001
+
+        now = time.monotonic()
+        if now - self.last_authorization_check < AUTH_RECHECK_INTERVAL_SECONDS:
+            return None
+        self.last_authorization_check = now
+        if not await self._user_can_access_sheet(self.scope["user"], self.sheet_id):
+            return 4003
+        return None
+
+    async def _authorization_watchdog(self) -> None:
+        """Close revoked or expired connections without trusting client heartbeats."""
+        try:
+            while True:
+                await asyncio.sleep(AUTH_WATCHDOG_INTERVAL_SECONDS)
+                close_code = await self._connection_close_code()
+                if close_code is not None:
+                    await self.close(code=close_code)
+                    return
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            # A transient authorization lookup failure must not silently disable
+            # lifecycle checks forever. Log it and let the normal reconnect path
+            # recover by closing this connection.
+            logger.exception(
+                "WebSocket authorization watchdog failed for sheet_id=%s",
+                getattr(self, "sheet_id", None),
+            )
+            await self.close(code=1011)
 
     @sync_to_async
     def _register_presence(self, info: dict) -> list[str]:
         return get_presence_store().register(
-            self.sheet_id,
+            self.presence_room_key,
             self.channel_name,
             info,
         )
@@ -345,7 +420,7 @@ class SheetConsumer(AsyncWebsocketConsumer):
     def _touch_presence(self) -> list[str]:
         user = self.scope["user"]
         return get_presence_store().register(
-            self.sheet_id,
+            self.presence_room_key,
             self.channel_name,
             {
                 "user_id": user.id,
@@ -381,7 +456,7 @@ class SheetConsumer(AsyncWebsocketConsumer):
         """
         user = self.scope["user"]
         return get_presence_store().unregister(
-            self.sheet_id,
+            self.presence_room_key,
             self.channel_name,
             user.id,
             self.client_id,
@@ -389,4 +464,4 @@ class SheetConsumer(AsyncWebsocketConsumer):
 
     @sync_to_async
     def _list_presence(self):
-        return get_presence_store().list(self.sheet_id)
+        return get_presence_store().list(self.presence_room_key)

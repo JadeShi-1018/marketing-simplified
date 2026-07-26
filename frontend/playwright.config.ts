@@ -12,7 +12,7 @@ export default defineConfig({
   /* Start Next.js so you don't have to run frontend/backend manually. */
   webServer: {
     command: 'npm run dev',
-    url: process.env.BASE_URL || 'http://localhost',
+    url: process.env.PLAYWRIGHT_WEB_SERVER_URL || process.env.BASE_URL || 'http://localhost',
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },
@@ -30,6 +30,9 @@ export default defineConfig({
   use: {
     /* Base URL to use in actions like `await page.goto('')`. Next.js dev runs on 3000. */
     baseURL: process.env.BASE_URL || 'http://localhost',
+    launchOptions: process.env.PLAYWRIGHT_HOST_RESOLVER_RULES
+      ? { args: [`--host-resolver-rules=${process.env.PLAYWRIGHT_HOST_RESOLVER_RULES}`] }
+      : undefined,
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',

@@ -33,6 +33,7 @@ urlpatterns = [
     path('sheets/<int:sheet_id>/rows/delete/', views.SheetRowDeleteByIdView.as_view(), name='sheet-row-delete-by-id'),
     path('sheets/<int:sheet_id>/columns/delete/', views.SheetColumnDeleteByIdView.as_view(), name='sheet-column-delete-by-id'),
     path('sheets/<int:sheet_id>/operations/<int:operation_id>/revert/', views.SheetOperationRevertByIdView.as_view(), name='sheet-operation-revert-by-id'),
+    path('sheets/<int:sheet_id>/ws-ticket/', views.SheetWebSocketTicketView.as_view(), name='sheet-websocket-ticket'),
     
     # Cells
     path('spreadsheets/<str:spreadsheet_id>/sheets/<int:sheet_id>/cells/range/', views.CellRangeReadView.as_view(), name='cell-range-read'),
@@ -51,4 +52,3 @@ urlpatterns = [
     path('patterns/<uuid:id>/apply/', views.WorkflowPatternApplyView.as_view(), name='pattern-apply'),
     path('pattern-jobs/<uuid:job_id>/', views.PatternJobStatusView.as_view(), name='pattern-job-status'),
 ]
-

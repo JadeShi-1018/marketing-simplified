@@ -805,18 +805,42 @@ describe('SpreadsheetGrid collaboration reconciliation', () => {
       jest.advanceTimersByTime(500);
     });
 
-    const recovery = JSON.parse(
-      sessionStorage.getItem('spreadsheet-pending-recovery:77:977') || '{}'
-    );
-    expect(recovery.operations).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ row: 0, column: 0, raw_input: 'local-pending' }),
-      ])
-    );
+    expect(container.firstElementChild).toHaveClass('pointer-events-none');
+    expect(sessionStorage.getItem('spreadsheet-pending-recovery:77:977')).toBeNull();
     expect(batchUpdateCellsMock).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledWith(
-      expect.stringContaining('structure changed'),
+      expect.stringContaining('discarded'),
       expect.any(Object)
     );
+  });
+
+  it('ignores an older same-revision cell broadcast by updated_at', async () => {
+    const ref = React.createRef<SpreadsheetGridHandle>();
+    render(<SpreadsheetGrid ref={ref} spreadsheetId={77} sheetId={977} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    act(() => {
+      ref.current?.applyRemoteCells([
+        {
+          row_position: 0,
+          column_position: 0,
+          raw_input: 'newer-commit',
+          updated_at: '2026-07-25T02:00:02.000Z',
+        },
+      ]);
+      ref.current?.applyRemoteCells([
+        {
+          row_position: 0,
+          column_position: 0,
+          raw_input: 'older-commit',
+          updated_at: '2026-07-25T02:00:01.000Z',
+        },
+      ]);
+    });
+
+    expect(screen.getByText('newer-commit')).toBeInTheDocument();
+    expect(screen.queryByText('older-commit')).not.toBeInTheDocument();
   });
 });

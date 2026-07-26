@@ -12,6 +12,7 @@ import django
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
 from channels.auth import AuthMiddlewareStack
+from channels.security.websocket import AllowedHostsOriginValidator
 from opentelemetry.instrumentation.asgi import OpenTelemetryMiddleware
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
@@ -31,14 +32,16 @@ http_application = OpenTelemetryMiddleware(http_application)
 
 application = ProtocolTypeRouter({
     "http": http_application,
-    "websocket": JWTAuthMiddleware(
-        URLRouter(
-            asset_websocket_urlpatterns +
-            chat_websocket_urlpatterns +
-            meetings_websocket_urlpatterns +
-            csm_websocket_urlpatterns +
-            portal_websocket_urlpatterns +
-            spreadsheet_websocket_urlpatterns
+    "websocket": AllowedHostsOriginValidator(
+        JWTAuthMiddleware(
+            URLRouter(
+                asset_websocket_urlpatterns +
+                chat_websocket_urlpatterns +
+                meetings_websocket_urlpatterns +
+                csm_websocket_urlpatterns +
+                portal_websocket_urlpatterns +
+                spreadsheet_websocket_urlpatterns
+            )
         )
     ),
 })

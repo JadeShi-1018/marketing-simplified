@@ -4,7 +4,12 @@ import { useEffect, useMemo, useRef } from 'react';
 import { buildWsUrl } from '@/lib/ws';
 import { useAuthStore } from '@/lib/authStore';
 import { readPersistedAuthState } from '@/lib/api';
-import { setSheetCollabClientId } from '@/lib/api/spreadsheetApi';
+import { SpreadsheetAPI, setSheetCollabClientId } from '@/lib/api/spreadsheetApi';
+import {
+  getSheetRevision,
+  setSheetRevision,
+  SHEET_REVISION_CONFLICT_EVENT,
+} from '@/lib/sheetRevisionStore';
 import {
   selectRemotePresenceUsers,
   useSheetSocketStore,
@@ -60,7 +65,8 @@ type Api = {
   sendCursorUpdate: (payload: SheetCursorPayload) => boolean;
 };
 
-const RECONNECT_DELAY_MS = 1500;
+const RECONNECT_BASE_DELAY_MS = 1500;
+const RECONNECT_MAX_DELAY_MS = 30_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const RESUME_RECONNECT_AFTER_MS = 20_000;
 const CLIENT_RESUME_CLOSE_CODE = 4000;
@@ -93,6 +99,12 @@ function getOrCreateClientId(): string {
     clientWindow.__sheetCollabClientId = clientId;
     return clientId;
   }
+}
+
+function parseRevision(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const revision = Number(value);
+  return Number.isSafeInteger(revision) && revision >= 0 ? revision : null;
 }
 
 export function useSheetSocket(sheetId: number | null | undefined, options?: Options): Api {
@@ -129,6 +141,7 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       useSheetSocketStore.getState().reset();
       return;
     }
+    const activeSheetId = sheetId;
 
     let stopped = false;
     let hadConnection = false;
@@ -136,6 +149,8 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
     let lastHeartbeatAt = Date.now();
     let hiddenAt: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
     let resumeReconnectPending = false;
+    let connectionAttempt = 0;
+    let reconnectFailureCount = 0;
     const createdSockets: WebSocket[] = [];
     setSheetCollabClientId(clientIdRef.current);
     useSheetSocketStore.getState().setSheetId(sheetId);
@@ -157,9 +172,21 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       reconnectTimerRef.current = window.setTimeout(connect, delayMs);
     };
 
+    const nextReconnectDelay = () => {
+      const exponent = Math.min(reconnectFailureCount, 5);
+      const delay = Math.min(
+        RECONNECT_MAX_DELAY_MS,
+        RECONNECT_BASE_DELAY_MS * 2 ** exponent
+      );
+      reconnectFailureCount += 1;
+      // ±25% jitter prevents many tabs from minting tickets in lockstep.
+      return Math.round(delay * (0.75 + Math.random() * 0.5));
+    };
+
     const forceResumeReconnect = () => {
       if (stopped || resumeReconnectPending || !hadConnection) return;
       resumeReconnectPending = true;
+      connectionAttempt += 1;
       stopHeartbeat();
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
@@ -187,18 +214,34 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       scheduleReconnect(0);
     };
 
-    function connect() {
+    async function connect() {
       if (stopped) return;
       reconnectTimerRef.current = null;
-      const url = buildWsUrl(`/ws/spreadsheets/sheets/${sheetId}/`, {
-        token,
-        client_id: clientIdRef.current,
-      });
+      const attempt = ++connectionAttempt;
       const prev = useSheetSocketStore.getState().wsState;
       useSheetSocketStore
         .getState()
         .setWsState(prev === 'connected' || prev === 'reconnecting' ? 'reconnecting' : 'connecting');
 
+      let ticket: string;
+      try {
+        const response = await SpreadsheetAPI.createWebSocketTicket(
+          activeSheetId,
+          clientIdRef.current
+        );
+        ticket = response.ticket;
+      } catch {
+        if (!stopped && attempt === connectionAttempt) {
+          useSheetSocketStore.getState().setWsState('reconnecting');
+          scheduleReconnect(nextReconnectDelay());
+        }
+        return;
+      }
+      if (stopped || attempt !== connectionAttempt) return;
+      const url = buildWsUrl(`/ws/spreadsheets/sheets/${sheetId}/`, {
+        ticket,
+        client_id: clientIdRef.current,
+      });
       const ws = new WebSocket(url);
       createdSockets.push(ws);
       wsRef.current = ws;
@@ -208,6 +251,7 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
         stopHeartbeat();
         lastHeartbeatAt = Date.now();
         resumeReconnectPending = false;
+        reconnectFailureCount = 0;
         heartbeatTimer = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
             const now = Date.now();
@@ -262,14 +306,55 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
             if (message.origin_client_id && message.origin_client_id === clientIdRef.current) {
               return;
             }
+            const eventRevision = parseRevision(message.revision);
+            const currentRevision = getSheetRevision(activeSheetId);
+            if (
+              eventRevision != null &&
+              currentRevision != null &&
+              eventRevision < currentRevision
+            ) {
+              return;
+            }
+            if (
+              eventRevision != null &&
+              currentRevision != null &&
+              eventRevision > currentRevision
+            ) {
+              setSheetRevision(activeSheetId, eventRevision);
+              onRefreshRequiredRef.current?.('revision_gap');
+              return;
+            }
+            if (eventRevision != null) {
+              setSheetRevision(activeSheetId, eventRevision);
+            }
             const cells = Array.isArray(message.cells) ? (message.cells as RemoteCellUpdate[]) : [];
             if (cells.length > 0) onCellsUpdatedRef.current?.(cells);
           } else if (message.type === 'sheet_refresh_required') {
             if (message.origin_client_id && message.origin_client_id === clientIdRef.current) {
               return;
             }
+            const eventRevision = parseRevision(message.revision);
+            const currentRevision = getSheetRevision(activeSheetId);
+            if (
+              eventRevision != null &&
+              currentRevision != null &&
+              eventRevision <= currentRevision
+            ) {
+              return;
+            }
+            const hasRevisionGap =
+              eventRevision != null &&
+              currentRevision != null &&
+              eventRevision > currentRevision + 1;
+            if (eventRevision != null) {
+              setSheetRevision(activeSheetId, eventRevision);
+            }
             onRefreshRequiredRef.current?.(
-              typeof message.reason === 'string' ? message.reason : 'unknown'
+              hasRevisionGap
+                ? 'revision_gap'
+                : typeof message.reason === 'string'
+                  ? message.reason
+                  : 'unknown'
             );
           }
         } catch {
@@ -297,7 +382,7 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
           return;
         }
         useSheetSocketStore.getState().setWsState('reconnecting');
-        scheduleReconnect(reconnectImmediately ? 0 : RECONNECT_DELAY_MS);
+        scheduleReconnect(reconnectImmediately ? 0 : nextReconnectDelay());
       };
 
       ws.onerror = () => {
@@ -336,11 +421,19 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       }
     };
 
+    const handleRevisionConflict = (event: Event) => {
+      const detail = (event as CustomEvent<{ sheetId?: number }>).detail;
+      if (Number(detail?.sheetId) === Number(sheetId)) {
+        onRefreshRequiredRef.current?.('revision_conflict');
+      }
+    };
+
     connect();
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('online', handleOnline);
     window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener(SHEET_REVISION_CONFLICT_EVENT, handleRevisionConflict);
 
     return () => {
       stopped = true;
@@ -348,6 +441,7 @@ export function useSheetSocket(sheetId: number | null | undefined, options?: Opt
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener(SHEET_REVISION_CONFLICT_EVENT, handleRevisionConflict);
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;

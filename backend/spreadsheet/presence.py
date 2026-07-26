@@ -32,12 +32,12 @@ _store_lock = threading.Lock()
 _redis_store = None
 
 
-def _presence_cache_key(sheet_id: int) -> str:
-    return f"sheet_presence:{sheet_id}"
+def _presence_cache_key(room_key: int | str) -> str:
+    return f"sheet_presence:{room_key}"
 
 
-def _presence_heartbeat_key(sheet_id: int) -> str:
-    return f"sheet_presence_heartbeat:{sheet_id}"
+def _presence_heartbeat_key(room_key: int | str) -> str:
+    return f"sheet_presence_heartbeat:{room_key}"
 
 
 def _identity(user_id: Any, client_id: Any) -> str:

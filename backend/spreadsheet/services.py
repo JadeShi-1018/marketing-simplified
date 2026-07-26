@@ -4,12 +4,14 @@ Handles spreadsheet, sheet, row, column, and cell management
 """
 from typing import Dict, List, Any, Optional, Tuple, Union
 from decimal import Decimal, InvalidOperation
+import hashlib
 import logging
 import re
 from functools import cmp_to_key
-from django.db import transaction
+from django.db import connection, transaction
 from django.core.exceptions import ValidationError
 from django.db.models import Q, Max, F
+from django.utils import timezone
 
 from .models import (
     Spreadsheet, Sheet, SheetRow, SheetColumn, Cell, CellValueType, ComputedCellType, CellDependency,
@@ -18,8 +20,10 @@ from .models import (
 )
 from .formula_engine import evaluate_formula, extract_references, reference_to_indexes, FormulaError
 from .formula_rewrite import rewrite_cells_for_operation
+from .exceptions import SheetRevisionConflict
 from core.models import Project, ProjectMember
 from .access import accessible_sheets
+from .tenant import current_tenant_schema, validate_tenant_schema
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +33,34 @@ def user_has_sheet_access(user, sheet_id: int) -> bool:
     return accessible_sheets(user).filter(id=sheet_id).exists()
 
 
-def sheet_room_group_name(sheet_id: int) -> str:
-    """Channel-layer group name for a sheet room (must match SheetConsumer)."""
-    return f"sheet_{sheet_id}"
+def sheet_room_group_name(
+    sheet_id: int,
+    tenant_schema: str = "public",
+) -> str:
+    """Tenant-isolated channel-layer group name for a sheet room."""
+    if isinstance(sheet_id, bool) or not isinstance(sheet_id, int) or sheet_id <= 0:
+        raise ValueError("sheet_id must be a positive integer")
+    schema_name = validate_tenant_schema(tenant_schema)
+    if schema_name == "public":
+        return f"sheet_{sheet_id}"
+    schema_key = hashlib.sha256(schema_name.encode("utf-8")).hexdigest()[:20]
+    return f"sheet_t_{schema_key}_{sheet_id}"
+
+
+def _validate_broadcast_target(
+    sheet_id: int,
+    cells: Optional[List[Cell]] = None,
+) -> int:
+    """Reject malformed targets and cell payloads routed to the wrong sheet.
+
+    Authorization belongs to the REST mutation boundary. Re-querying Sheet,
+    User and ProjectMember here added several queries to every committed edit
+    while providing no additional protection against an external caller.
+    """
+    sheet_room_group_name(sheet_id)
+    if cells and any(cell.sheet_id != sheet_id for cell in cells):
+        raise ValueError("All broadcast cells must belong to sheet_id")
+    return sheet_id
 
 
 def _lock_sheet_for_mutation(sheet: Sheet) -> Sheet:
@@ -46,6 +75,20 @@ def _lock_sheet_for_mutation(sheet: Sheet) -> Sheet:
         .select_related('spreadsheet')
         .get(pk=sheet.pk, is_deleted=False, spreadsheet__is_deleted=False)
     )
+
+
+def _assert_sheet_revision(sheet: Sheet, base_revision: Optional[int]) -> None:
+    if base_revision is None:
+        return
+    if base_revision != sheet.revision:
+        raise SheetRevisionConflict(base_revision, sheet.revision)
+
+
+def _advance_sheet_revision(sheet: Sheet) -> int:
+    """Advance the revision while the caller holds the common Sheet row lock."""
+    sheet.revision += 1
+    sheet.save(update_fields=['revision'])
+    return sheet.revision
 
 
 def _cell_broadcast_payload(cell: Cell) -> Dict[str, Any]:
@@ -78,6 +121,7 @@ def broadcast_cells_updated(
     cells: List[Cell],
     origin_client_id: Optional[str] = None,
     origin_user_id: Optional[int] = None,
+    revision: Optional[int] = None,
 ) -> None:
     """Queue a cells_updated broadcast to the sheet room for after commit.
 
@@ -86,10 +130,17 @@ def broadcast_cells_updated(
     therefore defines LWW order: the broadcast for the later commit is queued
     later, and per-cell payloads always carry the post-write DB state.
 
-    Never raises: a broadcast failure must not fail the save that produced it.
+    Delivery failures never escape the on_commit callback. Invalid programmer
+    input (for example a non-positive sheet id or cells from another sheet)
+    still raises before commit.
     """
+    _validate_broadcast_target(sheet_id, cells)
     if not cells:
         return
+    room_group_name = sheet_room_group_name(
+        sheet_id,
+        tenant_schema=current_tenant_schema(),
+    )
     payload_cells = [_cell_broadcast_payload(c) for c in cells]
 
     def _send():
@@ -101,12 +152,13 @@ def broadcast_cells_updated(
             if channel_layer is None:
                 return
             async_to_sync(channel_layer.group_send)(
-                sheet_room_group_name(sheet_id),
+                room_group_name,
                 {
                     'type': 'cells.updated',
                     'sheet_id': sheet_id,
                     'origin_client_id': origin_client_id,
                     'origin_user_id': origin_user_id,
+                    'revision': revision,
                     'cells': payload_cells,
                 },
             )
@@ -121,6 +173,7 @@ def broadcast_sheet_refresh(
     reason: str,
     origin_client_id: Optional[str] = None,
     origin_user_id: Optional[int] = None,
+    revision: Optional[int] = None,
 ) -> None:
     """Queue a sheet_refresh_required broadcast to the sheet room (after commit).
 
@@ -132,8 +185,15 @@ def broadcast_sheet_refresh(
 
     Runs via transaction.on_commit: immediate under autocommit (the structure
     services commit internally before their view calls this), deferred to the
-    commit point when a transaction is active. Never raises.
+    commit point when a transaction is active. Delivery failures are logged
+    and swallowed; malformed programmer input still raises.
     """
+
+    _validate_broadcast_target(sheet_id)
+    room_group_name = sheet_room_group_name(
+        sheet_id,
+        tenant_schema=current_tenant_schema(),
+    )
 
     def _send():
         try:
@@ -144,13 +204,14 @@ def broadcast_sheet_refresh(
             if channel_layer is None:
                 return
             async_to_sync(channel_layer.group_send)(
-                sheet_room_group_name(sheet_id),
+                room_group_name,
                 {
                     'type': 'sheet.refresh_required',
                     'sheet_id': sheet_id,
                     'reason': reason,
                     'origin_client_id': origin_client_id,
                     'origin_user_id': origin_user_id,
+                    'revision': revision,
                 },
             )
         except Exception:
@@ -440,7 +501,8 @@ class SheetService:
     def resize_sheet(
         sheet: Sheet,
         row_count: int,
-        column_count: int
+        column_count: int,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         Ensure sheet has at least the specified number of rows and columns.
@@ -458,6 +520,7 @@ class SheetService:
             raise ValidationError("row_count and column_count must be non-negative integers")
 
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
 
         # Fetch row state in ONE query (was 3 separate queries + a max() call)
         row_qs = SheetRow.objects.filter(sheet=sheet).values_list('position', 'is_deleted')
@@ -519,12 +582,15 @@ class SheetService:
         # Compute totals from already-fetched sets (avoids 2 extra COUNT queries)
         total_rows = len(active_row_positions) + rows_created
         total_columns = len(active_col_positions) + columns_created
+        if rows_created or columns_created:
+            _advance_sheet_revision(sheet)
 
         return {
             'rows_created': rows_created,
             'columns_created': columns_created,
             'total_rows': total_rows,
             'total_columns': total_columns,
+            'revision': sheet.revision,
         }
 
     @staticmethod
@@ -533,7 +599,8 @@ class SheetService:
         sheet: Sheet,
         position: int,
         count: int = 1,
-        created_by: Optional[Any] = None
+        created_by: Optional[Any] = None,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         Insert rows at a given position by shifting existing row positions.
@@ -543,6 +610,7 @@ class SheetService:
             raise ValidationError("count must be a positive integer")
 
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
 
         current_count = SheetRow.objects.filter(sheet=sheet, is_deleted=False).count()
         if position < 0 or position > current_count:
@@ -587,11 +655,13 @@ class SheetService:
         for cell in rewritten_cells:
             CellService._update_dependencies(cell)
         CellService._recalculate_formula_cells(rewritten_cells)
+        _advance_sheet_revision(sheet)
 
         result = {
             'rows_created': count,
             'total_rows': current_count + count,
-            'operation_id': operation.id
+            'operation_id': operation.id,
+            'revision': sheet.revision,
         }
         # Recompute any pivot sheets that depend on this sheet as a source.
         try:
@@ -608,7 +678,8 @@ class SheetService:
         sheet: Sheet,
         position: int,
         count: int = 1,
-        created_by: Optional[Any] = None
+        created_by: Optional[Any] = None,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         Insert columns at a given position by shifting existing column positions.
@@ -618,6 +689,7 @@ class SheetService:
             raise ValidationError("count must be a positive integer")
 
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
 
         current_count = SheetColumn.objects.filter(sheet=sheet, is_deleted=False).count()
         if position < 0 or position > current_count:
@@ -665,11 +737,13 @@ class SheetService:
         for cell in rewritten_cells:
             CellService._update_dependencies(cell)
         CellService._recalculate_formula_cells(rewritten_cells)
+        _advance_sheet_revision(sheet)
 
         result = {
             'columns_created': count,
             'total_columns': current_count + count,
-            'operation_id': operation.id
+            'operation_id': operation.id,
+            'revision': sheet.revision,
         }
         try:
             from .pivot_service import recompute_pivots_for_source_sheet
@@ -685,7 +759,8 @@ class SheetService:
         sheet: Sheet,
         position: int,
         count: int = 1,
-        created_by: Optional[Any] = None
+        created_by: Optional[Any] = None,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         Delete rows at a given position by soft-deleting rows and shifting positions.
@@ -695,6 +770,7 @@ class SheetService:
             raise ValidationError("count must be a positive integer")
 
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
 
         active_qs = SheetRow.objects.filter(sheet=sheet, is_deleted=False)
         current_count = active_qs.count()
@@ -744,11 +820,13 @@ class SheetService:
         for cell in rewritten_cells:
             CellService._update_dependencies(cell)
         CellService._recalculate_formula_cells(rewritten_cells)
+        _advance_sheet_revision(sheet)
 
         result = {
             'rows_deleted': count,
             'total_rows': current_count - count,
-            'operation_id': operation.id
+            'operation_id': operation.id,
+            'revision': sheet.revision,
         }
         try:
             from .pivot_service import recompute_pivots_for_source_sheet
@@ -764,7 +842,8 @@ class SheetService:
         sheet: Sheet,
         position: int,
         count: int = 1,
-        created_by: Optional[Any] = None
+        created_by: Optional[Any] = None,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         Delete columns at a given position by soft-deleting columns and shifting positions.
@@ -774,6 +853,7 @@ class SheetService:
             raise ValidationError("count must be a positive integer")
 
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
 
         active_qs = SheetColumn.objects.filter(sheet=sheet, is_deleted=False)
         current_count = active_qs.count()
@@ -823,11 +903,13 @@ class SheetService:
         for cell in rewritten_cells:
             CellService._update_dependencies(cell)
         CellService._recalculate_formula_cells(rewritten_cells)
+        _advance_sheet_revision(sheet)
 
         result = {
             'columns_deleted': count,
             'total_columns': current_count - count,
-            'operation_id': operation.id
+            'operation_id': operation.id,
+            'revision': sheet.revision,
         }
         try:
             from .pivot_service import recompute_pivots_for_source_sheet
@@ -894,6 +976,7 @@ class SheetService:
         direction: str,
         has_header: bool = True,
         previous_sort_columns: Optional[List[Union[int, Dict[str, Any]]]] = None,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Sort rows by updating SheetRow.position. Does NOT rewrite cells.
@@ -903,13 +986,14 @@ class SheetService:
         if direction not in ('asc', 'desc'):
             raise ValidationError("direction must be 'asc' or 'desc'")
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
         rows = list(
             SheetRow.objects.filter(sheet=sheet, is_deleted=False)
             .order_by('position')
             .select_related('sheet')
         )
         if not rows:
-            return {'previous_order': [], 'new_order': []}
+            return {'previous_order': [], 'new_order': [], 'revision': sheet.revision}
 
         if has_header:
             header_row = rows[0] if rows[0].position == 0 else None
@@ -919,7 +1003,11 @@ class SheetService:
             data_rows = rows
 
         if not data_rows:
-            return {'previous_order': [{'row_id': r.id, 'position': r.position} for r in rows], 'new_order': [{'row_id': r.id, 'position': r.position} for r in rows]}
+            return {
+                'previous_order': [{'row_id': r.id, 'position': r.position} for r in rows],
+                'new_order': [{'row_id': r.id, 'position': r.position} for r in rows],
+                'revision': sheet.revision,
+            }
 
         prev_cols = previous_sort_columns or []
         sort_history: List[Tuple[int, str]] = [(column_position, direction)]
@@ -992,19 +1080,29 @@ class SheetService:
             SheetRow.objects.filter(sheet=sheet, id=row_id, is_deleted=False).update(position=new_pos)
 
         new_order = [{'row_id': rid, 'position': p} for rid, p in new_positions]
+        _advance_sheet_revision(sheet)
 
-        return {'previous_order': previous_order, 'new_order': new_order}
+        return {
+            'previous_order': previous_order,
+            'new_order': new_order,
+            'revision': sheet.revision,
+        }
 
     @staticmethod
     @transaction.atomic
-    def reorder_rows(sheet: Sheet, order: List[Dict[str, int]]) -> None:
+    def reorder_rows(
+        sheet: Sheet,
+        order: List[Dict[str, int]],
+        base_revision: Optional[int] = None,
+    ) -> int:
         """
         Update SheetRow.position according to the given mapping. Used for undo/redo.
         order: [{"row_id": int, "position": int}, ...]
         """
         if not order:
-            return
+            return sheet.revision
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
         offset = 1_000_000
         for item in order:
             rid = item.get('row_id')
@@ -1016,17 +1114,20 @@ class SheetService:
             pos = item.get('position')
             if rid is not None and pos is not None:
                 SheetRow.objects.filter(sheet=sheet, id=rid, is_deleted=False).update(position=pos)
+        return _advance_sheet_revision(sheet)
 
     @staticmethod
     @transaction.atomic
     def revert_structure_operation(
         sheet: Sheet,
-        operation: SheetStructureOperation
+        operation: SheetStructureOperation,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, int]:
         """
         Revert a previously logged structure operation.
         """
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
         operation = SheetStructureOperation.objects.select_for_update().get(
             pk=operation.pk
         )
@@ -1130,8 +1231,13 @@ class SheetService:
 
         operation.is_reverted = True
         operation.save(update_fields=['is_reverted'])
+        _advance_sheet_revision(sheet)
 
-        return {'operation_id': operation.id, 'is_reverted': True}
+        return {
+            'operation_id': operation.id,
+            'is_reverted': True,
+            'revision': sheet.revision,
+        }
 
 
 class CellService:
@@ -1203,24 +1309,72 @@ class CellService:
     def _collect_dependent_formula_cells(changed_cells: List[Cell]) -> List[Cell]:
         from collections import deque
 
-        affected = {}
-        queue = deque(changed_cells)
+        if not changed_cells:
+            return []
+        sheet_ids = {cell.sheet_id for cell in changed_cells}
+        changed_ids = {cell.id for cell in changed_cells if cell.id is not None}
+        if not changed_ids:
+            return []
 
-        while queue:
-            current = queue.popleft()
-            deps = CellDependency.objects.filter(
-                to_cell=current,
-                is_deleted=False
-            ).select_related('from_cell')
-            for dependency in deps:
-                from_cell = dependency.from_cell
-                if from_cell.is_deleted:
-                    continue
-                if from_cell.id not in affected:
-                    affected[from_cell.id] = from_cell
-                    queue.append(from_cell)
+        if connection.vendor == 'postgresql':
+            dependency_table = connection.ops.quote_name(
+                CellDependency._meta.db_table
+            )
+            cell_table = connection.ops.quote_name(Cell._meta.db_table)
+            sql = f"""
+                WITH RECURSIVE affected(id) AS (
+                    SELECT dependency.from_cell_id
+                    FROM {dependency_table} dependency
+                    JOIN {cell_table} dependent
+                      ON dependent.id = dependency.from_cell_id
+                    WHERE dependency.to_cell_id = ANY(%s)
+                      AND dependency.is_deleted = FALSE
+                      AND dependent.is_deleted = FALSE
+                      AND dependent.sheet_id = ANY(%s)
+                    UNION
+                    SELECT dependency.from_cell_id
+                    FROM {dependency_table} dependency
+                    JOIN affected current
+                      ON dependency.to_cell_id = current.id
+                    JOIN {cell_table} dependent
+                      ON dependent.id = dependency.from_cell_id
+                    WHERE dependency.is_deleted = FALSE
+                      AND dependent.is_deleted = FALSE
+                      AND dependent.sheet_id = ANY(%s)
+                )
+                SELECT id FROM affected
+            """
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql,
+                    [list(changed_ids), list(sheet_ids), list(sheet_ids)],
+                )
+                affected_ids = {row[0] for row in cursor.fetchall()}
+        else:
+            # Portable fallback used by non-PostgreSQL unit environments.
+            affected_ids = set()
+            frontier = set(changed_ids)
+            while frontier:
+                next_ids = set(
+                    CellDependency.objects.filter(
+                        to_cell_id__in=frontier,
+                        from_cell__sheet_id__in=sheet_ids,
+                        from_cell__is_deleted=False,
+                        is_deleted=False,
+                    ).values_list('from_cell_id', flat=True)
+                )
+                next_ids -= affected_ids
+                next_ids -= changed_ids
+                affected_ids.update(next_ids)
+                frontier = next_ids
 
-        return list(affected.values())
+        affected_ids -= changed_ids
+        return list(
+            Cell.objects.filter(
+                id__in=affected_ids,
+                is_deleted=False,
+            ).select_related('sheet', 'row', 'column')
+        )
 
     @staticmethod
     def _recalculate_formula_cells(changed_cells: List[Cell]) -> List[Cell]:
@@ -1230,7 +1384,18 @@ class CellService:
             if (cell.raw_input or '').startswith('=')
             or (cell.value_type == CellValueType.FORMULA and (cell.formula_value or '').startswith('='))
         ]
-        all_cells = {cell.id: cell for cell in affected_cells + changed_formula_cells}
+        candidate_ids = {
+            cell.id
+            for cell in affected_cells + changed_formula_cells
+            if cell.id is not None
+        }
+        all_cells = {
+            cell.id: cell
+            for cell in Cell.objects.filter(
+                id__in=candidate_ids,
+                is_deleted=False,
+            ).select_related('sheet', 'row', 'column')
+        }
 
         if not all_cells:
             return []
@@ -1253,49 +1418,100 @@ class CellService:
 
         from collections import deque
         queue = deque([cell_id for cell_id, degree in in_degree.items() if degree == 0])
-        ordered = []
+        levels = []
+        ordered_set = set()
 
         while queue:
-            current_id = queue.popleft()
-            ordered.append(current_id)
-            for dependent_id in adjacency.get(current_id, []):
-                in_degree[dependent_id] -= 1
-                if in_degree[dependent_id] == 0:
-                    queue.append(dependent_id)
+            level_ids = list(queue)
+            queue.clear()
+            levels.append(level_ids)
+            ordered_set.update(level_ids)
+            for current_id in level_ids:
+                for dependent_id in adjacency.get(current_id, []):
+                    in_degree[dependent_id] -= 1
+                    if in_degree[dependent_id] == 0:
+                        queue.append(dependent_id)
 
-        ordered_set = set(ordered)
         cycle_ids = affected_ids - ordered_set
         updated_cells = []
 
-        for cell_id in ordered:
-            cell = all_cells[cell_id]
-            raw_input = cell.raw_input or ''
-            formula_source = raw_input
-            if not raw_input.startswith('='):
-                formula_value = cell.formula_value or ''
-                if cell.value_type == CellValueType.FORMULA and formula_value.startswith('='):
-                    formula_source = formula_value
-                else:
-                    continue
-            result = evaluate_formula(formula_source, cell.sheet)
-            cell.computed_type = result.computed_type
-            if result.computed_type == ComputedCellType.NUMBER and result.computed_number is not None:
-                cell.computed_number = Decimal(str(result.computed_number))
-            else:
-                cell.computed_number = None
-            cell.computed_string = result.computed_string
-            cell.error_code = result.error_code
-            cell.save()
-            updated_cells.append(cell)
+        formula_contexts = {}
+        for sheet_id in {cell.sheet_id for cell in all_cells.values()}:
+            formula_contexts[sheet_id] = {
+                'rows': set(
+                    SheetRow.objects.filter(
+                        sheet_id=sheet_id,
+                        is_deleted=False,
+                    ).values_list('position', flat=True)
+                ),
+                'columns': set(
+                    SheetColumn.objects.filter(
+                        sheet_id=sheet_id,
+                        is_deleted=False,
+                    ).values_list('position', flat=True)
+                ),
+                'cells': {},
+            }
+        for cell in all_cells.values():
+            context = formula_contexts[cell.sheet_id]
+            context['cells'][(cell.row.position, cell.column.position)] = cell
+            cell.sheet._formula_active_row_positions = context['rows']
+            cell.sheet._formula_active_column_positions = context['columns']
+            cell.sheet._formula_cell_cache = context['cells']
 
+        update_fields = [
+            'computed_type',
+            'computed_number',
+            'computed_string',
+            'error_code',
+            'updated_at',
+        ]
+        for level_ids in levels:
+            level_updates = []
+            for cell_id in level_ids:
+                cell = all_cells[cell_id]
+                raw_input = cell.raw_input or ''
+                formula_source = raw_input
+                if not raw_input.startswith('='):
+                    formula_value = cell.formula_value or ''
+                    if cell.value_type == CellValueType.FORMULA and formula_value.startswith('='):
+                        formula_source = formula_value
+                    else:
+                        continue
+                result = evaluate_formula(formula_source, cell.sheet)
+                cell.computed_type = result.computed_type
+                if result.computed_type == ComputedCellType.NUMBER and result.computed_number is not None:
+                    cell.computed_number = Decimal(str(result.computed_number))
+                else:
+                    cell.computed_number = None
+                cell.computed_string = result.computed_string
+                cell.error_code = result.error_code
+                cell.updated_at = timezone.now()
+                level_updates.append(cell)
+            if level_updates:
+                Cell.objects.bulk_update(
+                    level_updates,
+                    update_fields,
+                    batch_size=1000,
+                )
+                updated_cells.extend(level_updates)
+
+        cycle_updates = []
         for cell_id in cycle_ids:
             cell = all_cells[cell_id]
             cell.computed_type = ComputedCellType.ERROR
             cell.computed_number = None
             cell.computed_string = None
             cell.error_code = "#CYCLE!"
-            cell.save()
-            updated_cells.append(cell)
+            cell.updated_at = timezone.now()
+            cycle_updates.append(cell)
+        if cycle_updates:
+            Cell.objects.bulk_update(
+                cycle_updates,
+                update_fields,
+                batch_size=1000,
+            )
+            updated_cells.extend(cycle_updates)
 
         return updated_cells
 
@@ -1601,6 +1817,7 @@ class CellService:
             'column_count': end_column - start_column + 1,
             'sheet_row_count': sheet_row_count,
             'sheet_column_count': sheet_column_count,
+            'revision': sheet.revision,
         }
     
     @staticmethod
@@ -1612,6 +1829,7 @@ class CellService:
         import_mode: bool = False,
         origin_client_id: Optional[str] = None,
         origin_user_id: Optional[int] = None,
+        base_revision: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Perform multiple cell operations (set or clear) in a single atomic transaction.
@@ -1650,6 +1868,7 @@ class CellService:
         # Acquiring it before any row/column reads gives the whole operation a
         # single authoritative order relative to structural changes.
         sheet = _lock_sheet_for_mutation(sheet)
+        _assert_sheet_revision(sheet, base_revision)
 
         # PHASE 1: VALIDATION (no DB writes)
         # Validate all operations and collect errors
@@ -2144,12 +2363,19 @@ class CellService:
             recalculated_cells = CellService._recalculate_formula_cells(list(updated_cells.values()))
             for cell in recalculated_cells:
                 updated_cells[cell.id] = cell
-        
+
+        # Auto-expansion changes the coordinate structure just like an explicit
+        # resize. Advance the revision in the same transaction so peers reload
+        # before applying coordinates based on the expanded grid.
+        if rows_expanded or columns_expanded:
+            _advance_sheet_revision(sheet)
+
         result = {
             'updated': updated,
             'cleared': cleared,
             'rows_expanded': rows_expanded,
             'columns_expanded': columns_expanded,
+            'revision': sheet.revision,
         }
         if not import_mode:
             result['cells'] = list(updated_cells.values())
@@ -2175,6 +2401,7 @@ class CellService:
                 cells=result['cells'],
                 origin_client_id=origin_client_id,
                 origin_user_id=origin_user_id,
+                revision=sheet.revision,
             )
 
         return result

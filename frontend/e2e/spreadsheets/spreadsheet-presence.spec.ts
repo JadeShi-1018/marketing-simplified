@@ -6,6 +6,11 @@ import {
 } from '@playwright/test';
 import { waitForSpreadsheetPageReady } from './spreadsheet-helpers';
 
+const apiUrl = (path: string): string => {
+  const base = process.env.PLAYWRIGHT_API_BASE_URL?.replace(/\/$/, '');
+  return base ? `${base}${path}` : path;
+};
+
 /**
  * Two tabs on the same sheet should see each other's presence avatars.
  * Cell edit sync is out of scope for this scaffold.
@@ -37,9 +42,11 @@ async function getOrCreateSpreadsheetSlug(
     }
   };
 
-  const token: string | undefined = parseState(
+  const authState = parseState(
     localStorageOf('auth-storage-v1') ?? localStorageOf('auth-storage'),
-  )?.token;
+  );
+  const token: string | undefined = authState?.token;
+  const organizationToken: string | undefined = authState?.organizationAccessToken;
   expect(token, 'auth token missing from storageState (auth.setup failed?)').toBeTruthy();
 
   // Must use the active project: pages 401→login on cross-project resources.
@@ -48,16 +55,24 @@ async function getOrCreateSpreadsheetSlug(
   )?.activeProject?.id;
   expect(activeProjectId, 'no active project in storageState (auth.setup incomplete?)').toBeTruthy();
 
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    ...(process.env.PLAYWRIGHT_API_HOST
+      ? { Host: process.env.PLAYWRIGHT_API_HOST }
+      : {}),
+    ...(organizationToken
+      ? { 'X-Organization-Token': organizationToken }
+      : {}),
+  };
   const listUrl = `/api/spreadsheet/spreadsheets/?project_id=${activeProjectId}`;
 
-  const listResp = await request.get(listUrl, { headers });
+  const listResp = await request.get(apiUrl(listUrl), { headers });
   expect(listResp.ok(), `spreadsheet list API returned ${listResp.status()}`).toBeTruthy();
   const body = await listResp.json();
   const results: Array<{ slug: string }> = body.results ?? body ?? [];
   if (results.length > 0) return results[0].slug;
 
-  const createResp = await request.post(listUrl, {
+  const createResp = await request.post(apiUrl(listUrl), {
     headers,
     data: { name: 'Presence E2E' },
   });
