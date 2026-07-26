@@ -1879,7 +1879,20 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
     def move_subtask(self, request, pk=None, subtask_id=None):
         """
         Move subtask from old parent to new parent (pk).
-        payload: { "old_parent_id": <id> }
+
+        Request body: ``{ "old_parent_id": <id> }``
+
+        Success (200): ``{ "success": true }``
+
+        Hierarchy cycle (422) — stable contract for UI and integrations::
+
+            {
+                "detail": "Cannot set this parent: it would create a circular task hierarchy.",
+                "code": "task_hierarchy_cycle"
+            }
+
+        Other validation errors return 400 with ``{ "error": "<message>" }``.
+        Missing relationship returns 404.
         """
         new_parent = self.get_object()
         old_parent_id = request.data.get('old_parent_id')
