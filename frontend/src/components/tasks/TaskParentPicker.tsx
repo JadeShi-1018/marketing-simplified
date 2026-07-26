@@ -231,8 +231,8 @@ export default function TaskParentPicker({
     setInlineError(null);
     try {
       await TaskAPI.moveSubtask(
-        newParent.slug ?? newParent.id,
-        task.slug ?? taskId,
+        newParent.id,
+        taskId,
         { old_parent_id: currentParentId },
       );
       if (oldParent) {
