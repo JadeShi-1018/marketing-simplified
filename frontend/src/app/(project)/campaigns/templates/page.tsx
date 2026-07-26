@@ -120,7 +120,7 @@ export default function TemplatesListV2Page() {
           showArchived={showArchived}
           onRowClick={(t) => {
             if (!projectId) return;
-            router.push(`/projects/${projectId}/campaigns/templates/${t.slug}`);
+            router.push(buildUrl(`/campaigns/templates/${t.slug}`));
           }}
         />
       </div>

@@ -635,7 +635,7 @@ export function MeetingSummaryPanel({
                 </Button>
 
                 <Link
-                  href={`/projects/${projectId}/meetings/${meeting?.slug || meetingId}`}
+                  href={buildUrl(`/meetings/${meeting?.slug || meetingId}`)}
                   className="inline-flex w-full items-center justify-center rounded-lg border border-[#3CCED7]/30 bg-[#3CCED7]/10 px-3 py-2.5 text-sm font-medium text-[#1a9ba3] transition hover:bg-[#3CCED7]/15"
                 >
                   Open full meeting workspace

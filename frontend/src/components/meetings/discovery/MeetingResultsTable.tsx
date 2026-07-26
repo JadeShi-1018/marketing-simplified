@@ -117,7 +117,7 @@ function MeetingResultCard({
     (genDecisions.length > 0 || genTasks.length > 0);
   const meetingPageKnowledgeHref =
     hasContextualNav && projectId != null
-      ? `/projects/${projectId}/meetings/${m.slug}#contextual-knowledge`
+      ? buildUrl(`/meetings/${m.slug}#contextual-knowledge`)
       : null;
   const visibleTags = tags.slice(0, 3);
   const tagOverflow = tags.length - visibleTags.length;
