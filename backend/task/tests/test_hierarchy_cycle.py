@@ -291,3 +291,50 @@ class TaskHierarchyCycleAPITest(APITestCase):
                 child_task=self.task_b,
             ).exists()
         )
+
+    def test_move_subtask_success_by_task_id(self):
+        TaskHierarchy.objects.create(
+            parent_task=self.task_a,
+            child_task=self.task_b,
+        )
+
+        url = reverse(
+            "task-move-subtask",
+            kwargs={"pk": self.task_c.id, "subtask_id": self.task_b.id},
+        )
+        response = self.client.post(
+            url,
+            {"old_parent_id": self.task_a.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            TaskHierarchy.objects.filter(
+                parent_task=self.task_c,
+                child_task=self.task_b,
+            ).exists()
+        )
+
+    def test_move_subtask_cycle_by_task_id_returns_422(self):
+        TaskHierarchy.objects.create(
+            parent_task=self.task_a,
+            child_task=self.task_b,
+        )
+        TaskHierarchy.objects.create(
+            parent_task=self.task_b,
+            child_task=self.task_c,
+        )
+
+        url = reverse(
+            "task-move-subtask",
+            kwargs={"pk": self.task_c.id, "subtask_id": self.task_b.id},
+        )
+        response = self.client.post(
+            url,
+            {"old_parent_id": self.task_a.id},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        self.assertEqual(response.data["code"], HIERARCHY_CYCLE_ERROR_CODE)
