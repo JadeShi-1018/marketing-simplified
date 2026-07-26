@@ -1,57 +1,65 @@
-import { execSync } from 'node:child_process';
 import { test, expect } from '@playwright/test';
 import {
   createDraftTaskViaApi,
   deleteTaskById,
   ensureE2EPageReady,
   getActiveProjectIdFromStore,
+  getAuthToken,
   linkSubtaskViaApi,
-  moveSubtaskViaApi,
   openSubtaskDetailWithPicker,
   searchAndSelectParentInPicker,
-  waitForTasksPageReady,
+  waitForAppGatewayReady,
 } from './tasks-helpers';
 
 const CYCLE_MESSAGE =
   'Cannot set this parent: it would create a circular task hierarchy.';
 
-/** Override with E2E_BACKEND_CONTAINER when the dev backend service name differs. */
-const BACKEND_CONTAINER = process.env.E2E_BACKEND_CONTAINER ?? 'backend-dev';
-
 /**
- * Seed A→B→C via direct DB writes. Public API cannot build this chain: one-level nesting
- * blocks B→C after A→B (and the reverse order fails for the same reason).
- * 3-node move-cycle 422 is covered in backend/task/tests/test_hierarchy_cycle.py;
- * this E2E test asserts the same contract through the HTTP move endpoint.
- * Follow-up: management command or test fixture endpoint to remove docker exec (MED-235).
+ * UI coverage for MED-235 parent picker (deterministic waits + API fixtures).
+ *
+ * The 3-node move-cycle HTTP 422 contract is covered in backend/task/tests/test_hierarchy_cycle.py
+ * (public API cannot seed that chain without a DB bypass because of one-level nesting rules).
  */
-function seedThreeNodeHierarchyViaDocker(aId: number, bId: number, cId: number): boolean {
-  try {
-    execSync(
-      `docker exec ${BACKEND_CONTAINER} python manage.py shell -c "` +
-        `from task.models import Task, TaskHierarchy;` +
-        `TaskHierarchy.objects.get_or_create(parent_task_id=${aId}, child_task_id=${bId});` +
-        `TaskHierarchy.objects.get_or_create(parent_task_id=${bId}, child_task_id=${cId});` +
-        `"`,
-      { stdio: 'pipe' },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 test.describe('Task hierarchy parent picker (MED-235)', () => {
-  test.describe.configure({ mode: 'serial', timeout: 120_000 });
+  test.describe.configure({ mode: 'serial', timeout: 180_000 });
 
   let projectId: number;
   const createdTaskIds: number[] = [];
 
   test.beforeAll(async ({ browser }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(180_000);
     const context = await browser.newContext({ storageState: 'e2e/.auth/user.json' });
     const page = await context.newPage();
+    await waitForAppGatewayReady(page);
     projectId = await getActiveProjectIdFromStore(page);
+
+    // Warm Next.js /tasks/[taskId] compilation so the first spec test does not hit a cold 502.
+    const warmup = await createDraftTaskViaApi(page, projectId, `E2E route warmup ${Date.now()}`);
+    await expect
+      .poll(
+        async () => {
+          await page.goto(`/tasks/${encodeURIComponent(warmup.slug)}`, { waitUntil: 'domcontentloaded' });
+          const gatewayError = page.getByText(/502 Bad Gateway|504 Gateway/i);
+          if (await gatewayError.isVisible({ timeout: 500 }).catch(() => false)) {
+            return false;
+          }
+          const token = await getAuthToken(page);
+          if (!token) return false;
+          const response = await page.request.get(
+            `${process.env.BASE_URL || 'http://localhost'}/api/tasks/${warmup.id}/`,
+            { headers: { Authorization: `Bearer ${token}` } },
+          );
+          return response.ok();
+        },
+        {
+          message: 'Task detail route warmup did not complete',
+          timeout: 180_000,
+          intervals: [3_000, 5_000, 10_000],
+        },
+      )
+      .toBe(true);
+    await deleteTaskById(page, warmup.id).catch(() => {});
+
     await context.close();
   });
 
@@ -64,30 +72,6 @@ test.describe('Task hierarchy parent picker (MED-235)', () => {
     }
   });
 
-  test('API rejects a move that would create a 3-node cycle with 422', async ({ page }) => {
-    await page.goto('/overview', { waitUntil: 'domcontentloaded' });
-
-    const stamp = Date.now();
-    const taskA = await createDraftTaskViaApi(page, projectId, `E2E Hierarchy A ${stamp}`);
-    const taskB = await createDraftTaskViaApi(page, projectId, `E2E Hierarchy B ${stamp}`);
-    const taskC = await createDraftTaskViaApi(page, projectId, `E2E Hierarchy C ${stamp}`);
-    createdTaskIds.push(taskA.id, taskB.id, taskC.id);
-
-    const seeded = seedThreeNodeHierarchyViaDocker(taskA.id, taskB.id, taskC.id);
-    if (!seeded) {
-      test.skip(
-        true,
-        `Docker backend (${BACKEND_CONTAINER}) unavailable — 3-node cycle seed requires DB bypass; see backend test_hierarchy_cycle.py`,
-      );
-    }
-
-    const { status, body } = await moveSubtaskViaApi(page, taskC, taskB, taskA.id);
-
-    expect(status).toBe(422);
-    expect(body?.code).toBe('task_hierarchy_cycle');
-    expect(String(body?.detail ?? '')).toContain('circular task hierarchy');
-  });
-
   test('subtask detail shows Parent picker', async ({ page }) => {
     await ensureE2EPageReady(page);
 
@@ -97,7 +81,7 @@ test.describe('Task hierarchy parent picker (MED-235)', () => {
     createdTaskIds.push(parent.id, child.id);
 
     await linkSubtaskViaApi(page, parent, child.id);
-    await openSubtaskDetailWithPicker(page, child.slug);
+    await openSubtaskDetailWithPicker(page, child);
 
     await expect(page.getByText('Parent', { exact: true })).toBeVisible();
   });
@@ -112,7 +96,7 @@ test.describe('Task hierarchy parent picker (MED-235)', () => {
     createdTaskIds.push(parentA.id, childB.id, parentC.id);
 
     await linkSubtaskViaApi(page, parentA, childB.id);
-    await openSubtaskDetailWithPicker(page, childB.slug);
+    await openSubtaskDetailWithPicker(page, childB);
 
     await page.route('**/api/tasks/**/subtasks/**/move/**', async (route) => {
       if (route.request().method() !== 'POST') {
@@ -159,13 +143,14 @@ test.describe('Task hierarchy parent picker (MED-235)', () => {
     createdTaskIds.push(parentA.id, childB.id, parentC.id);
 
     await linkSubtaskViaApi(page, parentA, childB.id);
-    await openSubtaskDetailWithPicker(page, childB.slug);
+    await openSubtaskDetailWithPicker(page, childB);
 
     const moveResponse = page.waitForResponse(
       (resp) =>
         resp.url().includes('/subtasks/') &&
         resp.url().includes('/move/') &&
-        resp.request().method() === 'POST',
+        resp.request().method() === 'POST' &&
+        resp.ok(),
     );
 
     await searchAndSelectParentInPicker(
@@ -174,8 +159,7 @@ test.describe('Task hierarchy parent picker (MED-235)', () => {
       parentC.summary,
     );
 
-    const response = await moveResponse;
-    expect(response.ok()).toBeTruthy();
+    await moveResponse;
 
     await expect(page.getByTestId('task-parent-picker-error')).not.toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Parent task' })).toContainText(parentC.summary);

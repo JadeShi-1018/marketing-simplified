@@ -11,7 +11,26 @@ function isTaskListGetResponse(resp: { url(): string; request(): { method(): str
   return resp.request().method() === 'GET' && (path === '/api/tasks' || path === '/api/tasks/');
 }
 
+export async function waitForAppGatewayReady(page: Page): Promise<void> {
+  const origin = process.env.BASE_URL || 'http://localhost';
+
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(`${origin}/`, { timeout: 10_000 });
+        return response.status() !== 502 && response.status() !== 504;
+      },
+      {
+        message: `App gateway at ${origin} did not become ready`,
+        timeout: 120_000,
+        intervals: [1_000, 2_000, 3_000, 5_000],
+      },
+    )
+    .toBe(true);
+}
+
 export async function ensureE2EPageReady(page: Page): Promise<void> {
+  await waitForAppGatewayReady(page);
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await waitForTasksPageReady(page);
 }
@@ -407,11 +426,27 @@ export async function openTaskDetailPage(page: Page, taskSlug: string): Promise<
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 15_000 });
 }
 
-function isTaskDetailGetResponse(resp: { url(): string; request(): { method(): string } }, taskKey: string): boolean {
+function isTaskDetailGetResponse(
+  resp: { url(): string; request(): { method(): string }; ok(): boolean },
+  task: Pick<DraftTaskFixture, 'id' | 'slug'> | string,
+): boolean {
+  if (resp.request().method() !== 'GET' || !resp.ok()) {
+    return false;
+  }
   const url = new URL(resp.url());
   const path = decodeURIComponent(url.pathname.replace(/\/$/, ''));
-  const slug = decodeURIComponent(taskKey);
-  return resp.request().method() === 'GET' && path === `/api/tasks/${slug}`;
+  const prefix = '/api/tasks/';
+  if (!path.startsWith(prefix)) {
+    return false;
+  }
+  const segment = path.slice(prefix.length);
+  if (!segment || segment.includes('/')) {
+    return false;
+  }
+  if (typeof task === 'string') {
+    return segment === decodeURIComponent(task);
+  }
+  return segment === task.slug || segment === String(task.id);
 }
 
 function isTaskSearchGetResponse(resp: { url(): string; request(): { method(): string } }): boolean {
@@ -428,28 +463,36 @@ function isTaskSearchGetResponse(resp: { url(): string; request(): { method(): s
  * Open a subtask detail page and wait for the task GET + parent picker to be ready.
  * Deterministic waits: task detail API 200, then task-parent-picker visible.
  */
-export async function openSubtaskDetailWithPicker(page: Page, taskSlug: string): Promise<void> {
-  const taskResponse = page.waitForResponse(
-    (resp) =>
-      resp.request().method() === 'GET' &&
-      resp.url().includes('/api/tasks/') &&
-      resp.ok() &&
-      isTaskDetailGetResponse(resp, taskSlug),
-    { timeout: 30_000 },
-  );
+export async function openSubtaskDetailWithPicker(
+  page: Page,
+  task: Pick<DraftTaskFixture, 'id' | 'slug'> | string,
+): Promise<void> {
+  const slug = typeof task === 'string' ? task : task.slug;
 
-  await page.goto(`/tasks/${encodeURIComponent(taskSlug)}`, { waitUntil: 'domcontentloaded' });
+  await expect
+    .poll(
+      async () => {
+        const detailResponse = page
+          .waitForResponse((resp) => isTaskDetailGetResponse(resp, task), { timeout: 15_000 })
+          .catch(() => null);
 
-  await Promise.race([
-    taskResponse,
-    expect(page.getByTestId('task-parent-picker')).toBeVisible({ timeout: 30_000 }),
-  ]).catch(async () => {
-    const gatewayError = page.getByText(/502 Bad Gateway|504 Gateway/i);
-    if (await gatewayError.isVisible({ timeout: 2_000 }).catch(() => false)) {
-      await page.goto(`/tasks/${encodeURIComponent(taskSlug)}`, { waitUntil: 'domcontentloaded' });
-    }
-    await expect(page.getByTestId('task-parent-picker')).toBeVisible({ timeout: 30_000 });
-  });
+        await page.goto(`/tasks/${encodeURIComponent(slug)}`, { waitUntil: 'domcontentloaded' });
+
+        const gatewayError = page.getByText(/502 Bad Gateway|504 Gateway/i);
+        if (await gatewayError.isVisible({ timeout: 500 }).catch(() => false)) {
+          return false;
+        }
+
+        await detailResponse;
+        return page.getByTestId('task-parent-picker').isVisible().catch(() => false);
+      },
+      {
+        message: `Subtask detail and parent picker did not become ready for ${slug}`,
+        timeout: 90_000,
+        intervals: [1_000, 2_000, 3_000],
+      },
+    )
+    .toBe(true);
 
   await expect(page.getByRole('combobox', { name: 'Parent task' })).toBeVisible();
 }

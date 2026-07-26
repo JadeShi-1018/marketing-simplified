@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs';
-import { test as setup } from '@playwright/test';
+import { expect, test as setup } from '@playwright/test';
 
 const AUTH_DIR = path.join(__dirname, '.auth');
 const AUTH_FILE = path.join(AUTH_DIR, 'user.json');
@@ -27,27 +27,37 @@ setup('authenticate', async ({ page, baseURL }) => {
 
   const origin = baseURL ?? 'http://localhost';
 
-  let loginResponse = await page.request.post(`${origin}/auth/login/`, {
-    headers: { 'Content-Type': 'application/json' },
-    data: { email: TEST_EMAIL, password: TEST_PASSWORD },
-  });
+  let loginBody: LoginPayload | undefined;
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.post(`${origin}/auth/login/`, {
+          headers: { 'Content-Type': 'application/json' },
+          data: { email: TEST_EMAIL, password: TEST_PASSWORD },
+        });
+        if ([502, 503, 504].includes(response.status())) {
+          return false;
+        }
+        if (!response.ok()) {
+          throw new Error(
+            `Login API failed (${response.status()}): ${await response.text()}. ` +
+              'Check backend is up and DEV_USER_EMAIL / DEV_USER_PASSWORD in frontend/.env.local.',
+          );
+        }
+        loginBody = (await response.json()) as LoginPayload;
+        return true;
+      },
+      {
+        message: `Login API did not become ready at ${origin}/auth/login/`,
+        timeout: 60_000,
+        intervals: [500, 1_000, 2_000],
+      },
+    )
+    .toBe(true);
 
-  if ([502, 503, 504].includes(loginResponse.status())) {
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
-    loginResponse = await page.request.post(`${origin}/auth/login/`, {
-      headers: { 'Content-Type': 'application/json' },
-      data: { email: TEST_EMAIL, password: TEST_PASSWORD },
-    });
+  if (!loginBody?.token) {
+    throw new Error('Login API succeeded but returned no token');
   }
-
-  if (!loginResponse.ok()) {
-    throw new Error(
-      `Login API failed (${loginResponse.status()}): ${await loginResponse.text()}. ` +
-        'Check backend is up and DEV_USER_EMAIL / DEV_USER_PASSWORD in frontend/.env.local.',
-    );
-  }
-
-  const loginBody = (await loginResponse.json()) as LoginPayload;
 
   const projectsResponse = await page.request.get(`${origin}/api/core/projects/`, {
     headers: { Authorization: `Bearer ${loginBody.token}` },
