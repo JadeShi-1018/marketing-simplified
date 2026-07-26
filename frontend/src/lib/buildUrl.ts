@@ -3,7 +3,7 @@ import { useAuthStore } from '@/lib/authStore';
 import { useProjectStore } from '@/lib/projectStore';
 
 /**
- * MED-352 Plan B — prefixes app paths with /[orgSlug]/[projectSlug].
+ * Prefixes app paths with /[orgSlug]/[projectSlug].
  *
  * Falls back to the original, unprefixed path when either slug is
  * unavailable, so callers keep working exactly as before (flat routes)

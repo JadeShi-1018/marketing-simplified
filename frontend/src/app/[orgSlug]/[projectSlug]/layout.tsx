@@ -8,8 +8,8 @@ import { useProjectStore } from '@/lib/projectStore';
 import { useAuthStore } from '@/lib/authStore';
 
 /**
- * Phase 1 (MED-352 Plan B feasibility check): resolves [orgSlug]/[projectSlug]
- * from the URL and syncs org + project context.
+ * Resolves [orgSlug]/[projectSlug] from the URL and syncs org + project
+ * context.
  *
  * Multi-tenant note: the backend's tenant_schema middleware sets PostgreSQL's
  * search_path from request.user.current_organization_id on every request. If

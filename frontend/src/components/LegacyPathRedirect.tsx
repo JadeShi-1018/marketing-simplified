@@ -8,13 +8,13 @@ import { useAuthStore } from '@/lib/authStore';
 
 // Account-level pages under (project)/ that must never get an org/project
 // prefix, mirroring the buildUrl() call-site exclusions used throughout the
-// nav conversion (MED-352 Plan B).
+// nav conversion.
 const EXCLUDED_PREFIXES = ['/select-project', '/profile', '/subscription', '/organizations', '/ads/previewer'];
 
 // Old ID-nested routes (`/projects/123/tasks`) have a different path shape
 // than the flat scheme buildUrl() expects — prefixing them naively would
 // produce `/org/proj/projects/123/tasks`, not a real migrated route. These
-// are migrated separately (see MED-352 Plan A) rather than redirected here.
+// are migrated separately rather than redirected here.
 const OLD_NESTED_PROJECT_ROUTE = /^\/projects\/(?!active$|completed$|quick-start$)[^/]+\/.+/;
 
 function isExcluded(pathname: string): boolean {
