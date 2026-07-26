@@ -373,7 +373,7 @@ export async function createDraftTaskViaApi(
 
 export async function linkSubtaskViaApi(
   page: Page,
-  parent: Pick<DraftTaskFixture, 'slug'> | number | string,
+  parent: Pick<DraftTaskFixture, 'id' | 'slug'> | number | string,
   childTaskId: number,
 ): Promise<void> {
   const token = await getAuthToken(page);
@@ -392,8 +392,8 @@ export async function linkSubtaskViaApi(
 
 export async function moveSubtaskViaApi(
   page: Page,
-  newParent: Pick<DraftTaskFixture, 'slug'> | number | string,
-  child: Pick<DraftTaskFixture, 'slug'> | number | string,
+  newParent: Pick<DraftTaskFixture, 'id' | 'slug'> | number | string,
+  child: Pick<DraftTaskFixture, 'id' | 'slug'> | number | string,
   oldParentId: number,
 ): Promise<{ status: number; body: Record<string, unknown> | null }> {
   const token = await getAuthToken(page);
