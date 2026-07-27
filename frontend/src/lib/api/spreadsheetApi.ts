@@ -11,6 +11,7 @@ import {
   PivotConfigDTO,
 } from '@/types/spreadsheet';
 import {
+  isSheetRevisionConflictResponse,
   publishSheetRevisionConflict,
   setSheetRevision,
   withBaseRevision,
@@ -51,7 +52,10 @@ api.interceptors.response.use(
   (error) => {
     const data = error?.response?.data;
     const match = String(error?.config?.url || '').match(/\/sheets\/(\d+)\//);
-    if (data?.code === 'SHEET_REVISION_CONFLICT' && match) {
+    if (
+      match &&
+      isSheetRevisionConflictResponse(error?.response?.status, data)
+    ) {
       publishSheetRevisionConflict(match[1], data.current_revision);
     }
     return Promise.reject(error);

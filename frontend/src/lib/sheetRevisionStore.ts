@@ -1,6 +1,22 @@
 const revisions = new Map<string, number>();
 export const SHEET_REVISION_CONFLICT_EVENT = 'sheet-revision-conflict';
 
+export function isSheetRevisionConflictResponse(
+  status: unknown,
+  data: unknown
+): boolean {
+  if (!data || typeof data !== 'object') return false;
+  const payload = data as { code?: unknown; current_revision?: unknown };
+  const currentRevision = Number(payload.current_revision);
+  const hasCurrentRevision =
+    Number.isSafeInteger(currentRevision) && currentRevision >= 0;
+  if (!hasCurrentRevision) return false;
+  return (
+    payload.code === 'SHEET_REVISION_CONFLICT' ||
+    status === 409
+  );
+}
+
 function key(sheetId: number | string): string {
   return String(sheetId);
 }

@@ -1603,10 +1603,22 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     pendingCanonicalRefreshRef.current = true;
 
     const queuedOps = pendingOpsRef.current;
+    const hadActiveEditor = editingCell !== null;
+    if (hadActiveEditor) {
+      // An editor opened before a remote structure change still owns the old
+      // coordinate. Remove it before replacing the canonical cell map; outer
+      // pointer/keyboard guards cannot stop the input's own Enter/blur commit.
+      setEditingCell(null);
+      setEditValue('');
+      setMode('navigation');
+      setNavigationLocked(false);
+    }
     if (queuedOps.size > 0) {
       const emptyQueue = new Map<CellKey, PendingOperation>();
       pendingOpsRef.current = emptyQueue;
       setPendingOps(emptyQueue);
+    }
+    if (queuedOps.size > 0 || hadActiveEditor) {
       toast.error(
         'The sheet structure changed. Unsaved edits were discarded; please enter them again.',
         { duration: 5000 }
@@ -1715,6 +1727,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     loadCellRange,
     spreadsheetId,
     sheetId,
+    editingCell,
   ]);
 
   useEffect(() => {
@@ -3881,6 +3894,18 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   // Handle commit cell edit
   const handleCommitEdit = useCallback(() => {
     if (!editingCell) return;
+    if (
+      pendingCanonicalRefreshRef.current ||
+      canonicalRefreshInFlightRef.current > 0
+    ) {
+      // The editor's row/column belongs to the pre-refresh structure. Never
+      // enqueue it after the socket has advanced to the canonical revision.
+      setEditingCell(null);
+      setEditValue('');
+      setMode('navigation');
+      setNavigationLocked(false);
+      return;
+    }
 
     const { row, col } = parseCellKey(editingCell);
     const prevValue = getCellRawInput(row, col);
@@ -6284,11 +6309,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           position: 'relative',
         }}
         onScroll={isGridLoading ? undefined : handleScroll}
-        onKeyDown={isGridLoading ? undefined : handleKeyDown}
-        onCopy={isGridLoading ? undefined : handleCopy}
-        onPaste={isGridLoading ? undefined : handlePaste}
-        tabIndex={isGridLoading ? -1 : 0}
-        aria-busy={cellCanvasLoading || isGridLoading}
+        onKeyDown={showGridSpinner ? undefined : handleKeyDown}
+        onCopy={showGridSpinner ? undefined : handleCopy}
+        onPaste={showGridSpinner ? undefined : handlePaste}
+        tabIndex={showGridSpinner ? -1 : 0}
+        aria-busy={showGridSpinner}
       >
         {showGridSpinner ? (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">

@@ -814,6 +814,55 @@ describe('SpreadsheetGrid collaboration reconciliation', () => {
     );
   });
 
+  it('cancels an active editor and blocks keyboard input during canonical refresh', async () => {
+    const ref = React.createRef<SpreadsheetGridHandle>();
+    const { container } = render(
+      <SpreadsheetGrid ref={ref} spreadsheetId={77} sheetId={977} />
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const cell = container.querySelector(
+      'td[data-row="0"][data-col="0"]'
+    ) as HTMLTableCellElement;
+    fireEvent.doubleClick(cell);
+    const editor = cell.querySelector('input') as HTMLInputElement;
+    fireEvent.change(editor, { target: { value: 'stale-coordinate-edit' } });
+
+    act(() => {
+      ref.current?.refresh();
+      // Dispatch before React removes the input so both the editor's Enter
+      // handler and blur commit path exercise the in-flight refresh guard.
+      editor.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      editor.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+
+    const grid = container.querySelector(
+      '.spreadsheet-scroll-container'
+    ) as HTMLDivElement;
+    expect(container.querySelector('td[data-row="0"][data-col="0"] input')).toBeNull();
+    expect(grid).toHaveAttribute('tabindex', '-1');
+
+    fireEvent.keyDown(grid, { key: 'x' });
+    act(() => {
+      jest.advanceTimersByTime(500);
+    });
+
+    expect(container.querySelector('td[data-row="0"][data-col="0"] input')).toBeNull();
+    expect(batchUpdateCellsMock).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining('discarded'),
+      expect.any(Object)
+    );
+  });
+
   it('ignores an older same-revision cell broadcast by updated_at', async () => {
     const ref = React.createRef<SpreadsheetGridHandle>();
     render(<SpreadsheetGrid ref={ref} spreadsheetId={77} sheetId={977} />);
