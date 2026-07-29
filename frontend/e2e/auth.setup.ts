@@ -79,7 +79,7 @@ setup('authenticate', async ({ page, baseURL }) => {
   await page.evaluate(
     ({ auth, project }) => {
       localStorage.setItem(
-        'auth-storage',
+        'auth-storage-v1',
         JSON.stringify({
           state: {
             token: auth.token,
@@ -98,7 +98,7 @@ setup('authenticate', async ({ page, baseURL }) => {
       );
 
       localStorage.setItem(
-        'project-storage',
+        'project-storage-v1',
         JSON.stringify({
           state: {
             activeProject: project,

@@ -20,6 +20,16 @@ import {
 import { adjustFormulaReferences, colLabelToIndex } from '@/lib/spreadsheet/formulaFill';
 import { ApplyHighlightParams } from '@/types/patterns';
 import BrandSelect from '@/components/ui/BrandSelect';
+import type { SheetPresenceUser } from '@/lib/sheetSocketStore';
+
+export type SpreadsheetSelectionChange = {
+  row: number;
+  col: number;
+  startRow: number;
+  endRow: number;
+  startCol: number;
+  endCol: number;
+} | null;
 
 interface SpreadsheetGridProps {
   spreadsheetId: number | string;
@@ -31,6 +41,12 @@ interface SpreadsheetGridProps {
   frozenRowCount?: number;
   /** Called when freeze header is toggled; parent should update sheet state and pass new frozenRowCount. */
   onFreezeHeaderChange?: (frozenRowCount: number) => void;
+  /** Fired when local active cell / selection changes (for collab presence). */
+  onSelectionChange?: (selection: SpreadsheetSelectionChange) => void;
+  /** Collab WS client id of this tab; sent with cell saves so the server can suppress our own broadcast echo. */
+  collabClientId?: string;
+  /** Remote collaborators whose active cells/selections are rendered over the grid. */
+  remotePresenceUsers?: SheetPresenceUser[];
   onFormulaCommit?: (data: { row: number; col: number; formula: string }) => void;
   onInsertRowCommit?: (payload: { index: number; position: 'above' | 'below' }) => void;
   onInsertColumnCommit?: (payload: { index: number; position: 'left' | 'right' }) => void;
@@ -64,6 +80,23 @@ export interface SpreadsheetGridHandle {
   deleteColumn: (position: number, count?: number) => Promise<void>;
   refresh: () => void;
   applyHighlightOperation: (payload: ApplyHighlightParams) => void;
+  /** Apply committed remote cell changes from a cells_updated broadcast (same shape as the batch REST response). */
+  applyRemoteCells: (
+    cells: Array<{
+      row_position: number;
+      column_position: number;
+      raw_input?: string | null;
+      string_value?: string | null;
+      number_value?: number | string | null;
+      boolean_value?: boolean | null;
+      formula_value?: string | null;
+      computed_type?: string | null;
+      computed_number?: number | string | null;
+      computed_string?: string | null;
+      error_code?: string | null;
+      updated_at?: string | null;
+    }>
+  ) => void;
 }
 
 type CellKey = string; // Format: `${row}:${col}` (0-based indices)
@@ -74,6 +107,7 @@ interface CellData {
   computedNumber?: number | string | null;
   computedString?: string | null;
   errorCode?: string | null;
+  updatedAt?: string | null;
   isLoaded: boolean; // Track if cell was loaded from backend
 }
 
@@ -239,7 +273,10 @@ const OVERSCAN_ROWS = 20; // Render extra rows above/below viewport
 const OVERSCAN_COLUMNS = 6; // Render extra columns left/right of viewport
 const AUTO_GROW_ROWS = 50; // Batch add rows when expanding (deprecated - only used for import)
 const AUTO_GROW_COLUMNS = 50; // Batch add columns when expanding (deprecated - only used for import)
-const DEBOUNCE_MS = 500; // Debounce delay for batch writes
+// Keep the commit-to-broadcast path inside the <300 ms acceptance budget.
+// Synchronous multi-cell operations still batch into one React update before
+// this timer starts, while direct edits reach peers with ample network/DB headroom.
+const DEBOUNCE_MS = 50;
 const RESIZE_DEBOUNCE_MS = 500; // Debounce delay for resize API calls
 const MAX_ROWS = 100000; // Hard cap for grid size
 const MAX_COLUMNS = 702; // ZZZ (26 * 27) - hard cap for grid size
@@ -510,6 +547,47 @@ const parseTSV = (text: string): string[][] => {
   return rawRows.map((row) => row.split('\t'));
 };
 
+type RemoteCellPresence = {
+  selectionOwner: SheetPresenceUser | null;
+  cursors: SheetPresenceUser[];
+};
+
+function resolveRemoteCellPresence(
+  users: SheetPresenceUser[],
+  row: number,
+  col: number
+): RemoteCellPresence {
+  let selectionOwner: SheetPresenceUser | null = null;
+  const cursors: SheetPresenceUser[] = [];
+
+  for (const user of users) {
+    const cursor = user.cursor;
+    if (!cursor?.isActive) continue;
+
+    const activeRow = cursor.row;
+    const activeCol = cursor.col;
+    if (activeRow != null && activeCol != null && activeRow === row && activeCol === col) {
+      cursors.push(user);
+    }
+
+    const startRow = cursor.startRow ?? activeRow;
+    const endRow = cursor.endRow ?? activeRow;
+    const startCol = cursor.startCol ?? activeCol;
+    const endCol = cursor.endCol ?? activeCol;
+    if (startRow == null || endRow == null || startCol == null || endCol == null) continue;
+
+    const minRow = Math.min(startRow, endRow);
+    const maxRow = Math.max(startRow, endRow);
+    const minCol = Math.min(startCol, endCol);
+    const maxCol = Math.max(startCol, endCol);
+    if (row >= minRow && row <= maxRow && col >= minCol && col <= maxCol) {
+      selectionOwner = user;
+    }
+  }
+
+  return { selectionOwner, cursors };
+}
+
 const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(({
   spreadsheetId,
   sheetId,
@@ -528,6 +606,9 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   frozenRowCount = 0,
   onFreezeHeaderChange,
   onOpenPivotBuilder,
+  onSelectionChange,
+  collabClientId,
+  remotePresenceUsers = [],
 }: SpreadsheetGridProps, ref) => {
   const isGridLoading = loading || sheetId <= 0;
   const [rowCount, setRowCount] = useState(DEFAULT_ROWS);
@@ -667,6 +748,16 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const resizeDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRafIdRef = useRef<number | null>(null);
+  // Invalidates range responses that started before a canonical refresh or
+  // sheet switch. Clearing the in-flight map alone cannot cancel HTTP reads;
+  // without this guard a stale response can repopulate pre-structure cells.
+  const cellCacheGenerationRef = useRef(0);
+  const pendingCanonicalRefreshRef = useRef(false);
+  const canonicalRefreshInFlightRef = useRef(0);
+  const pendingOpsRef = useRef(pendingOps);
+  const isSavingRef = useRef(isSaving);
+  pendingOpsRef.current = pendingOps;
+  isSavingRef.current = isSaving;
   const pendingSelectionRef = useRef<{ position: 'start' | 'end' | number } | null>(null);
   const resizeStateRef = useRef<ResizeState | null>(null);
   const fillStateRef = useRef<{
@@ -686,6 +777,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
   // Initialize dimensions and cells cache for this sheetId
   useEffect(() => {
+    pendingCanonicalRefreshRef.current = false;
+    cellCacheGenerationRef.current += 1;
     if (!cellCache.has(sheetId)) {
       cellCache.set(sheetId, new Map());
     }
@@ -930,6 +1023,23 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
     return null;
   }, [computeSelectionRange, activeCell]);
+
+  useEffect(() => {
+    if (!onSelectionChange) return;
+    if (!activeCell) {
+      onSelectionChange(null);
+      return;
+    }
+    const range = getEffectiveSelectionRange();
+    onSelectionChange({
+      row: activeCell.row,
+      col: activeCell.col,
+      startRow: range?.startRow ?? activeCell.row,
+      endRow: range?.endRow ?? activeCell.row,
+      startCol: range?.startCol ?? activeCell.col,
+      endCol: range?.endCol ?? activeCell.col,
+    });
+  }, [activeCell, anchorCell, focusCell, onSelectionChange, getEffectiveSelectionRange]);
 
   const isSingleCellSelection = useMemo(() => {
     if (!activeCell || !anchorCell || !focusCell) return false;
@@ -1178,6 +1288,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       force: boolean = false,
       loadOptions?: { includeSheetDimensions?: boolean }
     ) => {
+      const requestGeneration = cellCacheGenerationRef.current;
       const wantSheetDimensions = loadOptions?.includeSheetDimensions !== false;
 
       let inFlightForSheet = inFlightRangeRequests.get(sheetId);
@@ -1242,6 +1353,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
               { includeSheetDimensions: includeThisDimension }
             );
 
+            if (requestGeneration !== cellCacheGenerationRef.current) {
+              return;
+            }
+
             if (includeThisDimension) {
               const res = response as typeof response & {
                 sheet_row_count?: number | null;
@@ -1269,6 +1384,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
               response.cells.forEach((cell) => {
                 const key = getCellKey(cell.row_position, cell.column_position);
+                const existing = next.get(key);
+                const incomingUpdatedAt = cell.updated_at
+                  ? Date.parse(cell.updated_at)
+                  : Number.NaN;
+                const existingUpdatedAt = existing?.updatedAt
+                  ? Date.parse(existing.updatedAt)
+                  : Number.NaN;
+                if (
+                  Number.isFinite(incomingUpdatedAt) &&
+                  Number.isFinite(existingUpdatedAt) &&
+                  incomingUpdatedAt < existingUpdatedAt
+                ) {
+                  return;
+                }
                 const fallbackRawInput =
                   cell.raw_input ??
                   cell.formula_value ??
@@ -1281,6 +1410,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                   computedNumber: cell.computed_number ?? null,
                   computedString: cell.computed_string ?? null,
                   errorCode: cell.error_code ?? null,
+                  updatedAt: cell.updated_at ?? null,
                   isLoaded: true,
                 };
                 next.set(key, cellData);
@@ -1320,14 +1450,15 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       column_position: number;
       raw_input?: string | null;
       string_value?: string | null;
-      number_value?: number | null;
+      number_value?: number | string | null;
       boolean_value?: boolean | null;
       formula_value?: string | null;
       computed_type?: string | null;
       computed_number?: number | string | null;
       computed_string?: string | null;
       error_code?: string | null;
-    }>) => {
+      updated_at?: string | null;
+    }>, options?: { source?: 'local' | 'remote' }) => {
       if (!cellsResponse || cellsResponse.length === 0) return;
       setCells((prev) => {
         const next = new Map(prev);
@@ -1335,6 +1466,26 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
         cellsResponse.forEach((cell) => {
           const key = getCellKey(cell.row_position, cell.column_position);
+          // A peer broadcast must not overwrite a newer local optimistic edit
+          // that has not reached the authoritative HTTP write path yet.
+          if (options?.source === 'remote' && pendingOpsRef.current.has(key)) {
+            return;
+          }
+          const existing = next.get(key);
+          const incomingUpdatedAt = cell.updated_at
+            ? Date.parse(cell.updated_at)
+            : Number.NaN;
+          const existingUpdatedAt = existing?.updatedAt
+            ? Date.parse(existing.updatedAt)
+            : Number.NaN;
+          if (
+            options?.source === 'remote' &&
+            Number.isFinite(incomingUpdatedAt) &&
+            Number.isFinite(existingUpdatedAt) &&
+            incomingUpdatedAt < existingUpdatedAt
+          ) {
+            return;
+          }
           const fallbackRawInput =
             cell.raw_input ??
             cell.formula_value ??
@@ -1347,6 +1498,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
             computedNumber: cell.computed_number ?? null,
             computedString: cell.computed_string ?? null,
             errorCode: cell.error_code ?? null,
+            updatedAt: cell.updated_at ?? existing?.updatedAt ?? null,
             isLoaded: true,
           };
           next.set(key, cellData);
@@ -1361,6 +1513,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   );
 
   const resetSheetCaches = useCallback((options?: { preserveCells?: boolean }) => {
+    cellCacheGenerationRef.current += 1;
     if (!options?.preserveCells) {
       cellCache.set(sheetId, new Map());
     }
@@ -1447,9 +1600,44 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   }, [isGridLoading, spreadsheetId, sheetId]);
 
   const refreshSheet = useCallback(() => {
-    if (isGridLoading) return;
+    pendingCanonicalRefreshRef.current = true;
+
+    const queuedOps = pendingOpsRef.current;
+    const hadActiveEditor = editingCell !== null;
+    if (hadActiveEditor) {
+      // An editor opened before a remote structure change still owns the old
+      // coordinate. Remove it before replacing the canonical cell map; outer
+      // pointer/keyboard guards cannot stop the input's own Enter/blur commit.
+      setEditingCell(null);
+      setEditValue('');
+      setMode('navigation');
+      setNavigationLocked(false);
+    }
+    if (queuedOps.size > 0) {
+      const emptyQueue = new Map<CellKey, PendingOperation>();
+      pendingOpsRef.current = emptyQueue;
+      setPendingOps(emptyQueue);
+    }
+    if (queuedOps.size > 0 || hadActiveEditor) {
+      toast.error(
+        'The sheet structure changed. Unsaved edits were discarded; please enter them again.',
+        { duration: 5000 }
+      );
+    }
+
+    // If a write is already in flight, let it finish before fetching canonical
+    // coordinates. The shared backend sheet lock decides the final order.
+    if (isGridLoading || isSavingRef.current) {
+      pendingCanonicalRefreshRef.current = true;
+      return;
+    }
+    pendingCanonicalRefreshRef.current = false;
+    canonicalRefreshInFlightRef.current += 1;
     setCellCanvasLoading(true);
-    resetSheetCaches({ preserveCells: true });
+    // A canonical refresh follows coordinate-changing operations. Replace the
+    // cell map instead of merging the response, otherwise cells at their old
+    // coordinates remain visible alongside their shifted canonical values.
+    resetSheetCaches();
     const range = computeVisibleRange();
     setVisibleRange({
       startRow: range.startRow,
@@ -1464,7 +1652,15 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       range.endColumn,
       true
     );
-    const finishLoading = () => setCellCanvasLoading(false);
+    const finishLoading = () => {
+      canonicalRefreshInFlightRef.current = Math.max(
+        0,
+        canonicalRefreshInFlightRef.current - 1
+      );
+      if (canonicalRefreshInFlightRef.current === 0) {
+        setCellCanvasLoading(false);
+      }
+    };
     if (maybePromise && typeof (maybePromise as Promise<void>).then === 'function') {
       void (maybePromise as Promise<void>).finally(finishLoading);
     } else {
@@ -1524,7 +1720,21 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       .catch((error) => {
         console.error('Failed to load cell formats on refresh:', error);
       });
-  }, [isGridLoading, resetSheetCaches, computeVisibleRange, loadCellRange]);
+  }, [
+    isGridLoading,
+    resetSheetCaches,
+    computeVisibleRange,
+    loadCellRange,
+    spreadsheetId,
+    sheetId,
+    editingCell,
+  ]);
+
+  useEffect(() => {
+    if (!isGridLoading && !isSaving && pendingCanonicalRefreshRef.current) {
+      refreshSheet();
+    }
+  }, [isGridLoading, isSaving, refreshSheet]);
 
   const handleAddRows = useCallback(async () => {
     const rowsToAdd = parseInt(addRowsInputValue, 10);
@@ -2014,7 +2224,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           spreadsheetId,
           sheetId,
           [operation],
-          true
+          true,
+          collabClientId ? { clientId: collabClientId } : undefined
         );
         applyCellsFromResponse(response.cells);
         setPendingOps((prev) => {
@@ -2055,6 +2266,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       recordFormulaCommit,
       getCellRawInput,
       onHeaderRenameCommit,
+      collabClientId,
     ]
   );
 
@@ -2187,13 +2399,19 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
 
   // Debounced batch save
   const flushPendingOps = useCallback(async () => {
-    if (pendingOps.size === 0 || isSaving) return;
+    if (
+      pendingOps.size === 0 ||
+      isSaving ||
+      pendingCanonicalRefreshRef.current ||
+      canonicalRefreshInFlightRef.current > 0
+    ) return;
 
     setIsSaving(true);
     setSaveError(null);
 
     // Merge operations by cell (last write wins)
-    const operations: PendingOperation[] = Array.from(pendingOps.values());
+    const submittedOps = new Map(pendingOps);
+    const operations: PendingOperation[] = Array.from(submittedOps.values());
     let minRow = Number.POSITIVE_INFINITY;
     let maxRow = Number.NEGATIVE_INFINITY;
     let minCol = Number.POSITIVE_INFINITY;
@@ -2207,8 +2425,23 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     });
 
     try {
-      const response = await SpreadsheetAPI.batchUpdateCells(spreadsheetId, sheetId, operations, true);
-      setPendingOps(new Map()); // Clear queue on success
+      const response = await SpreadsheetAPI.batchUpdateCells(
+        spreadsheetId,
+        sheetId,
+        operations,
+        true,
+        collabClientId ? { clientId: collabClientId } : undefined
+      );
+      // Only remove the exact operations included in this request. Edits made
+      // while the request was in flight have newer operation objects and must
+      // remain queued for the next LWW batch.
+      setPendingOps((current) => {
+        const next = new Map(current);
+        submittedOps.forEach((submitted, key) => {
+          if (next.get(key) === submitted) next.delete(key);
+        });
+        return next;
+      });
       applyCellsFromResponse(response.cells);
       if (Number.isFinite(minRow)) {
         await loadCellRange(minRow, maxRow, minCol, maxCol, true);
@@ -2226,7 +2459,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
     } finally {
       setIsSaving(false);
     }
-  }, [pendingOps, spreadsheetId, sheetId, isSaving, loadCellRange, applyCellsFromResponse]);
+  }, [pendingOps, spreadsheetId, sheetId, isSaving, loadCellRange, applyCellsFromResponse, collabClientId]);
 
   // Debounce flush
   useEffect(() => {
@@ -3411,7 +3644,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
         spreadsheetId,
         sheetId,
         operations,
-        true
+        true,
+        collabClientId ? { clientId: collabClientId } : undefined
       );
       applyCellsFromResponse(response.cells);
       if (onFillCommit && minRow != null && maxRow != null && minCol != null && maxCol != null) {
@@ -3437,7 +3671,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       setFillPreview(null);
       setIsFillSubmitting(false);
     }
-  }, [applyCellsFromResponse, fillPreview, getCellRawInput, isFillSubmitting, onFillCommit, sheetId, spreadsheetId]);
+  }, [applyCellsFromResponse, fillPreview, getCellRawInput, isFillSubmitting, onFillCommit, sheetId, spreadsheetId, collabClientId]);
 
   useEffect(() => {
     if (!isFilling) return;
@@ -3660,6 +3894,18 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   // Handle commit cell edit
   const handleCommitEdit = useCallback(() => {
     if (!editingCell) return;
+    if (
+      pendingCanonicalRefreshRef.current ||
+      canonicalRefreshInFlightRef.current > 0
+    ) {
+      // The editor's row/column belongs to the pre-refresh structure. Never
+      // enqueue it after the socket has advanced to the canonical revision.
+      setEditingCell(null);
+      setEditValue('');
+      setMode('navigation');
+      setNavigationLocked(false);
+      return;
+    }
 
     const { row, col } = parseCellKey(editingCell);
     const prevValue = getCellRawInput(row, col);
@@ -5119,6 +5365,8 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       deleteColumn: (position: number, count: number = 1) => handleDeleteColumn(position, count),
       refresh: () => refreshSheet(),
       applyHighlightOperation: (payload: ApplyHighlightParams) => applyHighlightOperation(payload),
+      applyRemoteCells: (cells) =>
+        applyCellsFromResponse(cells, { source: 'remote' }),
     }),
     [
       submitFormulaBarValue,
@@ -5127,6 +5375,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       handleDeleteColumn,
       refreshSheet,
       applyHighlightOperation,
+      applyCellsFromResponse,
     ]
   );
 
@@ -5295,7 +5544,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   const showGridSpinner = isGridLoading || cellCanvasLoading;
 
   return (
-    <div className={`relative h-full w-full flex flex-col${isGridLoading ? ' pointer-events-none' : ''}`}>
+    <div className={`relative h-full w-full flex flex-col${showGridSpinner ? ' pointer-events-none' : ''}`}>
       {/* Save status indicator */}
       {saveError && (
         <div className="absolute top-2 right-2 z-30 bg-red-50 border border-red-200 text-red-700 px-3 py-1 rounded text-xs">
@@ -6060,11 +6309,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
           position: 'relative',
         }}
         onScroll={isGridLoading ? undefined : handleScroll}
-        onKeyDown={isGridLoading ? undefined : handleKeyDown}
-        onCopy={isGridLoading ? undefined : handleCopy}
-        onPaste={isGridLoading ? undefined : handlePaste}
-        tabIndex={isGridLoading ? -1 : 0}
-        aria-busy={cellCanvasLoading || isGridLoading}
+        onKeyDown={showGridSpinner ? undefined : handleKeyDown}
+        onCopy={showGridSpinner ? undefined : handleCopy}
+        onPaste={showGridSpinner ? undefined : handlePaste}
+        tabIndex={showGridSpinner ? -1 : 0}
+        aria-busy={showGridSpinner}
       >
         {showGridSpinner ? (
           <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
@@ -6285,6 +6534,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     const displayValue = isEditing ? editValue : getCellDisplayValue(row, col);
                     const highlightColor = getHighlightColor(row, col);
                     const hasHighlight = Boolean(highlightColor);
+                    const remotePresence = resolveRemoteCellPresence(remotePresenceUsers, row, col);
                     
                     // Determine cell styling based on selection state
                     let cellClassName = 'border border-gray-300 p-0 relative align-top';
@@ -6337,6 +6587,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                               }
                             : {}),
                           ...(!frozen && highlightColor ? { backgroundColor: highlightColor } : {}),
+                          ...(remotePresence.selectionOwner
+                            ? {
+                                backgroundImage: `linear-gradient(${remotePresence.selectionOwner.color}1f, ${remotePresence.selectionOwner.color}1f)`,
+                              }
+                            : {}),
                         }}
                         data-row={row}
                         data-col={col}
@@ -6374,6 +6629,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                             {displayValue}
                           </div>
                         )}
+                        {remotePresence.cursors.map((user) => (
+                          <div
+                            key={`${user.userId}:${user.clientId}`}
+                            data-testid="sheet-remote-cursor"
+                            data-user-id={user.userId}
+                            data-client-id={user.clientId}
+                            data-row={row}
+                            data-col={col}
+                            aria-label={`${user.username} cursor`}
+                            title={user.username}
+                            className="pointer-events-none absolute inset-0 z-[5]"
+                            style={{ boxShadow: `inset 0 0 0 2px ${user.color}` }}
+                          />
+                        ))}
                         {showFillHandle && (
                           <div
                             className="absolute bottom-0 right-0 h-2 w-2 bg-[#3CCED7] border border-white cursor-crosshair"
@@ -6489,6 +6758,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                     const displayValue = isEditing ? editValue : getCellDisplayValue(row, col);
                     const highlightColor = getHighlightColor(row, col);
                     const hasHighlight = Boolean(highlightColor);
+                    const remotePresence = resolveRemoteCellPresence(remotePresenceUsers, row, col);
                     
                     // Determine cell styling based on selection state
                     let cellClassName = 'border border-gray-300 p-0 relative align-top';
@@ -6541,6 +6811,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                               }
                             : {}),
                           ...(!frozen && highlightColor ? { backgroundColor: highlightColor } : {}),
+                          ...(remotePresence.selectionOwner
+                            ? {
+                                backgroundImage: `linear-gradient(${remotePresence.selectionOwner.color}1f, ${remotePresence.selectionOwner.color}1f)`,
+                              }
+                            : {}),
                         }}
                         data-row={row}
                         data-col={col}
@@ -6578,6 +6853,20 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                             {displayValue}
                           </div>
                         )}
+                        {remotePresence.cursors.map((user) => (
+                          <div
+                            key={`${user.userId}:${user.clientId}`}
+                            data-testid="sheet-remote-cursor"
+                            data-user-id={user.userId}
+                            data-client-id={user.clientId}
+                            data-row={row}
+                            data-col={col}
+                            aria-label={`${user.username} cursor`}
+                            title={user.username}
+                            className="pointer-events-none absolute inset-0 z-[5]"
+                            style={{ boxShadow: `inset 0 0 0 2px ${user.color}` }}
+                          />
+                        ))}
                         {showFillHandle && (
                           <div
                             className="absolute bottom-0 right-0 h-2 w-2 bg-[#3CCED7] border border-white cursor-crosshair"

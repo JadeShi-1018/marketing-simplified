@@ -348,8 +348,18 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'chat_message_write': config('CHAT_MESSAGE_WRITE_THROTTLE_RATE', default='60/minute'),
         'chat_reaction': config('CHAT_REACTION_THROTTLE_RATE', default='120/minute'),
+        'spreadsheet_ws_ticket': config(
+            'SPREADSHEET_WS_TICKET_THROTTLE_RATE',
+            default='60/minute',
+        ),
     },
 }
+
+SPREADSHEET_WS_CONNECTION_MAX_SECONDS = config(
+    'SPREADSHEET_WS_CONNECTION_MAX_SECONDS',
+    default=3600,
+    cast=int,
+)
 
 CHAT_REVOKE_WINDOW_MINUTES = config('CHAT_REVOKE_WINDOW_MINUTES', default=2, cast=int)
 

@@ -5,6 +5,7 @@ import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local', override: false });
 
 const baseURL = process.env.BASE_URL || 'http://localhost';
+const webServerURL = process.env.PLAYWRIGHT_WEB_SERVER_URL || baseURL;
 
 /** When nginx/Docker already serves BASE_URL, set E2E_USE_EXISTING_SERVER=1 to skip `npm run dev`. */
 const useExistingServer =
@@ -22,7 +23,7 @@ export default defineConfig({
         /* Start Next.js when no external stack is running. */
         webServer: {
           command: 'npm run dev',
-          url: baseURL,
+          url: webServerURL,
           reuseExistingServer: !process.env.CI,
           timeout: 60_000,
         },
@@ -41,6 +42,9 @@ export default defineConfig({
   use: {
     /* Base URL to use in actions like `await page.goto('')`. Next.js dev runs on 3000. */
     baseURL,
+    launchOptions: process.env.PLAYWRIGHT_HOST_RESOLVER_RULES
+      ? { args: [`--host-resolver-rules=${process.env.PLAYWRIGHT_HOST_RESOLVER_RULES}`] }
+      : undefined,
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
