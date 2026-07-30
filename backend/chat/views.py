@@ -28,6 +28,7 @@ from .serializers import (
     ChatCreateSerializer,
     ChatUpdateSerializer,
     PinnedMessageSerializer,
+    PinMessageRequestSerializer,
     ParticipantNotificationSerializer,
     SavedMessageSerializer,
     MessageSerializer,
@@ -588,7 +589,15 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
             return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
-        pins = PinnedMessage.objects.filter(chat=chat).select_related('message', 'message__sender', 'pinned_by')
+        pins = (
+            PinnedMessage.objects.filter(
+                chat=chat,
+                message__is_deleted=False,
+                message__is_revoked=False,
+            )
+            .select_related('message', 'message__sender', 'pinned_by')
+            .order_by('-created_at', '-id')
+        )
         serializer = PinnedMessageSerializer(pins, many=True, context={'request': request})
         return Response(serializer.data)
 
@@ -645,13 +654,20 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
             return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
-        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+        if chat.type != ChatType.GROUP or not self._is_channel_manager(chat, request.user):
             return Response({'error': 'Only channel managers can pin messages'}, status=status.HTTP_403_FORBIDDEN)
-        message_id = request.data.get('message_id')
-        if not message_id:
-            return Response({'error': 'message_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        request_serializer = PinMessageRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        message_id = request_serializer.validated_data['message_id']
+
         try:
-            message = Message.objects.get(id=message_id, chat=chat, is_deleted=False)
+            message = Message.objects.get(
+                id=message_id,
+                chat=chat,
+                is_deleted=False,
+                is_revoked=False,
+            )
         except Message.DoesNotExist:
             return Response({'error': 'Message not found'}, status=status.HTTP_404_NOT_FOUND)
         pin, created = PinnedMessage.objects.get_or_create(
@@ -669,9 +685,17 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
             return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
-        if chat.type == ChatType.GROUP and not self._is_channel_manager(chat, request.user):
+        if chat.type != ChatType.GROUP or not self._is_channel_manager(chat, request.user):
             return Response({'error': 'Only channel managers can unpin messages'}, status=status.HTTP_403_FORBIDDEN)
-        deleted, _ = PinnedMessage.objects.filter(chat=chat, message_id=message_id).delete()
+
+        request_serializer = PinMessageRequestSerializer(data={'message_id': message_id})
+        request_serializer.is_valid(raise_exception=True)
+        validated_message_id = request_serializer.validated_data['message_id']
+
+        deleted, _ = PinnedMessage.objects.filter(
+            chat=chat,
+            message_id=validated_message_id,
+        ).delete()
         if not deleted:
             return Response({'error': 'Pin not found'}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)

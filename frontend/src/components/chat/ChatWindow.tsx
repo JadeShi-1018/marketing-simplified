@@ -10,6 +10,7 @@ import { useForwardMessages } from '@/hooks/useForwardMessages';
 import { useChatWebSocket, type ChatWsEvent } from '@/hooks/useChatWebSocket';
 import { useChatStore } from '@/lib/chatStore';
 import { editMessage, deleteMessage, addReaction, removeReaction, getMessage, getChat, pinMessage, unpinMessage, saveMessage, unsaveMessage, listPins, listSavedMessages, createScheduledMessage, listScheduledMessages, updateChatDetails, updateNotificationSettings } from '@/lib/api/chatApi';
+import { isChannelManager } from '@/lib/chatPermissions';
 import { buildMessagesPath } from '@/lib/messages/messagesRoutes';
 import { useBuildUrl } from '@/lib/buildUrl';
 import { limitName, MAX_CHANNEL_NAME_LENGTH } from '@/lib/messages/nameLimits';
@@ -45,11 +46,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   // Use selector for stable reference
   const user = useAuthStore(state => state.user);
   const currentUserId = user?.id ? Number(user.id) : null;
-  const myChatParticipant = currentUserId !== null
-    ? chat.participants?.find((p) => p.user.id === currentUserId)
-    : undefined;
-  const canManageChannel = chat.type !== 'group'
-    || Boolean(myChatParticipant?.is_manager || (chat.created_by_id && chat.created_by_id === currentUserId));
+  const canManageChannel = isChannelManager(chat, currentUserId);
   const chatsByProject = useChatStore(state => state.chatsByProject);
   // Snapshot taken at click-time in setCurrentChat — immune to subsequent setChatsForProject resets
   const capturedUnreadCount = useChatStore(state => state.capturedUnreadCounts[chat.id] ?? 0);
@@ -122,7 +119,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     setPendingScheduledCount(0);
     listPins(chat.slug)
       .then((pins) => setPinnedMessageIds(new Set(pins.map((p) => p.message.id))))
-      .catch(() => {});
+      .catch(() => toast.error('Could not load pinned messages'));
     listSavedMessages()
       .then((saved) => setSavedMessageIds(new Set(saved.map((s) => s.message.id))))
       .catch(() => {});
@@ -740,12 +737,12 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     const alreadyPinned = pinnedMessageIds.has(messageId);
     try {
       if (alreadyPinned) {
-        await unpinMessage(chat.id, messageId);
+        await unpinMessage(chat.slug, messageId);
         setPinnedMessageIds((prev) => { const next = new Set(prev); next.delete(messageId); return next; });
         setPinRefreshKey((prev) => prev + 1);
         toast.success('Message unpinned');
       } else {
-        await pinMessage(chat.id, messageId);
+        await pinMessage(chat.slug, messageId);
         setPinnedMessageIds((prev) => new Set([...prev, messageId]));
         setPinRefreshKey((prev) => prev + 1);
         toast.success('Message pinned');
@@ -753,7 +750,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
     } catch {
       toast.error(alreadyPinned ? 'Failed to unpin message' : 'Failed to pin message');
     }
-  }, [chat.id, pinnedMessageIds]);
+  }, [chat.slug, pinnedMessageIds]);
 
   const handleSaveMessage = useCallback(async (messageId: number) => {
     const alreadySaved = savedMessageIds.has(messageId);

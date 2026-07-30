@@ -119,7 +119,10 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
       },
-      testMatch: /e2e[\\/]messages[\\/]messages-reconnect-attachments\.spec\.ts$/,
+      testMatch: [
+        /e2e[\\/]messages[\\/]messages-reconnect-attachments\.spec\.ts$/,
+        /e2e[\\/]messages[\\/]messages-pinned\.spec\.ts$/,
+      ],
     },
   ],
 });

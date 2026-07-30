@@ -42,6 +42,7 @@ import {
 import toast from 'react-hot-toast';
 import type { Chat, ChatParticipant, ChannelVisibility } from '@/types/chat';
 import { useChatStore } from '@/lib/chatStore';
+import { isChannelManager } from '@/lib/chatPermissions';
 import { addParticipant, cancelScheduledMessage, createScheduledMessage, getChat, leaveChat, listPins, listChatFiles, listScheduledMessages, removeParticipant, unpinMessage, updateChatDetails, updateNotificationSettings, updateParticipantManager } from '@/lib/api/chatApi';
 import { TEMP_MUTE_OPTIONS, formatMutedUntil, getTemporaryMuteUntil, isParticipantCurrentlyMuted } from '@/lib/chatMute';
 import { MAX_CHANNEL_NAME_LENGTH, limitName, normalizeLimitedName } from '@/lib/messages/nameLimits';
@@ -561,6 +562,8 @@ export default function ChannelDetailsDrawer({
   const [removingId, setRemovingId] = useState<number | null>(null);
   const [pins, setPins] = useState<PinnedMessageRow[]>([]);
   const [pinsLoaded, setPinsLoaded] = useState(false);
+  const [pinsLoading, setPinsLoading] = useState(false);
+  const [pinsError, setPinsError] = useState<string | null>(null);
   const [unpinningId, setUnpinningId] = useState<number | null>(null);
   const [files, setFiles] = useState<ChatFileRow[]>([]);
   const [filesTotal, setFilesTotal] = useState(0);
@@ -658,20 +661,15 @@ export default function ChannelDetailsDrawer({
       : null;
   const managerCount = participants.filter((p) => p.is_manager).length;
   const assignedManagerCount = participants.filter((p) => p.is_manager && p.user.id !== metadataSource.created_by_id).length;
-  const hasExplicitManager = managerCount > 0;
-  const isEffectiveManager = (participant: ChatParticipant) => Boolean(
-    participant.is_manager
-    || (metadataSource.created_by_id && participant.user.id === metadataSource.created_by_id)
-    || (!hasExplicitManager && inferredCreator?.id === participant.user.id)
+  const permissionChat = { ...metadataSource, participants };
+  const isEffectiveManager = (participant: ChatParticipant) => isChannelManager(
+    permissionChat,
+    participant.user.id,
   );
   const managerParticipants = participants.filter(isEffectiveManager);
   const nonManagerParticipants = participants.filter((p) => !isEffectiveManager(p));
   const channelVisibility: ChannelVisibility = metadataSource.visibility ?? 'public';
-  const canManageChannel = isGroup && Boolean(
-    myParticipant?.is_manager
-    || (metadataSource.created_by_id && metadataSource.created_by_id === currentUserId)
-    || (!hasExplicitManager && inferredCreator?.id === currentUserId)
-  );
+  const canManageChannel = isChannelManager(permissionChat, currentUserId);
   const canAddMembers = isGroup && (channelVisibility !== 'manager_invite' || canManageChannel);
 
   useEffect(() => {
@@ -681,7 +679,7 @@ export default function ChannelDetailsDrawer({
   useEffect(() => {
     let cancelled = false;
     setMetadataChat(null);
-    getChat(chat.id)
+    getChat(chat.slug)
       .then((details) => {
         if (cancelled) return;
         syncChatDetails(details);
@@ -691,7 +689,7 @@ export default function ChannelDetailsDrawer({
     return () => {
       cancelled = true;
     };
-  }, [chat.id, syncChatDetails]);
+  }, [chat.id, chat.slug, syncChatDetails]);
 
   const handleSaveName = useCallback(async (value: string) => {
     const updated = await updateChatDetails(chat.id, { name: normalizeLimitedName(value, MAX_CHANNEL_NAME_LENGTH) });
@@ -903,12 +901,31 @@ export default function ChannelDetailsDrawer({
     }
   };
 
+  const fetchPins = useCallback(async () => {
+    setPinsLoaded(true);
+    setPinsLoading(true);
+    setPinsError(null);
+    try {
+      const rows = await listPins(chat.slug);
+      setPins(
+        [...rows].sort((a, b) => {
+          const timeDifference = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+          return timeDifference || b.id - a.id;
+        }),
+      );
+    } catch {
+      setPinsError('Could not load pinned messages.');
+    } finally {
+      setPinsLoading(false);
+    }
+  }, [chat.slug]);
+
   // Keep pins fresh while the drawer is open; the timeline bumps pinRefreshKey
   // after pin/unpin actions so this section updates immediately.
   useEffect(() => {
-    setPinsLoaded(true);
-    listPins(chat.slug).then(setPins).catch(() => {});
-  }, [chat.id, chat.slug, pinRefreshKey]);
+    setPins([]);
+    void fetchPins();
+  }, [chat.id, fetchPins, pinRefreshKey]);
 
   // Fetch counts on mount so each section header shows its count even before
   // it's expanded. The onOpen loaders below become no-ops once *Loaded is true.
@@ -926,9 +943,8 @@ export default function ChannelDetailsDrawer({
 
   const loadPins = useCallback(() => {
     if (pinsLoaded) return;
-    setPinsLoaded(true);
-    listPins(chat.slug).then(setPins).catch(() => {});
-  }, [chat.id, chat.slug, pinsLoaded]);
+    void fetchPins();
+  }, [fetchPins, pinsLoaded]);
 
   const loadFiles = useCallback(() => {
     if (filesLoaded) return;
@@ -949,11 +965,12 @@ export default function ChannelDetailsDrawer({
   const handleUnpin = async (pin: PinnedMessageRow) => {
     setUnpinningId(pin.id);
     try {
-      await unpinMessage(chat.id, pin.message.id);
+      await unpinMessage(chat.slug, pin.message.id);
       setPins((prev) => prev.filter((p) => p.id !== pin.id));
       onPinRemoved?.(pin.message.id);
+      toast.success('Message unpinned');
     } catch {
-      /* silently ignore */
+      toast.error('Failed to unpin message');
     } finally {
       setUnpinningId(null);
     }
@@ -1383,12 +1400,32 @@ export default function ChannelDetailsDrawer({
           defaultOpen={false}
           onOpen={loadPins}
         >
-          {pins.length === 0 ? (
+          {pinsLoading ? (
+            <div className="flex items-center gap-2 py-1 text-sm text-gray-400" role="status">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading pinned messages…
+            </div>
+          ) : pinsError ? (
+            <div className="space-y-2" role="alert">
+              <p className="text-sm text-red-600">{pinsError}</p>
+              <button
+                type="button"
+                onClick={() => void fetchPins()}
+                className="text-xs font-medium text-teal-700 hover:text-teal-800"
+              >
+                Try again
+              </button>
+            </div>
+          ) : pins.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No pinned messages yet.</p>
           ) : (
-            <ul className="divide-y divide-gray-100">
+            <ul className="divide-y divide-gray-100" data-testid="pinned-messages-list">
               {pins.map((pin) => (
-                <li key={pin.id} className="group flex items-center gap-2 py-2 first:pt-0 last:pb-0">
+                <li
+                  key={pin.id}
+                  className="group flex items-center gap-2 py-2 first:pt-0 last:pb-0"
+                  data-testid="pinned-message-item"
+                >
                   {/* Left accent bar */}
                   <div className="w-0.5 self-stretch rounded-full bg-teal-400 shrink-0" />
                   <div className="min-w-0 flex-1">

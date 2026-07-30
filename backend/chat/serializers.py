@@ -980,6 +980,12 @@ class PinnedMessageSerializer(serializers.ModelSerializer):
         return MessageSerializer(obj.message, context=self.context).data
 
 
+class PinMessageRequestSerializer(serializers.Serializer):
+    """Validate the message identifier used by pin and unpin actions."""
+
+    message_id = serializers.IntegerField(min_value=1)
+
+
 class SavedMessageSerializer(serializers.ModelSerializer):
     message = serializers.SerializerMethodField()
     chat_id = serializers.IntegerField(source='message.chat_id', read_only=True)
