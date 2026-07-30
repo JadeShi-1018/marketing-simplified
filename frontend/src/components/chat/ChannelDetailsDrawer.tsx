@@ -474,12 +474,13 @@ function DatePickerUp({ value, min, onChange, className }: DatePickerUpProps) {
 
 // ── Collapsible section ───────────────────────────────────────────────────────
 
-function Section({ title, icon, defaultOpen = true, onOpen, contentClassName, children }: {
+function Section({ title, icon, defaultOpen = true, onOpen, contentClassName, testId, children }: {
   title: string;
   icon: React.ReactNode;
   defaultOpen?: boolean;
   onOpen?: () => void;
   contentClassName?: string;
+  testId?: string;
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -488,6 +489,7 @@ function Section({ title, icon, defaultOpen = true, onOpen, contentClassName, ch
     <div className="border-b border-gray-100">
       <button
         ref={headerRef}
+        data-testid={testId}
         type="button"
         onClick={() => {
           const next = !open;
@@ -1399,6 +1401,7 @@ export default function ChannelDetailsDrawer({
           icon={<Pin className="h-4 w-4" />}
           defaultOpen={false}
           onOpen={loadPins}
+          testId="pinned-messages-section-toggle"
         >
           {pinsLoading ? (
             <div className="flex items-center gap-2 py-1 text-sm text-gray-400" role="status">
@@ -1460,12 +1463,13 @@ export default function ChannelDetailsDrawer({
                       <Pin className="h-2.5 w-2.5 shrink-0" />
                       Pinned to channel · visible to all members
                     </span>
-                    {/* Pinned-by context */}
-                    {pin.pinned_by && (
-                      <p className="text-[10px] text-gray-400">
-                        by {pin.pinned_by.username || pin.pinned_by.email}
-                      </p>
-                    )}
+                    {/* Pin audit context */}
+                    <p className="text-[10px] text-gray-400" data-testid="pinned-message-meta">
+                      {pin.pinned_by
+                        ? `by ${pin.pinned_by.username || pin.pinned_by.email} · `
+                        : ''}
+                      {format(parseISO(pin.created_at), 'MMM d, yyyy · h:mm a')}
+                    </p>
                   </div>
                   {canManageChannel && (
                     <button

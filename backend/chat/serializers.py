@@ -966,19 +966,26 @@ class ChatCreateSerializer(serializers.ModelSerializer):
         return chat
 
 
+class PinnedMessageContentSerializer(serializers.ModelSerializer):
+    """Lightweight message summary required by the pinned drawer."""
+
+    sender = UserSimpleSerializer(read_only=True)
+
+    class Meta:
+        model = Message
+        fields = ['id', 'chat', 'sender', 'content', 'created_at', 'parent_message_id']
+        read_only_fields = fields
+
+
 class PinnedMessageSerializer(serializers.ModelSerializer):
     """Serializer for pinned messages in a channel."""
-    message = serializers.SerializerMethodField()
+    message = PinnedMessageContentSerializer(read_only=True)
     pinned_by = UserSimpleSerializer(read_only=True)
 
     class Meta:
         model = PinnedMessage
         fields = ['id', 'chat', 'message', 'pinned_by', 'created_at']
         read_only_fields = fields
-
-    def get_message(self, obj):
-        return MessageSerializer(obj.message, context=self.context).data
-
 
 class PinMessageRequestSerializer(serializers.Serializer):
     """Validate the message identifier used by pin and unpin actions."""

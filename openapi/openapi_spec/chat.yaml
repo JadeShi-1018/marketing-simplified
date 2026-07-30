@@ -217,6 +217,40 @@ components:
       required:
         - message_id
 
+    PinnedMessageContent:
+      type: object
+      description: Lightweight message summary displayed by the pinned drawer
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        chat:
+          type: integer
+          description: ID of the channel containing the message
+          readOnly: true
+        sender:
+          $ref: '#/components/schemas/User'
+        content:
+          type: string
+          description: Message text preview
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          description: Time the message was sent
+          readOnly: true
+        parent_message_id:
+          type: integer
+          nullable: true
+          description: Root message ID when this pin is a thread reply
+          readOnly: true
+      required:
+        - id
+        - chat
+        - sender
+        - content
+        - created_at
+
     PinnedMessage:
       type: object
       description: A message pinned in a group channel
@@ -229,7 +263,7 @@ components:
           description: ID of the channel containing the pin
           readOnly: true
         message:
-          $ref: '#/components/schemas/Message'
+          $ref: '#/components/schemas/PinnedMessageContent'
         pinned_by:
           allOf:
             - $ref: '#/components/schemas/User'

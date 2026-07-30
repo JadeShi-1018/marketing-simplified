@@ -75,6 +75,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<number>>(new Set());
   const [pinRefreshKey, setPinRefreshKey] = useState(0);
+  const pinRequestsInFlightRef = useRef<Set<number>>(new Set());
   const [savedMessageIds, setSavedMessageIds] = useState<Set<number>>(new Set());
   const [pendingScheduledCount, setPendingScheduledCount] = useState(0);
   const [lastScheduledMsg, setLastScheduledMsg] = useState<ScheduledMessageRow | null>(null);
@@ -114,6 +115,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
 
   // Load pinned + saved IDs for this chat so we can show indicators on messages
   useEffect(() => {
+    pinRequestsInFlightRef.current.clear();
     setPinnedMessageIds(new Set());
     setSavedMessageIds(new Set());
     setPendingScheduledCount(0);
@@ -734,6 +736,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
   }, []);
 
   const handlePinMessage = useCallback(async (messageId: number) => {
+    if (pinRequestsInFlightRef.current.has(messageId)) return;
+    pinRequestsInFlightRef.current.add(messageId);
     const alreadyPinned = pinnedMessageIds.has(messageId);
     try {
       if (alreadyPinned) {
@@ -749,6 +753,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
       }
     } catch {
       toast.error(alreadyPinned ? 'Failed to unpin message' : 'Failed to pin message');
+    } finally {
+      pinRequestsInFlightRef.current.delete(messageId);
     }
   }, [chat.slug, pinnedMessageIds]);
 
@@ -1062,7 +1068,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
 
         {/* Channel details drawer */}
         {showChannelDetails && (
-          <div className="hidden w-72 shrink-0 md:flex md:flex-col xl:w-80">
+          <div className="fixed inset-0 z-50 flex min-h-0 flex-col bg-white md:static md:inset-auto md:z-auto md:w-72 md:shrink-0 xl:w-80">
             <ChannelDetailsDrawer
               chat={chat}
               currentUserId={currentUserId ?? 0}

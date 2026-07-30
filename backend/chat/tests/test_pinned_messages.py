@@ -159,6 +159,12 @@ class TestPinnedMessagesAPI:
             pinned_by=self.manager,
         )
         now = timezone.now()
+        # Message send time must not influence pin ordering: the message attached
+        # to the newer pin is deliberately the older message.
+        Message.objects.filter(pk=self.message.pk).update(created_at=now)
+        Message.objects.filter(pk=self.second_message.pk).update(
+            created_at=now - timedelta(days=1),
+        )
         PinnedMessage.objects.filter(pk=older_pin.pk).update(created_at=now - timedelta(hours=1))
         PinnedMessage.objects.filter(pk=newer_pin.pk).update(created_at=now)
         self.client.force_authenticate(user=self.member)
@@ -170,6 +176,45 @@ class TestPinnedMessagesAPI:
             self.second_message.id,
             self.message.id,
         ]
+
+    def test_list_pins_uses_id_as_stable_tie_breaker(self):
+        first_pin = PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.message,
+            pinned_by=self.manager,
+        )
+        second_pin = PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.second_message,
+            pinned_by=self.manager,
+        )
+        same_time = timezone.now()
+        PinnedMessage.objects.filter(pk__in=[first_pin.pk, second_pin.pk]).update(
+            created_at=same_time,
+        )
+
+        response = self.client.get(self.pins_url())
+
+        assert response.status_code == status.HTTP_200_OK
+        assert [row['id'] for row in response.data] == [second_pin.id, first_pin.id]
+
+    def test_list_pins_avoids_per_message_queries(self, django_assert_max_num_queries):
+        PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.message,
+            pinned_by=self.manager,
+        )
+        PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.second_message,
+            pinned_by=self.manager,
+        )
+
+        with django_assert_max_num_queries(8):
+            response = self.client.get(self.pins_url())
+
+        assert response.status_code == status.HTTP_200_OK
+        assert len(response.data) == 2
 
     @pytest.mark.parametrize('message_id', [None, 'not-a-number', 0, -1])
     def test_pin_rejects_invalid_message_id(self, message_id):
@@ -236,6 +281,36 @@ class TestPinnedMessagesAPI:
 
         assert response.status_code == status.HTTP_200_OK
         assert response.data == []
+
+    def test_deleting_message_removes_its_pin_record(self):
+        pin = PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.second_message,
+            pinned_by=self.manager,
+        )
+
+        response = self.client.delete(
+            reverse('message-detail', kwargs={'pk': self.second_message.id}),
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] == 'deleted'
+        assert not PinnedMessage.objects.filter(pk=pin.pk).exists()
+
+    def test_revoking_message_removes_its_pin_record(self):
+        pin = PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.second_message,
+            pinned_by=self.manager,
+        )
+
+        response = self.client.post(
+            reverse('message-revoke', kwargs={'pk': self.second_message.id}),
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data['status'] == 'revoked'
+        assert not PinnedMessage.objects.filter(pk=pin.pk).exists()
 
     def test_inactive_participant_and_outsider_cannot_access_pins(self):
         self.member_participant.is_active = False

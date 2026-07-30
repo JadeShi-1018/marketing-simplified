@@ -1435,6 +1435,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         message.is_revoked = True
         message.revoked_at = timezone.now()
         message.save(update_fields=['is_revoked', 'revoked_at', 'updated_at'])
+        PinnedMessage.objects.filter(message=message).delete()
 
         logger.info(f"User {request.user.id} revoked message {message.id}")
 
@@ -1559,6 +1560,8 @@ class MessageViewSet(viewsets.ModelViewSet):
                 'is_edited',
                 'updated_at',
             ])
+
+        PinnedMessage.objects.filter(message=message).delete()
 
         logger.info(f"User {request.user.id} soft-deleted message {message_id}")
 

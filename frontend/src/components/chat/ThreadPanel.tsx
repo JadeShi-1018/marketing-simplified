@@ -370,7 +370,10 @@ export default function ThreadPanel({
   }, [rootMessage.id, updateMessage]);
 
   return (
-    <div className="flex h-full w-full flex-col border-l border-gray-200 bg-white">
+    <div
+      className="flex h-full w-full flex-col border-l border-gray-200 bg-white"
+      data-testid="thread-panel"
+    >
       {/* Header */}
       <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
         <div className="flex items-center gap-2">

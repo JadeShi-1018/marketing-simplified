@@ -224,7 +224,9 @@ export interface PinnedMessageRow {
   chat: number;
   pinned_by: { id: number; username: string; email: string } | null;
   created_at: string;
-  message: Message;
+  message: Pick<Message, 'id' | 'sender' | 'content' | 'created_at' | 'parent_message_id'> & {
+    chat: number;
+  };
 }
 
 export const listPins = async (chatSlug: string): Promise<PinnedMessageRow[]> => {

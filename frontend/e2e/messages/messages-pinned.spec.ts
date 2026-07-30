@@ -70,6 +70,19 @@ const SECOND_MESSAGE = buildMessage(
   'Newest pinned announcement',
   '2026-07-30T08:05:00.000Z',
 );
+const THREAD_REPLY: MockMessage = {
+  ...buildMessage(27803, 'Pinned reply inside the announcement thread'),
+  parent_message_id: FIRST_MESSAGE.id,
+};
+
+type SetupOptions = {
+  isManager?: boolean;
+  initialPins?: MockPin[];
+  pinDelayMs?: number;
+  pinResponseStatus?: number;
+  pinsInitiallyFail?: boolean;
+  threadReplies?: MockMessage[];
+};
 
 function buildChat(isManager: boolean) {
   return {
@@ -115,12 +128,15 @@ function buildChat(isManager: boolean) {
 
 async function setupPinnedMessagesPage(
   page: Page,
-  options: { isManager?: boolean; initialPins?: MockPin[] } = {},
+  options: SetupOptions = {},
 ) {
   const isManager = options.isManager ?? true;
   const chat = buildChat(isManager);
-  const messages = [FIRST_MESSAGE, SECOND_MESSAGE];
+  const rootMessages = [FIRST_MESSAGE, SECOND_MESSAGE];
+  const threadReplies = options.threadReplies ?? [];
+  const messages = [...rootMessages, ...threadReplies];
   let pins = [...(options.initialPins ?? [])];
+  let pinsUnavailable = options.pinsInitiallyFail ?? false;
   const pinRequests: Array<{ pathname: string; payload: Record<string, unknown> }> = [];
   const unpinRequests: string[] = [];
 
@@ -173,6 +189,14 @@ async function setupPinnedMessagesPage(
     }
 
     if (pathname === `/api/chat/chats/${CHAT_SLUG}/pins` && request.method() === 'GET') {
+      if (pinsUnavailable) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Temporary pin service failure' }),
+        });
+        return;
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -184,6 +208,17 @@ async function setupPinnedMessagesPage(
     if (pathname === `/api/chat/chats/${CHAT_SLUG}/pin` && request.method() === 'POST') {
       const payload = request.postDataJSON() as { message_id: number };
       pinRequests.push({ pathname, payload });
+      if (options.pinDelayMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.pinDelayMs));
+      }
+      if (options.pinResponseStatus && options.pinResponseStatus >= 400) {
+        await route.fulfill({
+          status: options.pinResponseStatus,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Only channel managers can pin messages' }),
+        });
+        return;
+      }
       const message = messages.find((candidate) => candidate.id === payload.message_id);
       const existing = pins.find((candidate) => candidate.message.id === payload.message_id);
       const pin = existing ?? {
@@ -248,11 +283,42 @@ async function setupPinnedMessagesPage(
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
-          results: messages,
+          results: rootMessages,
           next_cursor: null,
           prev_cursor: null,
           page_size: 50,
         }),
+      });
+      return;
+    }
+
+    const threadRepliesMatch = pathname.match(/^\/api\/chat\/messages\/(\d+)\/thread_replies$/);
+    if (threadRepliesMatch && request.method() === 'GET') {
+      const rootMessageId = Number(threadRepliesMatch[1]);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          results: threadReplies.filter(
+            (message) => message.parent_message_id === rootMessageId,
+          ),
+        }),
+      });
+      return;
+    }
+
+    if (/\/mark_thread_as_read$/.test(pathname) && request.method() === 'POST') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      return;
+    }
+
+    const messageDetailMatch = pathname.match(/^\/api\/chat\/messages\/(\d+)$/);
+    if (messageDetailMatch && request.method() === 'GET') {
+      const message = messages.find((candidate) => candidate.id === Number(messageDetailMatch[1]));
+      await route.fulfill({
+        status: message ? 200 : 404,
+        contentType: 'application/json',
+        body: JSON.stringify(message ?? { error: 'Message not found' }),
       });
       return;
     }
@@ -265,7 +331,13 @@ async function setupPinnedMessagesPage(
   await expect(page.getByTestId('messages-chat-window')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(`#message-${FIRST_MESSAGE.id}`)).toBeVisible({ timeout: 15_000 });
 
-  return { pinRequests, unpinRequests };
+  return {
+    pinRequests,
+    unpinRequests,
+    recoverPins: () => {
+      pinsUnavailable = false;
+    },
+  };
 }
 
 async function openMessageMoreActions(page: Page, messageId: number) {
@@ -279,7 +351,7 @@ async function openPinnedMessagesSection(page: Page) {
   await page.getByRole('button', { name: 'Channel details' }).click();
   const drawer = page.getByTestId('channel-details-drawer');
   await expect(drawer).toBeVisible({ timeout: 10_000 });
-  await drawer.getByRole('button', { name: /^Pinned messages ·/ }).click();
+  await drawer.getByTestId('pinned-messages-section-toggle').click();
   return drawer;
 }
 
@@ -308,6 +380,7 @@ test.describe('Pinned messages per channel', () => {
       .filter({ hasText: FIRST_MESSAGE.content });
     await expect(pinnedItem).toBeVisible();
     await expect(pinnedItem).toContainText(CURRENT_USER.username);
+    await expect(pinnedItem.getByTestId('pinned-message-meta')).toContainText('Jul 30, 2026');
 
     await pinnedItem.getByRole('button', { name: 'Unpin' }).click({ force: true });
 
@@ -352,5 +425,83 @@ test.describe('Pinned messages per channel', () => {
     await expect(
       page.getByRole('menuitem').filter({ hasText: /Pin to channel|Unpin from channel/ }),
     ).toHaveCount(0);
+  });
+
+  test('failed pin keeps local state unchanged and shows an error', async ({ page }) => {
+    const { pinRequests } = await setupPinnedMessagesPage(page, { pinResponseStatus: 403 });
+
+    await openMessageMoreActions(page, FIRST_MESSAGE.id);
+    await page.getByRole('menuitem').filter({ hasText: 'Pin to channel' }).click();
+
+    await expect.poll(() => pinRequests.length).toBe(1);
+    await expect(page.getByText('Failed to pin message', { exact: true })).toBeVisible();
+    await expect(
+      page.locator(`#message-${FIRST_MESSAGE.id}`).getByText('Pinned to channel', { exact: false }),
+    ).toHaveCount(0);
+  });
+
+  test('pin action ignores duplicate clicks while the request is in flight', async ({ page }) => {
+    const { pinRequests } = await setupPinnedMessagesPage(page, { pinDelayMs: 1_000 });
+
+    await openMessageMoreActions(page, FIRST_MESSAGE.id);
+    await page
+      .getByRole('menuitem')
+      .filter({ hasText: 'Pin to channel' })
+      .evaluate((element) => {
+        const menuItem = element as HTMLElement;
+        menuItem.click();
+        menuItem.click();
+      });
+
+    await expect.poll(() => pinRequests.length).toBe(1);
+    await expect(page.getByText('Message pinned', { exact: true })).toBeVisible();
+  });
+
+  test('pinned drawer distinguishes load errors and supports retry', async ({ page }) => {
+    const { recoverPins } = await setupPinnedMessagesPage(page, { pinsInitiallyFail: true });
+
+    const drawer = await openPinnedMessagesSection(page);
+    await expect(drawer.getByRole('alert')).toContainText('Could not load pinned messages.');
+    recoverPins();
+    await drawer.getByRole('button', { name: 'Try again' }).click();
+    await expect(drawer.getByText('No pinned messages yet.')).toBeVisible();
+  });
+
+  test('pinned drawer is usable on a mobile viewport', async ({ page }) => {
+    await setupPinnedMessagesPage(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await page.getByRole('button', { name: 'Channel details' }).click();
+    const drawer = page.getByTestId('channel-details-drawer');
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Close channel details' })).toBeVisible();
+  });
+
+  test('a pinned thread reply opens its thread and highlights the reply', async ({ page }) => {
+    const replyPin: MockPin = {
+      id: 3,
+      chat: CHAT_ID,
+      pinned_by: CURRENT_USER,
+      created_at: '2026-07-30T09:00:00.000Z',
+      message: THREAD_REPLY,
+    };
+    await setupPinnedMessagesPage(page, {
+      initialPins: [replyPin],
+      threadReplies: [THREAD_REPLY],
+    });
+
+    const drawer = await openPinnedMessagesSection(page);
+    await drawer
+      .getByTestId('pinned-message-item')
+      .filter({ hasText: THREAD_REPLY.content })
+      .getByRole('button')
+      .filter({ hasText: THREAD_REPLY.content })
+      .click();
+
+    const threadPanel = page.getByTestId('thread-panel');
+    await expect(threadPanel).toBeVisible();
+    await expect(threadPanel.locator(`#message-${THREAD_REPLY.id}`)).toContainText(
+      THREAD_REPLY.content,
+    );
   });
 });
