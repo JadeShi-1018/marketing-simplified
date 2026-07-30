@@ -74,6 +74,13 @@ const THREAD_REPLY: MockMessage = {
   ...buildMessage(27803, 'Pinned reply inside the announcement thread'),
   parent_message_id: FIRST_MESSAGE.id,
 };
+// An old announcement that the timeline has not paged in yet — the case pinning
+// exists for. Resolvable through the message detail endpoint, absent from the list.
+const ARCHIVED_MESSAGE = buildMessage(
+  27800,
+  'Archived announcement above the loaded window',
+  '2026-07-29T08:00:00.000Z',
+);
 
 type SetupOptions = {
   isManager?: boolean;
@@ -82,6 +89,8 @@ type SetupOptions = {
   pinResponseStatus?: number;
   pinsInitiallyFail?: boolean;
   threadReplies?: MockMessage[];
+  /** Fetchable by id but not returned by the timeline list endpoint. */
+  unloadedMessages?: MockMessage[];
 };
 
 function buildChat(isManager: boolean) {
@@ -134,7 +143,7 @@ async function setupPinnedMessagesPage(
   const chat = buildChat(isManager);
   const rootMessages = [FIRST_MESSAGE, SECOND_MESSAGE];
   const threadReplies = options.threadReplies ?? [];
-  const messages = [...rootMessages, ...threadReplies];
+  const messages = [...rootMessages, ...threadReplies, ...(options.unloadedMessages ?? [])];
   let pins = [...(options.initialPins ?? [])];
   let pinsUnavailable = options.pinsInitiallyFail ?? false;
   const pinRequests: Array<{ pathname: string; payload: Record<string, unknown> }> = [];
@@ -475,6 +484,35 @@ test.describe('Pinned messages per channel', () => {
     const drawer = page.getByTestId('channel-details-drawer');
     await expect(drawer).toBeVisible();
     await expect(drawer.getByRole('button', { name: 'Close channel details' })).toBeVisible();
+  });
+
+  test('jumping to a pin above the loaded window pages the message in', async ({ page }) => {
+    const archivedPin: MockPin = {
+      id: 4,
+      chat: CHAT_ID,
+      pinned_by: CURRENT_USER,
+      created_at: '2026-07-30T09:00:00.000Z',
+      message: ARCHIVED_MESSAGE,
+    };
+    await setupPinnedMessagesPage(page, {
+      initialPins: [archivedPin],
+      unloadedMessages: [ARCHIVED_MESSAGE],
+    });
+
+    // The pinned announcement is not in the timeline yet — this is the case the
+    // feature exists for, and the one that used to fail silently.
+    await expect(page.locator(`#message-${ARCHIVED_MESSAGE.id}`)).toHaveCount(0);
+
+    const drawer = await openPinnedMessagesSection(page);
+    await drawer
+      .getByTestId('pinned-message-item')
+      .filter({ hasText: ARCHIVED_MESSAGE.content })
+      .getByRole('button')
+      .filter({ hasText: ARCHIVED_MESSAGE.content })
+      .click();
+
+    await expect(page.locator(`#message-${ARCHIVED_MESSAGE.id}`)).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/[?&]messageId=27800\b/);
   });
 
   test('a pinned thread reply opens its thread and highlights the reply', async ({ page }) => {

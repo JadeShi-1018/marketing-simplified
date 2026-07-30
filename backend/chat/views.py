@@ -589,6 +589,11 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         chat = self.get_object()
         if not ChatParticipant.objects.filter(chat=chat, user=request.user, is_active=True).exists():
             return Response({'error': 'You are not a participant of this chat'}, status=status.HTTP_403_FORBIDDEN)
+        # Pinning is a group-channel feature: only managers can pin/unpin, and a
+        # direct message has no manager. Legacy rows created before that rule was
+        # enforced would otherwise be listed here with no way to remove them.
+        if chat.type != ChatType.GROUP:
+            return Response([])
         pins = (
             PinnedMessage.objects.filter(
                 chat=chat,

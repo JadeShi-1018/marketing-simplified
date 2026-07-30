@@ -2,6 +2,8 @@ from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -198,23 +200,71 @@ class TestPinnedMessagesAPI:
         assert response.status_code == status.HTTP_200_OK
         assert [row['id'] for row in response.data] == [second_pin.id, first_pin.id]
 
-    def test_list_pins_avoids_per_message_queries(self, django_assert_max_num_queries):
-        PinnedMessage.objects.create(
-            chat=self.chat,
-            message=self.message,
-            pinned_by=self.manager,
+    def _pin_extra_messages(self, count):
+        for index in range(count):
+            message = Message.objects.create(
+                chat=self.chat,
+                sender=self.member,
+                content=f'Bulk announcement {index}',
+            )
+            PinnedMessage.objects.create(
+                chat=self.chat,
+                message=message,
+                pinned_by=self.manager,
+            )
+
+    def test_list_pins_query_count_does_not_grow_with_pins(self):
+        """The pin count must not drive the query count.
+
+        A max-queries assertion at a single list size would still pass on an N+1
+        serializer, so compare two sizes and require the same number of queries.
+        """
+        self._pin_extra_messages(2)
+        # Warm any per-request work (auth, participant lookup) that would
+        # otherwise only show up in the first capture.
+        self.client.get(self.pins_url())
+
+        with CaptureQueriesContext(connection) as small_queries:
+            small_response = self.client.get(self.pins_url())
+
+        self._pin_extra_messages(8)
+
+        with CaptureQueriesContext(connection) as large_queries:
+            large_response = self.client.get(self.pins_url())
+
+        assert small_response.status_code == status.HTTP_200_OK
+        assert large_response.status_code == status.HTTP_200_OK
+        assert len(small_response.data) == 2
+        assert len(large_response.data) == 10
+        assert len(large_queries) == len(small_queries)
+
+    def test_list_pins_excludes_direct_message_chats(self):
+        """Legacy DM pins are unreachable, so the list must not surface them.
+
+        Pin/unpin are group-only, which leaves rows created by the older
+        permission branch with no way to be removed from the UI.
+        """
+        private_chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.PRIVATE,
+            created_by=self.manager,
+        )
+        ChatParticipant.objects.create(chat=private_chat, user=self.manager, is_active=True)
+        private_message = Message.objects.create(
+            chat=private_chat,
+            sender=self.manager,
+            content='Legacy direct message pin',
         )
         PinnedMessage.objects.create(
-            chat=self.chat,
-            message=self.second_message,
+            chat=private_chat,
+            message=private_message,
             pinned_by=self.manager,
         )
 
-        with django_assert_max_num_queries(8):
-            response = self.client.get(self.pins_url())
+        response = self.client.get(self.pins_url(chat=private_chat))
 
         assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) == 2
+        assert response.data == []
 
     @pytest.mark.parametrize('message_id', [None, 'not-a-number', 0, -1])
     def test_pin_rejects_invalid_message_id(self, message_id):

@@ -1092,35 +1092,24 @@ export default function ChatWindow({ chat, onBack, roleByUserId, hideBackOnDeskt
                 setPinRefreshKey((prev) => prev + 1);
               }}
               onJumpToMessage={(msgId, parentMsgId) => {
-                // Close the drawer so the message is visible, then fire the jump event.
-                // The custom event path appends Date.now() to the requestId so every
-                // click is treated as a fresh jump — avoids the completedJumpRequestRef
-                // de-dup that silently skips re-jumps to the same message.
+                // Close the drawer so the message is visible, then route to it.
+                // Going through the URL instead of the jump CustomEvent reuses the
+                // deep-link effect above, which pages in history (and falls back to
+                // a single-message fetch) until the target exists. The event path
+                // only scans already-rendered messages, so pinned announcements far
+                // above the loaded window silently did nothing.
+                // `jumpId` keeps every click a fresh jump for the same message id.
                 setShowChannelDetails(false);
-                if (parentMsgId) {
-                  // Pinned message is a thread reply — open the thread for the
-                  // parent and highlight the reply inside it. Also jump the main
-                  // timeline to the parent so the user sees the source message.
-                  void getMessage(parentMsgId)
-                    .then((parent) => {
-                      setActiveThreadMessage(parent);
-                      setThreadHighlightMessageId(msgId);
-                      window.dispatchEvent(
-                        new CustomEvent('mj:chat:jumpToMessage', {
-                          detail: { messageId: parentMsgId },
-                        }),
-                      );
-                    })
-                    .catch(() => {
-                      // Fall back to jumping to the reply id directly if parent fetch fails.
-                      window.dispatchEvent(
-                        new CustomEvent('mj:chat:jumpToMessage', { detail: { messageId: msgId } }),
-                      );
-                    });
-                  return;
-                }
-                window.dispatchEvent(
-                  new CustomEvent('mj:chat:jumpToMessage', { detail: { messageId: msgId } })
+                router.replace(
+                  buildUrl(buildMessagesPath(chat.slug, {
+                    // A pinned thread reply targets its parent so the main timeline
+                    // has something to scroll to; the `threadMessageId` effect opens
+                    // the thread and highlights the reply inside it.
+                    messageId: parentMsgId ?? msgId,
+                    threadMessageId: parentMsgId ? msgId : null,
+                    jumpId: String(Date.now()),
+                  })),
+                  { scroll: false },
                 );
               }}
             />
