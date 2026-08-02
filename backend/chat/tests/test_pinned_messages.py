@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -87,27 +88,30 @@ class TestPinnedMessagesAPI:
         )
 
     def test_manager_can_pin_message_idempotently(self):
-        first = self.client.post(
-            self.pin_url(),
-            {'message_id': self.message.id},
-            format='json',
-        )
+        with patch('chat.views.ChatViewSet._notify_pin_update') as notify_pin_update:
+            first = self.client.post(
+                self.pin_url(),
+                {'message_id': self.message.id},
+                format='json',
+            )
 
-        assert first.status_code == status.HTTP_201_CREATED
-        pin = PinnedMessage.objects.get(chat=self.chat, message=self.message)
-        assert pin.pinned_by == self.manager
-        assert first.data['message']['id'] == self.message.id
-        assert first.data['pinned_by']['id'] == self.manager.id
-        assert first.data['created_at']
+            assert first.status_code == status.HTTP_201_CREATED
+            pin = PinnedMessage.objects.get(chat=self.chat, message=self.message)
+            assert pin.pinned_by == self.manager
+            assert first.data['message']['id'] == self.message.id
+            assert first.data['pinned_by']['id'] == self.manager.id
+            assert first.data['created_at']
 
-        second = self.client.post(
-            self.pin_url(),
-            {'message_id': self.message.id},
-            format='json',
-        )
+            second = self.client.post(
+                self.pin_url(),
+                {'message_id': self.message.id},
+                format='json',
+            )
 
-        assert second.status_code == status.HTTP_200_OK
-        assert PinnedMessage.objects.filter(chat=self.chat, message=self.message).count() == 1
+            assert second.status_code == status.HTTP_200_OK
+            assert PinnedMessage.objects.filter(chat=self.chat, message=self.message).count() == 1
+            notify_pin_update.assert_called_once()
+            assert notify_pin_update.call_args.args[1:3] == ('pinned', self.message.id)
 
     def test_regular_member_cannot_pin_or_unpin(self):
         pin = PinnedMessage.objects.create(
@@ -139,10 +143,16 @@ class TestPinnedMessagesAPI:
             pinned_by=self.manager,
         )
 
-        response = self.client.delete(self.unpin_url())
+        with patch('chat.views.ChatViewSet._notify_pin_update') as notify_pin_update:
+            response = self.client.delete(self.unpin_url())
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
         assert not PinnedMessage.objects.filter(chat=self.chat, message=self.message).exists()
+        notify_pin_update.assert_called_once_with(
+            self.chat,
+            'unpinned',
+            self.message.id,
+        )
 
     def test_unpin_missing_pin_returns_not_found(self):
         response = self.client.delete(self.unpin_url())

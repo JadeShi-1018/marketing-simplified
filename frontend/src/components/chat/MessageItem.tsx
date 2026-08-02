@@ -302,7 +302,7 @@ export default function MessageItem({
         rowPadding,
         'transition-colors',
         isHighlighted
-          ? 'bg-amber-50/40 scroll-mt-24'
+          ? 'chat-message-jump-highlight scroll-mt-24'
           : isThreadActive
             ? 'bg-teal-50/40'
             : isHovering && !hasImageAttachment
@@ -331,7 +331,6 @@ export default function MessageItem({
       <div
         className={[
           'relative flex gap-2 pl-3 pr-4',
-          isHighlighted ? 'bg-cyan-50' : '',
           isSelectMode ? 'cursor-pointer' : '',
           // Reserve the 2px left-border slot unconditionally so layout never shifts
           'border-l-2 border-transparent',

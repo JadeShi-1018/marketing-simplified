@@ -423,12 +423,23 @@ test.describe('Pinned messages per channel', () => {
     ];
     await setupPinnedMessagesPage(page, { isManager: false, initialPins });
 
-    const drawer = await openPinnedMessagesSection(page);
-    const items = drawer.getByTestId('pinned-message-item');
+    const banner = page.getByTestId('pinned-message-banner');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('New pinned message');
+    await expect(banner).toContainText(SECOND_MESSAGE.content);
+
+    await page.getByTestId('pinned-messages-button').click();
+    const drawer = page.getByTestId('pinned-messages-drawer');
+    await expect(drawer).toBeVisible();
+    const items = drawer.getByTestId('pinned-drawer-item');
     await expect(items).toHaveCount(2);
     await expect(items.nth(0)).toContainText(SECOND_MESSAGE.content);
     await expect(items.nth(1)).toContainText(FIRST_MESSAGE.content);
-    await expect(drawer.getByRole('button', { name: 'Unpin' })).toHaveCount(0);
+    await expect(drawer.getByRole('button', { name: /Unpin message:/ })).toHaveCount(0);
+
+    await drawer.getByRole('button', { name: 'Close pinned messages' }).click();
+    await expect(banner).toContainText('Pinned message');
+    await expect(banner).not.toContainText('New pinned message');
 
     await openMessageMoreActions(page, FIRST_MESSAGE.id);
     await expect(

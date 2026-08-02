@@ -13,6 +13,8 @@ import MessageItem from './MessageItem';
 import MessageHoverActions from './MessageHoverActions';
 import ChatRichTextRenderer from './ChatRichTextRenderer';
 
+const JUMP_HIGHLIGHT_CLEAR_MS = 7800;
+
 // ── Avatar helper ─────────────────────────────────────────────────────────────
 
 const AVATAR_COLORS = [
@@ -256,7 +258,7 @@ export default function ThreadPanel({
   }, [replies.length, highlightMessageId]);
 
   // When a highlight target is set and replies are loaded, scroll the target
-  // into view and start a 4 s timer to clear the highlight (parent state).
+  // into view and retain the class through the animation's transparent frame.
   useEffect(() => {
     if (!highlightMessageId) return;
     if (isLoading) return;
@@ -267,7 +269,7 @@ export default function ThreadPanel({
     });
     const timer = window.setTimeout(() => {
       onHighlightCleared?.();
-    }, 4000);
+    }, JUMP_HIGHLIGHT_CLEAR_MS);
     return () => {
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timer);

@@ -420,6 +420,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
             'reaction': event['reaction'],
         }))
 
+    async def pin_update(self, event):
+        """Tell channel members that the shared pin list changed."""
+        await self.send(text_data=json.dumps({
+            'type': 'pin_update',
+            'action': event['action'],
+            'chat_id': event['chat_id'],
+            'message_id': event['message_id'],
+            'pin': event.get('pin'),
+        }))
+
     async def presence_update(self, event):
         """Send user online/offline status changes to WebSocket"""
         await self.send(text_data=json.dumps({

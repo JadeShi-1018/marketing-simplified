@@ -193,6 +193,36 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
 
     def _is_channel_manager(self, chat, user):
         return ChatService.is_channel_manager(chat, user)
+
+    def _notify_pin_update(self, chat, action, message_id, pin_data=None):
+        """Broadcast shared pin changes to every active channel member."""
+        from asgiref.sync import async_to_sync
+        from channels.layers import get_channel_layer
+
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                return
+            event = {
+                'type': 'pin_update',
+                'action': action,
+                'chat_id': chat.id,
+                'message_id': message_id,
+                'pin': pin_data,
+            }
+            participant_ids = ChatParticipant.objects.filter(
+                chat=chat,
+                is_active=True,
+            ).values_list('user_id', flat=True)
+            for participant_id in participant_ids:
+                async_to_sync(channel_layer.group_send)(
+                    f'chat_user_{participant_id}',
+                    event,
+                )
+        except Exception:
+            # A notification transport failure must never roll back a pin that
+            # has already been persisted successfully.
+            logger.exception('Failed to broadcast pin update for chat %s', chat.id)
     
     def get_queryset(self):
         """Get chats where user is a participant"""
@@ -679,8 +709,11 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
             chat=chat, message=message,
             defaults={'pinned_by': request.user},
         )
+        pin_data = PinnedMessageSerializer(pin, context={'request': request}).data
+        if created:
+            self._notify_pin_update(chat, 'pinned', message.id, pin_data)
         return Response(
-            PinnedMessageSerializer(pin, context={'request': request}).data,
+            pin_data,
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
 
@@ -703,6 +736,7 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         ).delete()
         if not deleted:
             return Response({'error': 'Pin not found'}, status=status.HTTP_404_NOT_FOUND)
+        self._notify_pin_update(chat, 'unpinned', validated_message_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=['get'], url_path='browse')
