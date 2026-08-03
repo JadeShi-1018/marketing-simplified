@@ -355,6 +355,78 @@ class TestProcessApproval:
             )
         assert result.status == BudgetRequestStatus.APPROVED
 
+    def test_org_admin_override_auto_advances_original_chain(
+        self, budget_request_under_review, org_admin, user2, user3, project
+    ):
+        """MED-240: override approve continues the original ApprovalChain (not admin-picked)."""
+        from task.models import ApprovalChain, ApprovalChainStep
+
+        task = budget_request_under_review.task
+        chain = ApprovalChain.objects.create(
+            name="Buyer → Lead → Client",
+            project=project,
+            task_type="budget",
+        )
+        ApprovalChainStep.objects.create(chain=chain, order=1, approver=user2)
+        ApprovalChainStep.objects.create(chain=chain, order=2, approver=user3)
+        task.approval_chain = chain
+        task.current_approval_step = 1
+        task.current_approver = user2
+        task.save(
+            update_fields=['approval_chain', 'current_approval_step', 'current_approver']
+        )
+
+        with patch('budget_approval.services.budget_notifications') as mock_notif:
+            result = BudgetRequestService.process_approval(
+                budget_request_under_review,
+                org_admin,
+                is_approved=True,
+                comment="Override step 1",
+                next_approver=org_admin,  # must be ignored — chain picks user3
+            )
+
+        assert result.status == BudgetRequestStatus.UNDER_REVIEW
+        assert result.current_approver_id == user3.id
+        # Avoid Task.refresh_from_db() — FSMField(protected) blocks status setattr
+        from task.models import Task
+        task_row = Task.objects.filter(pk=task.pk).values(
+            'current_approval_step', 'current_approver_id'
+        ).get()
+        assert task_row['current_approval_step'] == 2
+        assert task_row['current_approver_id'] == user3.id
+        mock_notif.notify_budget_forwarded.assert_called_once()
+
+    def test_org_admin_override_finalizes_when_no_next_chain_step(
+        self, budget_request_under_review, org_admin, user2, project
+    ):
+        """Last chain step / legacy: override approve finalizes APPROVED."""
+        from task.models import ApprovalChain, ApprovalChainStep
+
+        task = budget_request_under_review.task
+        chain = ApprovalChain.objects.create(
+            name="Single step",
+            project=project,
+            task_type="budget",
+        )
+        ApprovalChainStep.objects.create(chain=chain, order=1, approver=user2)
+        task.approval_chain = chain
+        task.current_approval_step = 1
+        task.current_approver = user2
+        task.save(
+            update_fields=['approval_chain', 'current_approval_step', 'current_approver']
+        )
+
+        with patch('budget_approval.services.budget_notifications') as mock_notif:
+            result = BudgetRequestService.process_approval(
+                budget_request_under_review,
+                org_admin,
+                is_approved=True,
+                comment="Override last step",
+            )
+
+        assert result.status == BudgetRequestStatus.APPROVED
+        mock_notif.notify_budget_approved.assert_called_once()
+
     def test_org_admin_override_writes_audit_entry(
         self, budget_request_under_review, org_admin, user2
     ):

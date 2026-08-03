@@ -80,6 +80,38 @@ class BudgetRequestService:
         budget_request.save(update_fields=['notes'])
 
     @staticmethod
+    def _resolve_next_from_approval_chain(budget_request):
+        """Next chain step after the task's current step, or None (legacy / last step).
+
+        Org-admin override must continue the *original* ApprovalChain — the admin
+        does not pick the next approver. Returns (approver_user, next_step_number).
+        """
+        task = getattr(budget_request, 'task', None)
+        if task is None or not getattr(task, 'approval_chain_id', None):
+            return None, None
+
+        chain = task.approval_chain
+        if chain is None:
+            return None, None
+
+        current_step = task.current_approval_step or 1
+        next_step_num = current_step + 1
+        next_step = chain.get_step(next_step_num)
+        if next_step is None:
+            return None, None
+        return next_step.approver, next_step_num
+
+    @staticmethod
+    def _sync_task_chain_advance(budget_request, next_approver, next_step_num):
+        """Keep linked Task chain pointer in sync when BudgetRequest advances."""
+        task = getattr(budget_request, 'task', None)
+        if task is None or next_approver is None or next_step_num is None:
+            return
+        task.current_approver = next_approver
+        task.current_approval_step = next_step_num
+        task.save(update_fields=['current_approver', 'current_approval_step'])
+
+    @staticmethod
     def check_escalation_rules(budget_request):
         """Check if budget request should be escalated based on rules"""
         escalation_rules = BudgetEscalationRule.objects.filter(
@@ -180,6 +212,17 @@ class BudgetRequestService:
 
         # Capture before mutation: override = org-admin acting outside the chain
         is_override = is_org_admin_override_action(approver, budget_request)
+
+        # MED-240: org-admin replaces the current step only. Next person comes from
+        # the original ApprovalChain (not a client-supplied next_approver).
+        # Legacy / no remaining steps → finalize (effective_next stays None).
+        if is_override and is_approved:
+            effective_next, next_step_num = (
+                BudgetRequestService._resolve_next_from_approval_chain(budget_request)
+            )
+        else:
+            effective_next = next_approver
+            next_step_num = None
         
         with transaction.atomic():
             # Lock the budget request for update to ensure atomic state transition
@@ -196,14 +239,18 @@ class BudgetRequestService:
                 locked_request.save()
 
                 # status: APPROVED --> UNDER_REVIEW (multi-step chain)
-                if next_approver:
+                if effective_next:
                     locked_request.forward_to_next()
-                    locked_request.current_approver = next_approver
+                    locked_request.current_approver = effective_next
                     locked_request.save()
+                    if is_override and next_step_num is not None:
+                        BudgetRequestService._sync_task_chain_advance(
+                            locked_request, effective_next, next_step_num
+                        )
                     budget_notifications.notify_budget_forwarded(
                         locked_request,
                         actor_id=approver.id if approver else None,
-                        next_approver_id=next_approver.id,
+                        next_approver_id=effective_next.id,
                     )
                 else:
                     budget_notifications.notify_budget_approved(
