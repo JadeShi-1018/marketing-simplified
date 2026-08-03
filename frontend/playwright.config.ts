@@ -121,5 +121,12 @@ export default defineConfig({
       },
       testMatch: /e2e[\\/]messages[\\/]messages-reconnect-attachments\.spec\.ts$/,
     },
+    {
+      name: 'budget-mock',
+      use: {
+        ...devices['Desktop Chrome'],
+      },
+      testMatch: /e2e[\\/]budget[\\/]budget-admin-override\.spec\.ts$/,
+    },
   ],
 });

@@ -1,150 +1,206 @@
 /**
  * MED-240: Playwright coverage for org-admin override UI.
  *
- * Asserts the Admin override badge surfaces when a budget request is flagged
- * `is_admin_override` (e.g. after a chain-outside org-admin decision).
- * Uses response interception so the badge contract can be verified without a
- * second seeded org-admin account.
+ * Fully mocked (no real login / backend) so it runs inside the frontend
+ * Docker image without DEV_USER credentials. Asserts the Admin override
+ * badge contract against TaskTypeBlock / BudgetRequestDetail.
  */
 
-import { test, expect, type Page, type Route } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import {
-  createDraftTaskViaApi,
-  deleteTaskById,
-  navigateToTasksAndSelectProject,
-  waitForTasksPageReady,
-  getActiveProjectSlug,
-  buildTasksListDrawerUrl,
-} from '../tasks/tasks-helpers';
+  seedAuthenticatedUser,
+  mockAuthenticatedUserApis,
+  mockProjectShellApis,
+  seedActiveProject,
+} from '../messages/messages-helpers';
 
-async function waitForDrawerReady(page: Page) {
-  await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 15_000 });
-  await page.waitForFunction(
-    () => !document.querySelector('.animate-pulse'),
-    { timeout: 15_000 },
-  );
-}
+const PROJECT = {
+  id: 2401,
+  name: 'MED-240 Override Project',
+  slug: 'med-240-override',
+  member_count: 1,
+};
 
-/** Patch task / budget payloads so linked budget data exposes the override flag. */
-function withAdminOverrideFlag(body: Record<string, unknown>): Record<string, unknown> {
-  const linked =
-    body.linked_object && typeof body.linked_object === 'object'
-      ? { ...(body.linked_object as Record<string, unknown>) }
-      : {
-          id: body.object_id ?? 1,
-          status: body.status ?? 'APPROVED',
-          amount: '100.00',
-          currency: 'AUD',
-          notes: 'E2E override fixture',
-        };
-
-  return {
-    ...body,
-    type: 'budget',
-    linked_object: {
-      ...linked,
-      is_admin_override: true,
+const TASK = {
+  id: 24001,
+  slug: 'e2e-med-240-budget-task',
+  summary: 'E2E MED-240 budget override',
+  type: 'budget',
+  status: 'APPROVED',
+  project_id: PROJECT.id,
+  project: PROJECT,
+  current_approver: { id: 99, username: 'chain-approver', email: 'approver@example.com' },
+  owner: { id: 1, username: 'e2e-user', email: 'e2e@example.com' },
+  blocks: [],
+  is_blocked_by: [],
+  causes: [],
+  is_caused_by: [],
+  relations: {
+    blocks: [],
+    is_blocked_by: [],
+    causes: [],
+    is_caused_by: [],
+  },
+  linked_object: {
+    id: 8801,
+    status: 'APPROVED',
+    amount: '100.00',
+    currency: 'AUD',
+    notes: 'User visible note',
+    is_escalated: false,
+    is_admin_override: true,
+    current_approver_name: 'chain-approver',
+    ad_channel_name: 'Meta',
+    budget_pool: {
+      id: 1,
+      name: 'Pool A',
+      currency: 'AUD',
+      total_amount: '1000.00',
+      available_amount: '900.00',
     },
-  };
-}
+  },
+};
 
-async function fulfillJson(route: Route, body: unknown) {
-  await route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify(body),
+test.use({ storageState: { cookies: [], origins: [] } });
+
+async function mockBudgetTaskShell(page: Page, withOverride: boolean) {
+  const linked = {
+    ...TASK.linked_object,
+    is_admin_override: withOverride,
+  };
+  const taskPayload = { ...TASK, linked_object: linked };
+
+  await page.route('**/api/core/onboarding-status/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ needs_onboarding: false, has_org: true, has_project: true }),
+    });
+  });
+
+  await page.route('**/api/core/projects**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([PROJECT]),
+    });
+  });
+
+  await page.route(`**/api/core/projects/${PROJECT.id}/members/**`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ results: [], next: null }),
+    });
+  });
+
+  const emptyRelations = {
+    causes: [],
+    is_caused_by: [],
+    blocks: [],
+    is_blocked_by: [],
+    clones: [],
+    is_cloned_by: [],
+    relates_to: [],
+  };
+
+  await page.route('**/api/tasks/**', async (route) => {
+    const url = route.request().url();
+    const method = route.request().method();
+    if (method !== 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      return;
+    }
+
+    // Sub-resources must be matched before task detail (same URL prefix).
+    if (url.includes('/relations')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(emptyRelations),
+      });
+      return;
+    }
+    if (url.includes('/budget-request') || url.includes('/onboarding-status') || url.includes('/field-history')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(url.includes('/budget-request') ? linked : {}),
+      });
+      return;
+    }
+
+    // Detail by id or slug
+    if (url.includes(`/tasks/${TASK.id}`) || url.includes(`/tasks/${TASK.slug}`)) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(taskPayload),
+      });
+      return;
+    }
+
+    // List
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ count: 1, next: null, previous: null, results: [taskPayload] }),
+    });
+  });
+
+  await page.route('**/api/budgets/requests/**', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(linked),
+    });
+  });
+
+  await page.route('**/api/budgets/pools/**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ count: 0, results: [] }),
+    });
   });
 }
 
 test.describe('Budget admin override badge (MED-240)', () => {
-  test.describe.configure({ mode: 'serial' });
-
-  let projectId: number;
-  let projectSlug: string;
-  let taskId: number | null = null;
-  let taskSlug: string | null = null;
-
-  test.beforeAll(async ({ browser }) => {
-    const ctx = await browser.newContext({ storageState: 'e2e/.auth/user.json' });
-    const page = await ctx.newPage();
-    projectId = await navigateToTasksAndSelectProject(page);
-    projectSlug = await getActiveProjectSlug(page);
-    await ctx.close();
+  test.beforeEach(async ({ page }) => {
+    await seedAuthenticatedUser(page);
+    await mockAuthenticatedUserApis(page);
+    await mockProjectShellApis(page);
+    await seedActiveProject(page, PROJECT);
   });
 
-  test.afterEach(async ({ browser }) => {
-    if (taskId == null) return;
-    const ctx = await browser.newContext({ storageState: 'e2e/.auth/user.json' });
-    const page = await ctx.newPage();
-    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
-    await waitForTasksPageReady(page);
-    await deleteTaskById(page, taskId).catch(() => {});
-    await ctx.close();
-    taskId = null;
-    taskSlug = null;
-  });
+  test('shows Admin override badge when is_admin_override is true', async ({ page }) => {
+    await mockBudgetTaskShell(page, true);
 
-  test('shows Admin override badge when budget linked_object is_admin_override', async ({
-    page,
-  }) => {
-    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
-    await waitForTasksPageReady(page);
-
-    const fixture = await createDraftTaskViaApi(
-      page,
-      projectId,
-      `E2E MED-240 admin override ${Date.now()}`,
-      { type: 'budget' },
+    await page.goto(
+      `/projects/${encodeURIComponent(PROJECT.slug)}/tasks/${encodeURIComponent(TASK.slug)}`,
     );
-    taskId = fixture.id;
-    taskSlug = fixture.slug;
 
-    await page.route(`**/api/tasks/${taskId}/**`, async (route) => {
-      if (route.request().method() !== 'GET') {
-        await route.continue();
-        return;
-      }
-      const response = await route.fetch();
-      const data = (await response.json()) as Record<string, unknown>;
-      await fulfillJson(route, withAdminOverrideFlag(data));
-    });
-
-    // Also cover legacy BudgetRequestDetail fetch path
-    await page.route('**/api/budgets/requests/**', async (route) => {
-      if (route.request().method() !== 'GET') {
-        await route.continue();
-        return;
-      }
-      const response = await route.fetch();
-      const data = (await response.json()) as Record<string, unknown>;
-      await fulfillJson(route, { ...data, is_admin_override: true, status: data.status ?? 'APPROVED' });
-    });
-
-    await page.goto(buildTasksListDrawerUrl(projectSlug, taskSlug!));
-    await waitForDrawerReady(page);
-
+    await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId('admin-override-badge').first()).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByTestId('admin-override-badge').first()).toHaveText(/admin override/i);
   });
 
-  test('does not show Admin override badge for a normal budget draft', async ({ page }) => {
-    await page.goto(`/projects/${encodeURIComponent(projectSlug)}/tasks`);
-    await waitForTasksPageReady(page);
+  test('does not show Admin override badge when is_admin_override is false', async ({
+    page,
+  }) => {
+    await mockBudgetTaskShell(page, false);
 
-    const fixture = await createDraftTaskViaApi(
-      page,
-      projectId,
-      `E2E MED-240 no override ${Date.now()}`,
-      { type: 'budget' },
+    await page.goto(
+      `/projects/${encodeURIComponent(PROJECT.slug)}/tasks/${encodeURIComponent(TASK.slug)}`,
     );
-    taskId = fixture.id;
-    taskSlug = fixture.slug;
 
-    await page.goto(buildTasksListDrawerUrl(projectSlug, taskSlug!));
-    await waitForDrawerReady(page);
-
+    await expect(page.getByTestId('task-drawer')).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('section', { hasText: /budget details/i })).toBeVisible({
       timeout: 15_000,
     });
