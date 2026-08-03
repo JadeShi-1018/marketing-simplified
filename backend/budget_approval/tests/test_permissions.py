@@ -220,8 +220,7 @@ class TestOrgAdminApprovalOverridePermissions:
         )
 
         assert response.status_code == status.HTTP_200_OK
-        budget_request_under_review.refresh_from_db()
-        assert budget_request_under_review.status == BudgetRequestStatus.APPROVED
+        assert response.data['status'] == BudgetRequestStatus.APPROVED
 
     def test_org_admin_can_reject_outside_chain(
         self, api_client, org_admin, budget_request_under_review, team, user2
@@ -243,8 +242,7 @@ class TestOrgAdminApprovalOverridePermissions:
         )
 
         assert response.status_code == status.HTTP_200_OK
-        budget_request_under_review.refresh_from_db()
-        assert budget_request_under_review.status == BudgetRequestStatus.REJECTED
+        assert response.data['status'] == BudgetRequestStatus.REJECTED
 
     def test_approval_permission_object_allows_org_admin(
         self, org_admin, budget_request_under_review, user2

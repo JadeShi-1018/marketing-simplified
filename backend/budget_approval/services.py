@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction, OperationalError
 from .models import BudgetRequest, BudgetPool, BudgetEscalationRule, BudgetRequestStatus
+from .approver_access import user_may_process_budget_approval
 from .tasks import trigger_escalation
 from . import notifications as budget_notifications
 from core.models import AdChannel
@@ -130,8 +131,8 @@ class BudgetRequestService:
             to ensure consistency with the database state after the atomic transaction.
             The original object's ID remains unchanged - only the Python object reference changes.
         """
-        # Check if current approver matches (super admin can bypass this check)
-        if not approver.is_superuser and budget_request.current_approver != approver:
+        # Chain approver, superuser, or same-org org-admin override (MED-240)
+        if not user_may_process_budget_approval(approver, budget_request):
             raise ValidationError("Only the assigned approver can process this request")
         
         if not budget_request.can_approve() and not budget_request.can_reject():
