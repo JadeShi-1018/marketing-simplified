@@ -90,7 +90,7 @@ type PrependAnchor = {
 
 const JUMP_SCROLL_MIN_DURATION_MS = 1100;
 const JUMP_SCROLL_MAX_DURATION_MS = 1500;
-const JUMP_HIGHLIGHT_CLEAR_MS = 7800;
+const JUMP_HIGHLIGHT_CLEAR_MS = 8300;
 
 function formatDateHeader(dateStr: string): string {
   const date = new Date(dateStr + 'T00:00:00');

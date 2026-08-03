@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
+  ArrowUpRight,
   Bell,
   Calendar as CalendarIcon,
   ChevronDown,
@@ -25,6 +26,7 @@ import {
   Video,
   X,
 } from 'lucide-react';
+import { avatarColor } from './avatarColor';
 import {
   addMonths,
   eachDayOfInterval,
@@ -1067,7 +1069,7 @@ export default function ChannelDetailsDrawer({
   return (
     <div className="flex h-full w-full flex-col border-l border-gray-200 bg-white" data-testid="channel-details-drawer">
       {/* Header */}
-      <div className="flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3">
+      <div className="relative z-10 flex shrink-0 items-center justify-between border-b border-gray-100 px-4 py-3 shadow-[0_1px_3px_rgba(16,24,40,0.05)]">
         <span className="text-sm font-semibold text-gray-800">{isGroup ? 'Channel details' : 'Direct message'}</span>
         <button
           type="button"
@@ -1422,70 +1424,75 @@ export default function ChannelDetailsDrawer({
           ) : pins.length === 0 ? (
             <p className="text-sm text-gray-400 italic">No pinned messages yet.</p>
           ) : (
-            <ul className="divide-y divide-gray-100" data-testid="pinned-messages-list">
-              {pins.map((pin) => (
-                <li
-                  key={pin.id}
-                  className="group flex items-center gap-2 py-2 first:pt-0 last:pb-0"
-                  data-testid="pinned-message-item"
-                >
-                  {/* Left accent bar */}
-                  <div className="w-0.5 self-stretch rounded-full bg-teal-400 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    {/* One-line preview: sender · snippet */}
+            <ul className="space-y-2" data-testid="pinned-messages-list">
+              {pins.map((pin) => {
+                const sender = pin.message.sender?.username || pin.message.sender?.email || 'Unknown';
+                return (
+                  <li
+                    key={pin.id}
+                    className="group rounded-lg border border-gray-200/80 bg-white p-2.5 shadow-[0_1px_3px_rgba(16,24,40,0.06)] transition-all duration-200 hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-[0_6px_16px_rgba(16,24,40,0.10)]"
+                    data-testid="pinned-message-item"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[9px] font-bold text-white ${avatarColor(pin.message.sender?.id)}`}>
+                        {sender.charAt(0).toUpperCase()}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-700">
+                        {sender}
+                      </span>
+                    </div>
                     {onJumpToMessage ? (
                       <button
                         type="button"
                         onClick={() => onJumpToMessage(pin.message.id, pin.message.parent_message_id ?? null)}
-                        className="block w-full text-left"
+                        className="mt-1 block w-full rounded text-left"
+                        title="Jump to message"
+                        aria-label={`Jump to pinned message: ${pin.message.content || 'attachment'}`}
                       >
-                        <span className="text-[11px] font-semibold text-gray-600">
-                          {pin.message.sender?.username || pin.message.sender?.email || 'Unknown'}
-                        </span>
-                        <span className="mx-1 text-[11px] text-gray-300">·</span>
-                        <span className="text-[11px] text-gray-500 line-clamp-1 [overflow-wrap:anywhere]">
+                        <span className="block text-[11px] text-gray-500 line-clamp-2 [overflow-wrap:anywhere]">
                           {pin.message.content || '(attachment)'}
-                        </span>
-                        <span className="mt-0.5 block text-[10px] text-teal-600 group-hover:underline">
-                          Jump to message →
                         </span>
                       </button>
                     ) : (
-                      <>
-                        <span className="text-[11px] font-semibold text-gray-600">
-                          {pin.message.sender?.username || pin.message.sender?.email || 'Unknown'}
-                        </span>
-                        <p className="text-[11px] text-gray-500 line-clamp-1">{pin.message.content || '(attachment)'}</p>
-                      </>
+                      <p className="mt-1 text-[11px] text-gray-500 line-clamp-2">{pin.message.content || '(attachment)'}</p>
                     )}
-                    {/* Pinned label */}
-                    <span className="mt-0.5 flex items-center gap-1 text-[10px] text-teal-600">
-                      <Pin className="h-2.5 w-2.5 shrink-0" />
-                      Pinned to channel · visible to all members
-                    </span>
-                    {/* Pin audit context */}
-                    <p className="text-[10px] text-gray-400" data-testid="pinned-message-meta">
-                      {pin.pinned_by
-                        ? `by ${pin.pinned_by.username || pin.pinned_by.email} · `
-                        : ''}
-                      {format(parseISO(pin.created_at), 'MMM d, yyyy · h:mm a')}
-                    </p>
-                  </div>
-                  {canManageChannel && (
-                    <button
-                      type="button"
-                      onClick={() => void handleUnpin(pin)}
-                      disabled={unpinningId === pin.id}
-                      className="hidden shrink-0 rounded p-0.5 text-gray-400 hover:bg-red-50 hover:text-red-500 group-hover:block disabled:opacity-50"
-                      aria-label="Unpin"
-                    >
-                      {unpinningId === pin.id
-                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        : <X className="h-3.5 w-3.5" />}
-                    </button>
-                  )}
-                </li>
-              ))}
+                    {/* Pin audit context + aligned actions */}
+                    <div className="mt-1 flex items-center gap-1.5">
+                      <p className="min-w-0 flex-1 truncate text-[10px] text-gray-400" data-testid="pinned-message-meta">
+                        {pin.pinned_by
+                          ? `by ${pin.pinned_by.username || pin.pinned_by.email} · `
+                          : ''}
+                        {format(parseISO(pin.created_at), 'MMM d, yyyy · h:mm a')}
+                      </p>
+                      {onJumpToMessage && (
+                        <button
+                          type="button"
+                          onClick={() => onJumpToMessage(pin.message.id, pin.message.parent_message_id ?? null)}
+                          className="shrink-0 rounded p-1 text-gray-300 transition hover:bg-teal-50 hover:text-teal-600"
+                          aria-label={`Jump to pinned message: ${pin.message.content || 'attachment'}`}
+                          title="Jump to message"
+                        >
+                          <ArrowUpRight className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      {canManageChannel && (
+                        <button
+                          type="button"
+                          onClick={() => void handleUnpin(pin)}
+                          disabled={unpinningId === pin.id}
+                          className="shrink-0 rounded p-1 text-gray-400 transition hover:bg-red-50 hover:text-red-500 disabled:opacity-50"
+                          aria-label="Unpin"
+                          title="Unpin"
+                        >
+                          {unpinningId === pin.id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <X className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Section>

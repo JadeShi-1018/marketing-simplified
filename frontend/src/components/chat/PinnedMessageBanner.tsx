@@ -22,59 +22,55 @@ export default function PinnedMessageBanner({
 
   return (
     <section
-      className={[
-        'relative flex items-stretch overflow-hidden px-4 py-2.5',
-        isNew
-          ? 'bg-gradient-to-r from-teal-100 via-cyan-50 to-lime-50 shadow-[inset_0_0_0_1px_rgba(13,148,136,0.12)]'
-          : 'bg-gradient-to-r from-teal-50/90 via-white to-cyan-50/70',
-      ].join(' ')}
+      className="pin-banner-enter relative flex items-center gap-2.5 bg-gradient-to-r from-teal-50/80 via-teal-50/40 to-white px-4 py-2"
       data-testid="pinned-message-banner"
       aria-live="polite"
     >
+      {/* Deep "unseen" wash on its own layer: gradients can't transition, opacity can. */}
+      <span
+        aria-hidden="true"
+        className={[
+          'pointer-events-none absolute inset-0 bg-gradient-to-r from-teal-100/80 via-teal-50/50 to-white transition-opacity duration-700 ease-out',
+          isNew ? 'opacity-100' : 'opacity-0',
+        ].join(' ')}
+      />
+
       <button
         type="button"
         onClick={() => onJumpToMessage(latestPin.message.id, latestPin.message.parent_message_id ?? null)}
-        className="group flex min-w-0 flex-1 items-start gap-3 text-left"
+        className="group relative flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        title="Jump to message"
         aria-label={`Jump to latest pinned message: ${latestPin.message.content || 'attachment'}`}
       >
-        <span className="relative mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-600 text-white shadow-sm shadow-teal-600/25 transition group-hover:scale-105 group-hover:bg-teal-700">
-          <Pin className="h-4 w-4" />
-          {isNew && (
-            <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-              <span className="relative inline-flex h-3.5 w-3.5 rounded-full border-2 border-white bg-red-500" />
-            </span>
-          )}
+        <span className="pin-grad-chip flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white transition-transform duration-200 group-hover:-rotate-6 group-hover:scale-105">
+          <Pin className="h-3 w-3" />
         </span>
 
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-teal-800">
-              {isNew ? 'New pinned message' : 'Pinned message'}
-            </span>
-            <span className="truncate text-[11px] font-normal normal-case tracking-normal text-gray-500">by {sender}</span>
+        {isNew && (
+          <span
+            className="pin-new-pulse shrink-0 rounded-full bg-teal-500 px-2 py-0.5 text-[10px] font-semibold text-white"
+            data-testid="pinned-banner-new"
+          >
+            New
           </span>
-          <span className="mt-0.5 block truncate text-sm font-semibold text-gray-900">
-            {latestPin.message.content || '(attachment)'}
-          </span>
-          <span className="mt-0.5 flex items-center gap-1 text-[11px] font-semibold text-teal-700 opacity-80 group-hover:opacity-100">
-            Jump to message <ArrowUpRight className="h-3 w-3" />
-          </span>
+        )}
+
+        <span className="min-w-0 flex-1 truncate text-[13px]">
+          <span className="font-semibold text-teal-700">{sender}:</span>{' '}
+          <span className="text-gray-800">{latestPin.message.content || '(attachment)'}</span>
         </span>
+        <ArrowUpRight className="h-3.5 w-3.5 shrink-0 self-center text-gray-300 transition group-hover:text-teal-600" />
       </button>
 
-      <div className="ml-3 flex shrink-0 items-center border-l border-teal-200 pl-3">
-        <button
-          type="button"
-          onClick={onViewAll}
-          className="inline-flex items-center gap-1 rounded-lg border border-teal-300 bg-white/90 px-2.5 py-2 text-xs font-semibold text-teal-800 shadow-sm transition hover:border-teal-400 hover:bg-white hover:shadow"
-          aria-label={`View all ${pinCount} pinned messages`}
-        >
-          <span className="hidden sm:inline">View all</span>
-          <span className="rounded-full bg-teal-100 px-1.5 py-0.5 text-[10px]">{pinCount}</span>
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={onViewAll}
+        className="relative flex shrink-0 items-center gap-1 rounded-full border border-gray-200 bg-white px-2.5 py-1 text-[11px] font-medium text-gray-600 shadow-sm transition hover:border-teal-300 hover:text-teal-700"
+        aria-label={`View all ${pinCount} pinned messages`}
+      >
+        {pinCount} pin{pinCount === 1 ? '' : 's'}
+        <ChevronRight className="h-3 w-3" />
+      </button>
     </section>
   );
 }

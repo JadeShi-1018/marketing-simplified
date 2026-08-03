@@ -425,7 +425,7 @@ test.describe('Pinned messages per channel', () => {
 
     const banner = page.getByTestId('pinned-message-banner');
     await expect(banner).toBeVisible();
-    await expect(banner).toContainText('New pinned message');
+    await expect(banner.getByTestId('pinned-banner-new')).toBeVisible();
     await expect(banner).toContainText(SECOND_MESSAGE.content);
 
     await page.getByTestId('pinned-messages-button').click();
@@ -438,8 +438,8 @@ test.describe('Pinned messages per channel', () => {
     await expect(drawer.getByRole('button', { name: /Unpin message:/ })).toHaveCount(0);
 
     await drawer.getByRole('button', { name: 'Close pinned messages' }).click();
-    await expect(banner).toContainText('Pinned message');
-    await expect(banner).not.toContainText('New pinned message');
+    await expect(banner).toContainText(SECOND_MESSAGE.content);
+    await expect(banner.getByTestId('pinned-banner-new')).not.toBeVisible();
 
     await openMessageMoreActions(page, FIRST_MESSAGE.id);
     await expect(

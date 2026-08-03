@@ -26,6 +26,7 @@ import ChannelDetailsDrawer from './ChannelDetailsDrawer';
 import ReminderPickerSheet from './ReminderPickerSheet';
 import PinnedMessageBanner from './PinnedMessageBanner';
 import PinnedMessagesDrawer from './PinnedMessagesDrawer';
+import { useAnimatedPanel } from '@/hooks/useAnimatedPanel';
 
 interface ChatWindowProps {
   chat: Chat;
@@ -70,19 +71,42 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
   // is the reply id we want ThreadPanel to highlight + scroll to. Cleared by
   // ThreadPanel itself after the highlight fades.
   const [threadHighlightMessageId, setThreadHighlightMessageId] = useState<number | null>(null);
-  const [showChannelDetails, setShowChannelDetails] = useState(false);
-  const [showPinnedMessages, setShowPinnedMessages] = useState(false);
-  // Single owner of showChannelDetails: open when signal targets this chat, close otherwise.
+  const { panelState: pinsPanelState, openPanel: openPinsPanel, closePanel: closePinsPanel, resetPanel: resetPinsPanel } = useAnimatedPanel();
+  const { panelState: detailsPanelState, openPanel: openDetailsPanel, closePanel: closeDetailsPanel } = useAnimatedPanel();
+  const { panelState: threadPanelState, openPanel: openThreadPanel, closePanel: closeThreadPanel } = useAnimatedPanel();
+  const showPinnedMessages = pinsPanelState !== 'closed';
+  const showChannelDetails = detailsPanelState !== 'closed';
+  const dismissThreadPanel = useCallback(() => {
+    setActiveThreadMessage(null);
+    setThreadHighlightMessageId(null);
+  }, []);
+  // Single owner of the details panel: open when signal targets this chat, close otherwise.
   // Watching both deps means it fires correctly whether chat navigation and signal
   // land in the same render or in separate ones.
   useEffect(() => {
     if (openDetailsSignal && openDetailsSignal.chatId === chat.id) {
-      setShowPinnedMessages(false);
-      setShowChannelDetails(true);
+      closePinsPanel();
+      dismissThreadPanel();
+      openDetailsPanel();
     } else if (!openDetailsSignal || openDetailsSignal.chatId !== chat.id) {
-      setShowChannelDetails(false);
+      closeDetailsPanel();
     }
-  }, [chat.id, openDetailsSignal]);
+  }, [chat.id, openDetailsSignal, closePinsPanel, dismissThreadPanel, openDetailsPanel, closeDetailsPanel]);
+
+  // Thread panel: keep the message mounted through the close transition.
+  const [threadPanelMessage, setThreadPanelMessage] = useState<Message | null>(null);
+  useEffect(() => {
+    if (activeThreadMessage) {
+      setThreadPanelMessage(activeThreadMessage);
+      openThreadPanel();
+    } else {
+      closeThreadPanel();
+    }
+  }, [activeThreadMessage, openThreadPanel, closeThreadPanel]);
+  useEffect(() => {
+    if (threadPanelState === 'closed') setThreadPanelMessage(null);
+  }, [threadPanelState]);
+
   const [reminderMessageId, setReminderMessageId] = useState<number | null>(null);
   const [pins, setPins] = useState<PinnedMessageRow[]>([]);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<Set<number>>(new Set());
@@ -185,7 +209,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
     setPins([]);
     setPinnedMessageIds(new Set());
     setHasUnseenPin(false);
-    setShowPinnedMessages(false);
+    resetPinsPanel();
     setSavedMessageIds(new Set());
     setPendingScheduledCount(0);
     void refreshPins(true);
@@ -193,7 +217,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
       .then((saved) => setSavedMessageIds(new Set(saved.map((s) => s.message.id))))
       .catch(() => {});
     refreshScheduledCount();
-  }, [chat.id, refreshPins, refreshScheduledCount]);
+  }, [chat.id, refreshPins, refreshScheduledCount, resetPinsPanel]);
 
   const { forward, isForwarding } = useForwardMessages();
 
@@ -563,6 +587,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
     void getMessage(targetMessageId)
       .then((parent) => {
         if (cancelled) return;
+        closePinsPanel();
+        closeDetailsPanel();
         setActiveThreadMessage(parent);
         setThreadHighlightMessageId(targetThreadMessageId);
         // Drop `threadMessageId` from the URL so closing the thread (or any
@@ -577,6 +603,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
   }, [
     activeThreadMessage?.id,
     chat.slug,
+    closeDetailsPanel,
+    closePinsPanel,
     router,
     routeMatchesActiveChat,
     searchParams,
@@ -814,8 +842,10 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
     ? limitName(chat.name || 'Group Chat', MAX_CHANNEL_NAME_LENGTH)
     : (otherParticipant?.user?.username || 'Chat');
   const handleOpenThread = useCallback((message: Message) => {
+    closePinsPanel();
+    closeDetailsPanel();
     setActiveThreadMessage((prev) => (prev?.id === message.id ? null : message));
-  }, []);
+  }, [closeDetailsPanel, closePinsPanel]);
 
   const handleChatUpdated = useCallback((updated: Chat) => {
     const updates: Partial<Chat> = {
@@ -858,14 +888,29 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
 
   const handleOpenPinnedMessages = useCallback(() => {
     acknowledgePins();
-    setShowChannelDetails(false);
-    setShowPinnedMessages(true);
-  }, [acknowledgePins]);
+    closeDetailsPanel();
+    dismissThreadPanel();
+    openPinsPanel();
+  }, [acknowledgePins, closeDetailsPanel, dismissThreadPanel, openPinsPanel]);
+
+  const [descClosing, setDescClosing] = useState(false);
+  const descCloseTimerRef = useRef<number | null>(null);
+
+  const closeDescriptionBanner = useCallback(() => {
+    if (descCloseTimerRef.current !== null) return;
+    setDescClosing(true);
+    descCloseTimerRef.current = window.setTimeout(() => {
+      descCloseTimerRef.current = null;
+      dismissDescriptionBanner();
+      setDescClosing(false);
+    }, 200);
+  }, [dismissDescriptionBanner]);
 
   const handleJumpToPinnedMessage = useCallback((messageId: number, parentMessageId?: number | null) => {
     acknowledgePins();
-    setShowChannelDetails(false);
-    setShowPinnedMessages(false);
+    closeDetailsPanel();
+    closePinsPanel();
+    dismissThreadPanel();
     router.replace(
       buildUrl(buildMessagesPath(chat.slug, {
         messageId: parentMessageId ?? messageId,
@@ -874,7 +919,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
       })),
       { scroll: false },
     );
-  }, [acknowledgePins, buildUrl, chat.slug, router]);
+  }, [acknowledgePins, buildUrl, chat.slug, router, closeDetailsPanel, closePinsPanel, dismissThreadPanel]);
 
   const handleSaveMessage = useCallback(async (messageId: number) => {
     const alreadySaved = savedMessageIds.has(messageId);
@@ -1031,7 +1076,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
               type="button"
               onClick={() => {
                 if (showPinnedMessages) {
-                  setShowPinnedMessages(false);
+                  closePinsPanel();
                 } else {
                   handleOpenPinnedMessages();
                 }
@@ -1039,9 +1084,9 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
               className={[
                 'relative inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium transition sm:px-2.5',
                 showPinnedMessages
-                  ? 'border-teal-400 bg-teal-100 text-teal-800 shadow-sm'
-                  : hasUnseenPin
-                    ? 'border-teal-400 bg-teal-50 text-teal-800 shadow-sm hover:bg-teal-100'
+                  ? 'border-teal-300 bg-teal-50 text-teal-700 shadow-sm'
+                  : pins.length > 0
+                    ? 'border-teal-200 bg-teal-50/60 text-teal-700 shadow-sm hover:bg-teal-50'
                     : 'border-gray-300 text-gray-700 hover:bg-gray-50',
               ].join(' ')}
               aria-label={`Pinned messages${pins.length ? `, ${pins.length}` : ''}${hasUnseenPin ? ', new pin' : ''}`}
@@ -1050,14 +1095,14 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
               <Pin className="h-3.5 w-3.5" />
               <span className="hidden min-[420px]:inline">Pins</span>
               {pins.length > 0 && (
-                <span className="rounded-full bg-white/80 px-1.5 text-[10px] font-bold text-teal-800">
+                <span className="rounded-full bg-teal-100 px-1.5 text-[10px] font-semibold text-teal-700">
                   {pins.length}
                 </span>
               )}
               {hasUnseenPin && (
                 <span className="absolute -right-1 -top-1 flex h-2.5 w-2.5" aria-hidden="true">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
-                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full border border-white bg-red-500" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-400 opacity-75" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full border border-white bg-teal-500" />
                 </span>
               )}
             </button>
@@ -1066,8 +1111,13 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
           {/* Channel details toggle */}
           <button
             onClick={() => {
-              setShowPinnedMessages(false);
-              setShowChannelDetails((v) => !v);
+              closePinsPanel();
+              dismissThreadPanel();
+              if (showChannelDetails) {
+                closeDetailsPanel();
+              } else {
+                openDetailsPanel();
+              }
             }}
             className={[
               'inline-flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium transition sm:px-2.5',
@@ -1122,9 +1172,10 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
         {/* Timeline column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {(pins[0] || (showDescriptionBanner && chat.description)) && (
-            <div className="relative z-10 shrink-0 divide-y divide-teal-200/70 border-b border-teal-200 bg-white" data-testid="channel-notices">
+            <div className="relative z-10 shrink-0 divide-y divide-gray-200 border-b border-gray-200 bg-white shadow-[0_4px_16px_rgba(16,24,40,0.07)]" data-testid="channel-notices">
               {pins[0] && (
                 <PinnedMessageBanner
+                  key={pins[0].id}
                   latestPin={pins[0]}
                   pinCount={pins.length}
                   isNew={hasUnseenPin}
@@ -1133,22 +1184,21 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
                 />
               )}
               {showDescriptionBanner && chat.description && (
-                <section className="flex items-start gap-3 bg-teal-50/50 px-4 py-2.5">
-                  <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-100 text-teal-600">
-                    <Info className="h-4 w-4" />
+                <section className={[
+                  'relative flex items-center gap-2.5 bg-gradient-to-r from-teal-50/80 via-teal-50/40 to-white px-4 py-2',
+                  descClosing ? 'pin-banner-exit' : 'pin-banner-enter',
+                ].join(' ')}>
+                  <span className="pin-grad-chip flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white">
+                    <Info className="h-3 w-3" />
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-700">
-                      Welcome to #{chat.name || 'this channel'}
-                    </p>
-                    <p className="mt-0.5 whitespace-pre-wrap text-sm font-normal text-gray-800 [overflow-wrap:anywhere]">
-                      {chat.description}
-                    </p>
-                  </div>
+                  <p className="min-w-0 flex-1 truncate text-[13px]" title={chat.description}>
+                    <span className="font-semibold text-teal-700">Welcome to #{chat.name || 'this channel'}:</span>{' '}
+                    <span className="text-gray-800">{chat.description}</span>
+                  </p>
                   <button
                     type="button"
-                    onClick={dismissDescriptionBanner}
-                    className="mt-0.5 rounded p-1 text-gray-400 transition hover:bg-white hover:text-gray-600"
+                    onClick={closeDescriptionBanner}
+                    className="rounded-md p-1 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600"
                     aria-label="Dismiss"
                     title="Dismiss"
                   >
@@ -1216,34 +1266,51 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
         </div>
 
         {/* Thread panel */}
-        {activeThreadMessage && (
-          <div className="hidden w-80 shrink-0 md:flex md:flex-col xl:w-96">
-            <ThreadPanel
-              rootMessage={activeThreadMessage}
-              participants={mentionParticipants}
-              currentUserId={currentUserId ?? undefined}
-              onClose={() => {
-                setActiveThreadMessage(null);
-                setThreadHighlightMessageId(null);
-              }}
-              onForwardMessage={handleForwardSingle}
-              onPinMessage={canManageChannel ? handlePinMessage : undefined}
-              onSaveMessage={handleSaveMessage}
-              pinnedMessageIds={pinnedMessageIds}
-              savedMessageIds={savedMessageIds}
-              highlightMessageId={threadHighlightMessageId}
-              onHighlightCleared={() => setThreadHighlightMessageId(null)}
-            />
+        {threadPanelMessage && threadPanelState !== 'closed' && (
+          <div
+            className={[
+              'hidden shrink-0 overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none md:flex md:flex-col md:shadow-[-12px_0_28px_rgba(16,24,40,0.08)]',
+              threadPanelState === 'open' ? 'w-80 opacity-100 xl:w-96' : 'w-0 opacity-0',
+            ].join(' ')}
+            aria-hidden={threadPanelState !== 'open'}
+          >
+            <div className="h-full w-80 shrink-0 xl:w-96">
+              <ThreadPanel
+                rootMessage={threadPanelMessage}
+                participants={mentionParticipants}
+                currentUserId={currentUserId ?? undefined}
+                onClose={() => {
+                  setActiveThreadMessage(null);
+                  setThreadHighlightMessageId(null);
+                }}
+                onForwardMessage={handleForwardSingle}
+                onPinMessage={canManageChannel ? handlePinMessage : undefined}
+                onSaveMessage={handleSaveMessage}
+                pinnedMessageIds={pinnedMessageIds}
+                savedMessageIds={savedMessageIds}
+                highlightMessageId={threadHighlightMessageId}
+                onHighlightCleared={() => setThreadHighlightMessageId(null)}
+              />
+            </div>
           </div>
         )}
 
         {/* Dedicated channel pins drawer */}
         {showPinnedMessages && (
-          <div className="fixed inset-0 z-50 flex min-h-0 flex-col bg-white md:static md:inset-auto md:z-auto md:w-80 md:shrink-0 xl:w-96">
+          <div
+            className={[
+              'fixed inset-0 z-50 flex min-h-0 flex-col bg-white transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+              'md:static md:inset-auto md:z-auto md:shrink-0 md:overflow-hidden md:shadow-[-12px_0_28px_rgba(16,24,40,0.08)]',
+              pinsPanelState === 'open'
+                ? 'translate-x-0 opacity-100 md:w-80 xl:w-96'
+                : 'pointer-events-none translate-x-full opacity-0 md:w-0 md:translate-x-0',
+            ].join(' ')}
+            aria-hidden={pinsPanelState !== 'open'}
+          >
             <PinnedMessagesDrawer
               pins={pins}
               canManageChannel={canManageChannel}
-              onClose={() => setShowPinnedMessages(false)}
+              onClose={closePinsPanel}
               onJumpToMessage={handleJumpToPinnedMessage}
               onUnpin={handlePinMessage}
             />
@@ -1252,17 +1319,26 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
 
         {/* Channel details drawer */}
         {showChannelDetails && (
-          <div className="fixed inset-0 z-50 flex min-h-0 flex-col bg-white md:static md:inset-auto md:z-auto md:w-72 md:shrink-0 xl:w-80">
+          <div
+            className={[
+              'fixed inset-0 z-50 flex min-h-0 flex-col bg-white transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+              'md:static md:inset-auto md:z-auto md:shrink-0 md:overflow-hidden md:shadow-[-12px_0_28px_rgba(16,24,40,0.08)]',
+              detailsPanelState === 'open'
+                ? 'translate-x-0 opacity-100 md:w-72 xl:w-80'
+                : 'pointer-events-none translate-x-full opacity-0 md:w-0 md:translate-x-0',
+            ].join(' ')}
+            aria-hidden={detailsPanelState !== 'open'}
+          >
             <ChannelDetailsDrawer
               chat={chat}
               currentUserId={currentUserId ?? 0}
-              onClose={() => setShowChannelDetails(false)}
+              onClose={closeDetailsPanel}
               onChatUpdated={handleChatUpdated}
               onLeft={(chatId) => {
                 // Drop the channel from the store (clears currentChatId if active)
                 // and return to the list view.
                 useChatStore.getState().removeChat(chatId);
-                setShowChannelDetails(false);
+                closeDetailsPanel();
                 onBack();
               }}
               lastScheduledMsg={lastScheduledMsg}
