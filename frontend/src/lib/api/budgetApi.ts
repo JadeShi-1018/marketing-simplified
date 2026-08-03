@@ -97,6 +97,8 @@ export interface BudgetTaskDetail {
   rejection_reason?: string | null;
   cancel_reason?: string | null;
   can: BudgetTaskCapabilities;
+  /** True when an org-admin decided outside the assigned chain (MED-240). */
+  is_admin_override?: boolean;
   submitted_at?: string | null;
   approved_at?: string | null;
   activated_at?: string | null;
@@ -115,6 +117,7 @@ export type BudgetRequestData = BudgetTaskDetail & {
   ad_channel?: string | number | null;
   ad_channel_detail?: { name?: string | null } | null;
   is_escalated?: boolean;
+  is_admin_override?: boolean;
   notes?: string | null;
 };
 
