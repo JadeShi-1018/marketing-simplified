@@ -8,10 +8,36 @@ from django.test import TestCase
 from core.models import Organization, Project, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatType
 from chat.serializers import ChatCreateSerializer
-from chat.services import ChatService, MessageService, OnlineStatusService, UnsupportedAttachmentMimeType, validate_attachment_mime_type
+from chat.services import (
+    ChatService,
+    MessageDeliveryClaimService,
+    MessageService,
+    OnlineStatusService,
+    UnsupportedAttachmentMimeType,
+    validate_attachment_mime_type,
+)
 pytestmark = pytest.mark.django_db
 
 User = get_user_model()
+
+
+def test_message_delivery_claim_prevents_concurrent_publish():
+    message_id = 987654
+    user_id = 456789
+    cache.delete(MessageDeliveryClaimService._claim_key(message_id, user_id))
+
+    first_token = MessageDeliveryClaimService.acquire(message_id, user_id)
+    assert first_token
+    assert MessageDeliveryClaimService.acquire(message_id, user_id) is None
+
+    # A stale/incorrect owner cannot release the active claim.
+    MessageDeliveryClaimService.release(message_id, user_id, 'wrong-token')
+    assert MessageDeliveryClaimService.acquire(message_id, user_id) is None
+
+    MessageDeliveryClaimService.release(message_id, user_id, first_token)
+    second_token = MessageDeliveryClaimService.acquire(message_id, user_id)
+    assert second_token
+    MessageDeliveryClaimService.release(message_id, user_id, second_token)
 
 class TestOnlineStatusService:
 

@@ -398,6 +398,26 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = config('TIME_ZONE', default='UTC')
 broker_connection_retry_on_startup = True
 
+# Keep latency-sensitive chat delivery isolated from notifications, offline
+# recovery, scheduled sends, integrations, reports, and other default tasks.
+# Dedicated workers for these queues are defined in the compose/deployment
+# configuration. Missing queues are created by Celery when first published.
+CELERY_TASK_ROUTES = {
+    'chat.tasks.notify_new_message': {'queue': 'chat.realtime'},
+    'chat.tasks.notify_reaction_update': {'queue': 'chat.realtime'},
+    'chat.tasks.notify_pin_update': {'queue': 'chat.realtime'},
+    'chat.tasks.finalize_presence_offline': {'queue': 'chat.realtime'},
+    'chat.tasks.send_typing_indicator': {'queue': 'chat.realtime'},
+    'chat.tasks.update_message_status_task': {'queue': 'chat.realtime'},
+    'chat.tasks.notify_message_recipients': {'queue': 'chat.notifications'},
+    'chat.tasks.deliver_message_task': {'queue': 'chat.delivery'},
+    'chat.tasks.send_scheduled_message': {'queue': 'chat.delivery'},
+}
+
+# Bound concurrent Channels publications inside one Celery/ASGI process so a
+# large group cannot create an unbounded Redis command burst.
+CHAT_FANOUT_CONCURRENCY = config('CHAT_FANOUT_CONCURRENCY', default=25, cast=int)
+
 # Celery Beat Configuration for Periodic Tasks
 CELERY_BEAT_SCHEDULE = {
     # 'reset-daily-usage': {   # disabled — UsageDaily replaced by token-based billing

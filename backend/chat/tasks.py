@@ -11,7 +11,8 @@ from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage, MessageAttachment
-from .services import ChatService, OnlineStatusService
+from .realtime import broadcast_event_to_user_groups_sync
+from .services import ChatService, MessageDeliveryClaimService, OnlineStatusService
 from .url_helpers import build_messages_action_url
 
 User = get_user_model()
@@ -109,55 +110,76 @@ def deliver_message_task(self, message_id: int):
         ).prefetch_related('attachments').get(id=message_id)
         message_payload = build_realtime_message_payload(message)
 
-        # Get all recipients who haven't received the message
-        pending_statuses = MessageStatus.objects.filter(
+        pending_statuses = list(MessageStatus.objects.filter(
             message=message,
             status='sent'
-        ).select_related('user')
-        
-        if not pending_statuses.exists():
-            logger.info(f"No pending recipients for message {message_id}")
+        ).values('id', 'user_id'))
+
+        if not pending_statuses:
+            logger.debug("No pending recipients for message %s", message_id)
             return
-        
+
+        pending_user_ids = [status['user_id'] for status in pending_statuses]
+        online_user_ids = OnlineStatusService.get_online_users(pending_user_ids)
+        claims = {}
+        for user_id in online_user_ids:
+            token = MessageDeliveryClaimService.acquire(message_id, user_id)
+            if token:
+                claims[user_id] = token
+
+        if not claims:
+            logger.info(
+                "deliver_message_task: message=%s pending=%s online=0 delivered=0",
+                message_id,
+                len(pending_statuses),
+            )
+            return
+
         channel_layer = get_channel_layer()
-        delivered_count = 0
-        
-        for msg_status in pending_statuses:
-            user = msg_status.user
-            
-            # Check if user is online now
-            if OnlineStatusService.is_online(user.id):
-                try:
-                    # Send via WebSocket
-                    async_to_sync(channel_layer.group_send)(
-                        f'chat_user_{user.id}',
-                        {
-                            'type': 'chat_message',
-                            'message': message_payload
-                        }
-                    )
-                    
-                    # Mark as delivered
-                    msg_status.mark_as_delivered()
-                    delivered_count += 1
-                    logger.info(f"Delivered message {message_id} to online user {user.id}")
-                    
-                except Exception as e:
-                    logger.error(f"Failed to send message {message_id} to user {user.id} via WebSocket: {e}")
-            else:
-                logger.debug(f"User {user.id} still offline for message {message_id}")
-        
-        # If there are still pending recipients, retry later
-        if delivered_count < pending_statuses.count():
-            logger.info(f"Message {message_id} has {pending_statuses.count() - delivered_count} pending recipients, will retry")
-            raise self.retry(exc=Exception("Some recipients still offline"))
-        
-        logger.info(f"Message {message_id} delivered to all {delivered_count} recipients")
+        try:
+            delivered_user_ids, publish_failures = broadcast_event_to_user_groups_sync(
+                channel_layer,
+                claims,
+                {
+                    'type': 'chat_message',
+                    'message': message_payload,
+                },
+            )
+            if delivered_user_ids:
+                delivered_at = timezone.now()
+                MessageStatus.objects.filter(
+                    message_id=message_id,
+                    user_id__in=delivered_user_ids,
+                    status='sent',
+                ).update(
+                    status='delivered',
+                    delivered_at=delivered_at,
+                    updated_at=delivered_at,
+                )
+        finally:
+            for user_id, token in claims.items():
+                MessageDeliveryClaimService.release(message_id, user_id, token)
+
+        logger.info(
+            "deliver_message_task: message=%s pending=%s online=%s delivered=%s publish_failures=%s",
+            message_id,
+            len(pending_statuses),
+            len(online_user_ids),
+            len(delivered_user_ids),
+            len(publish_failures),
+        )
+
+        # Remaining offline users are recovered from durable MessageStatus rows
+        # when they reconnect. Retry only transient WebSocket publication errors.
+        if publish_failures:
+            raise RuntimeError(
+                f"WebSocket publish failed for {len(publish_failures)} recipient(s)"
+            )
         
     except Message.DoesNotExist:
         logger.error(f"Message {message_id} not found")
     except Exception as e:
-        logger.error(f"Error delivering message {message_id}: {e}")
+        logger.exception("Error delivering message %s", message_id)
         raise self.retry(exc=e)
 
 
@@ -309,24 +331,30 @@ def send_typing_indicator(chat_id: int, user_id: int, is_typing: bool):
         channel_layer = get_channel_layer()
         
         # Get all active participants except the typer
-        participants = ChatParticipant.objects.filter(
+        participant_ids = list(ChatParticipant.objects.filter(
             chat_id=chat_id,
             is_active=True
-        ).exclude(user_id=user_id).values_list('user_id', flat=True)
-        
-        # Broadcast to all participants
-        for participant_id in participants:
-            async_to_sync(channel_layer.group_send)(
-                f'chat_user_{participant_id}',
-                {
-                    'type': 'typing_indicator',
-                    'chat_id': chat_id,
-                    'user_id': user_id,
-                    'is_typing': is_typing,
-                }
-            )
-        
-        logger.debug(f"Sent typing indicator for user {user_id} in chat {chat_id} to {len(participants)} participants")
+        ).exclude(user_id=user_id).values_list('user_id', flat=True))
+
+        succeeded, failed = broadcast_event_to_user_groups_sync(
+            channel_layer,
+            participant_ids,
+            {
+                'type': 'typing_indicator',
+                'chat_id': chat_id,
+                'user_id': user_id,
+                'is_typing': is_typing,
+            },
+        )
+
+        logger.debug(
+            "send_typing_indicator: chat=%s user=%s recipients=%s sent=%s failed=%s",
+            chat_id,
+            user_id,
+            len(participant_ids),
+            len(succeeded),
+            len(failed),
+        )
         
     except Exception as e:
         logger.error(f"Error sending typing indicator: {e}")
@@ -376,8 +404,8 @@ def update_message_status_task(self, message_id: int, user_id: int, status: str)
         raise self.retry(exc=e)
 
 
-@shared_task
-def notify_new_message(message_id: int):
+@shared_task(bind=True, max_retries=3, default_retry_delay=5)
+def notify_new_message(self, message_id: int):
     """
     Celery task to notify all chat participants of a new message.
 
@@ -393,64 +421,63 @@ def notify_new_message(message_id: int):
         ).prefetch_related('attachments').get(id=message_id)
         message_payload = build_realtime_message_payload(message)
 
-        # Get all active participants except sender
-        participants = ChatParticipant.objects.filter(
+        participant_ids = list(ChatParticipant.objects.filter(
             chat=message.chat,
             is_active=True
-        ).exclude(user=message.sender).select_related('user')
+        ).exclude(user=message.sender).values_list('user_id', flat=True))
 
         channel_layer = get_channel_layer()
-        offline_users = []
+        online_user_ids = OnlineStatusService.get_online_users(participant_ids)
+        delivered_user_ids, publish_failures = broadcast_event_to_user_groups_sync(
+            channel_layer,
+            online_user_ids,
+            {
+                'type': 'chat_message',
+                'message': message_payload,
+            },
+        )
 
-        # Note: In-app notifications are created synchronously in views.py
-        # This task only handles WebSocket delivery for online users
-
-        for participant in participants:
-            user = participant.user
-            is_online = OnlineStatusService.is_online(user.id)
-
-            logger.info(f"[notify_new_message] Checking user {user.id} ({user.username}) online status: {is_online}")
-
-            if is_online:
-                # User is online, send via WebSocket immediately
-                try:
-                    logger.info(f"[notify_new_message] Sending message {message_id} to ONLINE user {user.id} via WebSocket")
-                    async_to_sync(channel_layer.group_send)(
-                        f'chat_user_{user.id}',
-                        {
-                            'type': 'chat_message',
-                            'message': message_payload
-                        }
-                    )
-
-                    # Mark as delivered
-                    MessageStatus.objects.filter(
-                        message=message,
-                        user=user
-                    ).update(status='delivered')
-
-                    logger.info(f"Successfully sent message {message_id} to online user {user.id}")
-
-                except Exception as e:
-                    logger.error(f"Failed to send message to user {user.id}: {e}")
-                    offline_users.append(user.id)
-            else:
-                # User is offline, queue for later delivery
-                offline_users.append(user.id)
-                logger.info(f"User {user.id} ({user.username}) is OFFLINE, queuing message {message_id}")
-
-        # Schedule delivery task for offline users
-        if offline_users:
-            logger.info(f"Scheduling delivery task for message {message_id} to {len(offline_users)} offline users")
-            deliver_message_task.apply_async(
-                args=[message_id],
-                countdown=5  # Retry after 5 seconds (reduced from 60)
+        if delivered_user_ids:
+            delivered_at = timezone.now()
+            MessageStatus.objects.filter(
+                message_id=message_id,
+                user_id__in=delivered_user_ids,
+                status='sent',
+            ).update(
+                status='delivered',
+                delivered_at=delivered_at,
+                updated_at=delivered_at,
             )
 
+        delivered_user_id_set = set(delivered_user_ids)
+        pending_user_ids = [
+            user_id for user_id in participant_ids
+            if user_id not in delivered_user_id_set
+        ]
+
+        if pending_user_ids:
+            deliver_message_task.apply_async(
+                args=[message_id],
+                countdown=5,
+            )
+
+        logger.info(
+            "notify_new_message: message=%s chat=%s recipients=%s online=%s "
+            "delivered=%s pending=%s publish_failures=%s",
+            message_id,
+            message.chat_id,
+            len(participant_ids),
+            len(online_user_ids),
+            len(delivered_user_ids),
+            len(pending_user_ids),
+            len(publish_failures),
+        )
+
     except Message.DoesNotExist:
-        logger.error(f"Message {message_id} not found")
+        logger.warning("notify_new_message: message=%s not found", message_id)
     except Exception as e:
-        logger.error(f"Error notifying new message {message_id}: {e}")
+        logger.exception("notify_new_message failed for message %s", message_id)
+        raise self.retry(exc=e)
 
 
 def _notification_exists_for_message(*, recipient_id: int, event_type: str, message_id: int) -> bool:
@@ -620,6 +647,58 @@ def notify_message_recipients(self, message_id: int):
 
 
 @shared_task
+def notify_pin_update(chat_id: int, action: str, message_id: int, pin_data=None):
+    """Broadcast a shared pin change to every active member of a channel.
+
+    Args:
+        chat_id: ID of the channel whose pins changed
+        action: 'pinned' or 'unpinned'
+        message_id: ID of the message that was pinned or unpinned
+        pin_data: serialised pin row for 'pinned'; None for 'unpinned'
+
+    The payload is serialised by the request so recipients keep the absolute
+    avatar URLs the request context produces.
+    """
+    try:
+        participant_ids = list(ChatParticipant.objects.filter(
+            chat_id=chat_id,
+            is_active=True,
+        ).values_list('user_id', flat=True))
+
+        channel_layer = get_channel_layer()
+        if not channel_layer:
+            return
+
+        succeeded, failed = broadcast_event_to_user_groups_sync(
+            channel_layer,
+            participant_ids,
+            {
+                'type': 'pin_update',
+                'action': action,
+                'chat_id': chat_id,
+                'message_id': message_id,
+                'pin': pin_data,
+            },
+        )
+
+        logger.info(
+            "notify_pin_update: chat=%s action=%s message=%s recipients=%s sent=%s failed=%s",
+            chat_id,
+            action,
+            message_id,
+            len(participant_ids),
+            len(succeeded),
+            len(failed),
+        )
+
+    except Exception:
+        # A broadcast failure must never undo a pin that is already persisted.
+        logger.exception(
+            "notify_pin_update failed for chat %s message %s", chat_id, message_id
+        )
+
+
+@shared_task
 def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: str):
     """
     Celery task to notify all chat participants of a reaction update.
@@ -647,28 +726,33 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
         }
 
         # Get all active participants
-        participants = ChatParticipant.objects.filter(
+        participant_ids = list(ChatParticipant.objects.filter(
             chat=message.chat,
             is_active=True
-        ).select_related('user')
+        ).values_list('user_id', flat=True))
 
         channel_layer = get_channel_layer()
+        online_user_ids = OnlineStatusService.get_online_users(participant_ids)
+        succeeded, failed = broadcast_event_to_user_groups_sync(
+            channel_layer,
+            online_user_ids,
+            {
+                'type': 'reaction_update',
+                'reaction': reaction_payload,
+            },
+        )
 
-        # Broadcast to all participants (including the reactor, for multi-device sync)
-        for participant in participants:
-            if OnlineStatusService.is_online(participant.user.id):
-                try:
-                    async_to_sync(channel_layer.group_send)(
-                        f'chat_user_{participant.user.id}',
-                        {
-                            'type': 'reaction_update',
-                            'reaction': reaction_payload
-                        }
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send reaction update to user {participant.user.id}: {e}")
-
-        logger.info(f"Reaction update sent for message {message_id}: {emoji} {action} by user {user_id}")
+        logger.info(
+            "notify_reaction_update: message=%s actor=%s action=%s recipients=%s "
+            "online=%s sent=%s failed=%s",
+            message_id,
+            user_id,
+            action,
+            len(participant_ids),
+            len(online_user_ids),
+            len(succeeded),
+            len(failed),
+        )
 
         # Persist an in-app notification for the message author when someone
         # adds (not removes) a reaction — skip self-reactions.

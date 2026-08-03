@@ -88,6 +88,7 @@ services:
       # (matches celery-worker pattern; previously absent — caused dev pain across MBI-03)
       - ./backend:/app
       - ../agentdoc/databackup:/app/agent_data
+      - ./test-results/chat-load:/load-test-output
     command: ["/bin/bash", "/app/entrypoint-dev"]
     logging:
       driver: "json-file"
@@ -148,6 +149,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.dev
+    image: marketing-simplified-celery-worker
     container_name: celery-worker-dev
     restart: always
     env_file:
@@ -164,7 +166,19 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    command: celery -A backend worker --loglevel=info --pool=threads --concurrency=4
+    command: celery -A backend worker --loglevel=info --pool=threads --concurrency=4 -Q celery
+
+  celery-chat-realtime:
+    extends:
+      service: celery-worker
+    container_name: celery-chat-realtime-dev
+    command: celery -A backend worker --loglevel=info --pool=threads --concurrency=${CHAT_REALTIME_WORKER_CONCURRENCY:-4} -Q chat.realtime
+
+  celery-chat-background:
+    extends:
+      service: celery-worker
+    container_name: celery-chat-background-dev
+    command: celery -A backend worker --loglevel=info --pool=threads --concurrency=${CHAT_BACKGROUND_WORKER_CONCURRENCY:-2} -Q chat.notifications,chat.delivery
 
   celery-beat:
     build:
@@ -406,6 +420,7 @@ services:
     volumes:
       # Mount scripts directory as read-only
       - ./k6/scripts:/scripts:ro
+      - ./test-results/chat-load:/data:ro
     # Default command (can be overridden when running)
     command: ["run", "--help"]
     depends_on:

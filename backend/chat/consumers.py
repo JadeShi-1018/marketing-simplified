@@ -9,7 +9,13 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.cache import cache
 from .models import Chat, ChatParticipant, Message, MessageStatus
-from .services import ChatService, OnlineStatusService, MessageService
+from .realtime import broadcast_event_to_user_groups
+from .services import (
+    ChatService,
+    MessageDeliveryClaimService,
+    MessageService,
+    OnlineStatusService,
+)
 from .tasks import (
     build_realtime_message_payload,
     finalize_presence_offline,
@@ -224,14 +230,22 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 }
             }
             
-            # Broadcast to all participants
-            for participant_id in participants:
-                await self.channel_layer.group_send(
-                    f'chat_user_{participant_id}',
-                    message_data
-                )
+            succeeded, failed = await broadcast_event_to_user_groups(
+                self.channel_layer,
+                participants,
+                message_data,
+            )
             
-            logger.info(f"Message {message.id} sent to chat {chat_id} by user {self.user_id}")
+            logger.info(
+                "WebSocket message fanout: message=%s chat=%s sender=%s "
+                "recipients=%s sent=%s failed=%s",
+                message.id,
+                chat_id,
+                self.user_id,
+                len(participants),
+                len(succeeded),
+                len(failed),
+            )
         
         except ValueError as e:
             await self.send_error(str(e))
@@ -256,16 +270,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 chat_id, exclude_user_id=self.user.id
             )
             
-            for participant_id in participants:
-                await self.channel_layer.group_send(
-                    f'chat_user_{participant_id}',
-                    {
-                        'type': 'typing_indicator',
-                        'chat_id': chat_id,
-                        'user_id': self.user.id,
-                        'is_typing': True,
-                    }
-                )
+            await broadcast_event_to_user_groups(
+                self.channel_layer,
+                participants,
+                {
+                    'type': 'typing_indicator',
+                    'chat_id': chat_id,
+                    'user_id': self.user.id,
+                    'is_typing': True,
+                },
+            )
             
             logger.debug(f"Typing start sent for user {self.user_id} in chat {chat_id}")
         
@@ -289,16 +303,16 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 chat_id, exclude_user_id=self.user.id
             )
             
-            for participant_id in participants:
-                await self.channel_layer.group_send(
-                    f'chat_user_{participant_id}',
-                    {
-                        'type': 'typing_indicator',
-                        'chat_id': chat_id,
-                        'user_id': self.user.id,
-                        'is_typing': False,
-                    }
-                )
+            await broadcast_event_to_user_groups(
+                self.channel_layer,
+                participants,
+                {
+                    'type': 'typing_indicator',
+                    'chat_id': chat_id,
+                    'user_id': self.user.id,
+                    'is_typing': False,
+                },
+            )
             
             logger.debug(f"Typing stop sent for user {self.user_id} in chat {chat_id}")
         
@@ -354,23 +368,40 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     async def send_queued_messages(self):
         """Send any queued messages for this user"""
+        claimed_messages = []
+        delivered_message_ids = []
         try:
-            queued_messages = await database_sync_to_async(self.get_queued_messages)()
+            claimed_messages = await database_sync_to_async(
+                self.get_claimed_queued_messages
+            )()
             
-            for msg in queued_messages:
+            for claimed in claimed_messages:
                 await self.send(text_data=json.dumps({
                     'type': 'chat_message',
-                    'message': msg
+                    'message': claimed['message'],
                 }))
-                
-                # Mark as delivered - wrap everything in database_sync_to_async
-                await database_sync_to_async(self._mark_message_delivered)(msg['id'])
-            
-            if queued_messages:
-                logger.info(f"Sent {len(queued_messages)} queued messages to user {self.user_id}")
-        
+                delivered_message_ids.append(claimed['message_id'])
+
         except Exception as e:
             logger.error(f"Error sending queued messages: {e}")
+        finally:
+            try:
+                if delivered_message_ids:
+                    updated = await database_sync_to_async(
+                        self._mark_messages_delivered
+                    )(delivered_message_ids)
+                    logger.info(
+                        "Queued message recovery: user=%s claimed=%s sent=%s updated=%s",
+                        self.user_id,
+                        len(claimed_messages),
+                        len(delivered_message_ids),
+                        updated,
+                    )
+            finally:
+                await sync_to_async(
+                    self._release_delivery_claims,
+                    thread_sensitive=False,
+                )(claimed_messages)
     
     # Channel layer handlers (called by group_send)
     
@@ -550,6 +581,27 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Mark a message as delivered (helper for async context)"""
         message = Message.objects.get(id=message_id)
         MessageService.mark_message_as_delivered(message, self.user)
+
+    def _mark_messages_delivered(self, message_ids):
+        """Bulk-mark successfully written queued WebSocket messages delivered."""
+        delivered_at = timezone.now()
+        return MessageStatus.objects.filter(
+            message_id__in=message_ids,
+            user=self.user,
+            status='sent',
+        ).update(
+            status='delivered',
+            delivered_at=delivered_at,
+            updated_at=delivered_at,
+        )
+
+    def _release_delivery_claims(self, claimed_messages):
+        for claimed in claimed_messages:
+            MessageDeliveryClaimService.release(
+                claimed['message_id'],
+                self.user.id,
+                claimed['claim_token'],
+            )
     
     def get_message_sender(self, message_id):
         """Get the sender ID of a message"""
@@ -558,14 +610,43 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     def get_queued_messages(self):
         """Get queued messages for this user (messages with 'sent' status)"""
-        statuses = MessageStatus.objects.filter(
+        statuses = self._get_queued_statuses()
+
+        return [build_realtime_message_payload(status.message) for status in statuses]
+
+    def get_claimed_queued_messages(self):
+        """Claim one bounded reconnect page so a Celery retry cannot race it."""
+        claimed_messages = []
+        for status in self._get_queued_statuses():
+            token = MessageDeliveryClaimService.acquire(status.message_id, self.user.id)
+            if not token:
+                continue
+            try:
+                claimed_messages.append({
+                    'message_id': status.message_id,
+                    'claim_token': token,
+                    'message': build_realtime_message_payload(status.message),
+                })
+            except Exception:
+                MessageDeliveryClaimService.release(
+                    status.message_id,
+                    self.user.id,
+                    token,
+                )
+                raise
+        return claimed_messages
+
+    def _get_queued_statuses(self):
+        return list(MessageStatus.objects.filter(
             user=self.user,
             status='sent'
-        ).select_related('message', 'message__sender', 'message__chat').prefetch_related('message__attachments')[:50]
-        
-        messages = []
-        for status in statuses:
-            msg = status.message
-            messages.append(build_realtime_message_payload(msg))
-        
-        return messages
+        ).select_related(
+            'message',
+            'message__sender',
+            'message__chat',
+            'message__reply_to',
+            'message__reply_to__sender',
+        ).prefetch_related('message__attachments').order_by(
+            'message__created_at',
+            'message_id',
+        )[:50])
