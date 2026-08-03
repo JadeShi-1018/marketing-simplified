@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from core.admin_utils import is_org_admin
 
+# Prefixed on ApprovalRecord.comment / BudgetRequest.notes so override is
+# detectable without a new DB column (MED-240: migrations = no).
+ORG_ADMIN_OVERRIDE_PREFIX = "[ORG_ADMIN_OVERRIDE]"
+
 
 def budget_request_organization(budget_request):
     """Resolve the org that owns this request (via budget_pool → project)."""
@@ -48,3 +52,30 @@ def user_may_process_budget_approval(user, budget_request) -> bool:
         return True
 
     return user_is_org_admin_for_budget_request(user, budget_request)
+
+
+def is_org_admin_override_action(user, budget_request) -> bool:
+    """True when a same-org org-admin acts while not the assigned chain approver."""
+    if user is None or budget_request is None:
+        return False
+    if budget_request.current_approver_id == getattr(user, 'id', None):
+        return False
+    return user_is_org_admin_for_budget_request(user, budget_request)
+
+
+def budget_request_has_admin_override(budget_request) -> bool:
+    """Whether this request was decided via an org-admin override (audit marker)."""
+    if budget_request is None:
+        return False
+
+    notes = budget_request.notes or ""
+    if ORG_ADMIN_OVERRIDE_PREFIX in notes:
+        return True
+
+    task = getattr(budget_request, 'task', None)
+    if task is None:
+        return False
+
+    return task.approval_records.filter(
+        comment__startswith=ORG_ADMIN_OVERRIDE_PREFIX
+    ).exists()

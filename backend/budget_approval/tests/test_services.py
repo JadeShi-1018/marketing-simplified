@@ -355,6 +355,69 @@ class TestProcessApproval:
             )
         assert result.status == BudgetRequestStatus.APPROVED
 
+    def test_org_admin_override_writes_audit_entry(
+        self, budget_request_under_review, org_admin, user2
+    ):
+        """MED-240: org-admin override must leave an auditable ApprovalRecord + marker."""
+        from task.models import ApprovalRecord
+        from budget_approval.approver_access import (
+            ORG_ADMIN_OVERRIDE_PREFIX,
+            budget_request_has_admin_override,
+        )
+        from budget_approval.serializers import BudgetRequestSerializer
+
+        assert budget_request_under_review.current_approver_id == user2.id
+        task = budget_request_under_review.task
+        assert task is not None
+
+        with patch('budget_approval.services.budget_notifications'):
+            result = BudgetRequestService.process_approval(
+                budget_request_under_review,
+                org_admin,
+                is_approved=True,
+                comment="Emergency approve",
+            )
+
+        assert budget_request_has_admin_override(result) is True
+        assert ORG_ADMIN_OVERRIDE_PREFIX in (result.notes or "")
+
+        records = ApprovalRecord.objects.filter(
+            task=task,
+            approved_by=org_admin,
+            comment__startswith=ORG_ADMIN_OVERRIDE_PREFIX,
+        )
+        assert records.count() == 1
+        assert records.first().is_approved is True
+        assert "Emergency approve" in records.first().comment
+
+        payload = BudgetRequestSerializer(result).data
+        assert payload['is_admin_override'] is True
+
+    def test_chain_approver_does_not_write_override_audit(
+        self, budget_request_under_review, user2
+    ):
+        """Normal chain approval must not be marked as admin override."""
+        from task.models import ApprovalRecord
+        from budget_approval.approver_access import (
+            ORG_ADMIN_OVERRIDE_PREFIX,
+            budget_request_has_admin_override,
+        )
+
+        task = budget_request_under_review.task
+        before = ApprovalRecord.objects.filter(task=task).count()
+
+        with patch('budget_approval.services.budget_notifications'):
+            result = BudgetRequestService.process_approval(
+                budget_request_under_review,
+                user2,
+                is_approved=True,
+                comment="Normal approve",
+            )
+
+        assert budget_request_has_admin_override(result) is False
+        assert ORG_ADMIN_OVERRIDE_PREFIX not in (result.notes or "")
+        assert ApprovalRecord.objects.filter(task=task).count() == before
+
     def test_raises_when_not_under_review(self, budget_request_draft, user2):
         with pytest.raises(ValidationError, match="cannot be processed"):
             BudgetRequestService.process_approval(

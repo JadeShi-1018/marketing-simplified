@@ -1,7 +1,12 @@
 from django.core.exceptions import ValidationError
 from django.db import transaction, OperationalError
+from django.db.models import Max
 from .models import BudgetRequest, BudgetPool, BudgetEscalationRule, BudgetRequestStatus
-from .approver_access import user_may_process_budget_approval
+from .approver_access import (
+    ORG_ADMIN_OVERRIDE_PREFIX,
+    is_org_admin_override_action,
+    user_may_process_budget_approval,
+)
 from .tasks import trigger_escalation
 from . import notifications as budget_notifications
 from core.models import AdChannel
@@ -39,6 +44,41 @@ class BudgetRequestService:
         """Check if budget pool has sufficient available amount"""
         return budget_pool.available_amount >= amount
     
+    @staticmethod
+    def _write_org_admin_override_audit(budget_request, approver, is_approved, comment):
+        """Persist override audit without a new migration (ApprovalRecord + notes marker)."""
+        from task.models import ApprovalRecord
+
+        user_comment = (comment or "").strip()
+        audit_comment = (
+            f"{ORG_ADMIN_OVERRIDE_PREFIX} {user_comment}".strip()
+            if user_comment
+            else ORG_ADMIN_OVERRIDE_PREFIX
+        )
+
+        task = budget_request.task
+        if task is not None:
+            last_step = task.approval_records.aggregate(m=Max('step_number'))['m'] or 0
+            ApprovalRecord.objects.create(
+                task=task,
+                approved_by=approver,
+                is_approved=is_approved,
+                comment=audit_comment,
+                step_number=last_step + 1,
+                revision_round=getattr(task, 'revision_round', 0) or 0,
+            )
+
+        # Notes marker keeps override discoverable on BudgetRequest itself (and
+        # covers requests with no linked task).
+        decision = 'approve' if is_approved else 'reject'
+        line = (
+            f"{ORG_ADMIN_OVERRIDE_PREFIX} user_id={approver.id} "
+            f"decision={decision}"
+        )
+        existing = (budget_request.notes or "").strip()
+        budget_request.notes = f"{existing}\n{line}".strip() if existing else line
+        budget_request.save(update_fields=['notes'])
+
     @staticmethod
     def check_escalation_rules(budget_request):
         """Check if budget request should be escalated based on rules"""
@@ -137,6 +177,9 @@ class BudgetRequestService:
         
         if not budget_request.can_approve() and not budget_request.can_reject():
             raise ValidationError("Budget request cannot be processed in current status")
+
+        # Capture before mutation: override = org-admin acting outside the chain
+        is_override = is_org_admin_override_action(approver, budget_request)
         
         with transaction.atomic():
             # Lock the budget request for update to ensure atomic state transition
@@ -179,6 +222,14 @@ class BudgetRequestService:
                     locked_request,
                     actor_id=approver.id if approver else None,
                     comment=comment or "",
+                )
+
+            if is_override:
+                BudgetRequestService._write_org_admin_override_audit(
+                    locked_request,
+                    approver=approver,
+                    is_approved=is_approved,
+                    comment=comment,
                 )
 
             return locked_request
